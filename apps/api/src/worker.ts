@@ -4,6 +4,7 @@ import { dispatchDueWebhooks } from './domain/webhooks.js';
 import { dispatchEmails, queueProtectionReminders } from './domain/notifications.js';
 import { maybeRunScheduledReconciliation } from './domain/reconciliation.js';
 import { heartbeat } from './observability.js';
+import { maybeRefreshRates } from './domain/fx.js';
 
 /**
  * Background jobs. Every job is safe to run on several worker processes at
@@ -30,6 +31,7 @@ export async function runJobsOnce(ctx: Ctx) {
     job(ctx, 'webhooks', () => dispatchDueWebhooks(ctx), 0),
     job(ctx, 'protection_reminders', () => queueProtectionReminders(ctx), 0),
     job(ctx, 'late_deliveries', () => handleLateDeliveries(ctx), { notified: 0, refunded: 0 }),
+    job(ctx, 'fx_rates', () => maybeRefreshRates(ctx), 0),
   ]);
   const reconciled = await job(ctx, 'reconciliation_scheduler', () => maybeRunScheduledReconciliation(ctx), false);
   // Send after the jobs above so emails they queued go out in the same tick.

@@ -62,7 +62,7 @@ export async function integrationRoutes(app: FastifyInstance, ctx: Ctx) {
 form{background:#141a26;padding:28px;border-radius:12px;width:340px}button{width:100%;padding:12px;border:0;border-radius:8px;background:#3ddc97;font-weight:600;margin-top:16px;cursor:pointer}
 small{color:#8b93a7}</style></head><body><form method="post" action="/v1/payments/mock/checkout/${escapeHtml(ref)}/pay">
 <h2>Mock hosted checkout</h2><p>${escapeHtml(order.title)} × ${order.quantity}</p>
-<p><strong>${(order.amount_cents / 100).toFixed(2)} ${order.currency}</strong></p>
+<p><strong>${(Number(order.presentment_amount_cents) / 100).toFixed(2)} ${order.presentment_currency}</strong></p>
 <small>In production this page is the PSP's hosted checkout (Stripe Checkout / Adyen Drop-in). Card data never touches marketplace servers (PCI DSS SAQ-A).</small>
 <button type="submit">Pay (test card 4242)</button></form></body></html>`;
     });
@@ -88,8 +88,8 @@ small{color:#8b93a7}</style></head><body><form method="post" action="/v1/payment
         type: 'payment.captured',
         ref,
         orderId: order.id,
-        amountCents: order.amount_cents,
-        currency: order.currency,
+        amountCents: Number(order.presentment_amount_cents),
+        currency: order.presentment_currency,
         details: {
           avsResult: body.avs ?? 'pass/pass',
           cvvResult: body.cvv ?? 'pass',
@@ -98,6 +98,8 @@ small{color:#8b93a7}</style></head><body><form method="post" action="/v1/payment
           cardFingerprint: body.cardFingerprint ?? `mockcard_${order.buyer_id.slice(0, 8)}`,
           billingCountry: body.billingCountry ?? order.buyer_ip_country ?? 'US',
           feeCents: body.feeCents ? Number(body.feeCents) : undefined,
+          // Tests/dev can simulate the PSP converting a foreign-currency charge at a different rate.
+          settledAmountCents: body.settledCents ? Number(body.settledCents) : undefined,
         },
       };
       // Exercise the same signed-webhook path a real PSP would use.

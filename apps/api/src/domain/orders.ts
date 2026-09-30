@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Ctx } from '../context.js';
 import type { Queryable, Tx } from '../db.js';
-import { many, maybeOne, one } from '../db.js';
+import { many, maybeOne, one, withTx } from '../db.js';
 import { badRequest, conflict, forbidden, notFound, AppError } from '../lib/errors.js';
 import type { PaymentEvent } from '../providers/payments/types.js';
 import { appendMessage, createOrderRoom } from './chat.js';
@@ -14,6 +14,9 @@ import { accountId, orderEscrowBalance, post } from './ledger.js';
 import { centsToTokenUnits, orderIdToBytes32 } from './web3.js';
 import { enqueueWebhook } from './webhooks.js';
 import { enqueueEmail } from './notifications.js';
+import { assertSupported, getRate } from './fx.js';
+import { quotePromo, reserveRedemption, setRedemptionStatus } from './promos.js';
+import { availableCredit, maybeGrantReferral } from './referrals.js';
 
 export type OrderStatus = 'awaiting_payment' | 'paid' | 'delivered' | 'completed' | 'disputed' | 'refunded' | 'cancelled' | 'charged_back';
 
@@ -30,6 +33,14 @@ export interface Order {
   commission_cents: number;
   seller_net_cents: number;
   seller_tier: string;
+  discount_cents: number;
+  credit_cents: number;
+  charged_cents: number;
+  presentment_currency: string;
+  presentment_amount_cents: number;
+  fx_rate: number;
+  listing_currency: string | null;
+  promo_code_id: string | null;
   rail: 'fiat' | 'crypto';
   status: OrderStatus;
   protection: 'inspection_72h' | 'insurance_14d';
@@ -143,6 +154,100 @@ export interface CreateOrderInput {
   ipCountry?: string;
   device?: string;
   walletAddress?: string;
+  promoCode?: string;
+  useCredit?: boolean;
+  /** Currency the buyer pays in. Defaults to the listing's currency. */
+  currency?: string;
+}
+
+/** Smallest card charge the PSP accepts, in settlement minor units. Orders fully covered by credit/promo skip the card. */
+export const MIN_CARD_CHARGE_CENTS = 50;
+
+export interface PriceBreakdown {
+  listingCurrency: string;
+  listingTotalCents: number;
+  amountCents: number;
+  unitPriceCents: number;
+  discountCents: number;
+  creditCents: number;
+  chargedCents: number;
+  promoId: string | null;
+  presentmentCurrency: string;
+  presentmentAmountCents: number;
+  fxRate: number;
+  settlementCurrency: string;
+}
+
+/**
+ * Work out what an order costs and who funds which part. Runs inside the order
+ * transaction (promo code row locked, buyer row locked when credit is used).
+ */
+export async function priceOrder(
+  ctx: Ctx,
+  tx: Tx,
+  offer: { price_cents: number; currency: string; category_slug: string },
+  buyerId: string,
+  input: Pick<CreateOrderInput, 'quantity' | 'rail' | 'promoCode' | 'useCredit' | 'currency'>,
+): Promise<PriceBreakdown> {
+  const settlement = ctx.cfg.SETTLEMENT_CURRENCY;
+  const listingRate = await getRate(ctx, tx, offer.currency);
+  const listingTotal = offer.price_cents * input.quantity;
+  const amount = Math.round(listingTotal / listingRate);
+  if (amount < MIN_CARD_CHARGE_CENTS) throw badRequest('amount_too_small', 'Order total is below the minimum');
+
+  if (input.rail === 'crypto' && (input.promoCode || input.useCredit)) {
+    throw badRequest('not_for_crypto', 'Promo codes and credit apply to card payments only');
+  }
+  let discount = 0;
+  let promoId: string | null = null;
+  if (input.promoCode) {
+    const q = await quotePromo(tx, input.promoCode, buyerId, amount, offer.category_slug);
+    discount = q.discountCents;
+    promoId = q.promoId;
+  }
+  let credit = 0;
+  if (input.useCredit) {
+    await tx.query('SELECT 1 FROM users WHERE id = $1 FOR UPDATE', [buyerId]); // serialize credit spending
+    credit = Math.min(await availableCredit(tx, buyerId, settlement), amount - discount);
+  }
+  let charged = amount - discount - credit;
+  // A card charge below the PSP minimum isn't possible: use less credit (then less discount) instead.
+  if (charged > 0 && charged < MIN_CARD_CHARGE_CENTS) {
+    const fromCredit = Math.min(credit, MIN_CARD_CHARGE_CENTS - charged);
+    credit -= fromCredit;
+    charged += fromCredit;
+    if (charged < MIN_CARD_CHARGE_CENTS) {
+      discount -= MIN_CARD_CHARGE_CENTS - charged;
+      charged = MIN_CARD_CHARGE_CENTS;
+    }
+  }
+
+  const presentment = (input.currency ?? offer.currency).toUpperCase();
+  assertSupported(ctx, presentment);
+  if (input.rail === 'crypto' && presentment !== settlement) throw badRequest('crypto_currency', `Crypto escrow is priced in ${settlement}`);
+  const fxRate = presentment === settlement ? 1 : (await getRate(ctx, tx, presentment)) * (1 + ctx.cfg.FX_SPREAD_BPS / 10_000);
+  return {
+    listingCurrency: offer.currency,
+    listingTotalCents: listingTotal,
+    amountCents: amount,
+    unitPriceCents: Math.round(amount / input.quantity),
+    discountCents: discount,
+    creditCents: credit,
+    chargedCents: charged,
+    promoId,
+    presentmentCurrency: presentment,
+    presentmentAmountCents: Math.round(charged * fxRate),
+    fxRate: Math.round(fxRate * 1e8) / 1e8,
+    settlementCurrency: settlement,
+  };
+}
+
+export async function quoteOrder(ctx: Ctx, buyerId: string, input: Pick<CreateOrderInput, 'offerId' | 'quantity' | 'rail' | 'promoCode' | 'useCredit' | 'currency'>) {
+  return withTx(ctx.db, async (tx) => {
+    const offer = await maybeOne(tx, `SELECT price_cents, currency, category_slug FROM offers WHERE id = $1 AND status = 'active'`, [input.offerId]);
+    if (!offer) throw notFound('Offer');
+    return priceOrder(ctx, tx, offer, buyerId, input);
+  });
 }
 
 export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
@@ -173,7 +278,8 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
 
     const { tier } = await sellerTier(s.tx, offer.seller_id);
     const rate = commissionBps(tier, { kind: offer.category_kind, promo_rate_bps: offer.promo_rate_bps });
-    const amount = offer.price_cents * input.quantity;
+    const price = await priceOrder(ctx, s.tx, offer, buyer.id, input);
+    const amount = price.amountCents;
     const split = splitAmount(amount, rate);
     const protection = offer.risk_class === 'high' ? 'insurance_14d' : 'inspection_72h';
     // "High Risk - Secondary Market": account listings without verified Original Owner Proof.
@@ -184,17 +290,22 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
       `INSERT INTO orders (buyer_id, seller_id, offer_id, quantity, unit_price_cents, amount_cents, currency,
                            commission_bps, commission_cents, seller_net_cents, seller_tier, rail, status, protection,
                            seller_protected, payment_expires_at, tos_version, tos_accepted_at, buyer_ip, buyer_ip_country,
-                           buyer_device, idempotency_key)
+                           buyer_device, idempotency_key, discount_cents, credit_cents, charged_cents, presentment_currency,
+                           presentment_amount_cents, fx_rate, fx_locked_at, listing_currency, listing_unit_price_cents, promo_code_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'awaiting_payment', $13, $14,
-               now() + make_interval(mins => $15), $16, now(), $17, $18, $19, $20)
+               now() + make_interval(mins => $15), $16, now(), $17, $18, $19, $20,
+               $21, $22, $23, $24, $25, $26, now(), $27, $28, $29)
        RETURNING *`,
       [
-        buyer.id, offer.seller_id, offer.id, input.quantity, offer.price_cents, amount, offer.currency,
+        buyer.id, offer.seller_id, offer.id, input.quantity, price.unitPriceCents, amount, price.settlementCurrency,
         rate, split.commissionCents, split.sellerNetCents, tier.name, input.rail, protection, sellerProtected,
         ctx.cfg.ORDER_PAYMENT_TTL_MINUTES, ctx.cfg.TOS_VERSION, input.ip ?? null, input.ipCountry ?? null,
         input.device ?? null, input.idempotencyKey ?? null,
+        price.discountCents, price.creditCents, price.chargedCents, price.presentmentCurrency,
+        price.presentmentAmountCents, price.fxRate, price.listingCurrency, offer.price_cents, price.promoId,
       ],
     );
+    if (price.promoId) await reserveRedemption(s.tx, price.promoId, order.id, buyer.id, price.discountCents);
 
     if (offer.delivery_mode === 'auto') await reserveInventory(s.tx, offer.id, order.id, input.quantity);
     else await reserveManualStock(s.tx, offer.id, input.quantity);
@@ -206,6 +317,7 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
         owner_proof_status: offer.owner_proof_status, version: offer.version,
       },
       terms: { protection, tos_version: ctx.cfg.TOS_VERSION, commission_bps: rate },
+      price: { ...price, promoId: undefined },
       captured_at: new Date().toISOString(),
     };
     const snapshotJson = JSON.stringify(snapshot);
@@ -236,12 +348,18 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
     return { order: { ...order, payment_provider: 'escrow_contract', payment_ref: chainRef }, checkoutUrl: null, replayed: false };
   }
 
+  if (order.charged_cents === 0) {
+    // Fully covered by promo and/or store credit: no card payment needed.
+    await fundWithoutCard(ctx, order.id);
+    return { order: await one<Order>(ctx.db, 'SELECT * FROM orders WHERE id = $1', [order.id]), checkoutUrl: null, replayed: false };
+  }
+
   try {
     const offerTitle = (await one<{ title: string }>(ctx.db, 'SELECT title FROM offers WHERE id = $1', [order.offer_id])).title;
     const session = await ctx.payments.createCheckout({
       orderId: order.id,
-      amountCents: order.amount_cents,
-      currency: order.currency,
+      amountCents: order.presentment_amount_cents,
+      currency: order.presentment_currency,
       description: `${offerTitle} x${order.quantity}`,
       buyerEmail: buyer.email,
       successUrl: `${ctx.cfg.PUBLIC_WEB_URL}/orders/${order.id}?checkout=success`,
@@ -264,19 +382,23 @@ export async function handlePaymentCaptured(ctx: Ctx, ev: Extract<PaymentEvent, 
   const result = await withScope(ctx, async (s) => {
     const order = await lockOrder(s.tx, ev.orderId);
     if (order.payment_ref !== ev.ref) throw badRequest('payment_mismatch', 'Payment reference does not match order');
-    if (order.amount_cents !== ev.amountCents || order.currency !== ev.currency) {
+    if (Number(order.presentment_amount_cents) !== ev.amountCents || order.presentment_currency !== ev.currency) {
       throw badRequest('amount_mismatch', 'Captured amount does not match order');
     }
+    // What the PSP credited in the settlement currency (differs from charged_cents only by FX conversion).
+    const settled = ev.details.settledAmountCents ?? order.charged_cents;
     if (order.status !== 'awaiting_payment') {
       if (order.status === 'cancelled' && !(await hasLedgerTxn(s.tx, order.id, 'payment_captured'))) {
         // Paid after the reservation expired: record the money and refund it.
-        await postCapture(s.tx, order);
+        await postCapture(s.tx, order, 0, settled);
         refundNeeded = order;
       }
       return order; // idempotent replay
     }
 
-    await postCapture(s.tx, order, ev.details.feeCents);
+    await postCapture(s.tx, order, ev.details.feeCents, settled);
+    await postFunding(s.tx, order);
+    await setRedemptionStatus(s.tx, order.id, 'redeemed');
     await s.tx.query(
       `INSERT INTO payment_details (order_id, provider, avs_result, cvv_result, card_brand, card_last4, card_fingerprint, billing_country, ip_country, raw)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
@@ -290,10 +412,10 @@ export async function handlePaymentCaptured(ctx: Ctx, ev: Extract<PaymentEvent, 
 
   if (refundNeeded) {
     const o = refundNeeded as Order;
-    await ctx.payments.refund(o.payment_ref!, o.amount_cents);
+    const r = await ctx.payments.refund(o.payment_ref!, o.presentment_amount_cents, o.presentment_currency);
     await withScope(ctx, async (s) => {
       const cur = await lockOrder(s.tx, o.id);
-      await postRefund(s.tx, cur);
+      await postRefund(s.tx, cur, r.settledAmountCents);
       await s.tx.query('INSERT INTO order_events (order_id, from_status, to_status, reason) VALUES ($1, $2, $2, $3)', [o.id, 'cancelled', 'late_payment_refunded']);
     });
   }
@@ -308,23 +430,28 @@ async function hasLedgerTxn(q: Queryable, orderId: string, memo: string) {
   return !!(await maybeOne(q, 'SELECT 1 FROM ledger_entries WHERE order_id = $1 AND memo = $2 LIMIT 1', [orderId, memo]));
 }
 
-async function postCapture(tx: Tx, order: Order, feeCents = 0) {
-  await post(
-    tx,
-    [
-      { account: await accountId(tx, 'gateway_clearing', order.currency), amountCents: -order.amount_cents },
-      { account: await accountId(tx, 'escrow', order.currency), amountCents: order.amount_cents },
-    ],
-    'payment_captured',
-    order.id,
-  );
+async function postCapture(tx: Tx, order: Order, feeCents = 0, settledCents = order.charged_cents) {
+  const cur = order.currency;
+  if (order.charged_cents > 0) {
+    await post(
+      tx,
+      [
+        { account: await accountId(tx, 'gateway_clearing', cur), amountCents: -settledCents },
+        { account: await accountId(tx, 'escrow', cur), amountCents: order.charged_cents },
+        // Card charged in another currency: the PSP's conversion vs our locked rate is FX gain/loss.
+        { account: await accountId(tx, 'fx_pnl', cur), amountCents: settledCents - order.charged_cents },
+      ],
+      'payment_captured',
+      order.id,
+    );
+  }
   // The PSP keeps its processing fee; the platform pays it out of revenue, never out of escrow.
   if (feeCents > 0) {
     await post(
       tx,
       [
-        { account: await accountId(tx, 'gateway_clearing', order.currency), amountCents: feeCents },
-        { account: await accountId(tx, 'treasury', order.currency), amountCents: -feeCents },
+        { account: await accountId(tx, 'gateway_clearing', cur), amountCents: feeCents },
+        { account: await accountId(tx, 'treasury', cur), amountCents: -feeCents },
       ],
       'psp_fee',
       order.id,
@@ -332,18 +459,70 @@ async function postCapture(tx: Tx, order: Order, feeCents = 0) {
   }
 }
 
-async function postRefund(tx: Tx, order: Order) {
-  const held = await orderEscrowBalance(tx, order.id, order.currency);
+/** Top escrow up to the full order value from the promo budget (treasury) and the buyer's store credit. */
+async function postFunding(tx: Tx, order: Order) {
+  const cur = order.currency;
+  if (order.discount_cents > 0) {
+    await post(
+      tx,
+      [
+        { account: await accountId(tx, 'treasury', cur), amountCents: -order.discount_cents },
+        { account: await accountId(tx, 'escrow', cur), amountCents: order.discount_cents },
+      ],
+      'promo_funding',
+      order.id,
+    );
+  }
+  if (order.credit_cents > 0) {
+    await post(
+      tx,
+      [
+        { account: await accountId(tx, 'user_credit', cur, order.buyer_id), amountCents: -order.credit_cents },
+        { account: await accountId(tx, 'escrow', cur), amountCents: order.credit_cents },
+      ],
+      'credit_applied',
+      order.id,
+    );
+  }
+}
+
+/**
+ * Return everything held in escrow to where it came from: the card part to the
+ * PSP (at what the PSP actually debits us, the rest is FX gain/loss), the promo
+ * part to treasury, the credit part back to the buyer's credit.
+ */
+async function postRefund(tx: Tx, order: Order, refundSettledCents?: number) {
+  const cur = order.currency;
+  const held = await orderEscrowBalance(tx, order.id, cur);
   if (held <= 0) return;
+  const card = Math.min(held, order.charged_cents);
+  const promo = Math.min(held - card, order.discount_cents);
+  const credit = held - card - promo;
+  const settledBack = refundSettledCents ?? card;
   await post(
     tx,
     [
-      { account: await accountId(tx, 'escrow', order.currency), amountCents: -held },
-      { account: await accountId(tx, 'gateway_clearing', order.currency), amountCents: held },
+      { account: await accountId(tx, 'escrow', cur), amountCents: -held },
+      { account: await accountId(tx, 'gateway_clearing', cur), amountCents: settledBack },
+      { account: await accountId(tx, 'fx_pnl', cur), amountCents: card - settledBack },
+      { account: await accountId(tx, 'treasury', cur), amountCents: promo },
+      { account: await accountId(tx, 'user_credit', cur, order.buyer_id), amountCents: credit },
     ],
     'refund',
     order.id,
   );
+}
+
+/** Orders fully covered by promo/credit are funded straight from those sources. */
+async function fundWithoutCard(ctx: Ctx, orderId: string) {
+  await withScope(ctx, async (s) => {
+    const order = await lockOrder(s.tx, orderId);
+    if (order.status !== 'awaiting_payment') return;
+    await s.tx.query(`UPDATE orders SET payment_provider = 'none', payment_ref = $2 WHERE id = $1`, [orderId, `nocard_${orderId}`]);
+    await postFunding(s.tx, order);
+    await setRedemptionStatus(s.tx, order.id, 'redeemed');
+    await onFunded(ctx, s, order);
+  });
 }
 
 /** Shared by fiat capture and on-chain EscrowCreated. */
@@ -445,7 +624,10 @@ async function releaseEscrow(ctx: Ctx, s: TxScope, order: Order & { title: strin
   const room = await roomOf(s.tx, order.id);
   await appendMessage(s, room.id, null, 'system', `Order completed. ${(order.seller_net_cents / 100).toFixed(2)} ${order.currency} released to the seller (commission ${(order.commission_bps / 100).toFixed(2)}%).`);
   await enqueueWebhook(s.tx, order.seller_id, 'order.completed', orderSummary(order));
-  if (order.rail === 'fiat') await enqueueEmail(s.tx, order.seller_id, 'seller_paid', emailData(order));
+  if (order.rail === 'fiat') {
+    await enqueueEmail(s.tx, order.seller_id, 'seller_paid', emailData(order));
+    await maybeGrantReferral(ctx, s, order);
+  }
   s.notifyUser(order.seller_id, 'order.completed', { orderId: order.id });
   s.notifyUser(order.buyer_id, 'order.completed', { orderId: order.id });
 }
@@ -526,6 +708,7 @@ export async function cancelOrder(ctx: Ctx, orderId: string, actorId: string | n
     if (actorId && order.buyer_id !== actorId) throw forbidden('not_buyer', 'Only the buyer can cancel');
     if (order.status !== 'awaiting_payment') throw conflict('invalid_state', 'Only unpaid orders can be cancelled');
     await releaseReservation(s.tx, order);
+    await setRedemptionStatus(s.tx, order.id, 'released');
     await transition(s.tx, order, 'cancelled', actorId, reason);
     await enqueueWebhook(s.tx, order.seller_id, 'order.cancelled', orderSummary(order));
     return order;
@@ -599,8 +782,12 @@ export async function resolveDispute(ctx: Ctx, disputeId: string, arbiterId: str
 async function refundOrder(ctx: Ctx, s: TxScope, order: Order & { delivery_mode: string; title: string }, actorId: string | null, reason: string) {
   // The PSP refund is idempotent (keyed on the payment ref), so calling it inside the
   // transaction is safe: on rollback a retry re-uses the same refund.
-  if (order.rail === 'fiat' && order.payment_ref) await ctx.payments.refund(order.payment_ref, order.amount_cents);
-  await postRefund(s.tx, order);
+  let settledBack: number | undefined;
+  if (order.rail === 'fiat' && order.payment_ref && order.charged_cents > 0 && order.payment_provider !== 'none') {
+    settledBack = (await ctx.payments.refund(order.payment_ref, order.presentment_amount_cents, order.presentment_currency)).settledAmountCents;
+  }
+  await postRefund(s.tx, order, settledBack);
+  await setRedemptionStatus(s.tx, order.id, 'released');
   // Undelivered auto-delivery stock goes back on sale; delivered goods are burned.
   if (order.delivery_mode === 'auto') {
     await s.tx.query(

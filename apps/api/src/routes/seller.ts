@@ -22,7 +22,7 @@ export const OfferBody = z.object({
   title: z.string().trim().min(3).max(140),
   description: z.string().max(5_000).optional(),
   priceCents: z.number().int().positive().max(100_000_00),
-  currency: z.literal('USD').optional(),
+  currency: z.string().length(3).toUpperCase().optional().describe('Listing currency (e.g. USD, EUR, GBP)'),
   deliveryMode: z.enum(['auto', 'manual']),
   stock: z.number().int().min(0).max(1_000_000).optional(),
   lowStockThreshold: z.number().int().min(0).max(100_000).optional(),

@@ -76,7 +76,8 @@ export async function receiveChargeback(ctx: Ctx, input: ChargebackInput) {
       if (dup) return dup;
     }
     const spec = classify(input.network, input.reasonCode, input.subtype);
-    const amount = Math.min(input.amountCents, order.amount_cents);
+    // Only the card-paid part can be charged back (promo discounts and store credit weren't on the card).
+    const amount = Math.min(input.amountCents, Number(order.charged_cents ?? order.amount_cents));
 
     // Pull the money back: from escrow if still held, else seller balance / reserve.
     const allocation: Record<string, number> = {};
@@ -84,6 +85,9 @@ export async function receiveChargeback(ctx: Ctx, input: ChargebackInput) {
     const clearing = await accountId(s.tx, 'gateway_clearing', order.currency);
     if (held > 0) {
       allocation.escrow = Math.min(held, amount);
+      // Whatever else sat in escrow for this order (promo top-up, store credit) is forfeited to the platform,
+      // so the order's escrow is fully cleared. Reversed if the chargeback is won.
+      if (held > allocation.escrow) allocation.forfeit = held - allocation.escrow;
     }
     let rest = amount - (allocation.escrow ?? 0);
     if (rest > 0) {
@@ -98,6 +102,10 @@ export async function receiveChargeback(ctx: Ctx, input: ChargebackInput) {
     if (allocation.escrow) postings.push({ account: await accountId(s.tx, 'escrow', order.currency), amountCents: -allocation.escrow });
     if (allocation.seller_available) postings.push({ account: await accountId(s.tx, 'seller_available', order.currency, order.seller_id), amountCents: -allocation.seller_available });
     if (allocation.reserve) postings.push({ account: await accountId(s.tx, 'reserve', order.currency), amountCents: -allocation.reserve });
+    if (allocation.forfeit) {
+      postings.push({ account: await accountId(s.tx, 'escrow', order.currency), amountCents: -allocation.forfeit });
+      postings.push({ account: await accountId(s.tx, 'treasury', order.currency), amountCents: allocation.forfeit });
+    }
     await post(s.tx, postings, 'chargeback_debit', order.id);
 
     const cb = await one(
@@ -138,7 +146,23 @@ export async function closeChargeback(ctx: Ctx, disputeRef: string, won: boolean
       if (a.escrow) postings.push({ account: await accountId(s.tx, 'escrow', order.currency), amountCents: a.escrow });
       if (a.seller_available) postings.push({ account: await accountId(s.tx, 'seller_available', order.currency, order.seller_id), amountCents: a.seller_available });
       if (a.reserve) postings.push({ account: await accountId(s.tx, 'reserve', order.currency), amountCents: a.reserve });
+      if (a.forfeit) {
+        postings.push({ account: await accountId(s.tx, 'escrow', order.currency), amountCents: a.forfeit });
+        postings.push({ account: await accountId(s.tx, 'treasury', order.currency), amountCents: -a.forfeit });
+      }
       await post(s.tx, postings, 'chargeback_reversal', order.id);
+      // Money is back where it was, so the order goes back to its pre-chargeback state.
+      const prev = await maybeOne<{ from_status: string }>(
+        s.tx,
+        `SELECT from_status FROM order_events WHERE order_id = $1 AND to_status = 'charged_back' ORDER BY id DESC LIMIT 1`,
+        [order.id],
+      );
+      if (prev?.from_status && order.status === 'charged_back') {
+        await s.tx.query(`UPDATE orders SET status = $2, escrow_frozen = false, version = version + 1, updated_at = now() WHERE id = $1`, [order.id, prev.from_status]);
+        await s.tx.query('INSERT INTO order_events (order_id, from_status, to_status, reason) VALUES ($1, $2, $3, $4)', [
+          order.id, 'charged_back', prev.from_status, 'chargeback_won',
+        ]);
+      }
     }
     return { ...cb, status: won ? 'won' : 'lost' };
   });

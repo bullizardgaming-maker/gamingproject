@@ -140,7 +140,7 @@ export function createMetrics(ctx: Ctx) {
 export async function heartbeat(ctx: Ctx, job: string, error?: unknown) {
   if (error) {
     await ctx.db.query(
-      `INSERT INTO worker_heartbeats (job, last_ok_at, last_error, last_error_at) VALUES ($1, '-infinity', $2, now())
+      `INSERT INTO worker_heartbeats (job, last_ok_at, last_error, last_error_at) VALUES ($1, to_timestamp(0), $2, now())
          ON CONFLICT (job) DO UPDATE SET last_error = $2, last_error_at = now()`,
       [job, String((error as Error)?.message ?? error).slice(0, 500)],
     );

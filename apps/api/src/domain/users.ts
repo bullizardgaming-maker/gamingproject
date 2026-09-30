@@ -8,6 +8,7 @@ import { withScope } from './events.js';
 import { recordSignals, subnetOf } from './fraud.js';
 import { accountId, post, sellerAvailable } from './ledger.js';
 import { checkSecondFactor } from './mfa.js';
+import { referrerForCode } from './referrals.js';
 import { enqueueEmail } from './notifications.js';
 import { activeSession, createSession, revokeOtherSessions, type IssuedSession } from './sessions.js';
 
@@ -82,13 +83,14 @@ function sessionResponse(user: User, s: IssuedSession) {
   return { user, token: s.accessToken, refreshToken: s.refreshToken, expiresIn: s.expiresIn };
 }
 
-export async function register(ctx: Ctx, input: { email: string; password: string; displayName: string } & AuthMeta) {
+export async function register(ctx: Ctx, input: { email: string; password: string; displayName: string; referralCode?: string } & AuthMeta) {
   const hash = await hashPassword(input.password);
+  const referrer = await referrerForCode(ctx.db, input.referralCode);
   try {
     const user = await one<User>(
       ctx.db,
-      `INSERT INTO users (email, password_hash, display_name) VALUES ($1, $2, $3) RETURNING ${PUBLIC_USER_COLUMNS}`,
-      [input.email, hash, input.displayName],
+      `INSERT INTO users (email, password_hash, display_name, referred_by) VALUES ($1, $2, $3, $4) RETURNING ${PUBLIC_USER_COLUMNS}`,
+      [input.email, hash, input.displayName, referrer],
     );
     await recordSignals(ctx.db, user.id, { device: input.device, ip_subnet: subnetOf(input.ip) });
     return sessionResponse(user, await createSession(ctx, user.id, { mfa: false, userAgent: input.userAgent, ip: input.ip }));

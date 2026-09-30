@@ -34,6 +34,8 @@ export type PaymentEvent =
         cardLast4?: string;
         cardFingerprint?: string;
         billingCountry?: string;
+        /** Amount credited to the platform in the settlement currency (after any currency conversion), gross of fees. */
+        settledAmountCents?: number;
         /** Processing fee the PSP deducted from this payment, in minor units. */
         feeCents?: number;
         raw?: unknown;
@@ -57,7 +59,8 @@ export interface PaymentProvider {
   createCheckout(req: CheckoutRequest): Promise<CheckoutSession>;
   /** Verify signature and normalize the provider webhook. Must throw on bad signature. */
   parseWebhook(rawBody: Buffer, headers: Record<string, string | string[] | undefined>): Promise<PaymentEvent>;
-  refund(paymentRef: string, amountCents: number): Promise<{ ref: string }>;
+  /** Refund in the currency the card was charged in. settledAmountCents = what the PSP debited in the settlement currency, when known. */
+  refund(paymentRef: string, amountCents: number, currency: string): Promise<{ ref: string; settledAmountCents?: number }>;
   /** Transfer a seller's released funds to their connected account. */
   payout(destination: string, amountCents: number, currency: string, idempotencyKey: string): Promise<{ ref: string }>;
   submitChargebackEvidence(disputeRef: string, evidence: { summary: string; pdf: Buffer }): Promise<void>;

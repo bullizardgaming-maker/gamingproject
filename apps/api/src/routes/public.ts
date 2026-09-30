@@ -4,7 +4,10 @@ import type { Ctx } from '../context.js';
 import { many } from '../db.js';
 import { SELLER_TIERS } from '../domain/commission.js';
 import { getOffer } from '../domain/offers.js';
-import { SORTS, searchOffers, suggestGames } from '../domain/search.js';
+import { SORTS, searchOffers, suggestGames, withDisplayPrices } from '../domain/search.js';
+import { currentRates, getRate } from '../domain/fx.js';
+import { availableCredit, referralSummary } from '../domain/referrals.js';
+import { userCredit } from '../domain/ledger.js';
 import { beginSetup, disable, enable, remainingRecoveryCodes } from '../domain/mfa.js';
 import { changePassword, requestPasswordReset, resetPassword, completeMfaLogin, confirmVerificationCode, login, register, sendVerificationCode, startKyc } from '../domain/users.js';
 import { REFRESH_TTL_DAYS, issueAccessToken, listSessions, refreshSession, revokeByRefreshToken, revokeFamily, revokeOtherSessions, revokeSessionById } from '../domain/sessions.js';
@@ -37,7 +40,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   };
 
   app.post('/auth/register', strict, async (req, reply) => {
-    const body = Credentials.extend({ displayName: z.string().trim().min(2).max(40) }).parse(req.body);
+    const body = Credentials.extend({ displayName: z.string().trim().min(2).max(40), referralCode: z.string().trim().max(20).optional() }).parse(req.body);
     const res = await register(ctx, { ...body, ...meta(req) });
     return reply.status(201).send(deliver(req, reply, res));
   });
@@ -194,17 +197,43 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
         inStock: bool.optional(),
         seller: z.string().uuid().optional(),
         sort: z.enum(SORTS).optional(),
+        currency: z.string().length(3).toUpperCase().optional().describe('Show prices converted to this currency; price filters are in it too'),
         page: z.coerce.number().int().min(1).max(500).optional(),
         pageSize: z.coerce.number().int().min(1).max(60).optional(),
       })
       .parse(req.query);
-    return searchOffers(ctx.db, {
+    // Price filters are given in the display currency and compared in the settlement currency.
+    const display = q.currency ?? ctx.cfg.SETTLEMENT_CURRENCY;
+    const rate = await getRate(ctx, ctx.db, display);
+    const toSettlement = (v?: number) => (v == null ? undefined : Math.round(v / rate));
+    const res = await searchOffers(ctx.db, {
       ...q,
-      minPriceCents: q.minPrice,
-      maxPriceCents: q.maxPrice,
+      minPriceCents: toSettlement(q.minPrice),
+      maxPriceCents: toSettlement(q.maxPrice),
       sellerId: q.seller,
     });
+    return withDisplayPrices(ctx, res, display);
   });
+
+  app.get('/me/credit', async (req) => {
+    const user = me(req);
+    const cur = ctx.cfg.SETTLEMENT_CURRENCY;
+    return {
+      currency: cur,
+      balanceCents: await userCredit(ctx.db, user.id, cur),
+      availableCents: await availableCredit(ctx.db, user.id, cur),
+      history: await many(
+        ctx.db,
+        `SELECT e.amount_cents, e.memo, e.order_id, e.created_at FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id
+          WHERE a.owner_id = $1 AND a.kind = 'user_credit' ORDER BY e.id DESC LIMIT 100`,
+        [user.id],
+      ),
+    };
+  });
+
+  app.get('/me/referral', async (req) => referralSummary(ctx, me(req).id));
+
+  app.get('/fx/rates', async () => currentRates(ctx));
 
   app.get('/games', async (req) => {
     const { q } = z.object({ q: z.string().trim().min(1).max(60) }).parse(req.query);

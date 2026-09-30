@@ -65,6 +65,11 @@ export const TEMPLATES = {
       `You promised delivery by ${when(d.delivery_due_at)}. The buyer can now cancel for a full refund, and the order is refunded automatically in ${d.auto_refund_hours} hours. ` +
       `Late deliveries lower your on-time rate, which buyers see on your profile.\n\n${link(`/orders/${d.order_id}`)}`,
   },
+  referral_reward: {
+    category: 'orders',
+    subject: (d) => `You earned ${money(d.amount_cents, d.currency)} in Bullizard credit`,
+    body: (d, link) => `A friend you invited completed their first order. ${money(d.amount_cents, d.currency)} of credit is in your account and applies at checkout.\n\n${link('/account')}`,
+  },
   protection_ending: {
     category: 'reminders',
     subject: (d) => `24 hours left to check ${d.title}`,

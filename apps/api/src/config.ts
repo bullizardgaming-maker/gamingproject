@@ -36,6 +36,17 @@ const Env = z.object({
   SANDBOX_MODE: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
   // Undelivered manual orders are refunded automatically this long after the promised delivery time.
   LATE_AUTO_REFUND_HOURS: z.coerce.number().int().min(1).default(48),
+  // Currencies & FX. Everything internal (escrow, ledger, balances) is in SETTLEMENT_CURRENCY.
+  SETTLEMENT_CURRENCY: z.string().length(3).default('USD'),
+  SUPPORTED_CURRENCIES: z.string().default('USD,EUR,GBP'),
+  FX_PROVIDER: z.enum(['static', 'ecb']).default('static'),
+  FX_STATIC_RATES: z.string().default('{"EUR":0.92,"GBP":0.79}'),
+  FX_SPREAD_BPS: z.coerce.number().int().min(0).max(1000).default(100),
+  FX_MAX_AGE_HOURS: z.coerce.number().default(48),
+  // Promotions & referrals
+  REFERRAL_REWARD_CENTS: z.coerce.number().int().min(0).default(500),
+  REFERRAL_MIN_ORDER_CENTS: z.coerce.number().int().min(0).default(1000),
+  REFERRAL_MONTHLY_CAP: z.coerce.number().int().min(0).default(20),
   RECON_INTERVAL_HOURS: z.coerce.number().default(24),
   RECON_TOLERANCE_CENTS: z.coerce.number().default(0),
   FRAUD_GNN_URL: z.string().optional(),

@@ -11,6 +11,7 @@ import { runReconciliation } from '../domain/reconciliation.js';
 import { notFound } from '../lib/errors.js';
 import { requireRole } from '../server.js';
 import { audit, listAudit } from '../domain/audit.js';
+import { createPromo, listPromos, setPromoActive } from '../domain/promos.js';
 import { decideTreasuryWithdrawal, listTreasuryWithdrawals, requestTreasuryWithdrawal, treasuryBalance } from '../domain/treasury.js';
 
 const Id = z.object({ id: z.string().uuid() });
@@ -160,6 +161,42 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const run = await runReconciliation(ctx);
     await audit(ctx.db, req, 'reconciliation.run', { type: 'reconciliation_run', id: run.id }, { status: run.status });
     return run;
+  });
+
+  // --- Promo codes --------------------------------------------------------------------------
+  app.get('/admin/promos', async (req) => {
+    requireRole(req, 'admin');
+    return listPromos(ctx);
+  });
+  app.post('/admin/promos', async (req, reply) => {
+    const admin = requireRole(req, 'admin');
+    const body = z
+      .object({
+        code: z.string().trim().min(3).max(40).regex(/^[A-Za-z0-9_-]+$/),
+        description: z.string().max(200).optional(),
+        percentOff: z.number().int().min(1).max(100).optional(),
+        amountOffCents: z.number().int().positive().optional(),
+        maxDiscountCents: z.number().int().positive().optional(),
+        minOrderCents: z.number().int().min(0).optional(),
+        categories: z.array(z.string()).min(1).optional(),
+        firstOrderOnly: z.boolean().optional(),
+        maxRedemptions: z.number().int().positive().optional(),
+        perUserLimit: z.number().int().positive().optional(),
+        startsAt: z.string().datetime().optional(),
+        endsAt: z.string().datetime().optional(),
+      })
+      .parse(req.body);
+    const promo = await createPromo(ctx, admin.id, body);
+    await audit(ctx.db, req, 'promo.create', { type: 'promo_code', id: promo.id }, body);
+    return reply.status(201).send(promo);
+  });
+  app.patch('/admin/promos/:id', async (req) => {
+    requireRole(req, 'admin');
+    const { active } = z.object({ active: z.boolean() }).parse(req.body);
+    const { id } = Id.parse(req.params);
+    const res = await setPromoActive(ctx, id, active);
+    await audit(ctx.db, req, active ? 'promo.activate' : 'promo.deactivate', { type: 'promo_code', id });
+    return res;
   });
 
   // --- Platform earnings (four-eyes) ------------------------------------------------------

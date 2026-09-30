@@ -53,8 +53,8 @@ export async function searchOffers(q: Queryable, p: SearchParams) {
     rank = `ts_rank(f.search, websearch_to_tsquery('simple', ${t})) + word_similarity(lower(${t}), lower(f.game))`;
   }
   if (p.game) where.push(`lower(f.game) = lower(${arg(p.game)})`);
-  if (p.minPriceCents != null) where.push(`f.price_cents >= ${arg(p.minPriceCents)}`);
-  if (p.maxPriceCents != null) where.push(`f.price_cents <= ${arg(p.maxPriceCents)}`);
+  if (p.minPriceCents != null) where.push(`f.price_settlement_cents >= ${arg(p.minPriceCents)}`);
+  if (p.maxPriceCents != null) where.push(`f.price_settlement_cents <= ${arg(p.maxPriceCents)}`);
   if (p.delivery) where.push(`f.delivery_mode = ${arg(p.delivery === 'instant' ? 'auto' : 'manual')}`);
   if (p.ownerVerified) where.push(`f.owner_proof_status = 'verified'`);
   if (p.sellerId) where.push(`f.seller_id = ${arg(p.sellerId)}`);
@@ -71,8 +71,8 @@ export async function searchOffers(q: Queryable, p: SearchParams) {
   const order = {
     relevance: 'rank DESC, created_at DESC',
     newest: 'created_at DESC',
-    price_asc: 'price_cents ASC, created_at DESC',
-    price_desc: 'price_cents DESC, created_at DESC',
+    price_asc: 'price_settlement_cents ASC, created_at DESC',
+    price_desc: 'price_settlement_cents DESC, created_at DESC',
     rating: 'seller_rating DESC NULLS LAST, seller_review_count DESC, created_at DESC',
     best_selling: 'seller_completed_orders DESC, created_at DESC',
   }[sort];
@@ -124,4 +124,15 @@ export async function suggestGames(q: Queryable, prefix: string, limit = 8) {
       GROUP BY f.game ORDER BY max(word_similarity(lower($1), lower(f.game))) DESC, offers DESC LIMIT $2`,
     [prefix, Math.min(limit, 20)],
   );
+}
+
+/** Adds display_price_cents/display_currency to each listing, converting via the settlement price. */
+export async function withDisplayPrices<T extends { items: any[] }>(ctx: import('../context.js').Ctx, res: T, currency: string): Promise<T> {
+  const { getRate } = await import('./fx.js');
+  const rate = await getRate(ctx, ctx.db, currency);
+  for (const it of res.items) {
+    it.display_currency = currency;
+    it.display_price_cents = it.currency === currency ? it.price_cents : Math.round(Number(it.price_settlement_cents) * rate);
+  }
+  return res;
 }

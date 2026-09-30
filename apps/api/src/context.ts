@@ -10,6 +10,7 @@ import type { PaymentProvider } from './providers/payments/types.js';
 import { MockKycProvider } from './providers/kyc/mock.js';
 import { SumsubKycProvider } from './providers/kyc/sumsub.js';
 import type { KycProvider } from './providers/kyc/types.js';
+import { EcbFxProvider, StaticFxProvider, type FxProvider } from './domain/fx.js';
 import {
   ConsoleMessenger,
   MockPhoneChecker,
@@ -37,6 +38,7 @@ export interface Ctx {
   kyc: KycProvider;
   messenger: Messenger;
   phoneChecker: PhoneChecker;
+  fx: FxProvider;
   log: Logger;
   apiBaseUrl: string;
 }
@@ -66,6 +68,7 @@ export function createContext(cfg: Config, log: Logger, overrides: Partial<Ctx> 
     payments,
     kyc,
     messenger: overrides.messenger ?? buildMessenger(cfg, log),
+    fx: overrides.fx ?? (cfg.FX_PROVIDER === 'ecb' ? new EcbFxProvider() : new StaticFxProvider(JSON.parse(cfg.FX_STATIC_RATES))),
     phoneChecker:
       overrides.phoneChecker ??
       (cfg.SMS_PROVIDER === 'twilio'

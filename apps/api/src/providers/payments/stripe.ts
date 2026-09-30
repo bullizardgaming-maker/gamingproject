@@ -75,6 +75,8 @@ export class StripePaymentProvider implements PaymentProvider {
             cardFingerprint: card?.fingerprint,
             billingCountry: charge?.billing_details?.address?.country ?? card?.country,
             feeCents: typeof charge?.balance_transaction === 'object' ? charge.balance_transaction.fee : undefined,
+            // Gross amount credited in the platform's settlement currency (after Stripe's conversion, if any).
+            settledAmountCents: typeof charge?.balance_transaction === 'object' ? charge.balance_transaction.amount : undefined,
             raw: { payment_intent: pi.id, charge: charge?.id, outcome: charge?.outcome },
           },
         };
@@ -91,7 +93,8 @@ export class StripePaymentProvider implements PaymentProvider {
           paymentRef: session.data[0]?.id ?? '',
           network: brand === 'mastercard' ? 'mastercard' : 'visa',
           reasonCode: obj.network_reason_code ?? mapStripeReason(obj.reason, brand),
-          amountCents: obj.amount,
+          // Settlement-currency amount Stripe debited for the dispute (the dispute itself is in the card currency).
+          amountCents: Math.abs(obj.balance_transactions?.[0]?.amount ?? obj.amount),
         };
       }
       case 'charge.dispute.closed':
@@ -103,13 +106,14 @@ export class StripePaymentProvider implements PaymentProvider {
     }
   }
 
-  async refund(paymentRef: string, amountCents: number) {
+  async refund(paymentRef: string, amountCents: number, _currency: string) {
     const session = await this.stripe.checkout.sessions.retrieve(paymentRef);
-    const refund = await this.stripe.refunds.create(
-      { payment_intent: session.payment_intent as string, amount: amountCents },
+    const refund: any = await this.stripe.refunds.create(
+      { payment_intent: session.payment_intent as string, amount: amountCents, expand: ['balance_transaction'] },
       { idempotencyKey: `refund_${paymentRef}_${amountCents}` },
     );
-    return { ref: refund.id };
+    const bt = refund.balance_transaction;
+    return { ref: refund.id, settledAmountCents: bt && typeof bt === 'object' ? Math.abs(bt.amount) : undefined };
   }
 
   async payout(destination: string, amountCents: number, currency: string, idempotencyKey: string) {

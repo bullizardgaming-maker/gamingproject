@@ -5,7 +5,7 @@ import { maybeOne, one } from '../db.js';
 import { getOrCreateInquiryRoom, listMessages, listRooms, postUserMessage, roomForParticipant, verifyChain } from '../domain/chat.js';
 import { revealDelivered } from '../domain/inventory.js';
 import {
-  cancelLateOrder, cancelOrder, confirmOrder, createOrder, deliverManually, getOrderFor, listOrders, openDispute, updateChecklist,
+  cancelLateOrder, cancelOrder, confirmOrder, createOrder, quoteOrder, deliverManually, getOrderFor, listOrders, openDispute, updateChecklist,
 } from '../domain/orders.js';
 import { buildEscrowTerms } from '../domain/web3.js';
 import { createReview, replyToReview, sellerProfile } from '../domain/reviews.js';
@@ -24,6 +24,9 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
         rail: z.enum(['fiat', 'crypto']).default('fiat'),
         acceptTos: z.literal(true),
         walletAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional(),
+        promoCode: z.string().trim().min(1).max(40).optional(),
+        useCredit: z.boolean().optional(),
+        currency: z.string().length(3).toUpperCase().optional(),
       })
       .parse(req.body);
     const idem = req.headers['idempotency-key'];
@@ -37,6 +40,21 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
       device: m.device,
     });
     return reply.status(res.replayed ? 200 : 201).send(res);
+  });
+
+  /** Price breakdown before paying: FX conversion, promo discount, store credit, card amount. */
+  app.post('/orders/quote', async (req) => {
+    const body = z
+      .object({
+        offerId: z.string().uuid(),
+        quantity: z.number().int().positive().max(1000).default(1),
+        rail: z.enum(['fiat', 'crypto']).default('fiat'),
+        promoCode: z.string().trim().min(1).max(40).optional(),
+        useCredit: z.boolean().optional(),
+        currency: z.string().length(3).toUpperCase().optional(),
+      })
+      .parse(req.body);
+    return quoteOrder(ctx, me(req).id, body);
   });
 
   app.get('/orders', async (req) => {

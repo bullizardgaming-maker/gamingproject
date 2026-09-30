@@ -3,6 +3,7 @@ import type { Queryable } from '../db.js';
 import { many, maybeOne, one, withTx } from '../db.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { addInventory, parseBulkUpload } from './inventory.js';
+import { getRate } from './fx.js';
 
 export interface OfferInput {
   categorySlug: string;
@@ -18,7 +19,7 @@ export interface OfferInput {
 }
 
 export const OFFER_LIST_SQL = `
-  SELECT f.id, f.seller_id, f.category_slug, f.game, f.title, f.description, f.price_cents, f.currency, f.delivery_mode,
+  SELECT f.id, f.seller_id, f.category_slug, f.game, f.title, f.description, f.price_cents, f.currency, f.price_settlement_cents, f.delivery_mode,
          f.status, f.owner_proof_status, f.version, f.created_at, f.updated_at, f.low_stock_threshold,
          c.kind AS category_kind, c.risk_class, u.display_name AS seller_name, f.delivery_hours,
          (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now())) AS shop_paused,
@@ -39,6 +40,8 @@ export function requireSeller(user: { kyc_tier: number; status: string }) {
 
 export async function createOffer(ctx: Ctx, seller: { id: string; kyc_tier: number; status: string }, input: OfferInput) {
   requireSeller(seller);
+  // Loads (or refreshes) the listing currency's rate so the settlement price used by search is right.
+  await getRate(ctx, ctx.db, (input.currency ?? ctx.cfg.SETTLEMENT_CURRENCY).toUpperCase());
   const cat = await maybeOne(ctx.db, 'SELECT * FROM categories WHERE slug = $1', [input.categorySlug]);
   if (!cat) throw badRequest('unknown_category', 'Unknown category');
   if (cat.kind === 'account' && input.deliveryMode === 'auto' && (input.stock ?? 0) > 0) {
@@ -49,7 +52,7 @@ export async function createOffer(ctx: Ctx, seller: { id: string; kyc_tier: numb
     ctx.db,
     `INSERT INTO offers (seller_id, category_slug, game, title, description, price_cents, currency, delivery_mode, stock, low_stock_threshold, delivery_hours)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
-    [seller.id, input.categorySlug, input.game, input.title, input.description ?? '', input.priceCents, input.currency ?? 'USD',
+    [seller.id, input.categorySlug, input.game, input.title, input.description ?? '', input.priceCents, (input.currency ?? ctx.cfg.SETTLEMENT_CURRENCY).toUpperCase(),
      input.deliveryMode, stock, input.lowStockThreshold ?? 5, input.deliveryHours ?? 24],
   );
   return getOffer(ctx.db, offer.id);
