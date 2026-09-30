@@ -86,6 +86,19 @@ async function buildReport(ctx: Ctx, currency: string): Promise<ReconReport> {
     issues.push({ check: 'psp_balance_mismatch', detail: { expected, actual, difference } });
   }
 
+  // Other currencies the platform holds (sellers paid in EUR/GBP): same equation per currency.
+  if (currency === ctx.cfg.SETTLEMENT_CURRENCY) {
+    const others = await many<{ currency: string }>(ctx.db, `SELECT DISTINCT currency FROM ledger_accounts WHERE currency <> $1`, [currency]);
+    for (const { currency: cur } of others) {
+      let exp = 0;
+      for (const kind of ['gateway_clearing', 'payouts', 'platform_withdrawals', 'fx_conversion'] as const) exp -= await balance(ctx.db, await accountId(ctx.db, kind, cur));
+      const act = await ctx.payments.platformBalance(cur);
+      if (act !== null && Math.abs(act - exp) > ctx.cfg.RECON_TOLERANCE_CENTS) {
+        issues.push({ check: 'psp_balance_mismatch', detail: { currency: cur, expected: exp, actual: act, difference: act - exp } });
+      }
+    }
+  }
+
   const negative = await many(
     ctx.db,
     `SELECT a.owner_id AS seller_id, a.currency, SUM(e.amount_cents)::bigint AS balance FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id

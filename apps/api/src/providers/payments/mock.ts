@@ -43,15 +43,21 @@ export class MockPaymentProvider implements PaymentProvider {
     this.submittedEvidence.push({ disputeRef, summary: evidence.summary, bytes: evidence.pdf.length });
   }
 
-  /** Tests set this to simulate the PSP's reported balance; null skips the external check. */
-  balanceOverride: number | null = null;
+  /**
+   * Tests set this to simulate the PSP's reported balance; null skips the external check.
+   * A number is the settlement-currency (USD) balance; a record gives balances per currency.
+   */
+  balanceOverride: number | Record<string, number> | null = null;
 
   async platformPayout(_amount: number, _currency: string, idempotencyKey: string) {
     return { ref: `mock_po_${idempotencyKey}` };
   }
 
-  async platformBalance() {
-    return this.balanceOverride;
+  async platformBalance(currency: string) {
+    const o = this.balanceOverride;
+    if (o === null) return null;
+    if (typeof o === 'number') return currency === 'USD' ? o : null;
+    return o[currency] ?? null;
   }
 
   /** Mock accounts become payout-enabled when the mock onboarding page is completed. */

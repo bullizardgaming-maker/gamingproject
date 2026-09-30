@@ -63,10 +63,13 @@ describe('seller balances in their own currency', () => {
 
     // USD at the PSP: 100.00 captured - 87.01 converted to EUR = the commission.
     const mock = h.ctx.payments as MockPaymentProvider;
-    mock.balanceOverride = Number(row.commission_cents);
-    const recon = await runReconciliation(h.ctx);
+    mock.balanceOverride = { USD: Number(row.commission_cents), EUR: 0 };
+    expect((await runReconciliation(h.ctx)).report.issues).toEqual([]);
+    // Had treasury forgotten to record the conversion, the EUR check would catch it.
+    mock.balanceOverride = { USD: Number(row.commission_cents), EUR: 5_00 };
+    const bad = await runReconciliation(h.ctx);
     mock.balanceOverride = null;
-    expect(recon.report.issues).toEqual([]);
+    expect(bad.report.issues).toEqual([{ check: 'psp_balance_mismatch', detail: { currency: 'EUR', expected: 0, actual: 5_00, difference: 5_00 } }]);
   });
 
   it('debits an unprotected EUR seller in EUR on a chargeback and restores it exactly when won', async () => {
