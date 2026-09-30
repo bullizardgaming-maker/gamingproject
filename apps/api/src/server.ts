@@ -139,6 +139,7 @@ export async function buildApp(ctx: Ctx, opts: { logger?: PinoLogger } = {}): Pr
   const limiterRedis = ctx.cfg.REDIS_URL ? new Redis(ctx.cfg.REDIS_URL, { connectTimeout: 1_000, maxRetriesPerRequest: 1, enableOfflineQueue: false }) : undefined;
   limiterRedis?.on('error', () => {});
   if (limiterRedis) app.addHook('onClose', async () => void limiterRedis.disconnect());
+  app.addHook('onClose', async () => ctx.dbRead.end());
   await app.register(rateLimit, {
     max: ctx.cfg.RATE_LIMIT_PER_MINUTE,
     timeWindow: '1 minute',
@@ -181,7 +182,9 @@ export async function buildApp(ctx: Ctx, opts: { logger?: PinoLogger } = {}): Pr
     checks.database = await ctx.db.query('SELECT 1').then(() => true, () => false);
     checks.pubsub = await ctx.pubsub.ping().catch(() => false);
     const ok = Object.values(checks).every(Boolean);
-    return reply.status(ok ? 200 : 503).send({ ok, checks });
+    // A lagging or down replica doesn't make this node unready: reads fall back to the primary.
+    const replica = ctx.cfg.DATABASE_READ_URL ? { inUse: ctx.dbRead.usingReplica, lagSeconds: ctx.dbRead.lagSeconds } : undefined;
+    return reply.status(ok ? 200 : 503).send({ ok, checks, ...(replica ? { replica } : {}) });
   });
 
   app.setErrorHandler((err: any, req, reply: FastifyReply) => {

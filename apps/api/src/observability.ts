@@ -86,6 +86,10 @@ export function createMetrics(ctx: Ctx) {
 
   // Business health, computed on scrape.
   const gauges: Array<[string, string, () => Promise<Array<{ labels?: Record<string, string>; value: number }>>]> = [
+    ['db_replica_lag_seconds', 'Replication lag of the read replica (-1 if unreachable; absent without a replica)', async () =>
+      ctx.cfg.DATABASE_READ_URL ? [{ value: ctx.dbRead.lagSeconds ?? -1 }] : []],
+    ['db_replica_in_use', '1 when stale-tolerant reads are served by the replica, 0 when they fell back to the primary', async () =>
+      ctx.cfg.DATABASE_READ_URL ? [{ value: ctx.dbRead.usingReplica ? 1 : 0 }] : []],
     ['escrow_held_cents', 'Buyer money currently held in escrow (fiat)', async () => [{ value: await scalar(`SELECT COALESCE(SUM(amount_cents), 0)::bigint AS v FROM orders WHERE rail = 'fiat' AND status IN ('paid', 'delivered', 'disputed')`) }]],
     ['disputes_open', 'Open disputes', async () => [{ value: await scalar(`SELECT count(*)::int AS v FROM disputes WHERE status = 'open'`) }]],
     ['disputes_oldest_open_seconds', 'Age of the oldest open dispute', async () => [{ value: await scalar(`SELECT COALESCE(EXTRACT(EPOCH FROM now() - min(created_at)), 0)::int AS v FROM disputes WHERE status = 'open'`) }]],
@@ -93,26 +97,26 @@ export function createMetrics(ctx: Ctx) {
     ['risk_flags_open', 'Fraud flags awaiting review', async () => [{ value: await scalar(`SELECT count(*)::int AS v FROM risk_flags WHERE status = 'open'`) }]],
     ['orders_paid_undelivered_1h', 'Paid orders not delivered after 1h (not under review)', async () => [{ value: await scalar(`SELECT count(*)::int AS v FROM orders WHERE status = 'paid' AND NOT escrow_frozen AND paid_at < now() - interval '1 hour'`) }]],
     ['webhook_deliveries', 'Webhook deliveries by status (dead: last 24h)', async () => {
-      const rows = await many<{ status: string; v: number }>(ctx.db, `SELECT status, count(*)::int AS v FROM webhook_deliveries WHERE status = 'pending' OR (status = 'dead' AND created_at > now() - interval '24 hours') GROUP BY status`);
+      const rows = await many<{ status: string; v: number }>(ctx.dbRead, `SELECT status, count(*)::int AS v FROM webhook_deliveries WHERE status = 'pending' OR (status = 'dead' AND created_at > now() - interval '24 hours') GROUP BY status`);
       return ['pending', 'dead'].map((s) => ({ labels: { status: s }, value: rows.find((r) => r.status === s)?.v ?? 0 }));
     }],
     ['emails', 'Emails by status (failed: last 24h)', async () => {
-      const rows = await many<{ status: string; v: number }>(ctx.db, `SELECT status, count(*)::int AS v FROM notifications WHERE status = 'pending' OR (status = 'failed' AND created_at > now() - interval '24 hours') GROUP BY status`);
+      const rows = await many<{ status: string; v: number }>(ctx.dbRead, `SELECT status, count(*)::int AS v FROM notifications WHERE status = 'pending' OR (status = 'failed' AND created_at > now() - interval '24 hours') GROUP BY status`);
       return ['pending', 'failed'].map((s) => ({ labels: { status: s }, value: rows.find((r) => r.status === s)?.v ?? 0 }));
     }],
     ['reconciliation_last_status', 'Last reconciliation: 0 ok, 1 mismatch, 2 error, -1 never run', async () => {
-      const r = await maybeOne<{ status: string }>(ctx.db, `SELECT status FROM reconciliation_runs WHERE status <> 'running' ORDER BY started_at DESC LIMIT 1`);
+      const r = await maybeOne<{ status: string }>(ctx.dbRead, `SELECT status FROM reconciliation_runs WHERE status <> 'running' ORDER BY started_at DESC LIMIT 1`);
       return [{ value: r ? { ok: 0, mismatch: 1, error: 2 }[r.status as 'ok'] ?? 2 : -1 }];
     }],
     ['reconciliation_last_run_age_seconds', 'Seconds since the last finished reconciliation', async () => [{ value: await scalar(`SELECT COALESCE(EXTRACT(EPOCH FROM now() - max(finished_at)), -1)::int AS v FROM reconciliation_runs WHERE finished_at IS NOT NULL`) }]],
     ['worker_job_last_success_age_seconds', 'Seconds since each background job last succeeded', async () => {
-      const rows = await many<{ job: string; v: number }>(ctx.db, `SELECT job, EXTRACT(EPOCH FROM now() - last_ok_at)::int AS v FROM worker_heartbeats`);
+      const rows = await many<{ job: string; v: number }>(ctx.dbRead, `SELECT job, EXTRACT(EPOCH FROM now() - last_ok_at)::int AS v FROM worker_heartbeats`);
       return rows.map((r) => ({ labels: { job: r.job }, value: r.v }));
     }],
   ];
 
   async function scalar(sql: string) {
-    return (await maybeOne<{ v: number }>(ctx.db, sql))?.v ?? 0;
+    return (await maybeOne<{ v: number }>(ctx.dbRead, sql))?.v ?? 0;
   }
 
   for (const [name, help, read] of gauges) {

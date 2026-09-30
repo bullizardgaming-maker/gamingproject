@@ -10,7 +10,10 @@ pg.types.setTypeParser(1700, (v) => Number(v));
 
 export type Db = pg.Pool;
 export type Tx = pg.PoolClient;
-export type Queryable = pg.Pool | pg.PoolClient;
+/** Anything that runs a parameterised query: the pool, a transaction client, or the read pool. */
+export interface Queryable {
+  query<R extends pg.QueryResultRow = any>(text: string, params?: unknown[]): Promise<pg.QueryResult<R>>;
+}
 
 export function createPool(url: string, max = Number(process.env.DB_POOL_MAX ?? 20)): Db {
   return new pg.Pool({ connectionString: url, max });
@@ -62,5 +65,68 @@ export async function migrate(db: Db, log: (msg: string) => void = () => {}): Pr
       await tx.query('INSERT INTO schema_migrations (name) VALUES ($1)', [file]);
       log(`applied ${file}`);
     });
+  }
+}
+
+/**
+ * Read-only queries that tolerate slightly stale data (market search, listings, seller
+ * profiles, metrics) go to a streaming replica when DATABASE_READ_URL is set. If the replica
+ * falls more than `maxLagSeconds` behind or stops answering, reads go to the primary until
+ * it recovers. Never use this for a read that decides a write (stock, balances, order state).
+ */
+export class ReadPool {
+  lagSeconds: number | null = null;
+  healthy = false;
+  private timer?: NodeJS.Timeout;
+
+  constructor(
+    private readonly primary: Db,
+    private readonly replica: Db | null,
+    private readonly maxLagSeconds = 10,
+  ) {
+    if (replica) {
+      void this.check();
+      this.timer = setInterval(() => void this.check(), 5_000);
+      this.timer.unref();
+    }
+  }
+
+  get usingReplica() {
+    return !!this.replica && this.healthy;
+  }
+
+  async check() {
+    if (!this.replica) return;
+    try {
+      // On a replica: seconds since the last replayed transaction (0 when idle and caught up).
+      const { rows } = await this.replica.query<{ lag: number | null; in_recovery: boolean }>(
+        `SELECT pg_is_in_recovery() AS in_recovery,
+                CASE WHEN pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn() THEN 0
+                     ELSE EXTRACT(EPOCH FROM now() - pg_last_xact_replay_timestamp()) END::float AS lag`,
+      );
+      this.lagSeconds = rows[0]!.in_recovery ? (rows[0]!.lag ?? 0) : 0;
+      this.healthy = this.lagSeconds <= this.maxLagSeconds;
+    } catch {
+      this.healthy = false;
+      this.lagSeconds = null;
+    }
+  }
+
+  async query<R extends pg.QueryResultRow = any>(text: string, params?: unknown[]): Promise<pg.QueryResult<R>> {
+    if (this.usingReplica) {
+      try {
+        return await this.replica!.query<R>(text, params as any[]);
+      } catch (err) {
+        // Connection-level failure: mark unhealthy and answer from the primary. SQL errors are rethrown.
+        if (!(err as { code?: string }).code || /^(08|57P)/.test((err as { code: string }).code)) this.healthy = false;
+        else throw err;
+      }
+    }
+    return this.primary.query<R>(text, params as any[]);
+  }
+
+  async end() {
+    if (this.timer) clearInterval(this.timer);
+    await this.replica?.end();
   }
 }

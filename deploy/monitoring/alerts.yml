@@ -37,10 +37,28 @@ groups:
   - name: bullizard-operations
     rules:
       - alert: WorkerJobStalled
-        expr: max by (job) (bullizard_worker_job_last_success_age_seconds{job!="reconciliation_scheduler"}) > 300
+        expr: max by (job) (bullizard_worker_job_last_success_age_seconds{job!~"reconciliation_scheduler|db_backup|restore_drill"}) > 300
         for: 5m
         labels: { severity: page }
         annotations: { summary: "Background job {{ $labels.job }} hasn't succeeded for 5 minutes (escrow release, webhooks or emails are stuck)" }
+
+      - alert: DatabaseBackupStale
+        expr: max(bullizard_worker_job_last_success_age_seconds{job="db_backup"}) > 26 * 3600 or absent(bullizard_worker_job_last_success_age_seconds{job="db_backup"})
+        for: 15m
+        labels: { severity: page }
+        annotations: { summary: "No successful database base backup in 26 hours (deploy/backup/backup.sh)" }
+
+      - alert: RestoreDrillStale
+        expr: max(bullizard_worker_job_last_success_age_seconds{job="restore_drill"}) > 8 * 86400 or absent(bullizard_worker_job_last_success_age_seconds{job="restore_drill"})
+        for: 1h
+        labels: { severity: ticket }
+        annotations: { summary: "No passing restore drill in 8 days: backups are unproven (deploy/backup/restore-drill.sh)" }
+
+      - alert: ReplicaLagging
+        expr: max(bullizard_db_replica_lag_seconds) > 30 or max(bullizard_db_replica_lag_seconds) == -1
+        for: 10m
+        labels: { severity: ticket }
+        annotations: { summary: "Read replica is lagging or unreachable; search and listings are being served from the primary" }
 
       - alert: DisputesPilingUp
         expr: max(bullizard_disputes_oldest_open_seconds) > 48 * 3600

@@ -133,7 +133,7 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
   });
   app.get('/sellers/:id', async (req) => {
     const q = z.object({ limit: z.coerce.number().int().positive().max(50).default(20), offset: z.coerce.number().int().min(0).default(0) }).parse(req.query);
-    return sellerProfile(ctx.db, Id.parse(req.params).id, q.limit, q.offset);
+    return sellerProfile(ctx.dbRead, Id.parse(req.params).id, q.limit, q.offset);
   });
 
   // --- Chat (REST mirror of the WebSocket protocol) ----------------------------------

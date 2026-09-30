@@ -1,6 +1,6 @@
 import type { Config } from './config.js';
 import type { Db } from './db.js';
-import { createPool } from './db.js';
+import { ReadPool, createPool } from './db.js';
 import { Keyring } from './lib/crypto.js';
 import type { PubSub } from './lib/pubsub.js';
 import { createPubSub } from './lib/pubsub.js';
@@ -35,6 +35,8 @@ export interface Logger {
 export interface Ctx {
   cfg: Config;
   db: Db;
+  /** Replica-backed pool for stale-tolerant reads; the primary when no replica is configured. */
+  dbRead: ReadPool;
   keyring: Keyring;
   pubsub: PubSub;
   payments: PaymentProvider;
@@ -69,9 +71,11 @@ export function createContext(cfg: Config, log: Logger, overrides: Partial<Ctx> 
           cfg.SUMSUB_LEVEL_NAME,
         )
       : new MockKycProvider(cfg.JWT_SECRET));
+  const db = overrides.db ?? createPool(cfg.DATABASE_URL);
   return {
     cfg,
-    db: overrides.db ?? createPool(cfg.DATABASE_URL),
+    db,
+    dbRead: overrides.dbRead ?? new ReadPool(db, cfg.DATABASE_READ_URL ? createPool(cfg.DATABASE_READ_URL) : null, cfg.REPLICA_MAX_LAG_SECONDS),
     keyring,
     pubsub: overrides.pubsub ?? createPubSub(cfg.REDIS_URL),
     payments,

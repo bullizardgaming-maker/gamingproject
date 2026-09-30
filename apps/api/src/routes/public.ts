@@ -201,7 +201,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   // --- Catalog ------------------------------------------------------------------
-  app.get('/categories', async () => many(ctx.db, 'SELECT * FROM categories ORDER BY name'));
+  app.get('/categories', async () => many(ctx.dbRead, 'SELECT * FROM categories ORDER BY name'));
 
   app.get('/tiers', async () =>
     SELLER_TIERS.map((t) => ({ ...t, accountRate: t.accountRateBps / 100, otherRate: t.otherRateBps / 100 })),
@@ -231,7 +231,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     const display = q.currency ?? ctx.cfg.SETTLEMENT_CURRENCY;
     const rate = await getRate(ctx, ctx.db, display);
     const toSettlement = (v?: number) => (v == null ? undefined : Math.round(v / rate));
-    const res = await searchOffers(ctx.db, {
+    const res = await searchOffers(ctx.dbRead, {
       ...q,
       minPriceCents: toSettlement(q.minPrice),
       maxPriceCents: toSettlement(q.maxPrice),
@@ -262,11 +262,11 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.get('/games', async (req) => {
     const { q } = z.object({ q: z.string().trim().min(1).max(60) }).parse(req.query);
-    return suggestGames(ctx.db, q);
+    return suggestGames(ctx.dbRead, q);
   });
 
   app.get('/offers/:id', async (req) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
-    return getOffer(ctx.db, id);
+    return getOffer(ctx.dbRead, id);
   });
 }

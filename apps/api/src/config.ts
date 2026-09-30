@@ -28,6 +28,9 @@ const Env = z.object({
   // Bearer token required to scrape /metrics. Without it /metrics is disabled in production.
   METRICS_TOKEN: z.string().optional(),
   DATABASE_URL: z.string().default('postgres://market:market@localhost:5432/market'),
+  // Streaming replica for search, listings, profiles and metrics. Falls back to the primary if it lags.
+  DATABASE_READ_URL: z.string().optional(),
+  REPLICA_MAX_LAG_SECONDS: z.coerce.number().min(0).default(10),
   REDIS_URL: z.string().optional(),
   JWT_SECRET: z.string().min(32).default('dev-only-jwt-secret-change-me-please-0000'),
   // Keyring for AES-256-GCM field encryption: "v1:<base64 32 bytes>,v2:<base64 32 bytes>". Last key encrypts.
