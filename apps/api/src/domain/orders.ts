@@ -13,6 +13,7 @@ import { availableCount, markDelivered, releaseReservation, reserveInventory, re
 import { accountId, orderEscrowBalance, post } from './ledger.js';
 import { centsToTokenUnits, orderIdToBytes32 } from './web3.js';
 import { taxForCommission } from './tax.js';
+import { sellerLeg, sellerRateFor } from './sellerfx.js';
 import { enqueueWebhook } from './webhooks.js';
 import { enqueueEmail } from './notifications.js';
 import { assertSupported, getRate } from './fx.js';
@@ -40,6 +41,8 @@ export interface Order {
   presentment_currency: string;
   presentment_amount_cents: number;
   fx_rate: number;
+  seller_currency: string | null;
+  seller_fx_rate: number | null;
   listing_currency: string | null;
   promo_code_id: string | null;
   rail: 'fiat' | 'crypto';
@@ -299,16 +302,18 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
     // "High Risk - Secondary Market": account listings without verified Original Owner Proof.
     const sellerProtected = offer.category_kind !== 'account' || offer.owner_proof_status === 'verified';
 
+    const sellerFx = await sellerRateFor(ctx, s.tx, offer.seller_id, input.rail);
     const order = await one<Order>(
       s.tx,
       `INSERT INTO orders (buyer_id, seller_id, offer_id, quantity, unit_price_cents, amount_cents, currency,
                            commission_bps, commission_cents, seller_net_cents, seller_tier, rail, status, protection,
                            seller_protected, payment_expires_at, tos_version, tos_accepted_at, buyer_ip, buyer_ip_country,
                            buyer_device, idempotency_key, discount_cents, credit_cents, charged_cents, presentment_currency,
-                           presentment_amount_cents, fx_rate, fx_locked_at, listing_currency, listing_unit_price_cents, promo_code_id)
+                           presentment_amount_cents, fx_rate, fx_locked_at, listing_currency, listing_unit_price_cents, promo_code_id,
+                           seller_currency, seller_fx_rate)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'awaiting_payment', $13, $14,
                now() + make_interval(mins => $15), $16, now(), $17, $18, $19, $20,
-               $21, $22, $23, $24, $25, $26, now(), $27, $28, $29)
+               $21, $22, $23, $24, $25, $26, now(), $27, $28, $29, $30, $31)
        RETURNING *`,
       [
         buyer.id, offer.seller_id, offer.id, input.quantity, price.unitPriceCents, amount, price.settlementCurrency,
@@ -317,6 +322,7 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
         input.device ?? null, input.idempotencyKey ?? null,
         price.discountCents, price.creditCents, price.chargedCents, price.presentmentCurrency,
         price.presentmentAmountCents, price.fxRate, price.listingCurrency, offer.price_cents, price.promoId,
+        sellerFx.currency, sellerFx.rate,
       ],
     );
     if (price.promoId) await reserveRedemption(s.tx, price.promoId, order.id, buyer.id, price.discountCents);
@@ -642,7 +648,7 @@ async function releaseEscrow(ctx: Ctx, s: TxScope, order: Order & { title: strin
         { account: await accountId(s.tx, 'treasury', order.currency), amountCents: order.commission_cents - reserveCut - tax },
         { account: await accountId(s.tx, 'reserve', order.currency), amountCents: reserveCut },
         { account: await accountId(s.tx, 'tax_payable', order.currency), amountCents: tax },
-        { account: await accountId(s.tx, 'seller_available', order.currency, order.seller_id), amountCents: order.seller_net_cents },
+        await sellerLeg(s.tx, order, order.seller_net_cents, 'escrow_release'),
       ],
       'escrow_release',
       order.id,

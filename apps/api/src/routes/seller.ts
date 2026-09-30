@@ -11,6 +11,7 @@ import { createOffer, requireSeller, submitOwnerProof, updateOffer, uploadInvent
 import { requestWithdrawal } from '../domain/users.js';
 import { payoutStatus, startPayoutOnboarding } from '../domain/payouts.js';
 import { withdrawable } from '../domain/payoutholds.js';
+import { payoutCurrency, sellerBalances, setPayoutCurrency } from '../domain/sellerfx.js';
 import { getTaxProfile, setTaxProfile } from '../domain/tax.js';
 import { getInvoice, invoicePdf, listInvoices } from '../domain/invoices.js';
 import { DELIVERY_FILTERS, WEBHOOK_EVENTS, createEndpoint, listDeliveries, redeliver, replayDead, rotateSecret, setEndpointActive } from '../domain/webhooks.js';
@@ -40,10 +41,11 @@ export const InventoryBody = z.object({
 export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/seller/dashboard', async (req) => {
     const user = me(req);
-    const hold = await withdrawable(ctx, ctx.db, user.id);
+    const currency = await payoutCurrency(ctx, ctx.db, user.id);
+    const hold = await withdrawable(ctx, ctx.db, user.id, currency);
     const [tier, available, stats, escrow] = await Promise.all([
       sellerTier(ctx.db, user.id),
-      sellerAvailable(ctx.db, user.id),
+      sellerAvailable(ctx.db, user.id, currency),
       one(
         ctx.db,
         `SELECT count(*) FILTER (WHERE status = 'completed')::int AS completed,
@@ -60,7 +62,9 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
       monthlySalesCents: tier.monthlySalesCents,
       next: tier.next,
       tiers: SELLER_TIERS,
-      balances: { availableCents: available, pendingEscrowCents: escrow.pending, withdrawableCents: hold.withdrawableCents, onHoldCents: hold.heldCents },
+      payoutCurrency: currency,
+      balances: { currency, availableCents: available, pendingEscrowCents: escrow.pending, withdrawableCents: hold.withdrawableCents, onHoldCents: hold.heldCents },
+      allBalances: await sellerBalances(ctx.db, user.id),
       payoutHold: { level: hold.level, days: hold.holdDays, upcoming: hold.upcoming },
       withdrawalsFrozen: user.withdrawals_frozen,
       shop: await one(
@@ -119,8 +123,16 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // --- Payouts ------------------------------------------------------------------
   app.post('/seller/withdrawals', async (req, reply) => {
-    const { amountCents } = z.object({ amountCents: z.number().int().positive() }).parse(req.body);
-    return reply.status(201).send(await requestWithdrawal(ctx, me(req).id, amountCents));
+    const user = me(req);
+    const body = z.object({ amountCents: z.number().int().positive(), currency: z.string().length(3).toUpperCase().optional() }).parse(req.body);
+    const currency = body.currency ?? (await payoutCurrency(ctx, ctx.db, user.id));
+    return reply.status(201).send(await requestWithdrawal(ctx, user.id, body.amountCents, currency));
+  });
+
+  /** Currency new sales are credited and paid out in (the buyer's conversion is the only one). */
+  app.put('/seller/payout-currency', async (req) => {
+    const { currency } = z.object({ currency: z.string().length(3) }).parse(req.body);
+    return setPayoutCurrency(ctx, me(req).id, currency);
   });
 
   /** Holiday mode: listings disappear from the market and can't be bought until resumed (or `until` passes). */
@@ -164,7 +176,11 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     return reply.send(await invoicePdf(inv));
   });
 
-  app.get('/seller/payout-hold', async (req) => withdrawable(ctx, ctx.db, me(req).id));
+  app.get('/seller/payout-hold', async (req) => {
+    const { currency } = z.object({ currency: z.string().length(3).toUpperCase().optional() }).parse(req.query);
+    const id = me(req).id;
+    return withdrawable(ctx, ctx.db, id, currency ?? (await payoutCurrency(ctx, ctx.db, id)));
+  });
   app.get('/seller/withdrawals', async (req) => many(ctx.db, 'SELECT * FROM withdrawals WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100', [me(req).id]));
 
   /** Link a self-custody wallet (for crypto escrow payouts), proven by a personal_sign signature. */

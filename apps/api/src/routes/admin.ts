@@ -16,6 +16,7 @@ import { withdrawable } from '../domain/payoutholds.js';
 import { retentionPolicy, runRetention } from '../domain/retention.js';
 import { keyStatus, rotateAll } from '../domain/keyrotation.js';
 import { setRate, taxReport } from '../domain/tax.js';
+import { fxPosition, recordConversion } from '../domain/sellerfx.js';
 import { getInvoice, invoicePdf, issueMonthlyInvoices } from '../domain/invoices.js';
 import { decideAdjustment, listAdjustments, requestAdjustment, userLedger } from '../domain/adjustments.js';
 import { decideTreasuryWithdrawal, listTreasuryWithdrawals, requestTreasuryWithdrawal, treasuryBalance } from '../domain/treasury.js';
@@ -230,7 +231,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // --- Manual ledger corrections (four-eyes) -------------------------------------------
   const AdjustmentLine = z.object({
-    kind: z.enum(['gateway_clearing', 'escrow', 'treasury', 'reserve', 'seller_available', 'payouts', 'platform_withdrawals', 'user_credit', 'fx_pnl', 'tax_payable']),
+    kind: z.enum(['gateway_clearing', 'escrow', 'treasury', 'reserve', 'seller_available', 'payouts', 'platform_withdrawals', 'user_credit', 'fx_pnl', 'tax_payable', 'fx_position', 'fx_conversion']),
     ownerId: z.string().uuid().nullable().default(null),
     currency: z.string().length(3).toUpperCase().default(ctx.cfg.SETTLEMENT_CURRENCY),
     amountCents: z.number().int(),
@@ -283,6 +284,21 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const reencrypted = await rotateAll(ctx);
     await audit(ctx.db, req, 'keys.rotated', { type: 'keyring', id: null }, { current: ctx.keyring.currentVersion, reencrypted });
     return { reencrypted, status: await keyStatus(ctx) };
+  });
+
+  // --- Currency position (sellers paid in EUR/GBP) ---------------------------------------
+  app.get('/admin/fx/position', async (req) => {
+    requireRole(req, 'admin');
+    return { positions: await fxPosition(ctx), conversions: await many(ctx.db, 'SELECT * FROM fx_conversions ORDER BY created_at DESC LIMIT 50') };
+  });
+  app.post('/admin/fx/conversions', async (req, reply) => {
+    const admin = requireRole(req, 'admin');
+    const body = z
+      .object({ fromCurrency: z.string().length(3), fromCents: z.number().int().positive(), toCurrency: z.string().length(3), toCents: z.number().int().positive(), reference: z.string().trim().min(3).max(200) })
+      .parse(req.body);
+    const row = await recordConversion(ctx, admin.id, body);
+    await audit(ctx.db, req, 'fx.conversion_recorded', { type: 'fx_conversion', id: row.id }, body);
+    return reply.status(201).send(row);
   });
 
   // --- Tax ------------------------------------------------------------------------------

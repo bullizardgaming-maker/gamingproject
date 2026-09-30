@@ -12,7 +12,9 @@ export type AccountKind =
   | 'platform_withdrawals'
   | 'user_credit'
   | 'fx_pnl'
-  | 'tax_payable';
+  | 'tax_payable'
+  | 'fx_position'
+  | 'fx_conversion';
 
 /**
  * Double-entry ledger. Every posting is a set of entries sharing a txn_id whose

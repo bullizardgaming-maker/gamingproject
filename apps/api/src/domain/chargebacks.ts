@@ -1,4 +1,5 @@
 import PDFDocument from 'pdfkit';
+import { sellerCurrencyOf, sellerLeg, toSettlement } from './sellerfx.js';
 import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { many, maybeOne, one } from '../db.js';
@@ -92,7 +93,8 @@ export async function receiveChargeback(ctx: Ctx, input: ChargebackInput) {
     let rest = amount - (allocation.escrow ?? 0);
     if (rest > 0) {
       if (!order.seller_protected) {
-        const avail = Math.max(0, await sellerAvailable(s.tx, order.seller_id, order.currency));
+        // The seller's balance may be in their own currency: count it in settlement terms at the order's rate.
+        const avail = toSettlement(order, Math.max(0, await sellerAvailable(s.tx, order.seller_id, sellerCurrencyOf(order))));
         allocation.seller_available = Math.min(avail, rest);
         rest -= allocation.seller_available;
       }
@@ -100,7 +102,7 @@ export async function receiveChargeback(ctx: Ctx, input: ChargebackInput) {
     }
     const postings = [{ account: clearing, amountCents: amount }];
     if (allocation.escrow) postings.push({ account: await accountId(s.tx, 'escrow', order.currency), amountCents: -allocation.escrow });
-    if (allocation.seller_available) postings.push({ account: await accountId(s.tx, 'seller_available', order.currency, order.seller_id), amountCents: -allocation.seller_available });
+    if (allocation.seller_available) postings.push(await sellerLeg(s.tx, order, -allocation.seller_available, 'chargeback_debit'));
     if (allocation.reserve) postings.push({ account: await accountId(s.tx, 'reserve', order.currency), amountCents: -allocation.reserve });
     if (allocation.forfeit) {
       postings.push({ account: await accountId(s.tx, 'escrow', order.currency), amountCents: -allocation.forfeit });
@@ -144,7 +146,7 @@ export async function closeChargeback(ctx: Ctx, disputeRef: string, won: boolean
       const a = (cb.evidence?.allocation ?? {}) as Record<string, number>;
       const postings = [{ account: await accountId(s.tx, 'gateway_clearing', order.currency), amountCents: -cb.amount_cents }];
       if (a.escrow) postings.push({ account: await accountId(s.tx, 'escrow', order.currency), amountCents: a.escrow });
-      if (a.seller_available) postings.push({ account: await accountId(s.tx, 'seller_available', order.currency, order.seller_id), amountCents: a.seller_available });
+      if (a.seller_available) postings.push(await sellerLeg(s.tx, order, a.seller_available, 'chargeback_reversal'));
       if (a.reserve) postings.push({ account: await accountId(s.tx, 'reserve', order.currency), amountCents: a.reserve });
       if (a.forfeit) {
         postings.push({ account: await accountId(s.tx, 'escrow', order.currency), amountCents: a.forfeit });

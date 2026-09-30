@@ -64,7 +64,7 @@ async function buildReport(ctx: Ctx, currency: string): Promise<ReconReport> {
   if (escrowMismatch.length) issues.push({ check: 'order_escrow_mismatch', detail: escrowMismatch });
 
   const totals: Record<string, number> = {};
-  for (const kind of ['gateway_clearing', 'escrow', 'treasury', 'reserve', 'payouts', 'platform_withdrawals'] as const) {
+  for (const kind of ['gateway_clearing', 'escrow', 'treasury', 'reserve', 'payouts', 'platform_withdrawals', 'fx_conversion'] as const) {
     totals[kind] = await balance(ctx.db, await accountId(ctx.db, kind, currency));
   }
   totals.seller_balances = (
@@ -77,8 +77,9 @@ async function buildReport(ctx: Ctx, currency: string): Promise<ReconReport> {
   ).s;
 
   // Money the PSP should be holding for us: everything captured (net of refunds, fees and
-  // chargebacks), minus what was paid out to sellers and to the company bank account.
-  const expected = -totals.gateway_clearing! - totals.payouts! - totals.platform_withdrawals!;
+  // chargebacks), minus what was paid out to sellers and to the company bank account, adjusted
+  // for money converted into or out of this currency.
+  const expected = -totals.gateway_clearing! - totals.payouts! - totals.platform_withdrawals! - totals.fx_conversion!;
   const actual = await ctx.payments.platformBalance(currency);
   const difference = actual === null ? null : actual - expected;
   if (difference !== null && Math.abs(difference) > ctx.cfg.RECON_TOLERANCE_CENTS) {
@@ -87,9 +88,9 @@ async function buildReport(ctx: Ctx, currency: string): Promise<ReconReport> {
 
   const negative = await many(
     ctx.db,
-    `SELECT a.owner_id AS seller_id, SUM(e.amount_cents)::bigint AS balance FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id
-      WHERE a.kind = 'seller_available' AND a.currency = $1 GROUP BY a.owner_id HAVING SUM(e.amount_cents) < 0`,
-    [currency],
+    `SELECT a.owner_id AS seller_id, a.currency, SUM(e.amount_cents)::bigint AS balance FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id
+      WHERE a.kind = 'seller_available' GROUP BY a.owner_id, a.currency HAVING SUM(e.amount_cents) < 0`,
+    [],
   );
   if (negative.length) warnings.push({ check: 'negative_seller_balances', detail: negative });
 

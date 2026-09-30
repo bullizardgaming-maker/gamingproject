@@ -341,7 +341,7 @@ export async function applyKycResult(ctx: Ctx, result: { externalId: string; sta
 // ---------------------------------------------------------------------------
 // Withdrawals (Tier 2 only)
 // ---------------------------------------------------------------------------
-export async function requestWithdrawal(ctx: Ctx, userId: string, amountCents: number, currency = 'USD') {
+export async function requestWithdrawal(ctx: Ctx, userId: string, amountCents: number, currency = ctx.cfg.SETTLEMENT_CURRENCY) {
   const w = await withScope(ctx, async (s) => {
     // Lock the user row to serialize concurrent withdrawals against the same balance.
     const user = await one<User>(s.tx, `SELECT ${PUBLIC_USER_COLUMNS} FROM users WHERE id = $1 FOR UPDATE`, [userId]);
