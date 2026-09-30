@@ -134,12 +134,18 @@ export async function markDelivered(tx: Tx, orderId: string): Promise<number> {
 
 /** Decrypt delivered goods for the buyer's private dashboard. */
 export async function revealDelivered(ctx: Ctx, orderId: string) {
-  const rows = await many<{ id: string; offer_id: string; ciphertext: string; delivered_at: string }>(
+  const rows = await many<{ id: string; offer_id: string; ciphertext: string | null; delivered_at: string; purged_at: string | null }>(
     ctx.db,
-    `SELECT id, offer_id, ciphertext, delivered_at FROM inventory_items WHERE order_id = $1 AND status = 'delivered' ORDER BY position`,
+    `SELECT id, offer_id, ciphertext, delivered_at, purged_at FROM inventory_items WHERE order_id = $1 AND status = 'delivered' ORDER BY position`,
     [orderId],
   );
-  return rows.map((r) => ({ id: r.id, deliveredAt: r.delivered_at, content: ctx.keyring.decrypt(r.ciphertext, aad(r.offer_id)) }));
+  // Erased by the retention job: the item was delivered, but its content is no longer stored.
+  return rows.map((r) => ({
+    id: r.id,
+    deliveredAt: r.delivered_at,
+    content: r.ciphertext === null ? null : ctx.keyring.decrypt(r.ciphertext, aad(r.offer_id)),
+    ...(r.purged_at ? { erasedAt: r.purged_at } : {}),
+  }));
 }
 
 /** Store a manually delivered payload (e.g. account credentials) encrypted and attached to the order. */

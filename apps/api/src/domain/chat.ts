@@ -181,6 +181,11 @@ export async function listMessages(q: Queryable, roomId: string, afterSeq = 0, l
 
 /** Recompute the hash chain. Any edited, deleted, re-ordered or inserted message breaks it. */
 export async function verifyChain(q: Queryable, roomId: string) {
+  const room = await maybeOne<{ purged_at: string | null; purged_messages: number | null; last_hash: string }>(q, 'SELECT purged_at, purged_messages, last_hash FROM chat_rooms WHERE id = $1', [roomId]);
+  if (room?.purged_at) {
+    // Messages were deleted at the end of the retention period; the final hash is kept.
+    return { valid: true, messages: 0, brokenAtSeq: null, headHash: room.last_hash, purgedAt: room.purged_at, purgedMessages: room.purged_messages };
+  }
   const msgs = await many<ChatMessage>(q, 'SELECT * FROM chat_messages WHERE room_id = $1 ORDER BY seq', [roomId]);
   let prev = '0'.repeat(64);
   for (let i = 0; i < msgs.length; i++) {

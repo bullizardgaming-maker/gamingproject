@@ -1,7 +1,7 @@
 import { connect } from 'node:net';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import type { Keyring } from '../lib/crypto.js';
 
 // ---------------------------------------------------------------------------
@@ -10,6 +10,8 @@ import type { Keyring } from '../lib/crypto.js';
 export interface FileStorage {
   put(key: string, bytes: Buffer, contentType: string): Promise<void>;
   get(key: string): Promise<Buffer>;
+  /** Idempotent: deleting a missing key is not an error. */
+  delete(key: string): Promise<void>;
 }
 
 /** Local disk, encrypted with the data keyring (development / single-server). */
@@ -30,6 +32,9 @@ export class LocalEncryptedStorage implements FileStorage {
   async get(key: string) {
     return this.keyring.decryptBytes(await readFile(this.file(key)), `file:${key}`);
   }
+  async delete(key: string) {
+    await rm(this.file(key), { force: true });
+  }
 }
 
 /** S3 or any S3-compatible store (R2, MinIO). Server-side encryption on; the bucket must be private. */
@@ -48,6 +53,9 @@ export class S3Storage implements FileStorage {
   async get(key: string) {
     const res = await this.s3.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
     return Buffer.from(await res.Body!.transformToByteArray());
+  }
+  async delete(key: string) {
+    await this.s3.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
   }
 }
 

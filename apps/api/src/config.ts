@@ -78,6 +78,18 @@ const Env = z.object({
   MALWARE_SCANNER: z.enum(['clamd', 'dev']).default('dev'),
   CLAMD_HOST: z.string().default('127.0.0.1'),
   CLAMD_PORT: z.coerce.number().default(3310),
+  // Data retention (days). Orders, the ledger, payouts and chargebacks are kept for accounting
+  // and legal claims and are not purged here; see docs/ARCHITECTURE.md.
+  RETENTION_ENABLED: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
+  RETENTION_CHAT_DAYS: z.coerce.number().int().min(30).default(730),          // after the order closes
+  RETENTION_INQUIRY_CHAT_DAYS: z.coerce.number().int().min(7).default(180),  // pre-sale chats, after the last message
+  RETENTION_DELIVERED_ITEMS_DAYS: z.coerce.number().int().min(30).default(365),
+  RETENTION_FRAUD_SIGNALS_DAYS: z.coerce.number().int().min(30).default(730),
+  RETENTION_ORDER_IP_DAYS: z.coerce.number().int().min(30).default(540),     // chargebacks can arrive ~540 days later
+  RETENTION_SESSIONS_DAYS: z.coerce.number().int().min(1).default(90),       // after expiry or sign-out
+  RETENTION_NOTIFICATIONS_DAYS: z.coerce.number().int().min(1).default(90),
+  RETENTION_WEBHOOK_DELIVERIES_DAYS: z.coerce.number().int().min(1).default(90),
+  RETENTION_SECURITY_LOGS_DAYS: z.coerce.number().int().min(1).default(90),  // CSP reports, one-time codes, reset links
   RECON_INTERVAL_HOURS: z.coerce.number().default(24),
   RECON_TOLERANCE_CENTS: z.coerce.number().default(0),
   FRAUD_GNN_URL: z.string().optional(),

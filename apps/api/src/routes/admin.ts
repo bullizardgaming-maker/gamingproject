@@ -13,6 +13,7 @@ import { requireRole } from '../server.js';
 import { audit, listAudit } from '../domain/audit.js';
 import { createPromo, listPromos, setPromoActive } from '../domain/promos.js';
 import { withdrawable } from '../domain/payoutholds.js';
+import { retentionPolicy, runRetention } from '../domain/retention.js';
 import { decideAdjustment, listAdjustments, requestAdjustment, userLedger } from '../domain/adjustments.js';
 import { decideTreasuryWithdrawal, listTreasuryWithdrawals, requestTreasuryWithdrawal, treasuryBalance } from '../domain/treasury.js';
 
@@ -262,6 +263,17 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     await ctx.db.query('UPDATE users SET payout_hold_days = $2 WHERE id = $1', [id, days]);
     await audit(ctx.db, req, 'user.payout_hold_set', { type: 'user', id }, { days, reason });
     return withdrawable(ctx, ctx.db, id);
+  });
+
+  app.get('/admin/retention', async (req) => {
+    requireRole(req, 'admin');
+    return { policy: retentionPolicy(ctx), runs: await many(ctx.db, 'SELECT * FROM retention_runs ORDER BY started_at DESC LIMIT 30') };
+  });
+  app.post('/admin/retention/run', async (req) => {
+    requireRole(req, 'admin');
+    const res = await runRetention(ctx);
+    await audit(ctx.db, req, 'retention.run', { type: 'retention_run', id: res.id }, res.counts);
+    return res;
   });
 
   app.get('/admin/audit', async (req) => {
