@@ -12,6 +12,7 @@ import { notFound } from '../lib/errors.js';
 import { requireRole } from '../server.js';
 import { audit, listAudit } from '../domain/audit.js';
 import { createPromo, listPromos, setPromoActive } from '../domain/promos.js';
+import { withdrawable } from '../domain/payoutholds.js';
 import { decideAdjustment, listAdjustments, requestAdjustment, userLedger } from '../domain/adjustments.js';
 import { decideTreasuryWithdrawal, listTreasuryWithdrawals, requestTreasuryWithdrawal, treasuryBalance } from '../domain/treasury.js';
 
@@ -252,6 +253,15 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const { id } = Id.parse(req.params);
     await audit(ctx.db, req, 'ledger.user_viewed', { type: 'user', id });
     return userLedger(ctx, id);
+  });
+
+  app.put('/admin/users/:id/payout-hold', async (req) => {
+    requireRole(req, 'admin');
+    const { id } = Id.parse(req.params);
+    const { days, reason } = z.object({ days: z.number().int().min(0).max(90).nullable(), reason: z.string().trim().min(3).max(300) }).parse(req.body);
+    await ctx.db.query('UPDATE users SET payout_hold_days = $2 WHERE id = $1', [id, days]);
+    await audit(ctx.db, req, 'user.payout_hold_set', { type: 'user', id }, { days, reason });
+    return withdrawable(ctx, ctx.db, id);
   });
 
   app.get('/admin/audit', async (req) => {

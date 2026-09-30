@@ -68,6 +68,7 @@ describe('syndicate risk scoring (graph fraud engine)', () => {
 describe('withdrawals', () => {
   it('pays out available balance and refuses overdrafts', async () => {
     const seller = await makeUser(h, { tier: 2 });
+    await h.ctx.db.query('UPDATE users SET payout_hold_days = 0 WHERE id = $1', [seller.id]); // holds are tested in payout-holds.test.ts
     const buyer = await makeUser(h, { tier: 1 });
     const offer = await makeOffer(seller, { priceCents: 40_00 });
     await seller.api.post(`/v1/offers/${offer.id}/inventory`, { format: 'txt', content: 'W1' });

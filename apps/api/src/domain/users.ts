@@ -8,6 +8,7 @@ import { withScope } from './events.js';
 import { recordSignals, subnetOf } from './fraud.js';
 import { accountId, post, sellerAvailable } from './ledger.js';
 import { checkSecondFactor } from './mfa.js';
+import { withdrawable } from './payoutholds.js';
 import { referrerForCode } from './referrals.js';
 import { enqueueEmail } from './notifications.js';
 import { activeSession, createSession, revokeOtherSessions, type IssuedSession } from './sessions.js';
@@ -347,8 +348,16 @@ export async function requestWithdrawal(ctx: Ctx, userId: string, amountCents: n
     if (user.kyc_tier < 2) throw new AppError(403, 'kyc_required', 'Tier 2 identity verification is required to withdraw');
     if (user.withdrawals_frozen || user.status !== 'active') throw new AppError(423, 'withdrawals_frozen', 'Withdrawals are frozen pending a security review');
     if (!user.stripe_account_id || !user.payouts_enabled) throw badRequest('no_payout_account', 'Set up your payout account first');
-    const available = await sellerAvailable(s.tx, userId, currency);
-    if (amountCents > available) throw badRequest('insufficient_funds', `Available balance is ${available} cents`);
+    const bal = await withdrawable(ctx, s.tx, userId, currency);
+    if (amountCents > bal.withdrawableCents) {
+      throw badRequest(
+        'insufficient_funds',
+        bal.heldCents
+          ? `You can withdraw ${bal.withdrawableCents} cents now; ${bal.heldCents} cents from recent sales is on a ${bal.holdDays}-day payout hold`
+          : `Available balance is ${bal.availableCents} cents`,
+        { withdrawableCents: bal.withdrawableCents, heldCents: bal.heldCents, upcoming: bal.upcoming },
+      );
+    }
     const w = await one(s.tx, 'INSERT INTO withdrawals (user_id, amount_cents, currency) VALUES ($1, $2, $3) RETURNING *', [userId, amountCents, currency]);
     await post(
       s.tx,

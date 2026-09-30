@@ -10,6 +10,7 @@ import { sellerAvailable } from '../domain/ledger.js';
 import { createOffer, requireSeller, submitOwnerProof, updateOffer, uploadInventory } from '../domain/offers.js';
 import { requestWithdrawal } from '../domain/users.js';
 import { payoutStatus, startPayoutOnboarding } from '../domain/payouts.js';
+import { withdrawable } from '../domain/payoutholds.js';
 import { DELIVERY_FILTERS, WEBHOOK_EVENTS, createEndpoint, listDeliveries, redeliver, replayDead, rotateSecret, setEndpointActive } from '../domain/webhooks.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { me } from '../server.js';
@@ -37,6 +38,7 @@ export const InventoryBody = z.object({
 export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/seller/dashboard', async (req) => {
     const user = me(req);
+    const hold = await withdrawable(ctx, ctx.db, user.id);
     const [tier, available, stats, escrow] = await Promise.all([
       sellerTier(ctx.db, user.id),
       sellerAvailable(ctx.db, user.id),
@@ -56,7 +58,8 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
       monthlySalesCents: tier.monthlySalesCents,
       next: tier.next,
       tiers: SELLER_TIERS,
-      balances: { availableCents: available, pendingEscrowCents: escrow.pending },
+      balances: { availableCents: available, pendingEscrowCents: escrow.pending, withdrawableCents: hold.withdrawableCents, onHoldCents: hold.heldCents },
+      payoutHold: { level: hold.level, days: hold.holdDays, upcoming: hold.upcoming },
       withdrawalsFrozen: user.withdrawals_frozen,
       shop: await one(
         ctx.db,
@@ -138,6 +141,7 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/seller/payout-account', async (req) => startPayoutOnboarding(ctx, me(req)));
   app.get('/seller/payout-account', async (req) => payoutStatus(ctx, me(req)));
 
+  app.get('/seller/payout-hold', async (req) => withdrawable(ctx, ctx.db, me(req).id));
   app.get('/seller/withdrawals', async (req) => many(ctx.db, 'SELECT * FROM withdrawals WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100', [me(req).id]));
 
   /** Link a self-custody wallet (for crypto escrow payouts), proven by a personal_sign signature. */

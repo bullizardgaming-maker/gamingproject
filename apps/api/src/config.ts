@@ -52,6 +52,11 @@ const Env = z.object({
   // Sandbox deployments expose /v1/sandbox/* for sellers testing bots. Requires the mock payment provider.
   SANDBOX_MODE: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
   // Undelivered manual orders are refunded automatically this long after the promised delivery time.
+  // Days released money waits before it can be withdrawn, by seller track record (see domain/payoutholds.ts).
+  PAYOUT_HOLD_DAYS_NEW: z.coerce.number().int().min(0).max(90).default(7),
+  PAYOUT_HOLD_DAYS_ESTABLISHED: z.coerce.number().int().min(0).max(90).default(3),
+  PAYOUT_HOLD_DAYS_TRUSTED: z.coerce.number().int().min(0).max(90).default(0),
+  PAYOUT_HOLD_DAYS_WATCH: z.coerce.number().int().min(0).max(90).default(14),
   LATE_AUTO_REFUND_HOURS: z.coerce.number().int().min(1).default(48),
   // Currencies & FX. Everything internal (escrow, ledger, balances) is in SETTLEMENT_CURRENCY.
   SETTLEMENT_CURRENCY: z.string().length(3).default('USD'),
