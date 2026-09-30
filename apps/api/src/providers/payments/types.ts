@@ -1,0 +1,61 @@
+/**
+ * Payment provider abstraction. Card data is only ever entered on the provider's
+ * hosted checkout page (redirect / hosted iframe), keeping the platform in
+ * PCI DSS SAQ-A scope: raw PANs never reach our servers.
+ */
+export interface CheckoutRequest {
+  orderId: string;
+  amountCents: number;
+  currency: string;
+  description: string;
+  buyerEmail: string;
+  successUrl: string;
+  cancelUrl: string;
+  expiresAt: Date;
+}
+
+export interface CheckoutSession {
+  provider: string;
+  ref: string;
+  redirectUrl: string;
+}
+
+export type PaymentEvent =
+  | {
+      type: 'payment.captured';
+      ref: string;
+      orderId: string;
+      amountCents: number;
+      currency: string;
+      details: {
+        avsResult?: string;
+        cvvResult?: string;
+        cardBrand?: string;
+        cardLast4?: string;
+        cardFingerprint?: string;
+        billingCountry?: string;
+        raw?: unknown;
+      };
+    }
+  | { type: 'payment.failed'; ref: string; orderId: string }
+  | {
+      type: 'chargeback.created';
+      disputeRef: string;
+      paymentRef: string;
+      network: 'visa' | 'mastercard';
+      reasonCode: string;
+      amountCents: number;
+    }
+  | { type: 'chargeback.closed'; disputeRef: string; won: boolean }
+  | { type: 'ignored' };
+
+export interface PaymentProvider {
+  readonly name: string;
+  createCheckout(req: CheckoutRequest): Promise<CheckoutSession>;
+  /** Verify signature and normalize the provider webhook. Must throw on bad signature. */
+  parseWebhook(rawBody: Buffer, headers: Record<string, string | string[] | undefined>): Promise<PaymentEvent>;
+  refund(paymentRef: string, amountCents: number): Promise<{ ref: string }>;
+  /** Transfer a seller's released funds to their connected account. */
+  payout(destination: string, amountCents: number, currency: string, idempotencyKey: string): Promise<{ ref: string }>;
+  submitChargebackEvidence(disputeRef: string, evidence: { summary: string; pdf: Buffer }): Promise<void>;
+}

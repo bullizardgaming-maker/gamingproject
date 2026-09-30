@@ -1,0 +1,67 @@
+import type { Config } from './config.js';
+import type { Db } from './db.js';
+import { createPool } from './db.js';
+import { Keyring } from './lib/crypto.js';
+import type { PubSub } from './lib/pubsub.js';
+import { createPubSub } from './lib/pubsub.js';
+import { MockPaymentProvider } from './providers/payments/mock.js';
+import { StripePaymentProvider } from './providers/payments/stripe.js';
+import type { PaymentProvider } from './providers/payments/types.js';
+import { MockKycProvider } from './providers/kyc/mock.js';
+import { SumsubKycProvider } from './providers/kyc/sumsub.js';
+import type { KycProvider } from './providers/kyc/types.js';
+import { ConsoleMessenger, type Messenger } from './providers/messaging.js';
+
+export interface Logger {
+  info(obj: unknown, msg?: string): void;
+  warn(obj: unknown, msg?: string): void;
+  error(obj: unknown, msg?: string): void;
+}
+
+/** Everything a domain function needs. Constructed once per process. */
+export interface Ctx {
+  cfg: Config;
+  db: Db;
+  keyring: Keyring;
+  pubsub: PubSub;
+  payments: PaymentProvider;
+  kyc: KycProvider;
+  messenger: Messenger;
+  log: Logger;
+  apiBaseUrl: string;
+}
+
+export function createContext(cfg: Config, log: Logger, overrides: Partial<Ctx> = {}): Ctx {
+  const apiBaseUrl = `http://localhost:${cfg.PORT}`;
+  const payments =
+    overrides.payments ??
+    (cfg.PAYMENT_PROVIDER === 'stripe'
+      ? new StripePaymentProvider(required(cfg.STRIPE_SECRET_KEY, 'STRIPE_SECRET_KEY'), required(cfg.STRIPE_WEBHOOK_SECRET, 'STRIPE_WEBHOOK_SECRET'))
+      : new MockPaymentProvider(cfg.JWT_SECRET, apiBaseUrl));
+  const kyc =
+    overrides.kyc ??
+    (cfg.KYC_PROVIDER === 'sumsub'
+      ? new SumsubKycProvider(
+          required(cfg.SUMSUB_APP_TOKEN, 'SUMSUB_APP_TOKEN'),
+          required(cfg.SUMSUB_SECRET_KEY, 'SUMSUB_SECRET_KEY'),
+          required(cfg.SUMSUB_WEBHOOK_SECRET, 'SUMSUB_WEBHOOK_SECRET'),
+          cfg.SUMSUB_LEVEL_NAME,
+        )
+      : new MockKycProvider(cfg.JWT_SECRET));
+  return {
+    cfg,
+    db: overrides.db ?? createPool(cfg.DATABASE_URL),
+    keyring: overrides.keyring ?? new Keyring(cfg.DATA_ENCRYPTION_KEYS),
+    pubsub: overrides.pubsub ?? createPubSub(cfg.REDIS_URL),
+    payments,
+    kyc,
+    messenger: overrides.messenger ?? new ConsoleMessenger((m) => log.info(m)),
+    log,
+    apiBaseUrl: overrides.apiBaseUrl ?? apiBaseUrl,
+  };
+}
+
+function required(v: string | undefined, name: string): string {
+  if (!v) throw new Error(`${name} is required for the selected provider`);
+  return v;
+}
