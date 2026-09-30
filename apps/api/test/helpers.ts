@@ -16,14 +16,14 @@ export interface Harness {
 
 const silent = { info() {}, warn() {}, error: (o: unknown, m?: string) => console.error(m, o) };
 
-export async function setup(overrides: Record<string, string> = {}): Promise<Harness> {
+export async function setup(overrides: Record<string, string> = {}, ctxOverrides: Partial<Ctx> = {}): Promise<Harness> {
   // Tests simulate clients on different IPs through X-Forwarded-For, as if behind a trusted proxy.
-  const cfg = loadConfig({ TRUST_PROXY: 'true', ...overrides } as any);
+  const cfg = loadConfig({ TRUST_PROXY: 'true', RATE_LIMIT_PER_MINUTE: '100000', AUTH_RATE_LIMIT_PER_MINUTE: '100000', ...overrides } as any);
   const db = createPool(cfg.DATABASE_URL);
   await db.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
   await migrate(db);
   const messenger = new ConsoleMessenger(() => {});
-  const ctx = createContext(cfg, silent, { db, pubsub: new MemoryPubSub(), messenger });
+  const ctx = createContext(cfg, silent, { db, pubsub: new MemoryPubSub(), messenger, ...ctxOverrides });
   const app = await buildApp(ctx);
   await app.ready();
   return {

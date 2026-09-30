@@ -12,6 +12,7 @@ import { SumsubKycProvider } from './providers/kyc/sumsub.js';
 import type { KycProvider } from './providers/kyc/types.js';
 import { EcbFxProvider, StaticFxProvider, type FxProvider } from './domain/fx.js';
 import { ClamdScanner, EicarOnlyScanner, LocalEncryptedStorage, S3Storage, type FileStorage, type MalwareScanner } from './providers/files.js';
+import { NoCaptcha, SiteverifyCaptcha, type CaptchaVerifier } from './providers/captcha.js';
 import {
   ConsoleMessenger,
   MockPhoneChecker,
@@ -42,6 +43,7 @@ export interface Ctx {
   fx: FxProvider;
   storage: FileStorage;
   scanner: MalwareScanner;
+  captcha: CaptchaVerifier;
   log: Logger;
   apiBaseUrl: string;
 }
@@ -74,6 +76,9 @@ export function createContext(cfg: Config, log: Logger, overrides: Partial<Ctx> 
     messenger: overrides.messenger ?? buildMessenger(cfg, log),
     storage: overrides.storage ?? buildStorage(cfg, keyring),
     scanner: overrides.scanner ?? (cfg.MALWARE_SCANNER === 'clamd' ? new ClamdScanner(cfg.CLAMD_HOST, cfg.CLAMD_PORT) : new EicarOnlyScanner()),
+    captcha:
+      overrides.captcha ??
+      (cfg.CAPTCHA_PROVIDER === 'none' ? new NoCaptcha() : new SiteverifyCaptcha(cfg.CAPTCHA_PROVIDER, required(cfg.CAPTCHA_SECRET, 'CAPTCHA_SECRET'))),
     fx: overrides.fx ?? (cfg.FX_PROVIDER === 'ecb' ? new EcbFxProvider() : new StaticFxProvider(JSON.parse(cfg.FX_STATIC_RATES))),
     phoneChecker:
       overrides.phoneChecker ??

@@ -17,6 +17,11 @@ const Env = z.object({
   // Failed password/2FA attempts before an account is locked for a while (doubles each time).
   LOGIN_MAX_FAILURES: z.coerce.number().int().min(3).default(10),
   LOGIN_LOCK_MINUTES: z.coerce.number().int().min(1).default(15),
+  // Bot checks: sign-up and password reset always; sign-in after this many failures from one IP in 15 minutes.
+  CAPTCHA_PROVIDER: z.enum(['none', 'turnstile', 'hcaptcha']).default('none'),
+  CAPTCHA_SITE_KEY: z.string().optional(),
+  CAPTCHA_SECRET: z.string().optional(),
+  CAPTCHA_AFTER_FAILED_LOGINS: z.coerce.number().int().min(1).default(3),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   SENTRY_DSN: z.string().optional(),
   SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0),

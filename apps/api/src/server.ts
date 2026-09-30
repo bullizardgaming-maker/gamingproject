@@ -5,6 +5,7 @@ import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import websocket from '@fastify/websocket';
 import { ZodError } from 'zod';
+import { Redis } from 'ioredis';
 import { randomUUID } from 'node:crypto';
 import type { Logger as PinoLogger } from 'pino';
 import { safeEqual } from './lib/crypto.js';
@@ -133,7 +134,16 @@ export async function buildApp(ctx: Ctx, opts: { logger?: PinoLogger } = {}): Pr
     allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Device-Fingerprint'],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   });
-  await app.register(rateLimit, { max: ctx.cfg.NODE_ENV === 'test' ? 100_000 : ctx.cfg.RATE_LIMIT_PER_MINUTE, timeWindow: '1 minute' });
+  // With Redis the counters are shared, so limits hold across every API node instead of per process.
+  // If Redis is briefly unreachable requests are let through (skipOnError) rather than failing the site.
+  const limiterRedis = ctx.cfg.REDIS_URL ? new Redis(ctx.cfg.REDIS_URL, { connectTimeout: 1_000, maxRetriesPerRequest: 1, enableOfflineQueue: false }) : undefined;
+  limiterRedis?.on('error', () => {});
+  if (limiterRedis) app.addHook('onClose', async () => void limiterRedis.disconnect());
+  await app.register(rateLimit, {
+    max: ctx.cfg.RATE_LIMIT_PER_MINUTE,
+    timeWindow: '1 minute',
+    ...(limiterRedis ? { redis: limiterRedis, nameSpace: 'bz-rl:', skipOnError: true } : {}),
+  });
   await app.register(websocket, { options: { maxPayload: 64 * 1024 } });
 
   // Session auth (optional on every route; handlers call me()/requireRole()).

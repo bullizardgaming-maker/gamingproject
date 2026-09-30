@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { Ctx } from '../context.js';
-import { many } from '../db.js';
+import { many, one } from '../db.js';
 import { SELLER_TIERS } from '../domain/commission.js';
 import { getOffer } from '../domain/offers.js';
 import { SORTS, searchOffers, suggestGames, withDisplayPrices } from '../domain/search.js';
@@ -16,10 +16,10 @@ import { AppError, unauthorized } from '../lib/errors.js';
 import { deleteAccount, exportData } from '../domain/privacy.js';
 import { me, requestMeta } from '../server.js';
 
-const Credentials = z.object({ email: z.string().email().max(254), password: z.string().min(10).max(200) });
+const Credentials = z.object({ email: z.string().email().max(254), password: z.string().min(10).max(200), captchaToken: z.string().max(4096).optional() });
 
 export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
-  const strict = { config: { rateLimit: { max: ctx.cfg.NODE_ENV === 'test' ? 10_000 : ctx.cfg.AUTH_RATE_LIMIT_PER_MINUTE, timeWindow: '1 minute' } } };
+  const strict = { config: { rateLimit: { max: ctx.cfg.AUTH_RATE_LIMIT_PER_MINUTE, timeWindow: '1 minute' } } };
 
   // --- Auth -----------------------------------------------------------------
   // Browsers get the refresh token as an httpOnly, SameSite=Strict cookie scoped to /v1/auth,
@@ -39,15 +39,39 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     return { ip: m.ip, device: m.device, userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : undefined };
   };
 
+  /** Throws unless the request carries a valid CAPTCHA token (no-op when CAPTCHA is off). */
+  const requireCaptcha = async (req: FastifyRequest, token: string | undefined) => {
+    if (!ctx.captcha.enabled) return;
+    if (!(await ctx.captcha.verify(token, req.ip))) {
+      throw new AppError(400, token ? 'captcha_failed' : 'captcha_required', token ? 'The bot check failed. Please try again.' : 'Please complete the bot check.');
+    }
+  };
+  const recentIpFailures = async (ip: string) =>
+    (await one<{ n: number }>(ctx.db, `SELECT count(*)::int AS n FROM login_failures WHERE ip = $1 AND created_at > now() - interval '15 minutes'`, [ip])).n;
+
+  // Tells clients which bot-check widget to render.
+  app.get('/auth/config', async () => ({
+    captcha: ctx.captcha.enabled ? { provider: ctx.cfg.CAPTCHA_PROVIDER, siteKey: ctx.cfg.CAPTCHA_SITE_KEY ?? null } : null,
+  }));
+
   app.post('/auth/register', strict, async (req, reply) => {
     const body = Credentials.extend({ displayName: z.string().trim().min(2).max(40), referralCode: z.string().trim().max(20).optional() }).parse(req.body);
+    await requireCaptcha(req, body.captchaToken);
     const res = await register(ctx, { ...body, ...meta(req) });
     return reply.status(201).send(deliver(req, reply, res));
   });
 
   app.post('/auth/login', strict, async (req, reply) => {
     const body = Credentials.parse(req.body);
-    const res = await login(ctx, { ...body, ...meta(req) });
+    // Per IP (not per account, which would reveal whether an email is registered).
+    if (ctx.captcha.enabled && (await recentIpFailures(req.ip)) >= ctx.cfg.CAPTCHA_AFTER_FAILED_LOGINS) await requireCaptcha(req, body.captchaToken);
+    let res: Awaited<ReturnType<typeof login>>;
+    try {
+      res = await login(ctx, { ...body, ...meta(req) });
+    } catch (err) {
+      if (err instanceof AppError && (err.status === 401 || err.status === 429)) await ctx.db.query('INSERT INTO login_failures (ip) VALUES ($1)', [req.ip]);
+      throw err;
+    }
     return 'refreshToken' in res ? deliver(req, reply, res) : res;
   });
 
@@ -78,7 +102,8 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   app.post('/auth/password/forgot', strict, async (req, reply) => {
-    const { email } = z.object({ email: z.string().email().max(254) }).parse(req.body);
+    const { email, captchaToken } = z.object({ email: z.string().email().max(254), captchaToken: z.string().max(4096).optional() }).parse(req.body);
+    await requireCaptcha(req, captchaToken);
     await requestPasswordReset(ctx, email, requestMeta(req).ip);
     return reply.status(202).send({ message: 'If an account uses this email, a reset link is on its way.' });
   });
