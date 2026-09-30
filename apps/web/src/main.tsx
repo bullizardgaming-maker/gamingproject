@@ -10,6 +10,7 @@ import { InquiryChat, Orders } from './pages/Orders';
 import { Sell } from './pages/Sell';
 import { Developers } from './pages/Developers';
 import { Account, Login } from './pages/Account';
+import { Admin } from './pages/Admin';
 import './styles.css';
 
 function TopBar() {
@@ -17,12 +18,13 @@ function TopBar() {
   return (
     <header className="topbar">
       <div className="shell">
-        <Link to="/" className="brand"><span className="brand-mark" aria-hidden />Vaultline</Link>
+        <Link to="/" className="brand"><span className="brand-mark" aria-hidden />Bullizard</Link>
         <nav className="nav" aria-label="Main">
           <NavLink to="/market">Market</NavLink>
           {user && <NavLink to="/orders">Orders</NavLink>}
           <NavLink to="/sell">Sell</NavLink>
           <NavLink to="/developers">API</NavLink>
+          {user && user.role !== 'user' && <NavLink to="/admin">Operations</NavLink>}
         </nav>
         <div className="who">
           {user ? (
@@ -57,6 +59,7 @@ function App() {
           <Route path="/developers" element={<Developers />} />
           <Route path="/login" element={<Login />} />
           <Route path="/account" element={<Account />} />
+          <Route path="/admin" element={<Admin />} />
           <Route path="*" element={<div className="card"><h2>Page not found</h2><Link to="/market">Go to the market</Link></div>} />
         </Routes>
       </main>

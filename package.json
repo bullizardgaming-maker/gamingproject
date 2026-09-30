@@ -1,5 +1,5 @@
 {
-  "name": "gaming-marketplace",
+  "name": "bullizard",
   "private": true,
   "workspaces": [
     "apps/api",

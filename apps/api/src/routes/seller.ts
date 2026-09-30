@@ -9,6 +9,7 @@ import { recordSignals } from '../domain/fraud.js';
 import { sellerAvailable } from '../domain/ledger.js';
 import { createOffer, requireSeller, submitOwnerProof, updateOffer, uploadInventory } from '../domain/offers.js';
 import { requestWithdrawal } from '../domain/users.js';
+import { payoutStatus, startPayoutOnboarding } from '../domain/payouts.js';
 import { WEBHOOK_EVENTS, createEndpoint } from '../domain/webhooks.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { me } from '../server.js';
@@ -110,13 +111,16 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     return reply.status(201).send(await requestWithdrawal(ctx, me(req).id, amountCents));
   });
 
+  app.post('/seller/payout-account', async (req) => startPayoutOnboarding(ctx, me(req)));
+  app.get('/seller/payout-account', async (req) => payoutStatus(ctx, me(req)));
+
   app.get('/seller/withdrawals', async (req) => many(ctx.db, 'SELECT * FROM withdrawals WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100', [me(req).id]));
 
   /** Link a self-custody wallet (for crypto escrow payouts), proven by a personal_sign signature. */
   app.post('/me/wallet', async (req) => {
     const user = me(req);
     const { address, signature } = z.object({ address: z.string().regex(/^0x[0-9a-fA-F]{40}$/), signature: z.string() }).parse(req.body);
-    const message = `Link wallet ${address.toLowerCase()} to marketplace account ${user.id}`;
+    const message = `Link wallet ${address.toLowerCase()} to Bullizard account ${user.id}`;
     let recovered: string;
     try {
       recovered = verifyMessage(message, signature);

@@ -5,6 +5,7 @@ import { maybeOne } from '../db.js';
 import { closeChargeback, receiveChargeback } from '../domain/chargebacks.js';
 import { handleChainEvent, handlePaymentCaptured, type ChainEvent } from '../domain/orders.js';
 import { applyKycResult } from '../domain/users.js';
+import { applyPayoutAccountUpdate } from '../domain/payouts.js';
 import { hmacSha256, safeEqual } from '../lib/crypto.js';
 import { badRequest, notFound, unauthorized } from '../lib/errors.js';
 import { MockPaymentProvider } from '../providers/payments/mock.js';
@@ -18,6 +19,8 @@ export async function processPaymentEvent(ctx: Ctx, ev: PaymentEvent) {
       return receiveChargeback(ctx, { paymentRef: ev.paymentRef, disputeRef: ev.disputeRef, network: ev.network, reasonCode: ev.reasonCode, amountCents: ev.amountCents });
     case 'chargeback.closed':
       return closeChargeback(ctx, ev.disputeRef, ev.won);
+    case 'payout_account.updated':
+      return applyPayoutAccountUpdate(ctx, ev.accountRef, ev.payoutsEnabled);
     default:
       return null; // payment.failed: the unpaid-order reaper releases stock when the window lapses
   }
@@ -62,6 +65,18 @@ small{color:#8b93a7}</style></head><body><form method="post" action="/v1/payment
 <p><strong>${(order.amount_cents / 100).toFixed(2)} ${order.currency}</strong></p>
 <small>In production this page is the PSP's hosted checkout (Stripe Checkout / Adyen Drop-in). Card data never touches marketplace servers (PCI DSS SAQ-A).</small>
 <button type="submit">Pay (test card 4242)</button></form></body></html>`;
+    });
+
+    // Stand-in for the PSP-hosted onboarding flow: completing it enables payouts via the signed webhook path.
+    app.get('/payments/mock/onboarding/:account', async (req, reply) => {
+      const { account } = z.object({ account: z.string().regex(/^mock_acct_[a-f0-9]{8}$/) }).parse(req.params);
+      const { return: back } = z.object({ return: z.string().url() }).parse(req.query);
+      if (new URL(back).origin !== new URL(ctx.cfg.PUBLIC_WEB_URL).origin) throw badRequest('invalid_return', 'Return URL must be the web app');
+      mock.enabledAccounts.add(account);
+      const raw = JSON.stringify({ type: 'payout_account.updated', accountRef: account, payoutsEnabled: true });
+      await processPaymentEvent(ctx, await mock.parseWebhook(Buffer.from(raw), { 'x-mock-signature': mock.sign(raw) }));
+      if ((req.headers.accept ?? '').includes('application/json')) return { payoutsEnabled: true };
+      return reply.redirect(back, 303);
     });
 
     app.post('/payments/mock/checkout/:ref/pay', async (req, reply) => {

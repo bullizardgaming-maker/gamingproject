@@ -95,6 +95,8 @@ export class StripePaymentProvider implements PaymentProvider {
       }
       case 'charge.dispute.closed':
         return { type: 'chargeback.closed', disputeRef: obj.id, won: obj.status === 'won' };
+      case 'account.updated':
+        return { type: 'payout_account.updated', accountRef: obj.id, payoutsEnabled: !!obj.payouts_enabled };
       default:
         return { type: 'ignored' };
     }
@@ -126,6 +128,29 @@ export class StripePaymentProvider implements PaymentProvider {
       evidence: { uncategorized_text: evidence.summary.slice(0, 20_000), uncategorized_file: file.id },
       submit: true,
     });
+  }
+
+  async createPayoutAccount(seller: { id: string; email: string }) {
+    const account = await this.stripe.accounts.create(
+      {
+        type: 'express',
+        email: seller.email,
+        capabilities: { transfers: { requested: true } },
+        metadata: { userId: seller.id },
+      },
+      { idempotencyKey: `payout_account_${seller.id}` },
+    );
+    return { accountRef: account.id };
+  }
+
+  async payoutOnboardingLink(accountRef: string, returnUrl: string, refreshUrl: string) {
+    const link = await this.stripe.accountLinks.create({ account: accountRef, return_url: returnUrl, refresh_url: refreshUrl, type: 'account_onboarding' });
+    return { url: link.url };
+  }
+
+  async payoutAccountStatus(accountRef: string) {
+    const a: any = await this.stripe.accounts.retrieve(accountRef);
+    return { payoutsEnabled: !!a.payouts_enabled, requirementsDue: (a.requirements?.currently_due ?? []) as string[] };
   }
 }
 

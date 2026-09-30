@@ -144,7 +144,7 @@ async function deliver(ctx: Ctx, d: ClaimedDelivery, fetchImpl: typeof fetch) {
       signal: AbortSignal.timeout(10_000),
       headers: {
         'Content-Type': 'application/json',
-        'User-Agent': 'Marketplace-Webhooks/1.0',
+        'User-Agent': 'Bullizard-Webhooks/1.0',
         'X-Hook-Signature': signPayload(secret, body),
         'X-Hook-Event': d.event_type,
         'X-Hook-Delivery': d.id,

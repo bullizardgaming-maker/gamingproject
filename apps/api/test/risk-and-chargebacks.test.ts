@@ -74,6 +74,17 @@ describe('withdrawals', () => {
     const order = await buyAndPay(h, buyer, offer.id);
     await buyer.api.post(`/v1/orders/${order.id}/confirm`);
     const available = await sellerAvailable(h.ctx.db, seller.id);
+    expect((await seller.api.post('/v1/seller/withdrawals', { amountCents: available })).body.error.code).toBe('no_payout_account');
+
+    // Payout onboarding through the (mock) PSP-hosted flow.
+    const link = await seller.api.post('/v1/seller/payout-account');
+    expect((await seller.api.get('/v1/seller/payout-account')).body).toMatchObject({ connected: true, payoutsEnabled: false });
+    const path = new URL(link.body.url).pathname + new URL(link.body.url).search;
+    expect((await client(h.app).get(path, { accept: 'application/json' })).body.payoutsEnabled).toBe(true);
+    expect((await seller.api.get('/v1/seller/payout-account')).body.payoutsEnabled).toBe(true);
+    const evil = path.replace(/return=[^&]+/, 'return=' + encodeURIComponent('https://evil.example/'));
+    expect((await client(h.app).get(evil)).status).toBe(400);
+
     expect((await seller.api.post('/v1/seller/withdrawals', { amountCents: available + 1 })).status).toBe(400);
     const w = await seller.api.post('/v1/seller/withdrawals', { amountCents: available });
     expect(w.status).toBe(201);

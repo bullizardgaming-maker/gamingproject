@@ -20,6 +20,7 @@ declare module 'fastify' {
   interface FastifyRequest {
     user: User | null;
     apiScopes: string[] | null;
+    staffMfaRequired: boolean;
     rawBody?: Buffer;
   }
 }
@@ -49,6 +50,9 @@ export function me(req: FastifyRequest): User {
 export function requireRole(req: FastifyRequest, ...roles: Array<User['role']>): User {
   const user = me(req);
   if (!roles.includes(user.role)) throw forbidden('insufficient_role', 'Insufficient permissions');
+  if (req.staffMfaRequired && !user.session_mfa) {
+    throw forbidden('mfa_required', 'Staff actions need two-factor login. Turn it on in Account, then sign in again.');
+  }
   return user;
 }
 
@@ -69,6 +73,8 @@ export async function buildApp(ctx: Ctx, opts: { logger?: boolean } = {}): Promi
 
   app.decorateRequest('user', null);
   app.decorateRequest('apiScopes', null);
+  app.decorateRequest('staffMfaRequired', false);
+  const staffMfaRequired = (ctx.cfg.STAFF_MFA_REQUIRED ?? (ctx.cfg.NODE_ENV === 'production' ? 'true' : 'false')) === 'true';
 
   // Keep the raw body: webhook signatures (PSP, KYC, indexer) are computed over exact bytes.
   const jsonParser = (req: FastifyRequest, body: Buffer, done: (err: Error | null, v?: unknown) => void) => {
@@ -98,6 +104,7 @@ export async function buildApp(ctx: Ctx, opts: { logger?: boolean } = {}): Promi
 
   // Session auth (optional on every route; handlers call me()/requireRole()).
   app.addHook('onRequest', async (req) => {
+    req.staffMfaRequired = staffMfaRequired;
     const header = req.headers.authorization;
     if (header?.startsWith('Bearer ') && !header.startsWith('Bearer mk_')) {
       req.user = await userFromToken(ctx, header.slice(7));

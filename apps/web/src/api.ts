@@ -10,6 +10,9 @@ export interface User {
   email_verified_at: string | null;
   phone_verified_at: string | null;
   withdrawals_frozen: boolean;
+  totp_enabled: boolean;
+  payouts_enabled: boolean;
+  session_mfa?: boolean;
 }
 
 export class ApiError extends Error {
@@ -152,3 +155,13 @@ class Realtime {
 }
 
 export const realtime = new Realtime();
+
+/** Authenticated binary download (e.g. representment PDFs). */
+export async function apiBlob(path: string): Promise<Blob> {
+  const res = await fetch(`${BASE}/v1${path}`, { headers: session.token ? { Authorization: `Bearer ${session.token}` } : {} });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new ApiError(res.status, data.error?.code ?? 'error', data.error?.message ?? `Request failed (${res.status})`);
+  }
+  return res.blob();
+}

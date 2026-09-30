@@ -25,6 +25,8 @@ const Env = z.object({
   OFFPLATFORM_SUSPEND_STRIKES: z.coerce.number().default(3),
   ORDER_PAYMENT_TTL_MINUTES: z.coerce.number().default(30),
   TOS_VERSION: z.string().default('2026-09-01'),
+  // Admin/arbiter actions need a session signed in with a second factor (PCI DSS 8.4). Defaults to on in production.
+  STAFF_MFA_REQUIRED: z.enum(['true', 'false']).optional(),
   RUN_WORKER_IN_PROCESS: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
   // Web3 escrow
   ESCROW_CHAIN_ID: z.coerce.number().default(31337),

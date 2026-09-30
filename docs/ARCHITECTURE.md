@@ -68,6 +68,12 @@ This maps each requirement in the product spec to where and how it is implemente
 
 **eKYC** (`domain/users.ts`, `providers/kyc/sumsub.ts`): Tier 1 = verified email + SMS OTP (required to buy). Tier 2 = ID document + liveness via Sumsub (required to sell, use the API, and withdraw). Sumsub requests are HMAC-signed and webhooks verified with `X-Payload-Digest`.
 
+**Two-factor login** (`domain/mfa.ts`): TOTP (RFC 6238, verified against the RFC test vectors) with ±1 step drift, replay protection (last accepted step is stored), secrets AES-256-GCM encrypted, and 10 single-use recovery codes stored as HMACs. With 2FA on, the password step only returns a 5-minute challenge token that is useless as a session. **Staff actions** (arbiter/admin routes) require a session established with a second factor (PCI DSS 8.4); on by default in production, controlled by `STAFF_MFA_REQUIRED`.
+
+**Payout accounts** (`domain/payouts.ts`): sellers onboard through Stripe Connect Express's hosted flow (bank and identity details never reach our servers). `account.updated` webhooks keep `payouts_enabled` current; withdrawals require it.
+
+**Operations console** (`apps/web/src/pages/Admin.tsx`, `/admin`): dispute queue with links to the order chat, fraud-flag review (clear/unfreeze or confirm/suspend), Original Owner Proof review with the billing-name vs verified-ID check, chargeback deadlines and evidence PDFs, and platform ledger balances. Arbiters see disputes and owner proofs; admins see everything.
+
 **Fraud** (`domain/fraud.ts`, `services/fraud-gnn`)
 - Every login/registration/order records graph edges in `risk_signals` (device fingerprint, IP /24 or /48, card fingerprint, wallet). Private/loopback IPs are ignored.
 - On payment capture the API computes a **Syndicate Risk Score** inline: shared infrastructure between buyer and seller, connected buyer clusters funnelling into one seller within 72h (union-find over shared signals), new-seller concentration, buyer velocity, links to suspended/charged-back accounts; combined by noisy-OR.
@@ -86,7 +92,6 @@ This maps each requirement in the product spec to where and how it is implemente
 - **Fraud model training data.** The shipped model is bootstrapped on synthetic graphs (`fraud_gnn/synthetic.py`). The synthetic task is easy (validation AUC ≈ 1.0), so that number says nothing about production accuracy. Retrain on labelled production data (`python -m fraud_gnn.train --dsn …`) and evaluate on a time-based holdout before enabling `FRAUD_GNN_URL` in enforcement mode. The inline heuristic works without it.
 - **Validator randomness.** The panel seed is a future block hash, which a block proposer can bias. Use a VRF (e.g. Chainlink VRF) before mainnet, and get the contract **externally audited**; it has unit tests, not an audit.
 - **Escrow signer key** should live in a KMS/HSM, not an environment variable.
-- **Stripe Connect onboarding** (creating connected accounts, `stripe_account_id`) is not implemented in the UI; payouts require it when `PAYMENT_PROVIDER=stripe`.
-- **Refresh tokens / MFA for users** are not implemented; sessions are 12-hour JWTs re-validated against the user row on every request.
+- **Refresh tokens** are not implemented; sessions are 12-hour JWTs re-validated against the user row on every request.
 - **Chat retention**: the log is append-only by design. Check this against GDPR erasure obligations in your jurisdiction (e.g. crypto-shredding per-user message keys).
 - The legality of trading game accounts varies by publisher ToS; category policies are a business decision, not something code can settle.

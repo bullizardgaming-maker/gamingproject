@@ -1,4 +1,4 @@
-# Gaming Marketplace ("Vaultline")
+# Bullizard
 
 A peer-to-peer marketplace for game accounts, keys, in-game currency, items and boosting, built around one idea: **the buyer's money waits in escrow until the goods are really theirs.**
 
@@ -12,7 +12,7 @@ A peer-to-peer marketplace for game accounts, keys, in-game currency, items and 
 | Path | What it is | Stack |
 |---|---|---|
 | `apps/api` | Marketplace backend: escrow, ledger, orders, auto-delivery, chat, merchant API, webhooks, fraud scoring, chargebacks, eKYC | Node 22, Fastify 5, PostgreSQL 16, Redis |
-| `apps/web` | Buyer / seller web app | React 19, Vite |
+| `apps/web` | Buyer, seller and staff web app (market, checkout, order chat, seller hub, API console, operations console) | React 19, Vite |
 | `contracts` | `MarketEscrow.sol`: stablecoin escrow with milestones and a bonded validator panel for disputes | Solidity 0.8.24, OpenZeppelin 5, Hardhat |
 | `services/fraud-gnn` | Heterogeneous Graph Transformer (HGT) syndicate-risk model + scoring service | PyTorch, PyTorch Geometric, FastAPI |
 | `docs/ARCHITECTURE.md` | How each requirement is implemented, security/compliance notes, known limitations | |
@@ -31,7 +31,7 @@ npm run dev:api               # http://localhost:4000  (worker runs in-process)
 npm run dev:web               # http://localhost:5173
 ```
 
-Demo logins: `buyer@demo.test` (level 1), `seller@demo.test` (level 2 seller), `admin@demo.test` (admin/arbiter).
+Demo logins: `buyer@demo.test` (level 1), `seller@demo.test` (level 2 seller), `admin@demo.test` (admin/arbiter; the Operations console needs two-factor login when `STAFF_MFA_REQUIRED=true`, the production default).
 With `PAYMENT_PROVIDER=mock`, checkout opens a mock hosted payment page that posts a signed webhook back, the same flow as Stripe.
 
 Full stack in containers: `docker compose up --build` (web on :8080). Add `--profile gnn` for the fraud model service.
@@ -39,7 +39,7 @@ Full stack in containers: `docker compose up --build` (web on :8080). Add `--pro
 ## Tests
 
 ```bash
-npm test -w apps/api          # 44 tests, needs Postgres (TEST_DATABASE_URL, default market_test) and Redis for the multi-node test
+npm test -w apps/api          # 48 tests, needs Postgres (TEST_DATABASE_URL, default market_test) and Redis for the multi-node test
 npm test -w contracts         # 10 Hardhat tests
 cd services/fraud-gnn && pip install -r requirements.txt && pytest -q   # 9 tests
 npm run build -w apps/web     # includes the payment-page script inventory check

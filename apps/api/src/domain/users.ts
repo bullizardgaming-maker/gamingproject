@@ -7,6 +7,7 @@ import { AppError, badRequest, conflict, unauthorized } from '../lib/errors.js';
 import { withScope } from './events.js';
 import { recordSignals, subnetOf } from './fraud.js';
 import { accountId, post, sellerAvailable } from './ledger.js';
+import { checkSecondFactor } from './mfa.js';
 
 export interface User {
   id: string;
@@ -22,17 +23,21 @@ export interface User {
   stripe_account_id: string | null;
   legal_name: string | null;
   created_at: string;
+  totp_enabled: boolean;
+  payouts_enabled: boolean;
+  /** True when the current session was established with a second factor. */
+  session_mfa?: boolean;
 }
 
 export const PUBLIC_USER_COLUMNS =
-  'id, email, display_name, role, kyc_tier, status, email_verified_at, phone, phone_verified_at, withdrawals_frozen, stripe_account_id, legal_name, created_at';
+  'id, email, display_name, role, kyc_tier, status, email_verified_at, phone, phone_verified_at, withdrawals_frozen, stripe_account_id, legal_name, created_at, (totp_enabled_at IS NOT NULL) AS totp_enabled, payouts_enabled';
 
 // ---------------------------------------------------------------------------
 // Sessions (short-lived HS256 JWTs; the user row is re-read on every request so
 // suspensions and tier changes take effect immediately).
 // ---------------------------------------------------------------------------
-export async function issueToken(ctx: Ctx, userId: string): Promise<string> {
-  return new SignJWT({})
+export async function issueToken(ctx: Ctx, userId: string, opts: { mfa?: boolean } = {}): Promise<string> {
+  return new SignJWT({ purpose: 'session', mfa: !!opts.mfa })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(userId)
     .setIssuedAt()
@@ -40,12 +45,29 @@ export async function issueToken(ctx: Ctx, userId: string): Promise<string> {
     .sign(new TextEncoder().encode(ctx.cfg.JWT_SECRET));
 }
 
+/** Short-lived token proving the password step passed; only exchangeable for a session via /auth/mfa. */
+async function issueChallenge(ctx: Ctx, userId: string): Promise<string> {
+  return new SignJWT({ purpose: 'mfa_challenge' })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setSubject(userId)
+    .setIssuedAt()
+    .setExpirationTime('5m')
+    .sign(new TextEncoder().encode(ctx.cfg.JWT_SECRET));
+}
+
+async function verifyJwt(ctx: Ctx, token: string, purpose: string) {
+  const { payload } = await jwtVerify(token, new TextEncoder().encode(ctx.cfg.JWT_SECRET), { algorithms: ['HS256'] });
+  // Tokens issued before the purpose claim existed are sessions.
+  if ((payload.purpose ?? 'session') !== purpose) throw new Error('wrong token purpose');
+  return payload;
+}
+
 export async function userFromToken(ctx: Ctx, token: string): Promise<User> {
   try {
-    const { payload } = await jwtVerify(token, new TextEncoder().encode(ctx.cfg.JWT_SECRET), { algorithms: ['HS256'] });
+    const payload = await verifyJwt(ctx, token, 'session');
     const user = await maybeOne<User>(ctx.db, `SELECT ${PUBLIC_USER_COLUMNS} FROM users WHERE id = $1`, [payload.sub]);
     if (!user) throw new Error('unknown user');
-    return user;
+    return { ...user, session_mfa: payload.mfa === true };
   } catch {
     throw unauthorized('Invalid or expired session');
   }
@@ -74,7 +96,21 @@ export async function login(ctx: Ctx, input: { email: string; password: string; 
   if (!row || !ok) throw unauthorized('Invalid email or password');
   await recordSignals(ctx.db, row.id, { device: input.device, ip_subnet: subnetOf(input.ip) });
   const { password_hash: _, ...user } = row;
+  if (user.totp_enabled) return { mfaRequired: true as const, mfaToken: await issueChallenge(ctx, user.id) };
   return { user, token: await issueToken(ctx, user.id) };
+}
+
+/** Second login step: exchange the challenge token plus a TOTP or recovery code for a session. */
+export async function completeMfaLogin(ctx: Ctx, mfaToken: string, code: string) {
+  let userId: string;
+  try {
+    userId = String((await verifyJwt(ctx, mfaToken, 'mfa_challenge')).sub);
+  } catch {
+    throw unauthorized('Sign-in expired. Enter your password again.');
+  }
+  const method = await checkSecondFactor(ctx, userId, code);
+  const user = await one<User>(ctx.db, `SELECT ${PUBLIC_USER_COLUMNS} FROM users WHERE id = $1`, [userId]);
+  return { user, token: await issueToken(ctx, userId, { mfa: true }), method };
 }
 
 // ---------------------------------------------------------------------------
@@ -165,7 +201,7 @@ export async function requestWithdrawal(ctx: Ctx, userId: string, amountCents: n
     const user = await one<User>(s.tx, `SELECT ${PUBLIC_USER_COLUMNS} FROM users WHERE id = $1 FOR UPDATE`, [userId]);
     if (user.kyc_tier < 2) throw new AppError(403, 'kyc_required', 'Tier 2 identity verification is required to withdraw');
     if (user.withdrawals_frozen || user.status !== 'active') throw new AppError(423, 'withdrawals_frozen', 'Withdrawals are frozen pending a security review');
-    if (ctx.payments.name === 'stripe' && !user.stripe_account_id) throw badRequest('no_payout_account', 'Connect a payout account first');
+    if (!user.stripe_account_id || !user.payouts_enabled) throw badRequest('no_payout_account', 'Set up your payout account first');
     const available = await sellerAvailable(s.tx, userId, currency);
     if (amountCents > available) throw badRequest('insufficient_funds', `Available balance is ${available} cents`);
     const w = await one(s.tx, 'INSERT INTO withdrawals (user_id, amount_cents, currency) VALUES ($1, $2, $3) RETURNING *', [userId, amountCents, currency]);
@@ -177,7 +213,7 @@ export async function requestWithdrawal(ctx: Ctx, userId: string, amountCents: n
       ],
       `withdrawal:${w.id}`,
     );
-    return { ...w, destination: user.stripe_account_id ?? 'mock' };
+    return { ...w, destination: user.stripe_account_id };
   });
 
   try {

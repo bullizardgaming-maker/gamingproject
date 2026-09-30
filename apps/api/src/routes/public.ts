@@ -4,7 +4,8 @@ import type { Ctx } from '../context.js';
 import { many } from '../db.js';
 import { SELLER_TIERS } from '../domain/commission.js';
 import { getOffer, listOffers } from '../domain/offers.js';
-import { confirmVerificationCode, login, register, sendVerificationCode, startKyc } from '../domain/users.js';
+import { beginSetup, disable, enable, remainingRecoveryCodes } from '../domain/mfa.js';
+import { completeMfaLogin, confirmVerificationCode, issueToken, login, register, sendVerificationCode, startKyc } from '../domain/users.js';
 import { me, requestMeta } from '../server.js';
 
 const Credentials = z.object({ email: z.string().email().max(254), password: z.string().min(10).max(200) });
@@ -26,7 +27,32 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     return login(ctx, { ...body, ip: m.ip, device: m.device });
   });
 
+  app.post('/auth/mfa', strict, async (req) => {
+    const body = z.object({ mfaToken: z.string(), code: z.string().trim().min(6).max(20) }).parse(req.body);
+    return completeMfaLogin(ctx, body.mfaToken, body.code);
+  });
+
   app.get('/me', async (req) => ({ user: me(req) }));
+
+  // --- Two-factor login -------------------------------------------------------------
+  app.post('/me/2fa/setup', strict, async (req) => beginSetup(ctx, me(req)));
+  app.post('/me/2fa/enable', strict, async (req) => {
+    const { code } = z.object({ code: z.string().trim() }).parse(req.body);
+    const user = me(req);
+    const res = await enable(ctx, user.id, code);
+    // Upgrade the current session so the user doesn't have to sign in again.
+    return { ...res, token: await issueToken(ctx, user.id, { mfa: true }) };
+  });
+  app.post('/me/2fa/disable', strict, async (req) => {
+    const { code } = z.object({ code: z.string().trim() }).parse(req.body);
+    const user = me(req);
+    await disable(ctx, user.id, code);
+    return { token: await issueToken(ctx, user.id) };
+  });
+  app.get('/me/2fa', async (req) => {
+    const user = me(req);
+    return { enabled: user.totp_enabled, sessionVerified: !!user.session_mfa, recoveryCodesLeft: await remainingRecoveryCodes(ctx, user.id) };
+  });
 
   // --- Tier 1 verification ------------------------------------------------------
   app.post('/verify/:channel/send', strict, async (req) => {

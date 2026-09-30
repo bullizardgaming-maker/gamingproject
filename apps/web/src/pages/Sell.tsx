@@ -27,7 +27,7 @@ interface SellerOffer {
 }
 
 export function Sell() {
-  const { user } = useSession();
+  const { user, refresh } = useSession();
   const [dash, setDash] = useState<Dashboard | null>(null);
   const [offers, setOffers] = useState<SellerOffer[]>([]);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'alert'; text: string } | null>(null);
@@ -41,6 +41,13 @@ export function Sell() {
   useEffect(() => {
     if (user) load().catch(() => {});
   }, [user, load]);
+
+  // Returning from the payment partner's onboarding page: sync payout status.
+  useEffect(() => {
+    if (user && !user.payouts_enabled && new URLSearchParams(window.location.search).get('payouts')) {
+      api<{ payoutsEnabled: boolean }>('/seller/payout-account').then((s) => { if (s.payoutsEnabled) refresh(); }).catch(() => {});
+    }
+  }, [user, refresh]);
 
   if (!user) return <p className="muted"><Link to="/login?next=/sell">Sign in</Link> to start selling.</p>;
   if (user.kyc_tier < 2) {
@@ -56,6 +63,15 @@ export function Sell() {
   if (!dash) return <p className="muted">Loading your shop…</p>;
 
   const progress = dash.next ? dash.monthlySalesCents / dash.next.tier.minMonthlySalesCents : 1;
+
+  const setUpPayouts = async () => {
+    try {
+      const { url } = await api<{ url: string }>('/seller/payout-account', { body: {} });
+      window.location.assign(url);
+    } catch (e: any) {
+      setMsg({ kind: 'alert', text: e.message });
+    }
+  };
 
   const withdraw = async () => {
     try {
@@ -86,7 +102,14 @@ export function Sell() {
           <div className="eyebrow">Balance</div>
           <h2 className="mono" style={{ margin: 0 }}>{money(dash.balances.availableCents)}</h2>
           <p className="small muted">{money(dash.balances.pendingEscrowCents)} still in escrow on open orders.</p>
-          <button className="btn" disabled={dash.withdrawalsFrozen || dash.balances.availableCents <= 0} onClick={withdraw}>Withdraw all</button>
+          {user.payouts_enabled ? (
+            <button className="btn" disabled={dash.withdrawalsFrozen || dash.balances.availableCents <= 0} onClick={withdraw}>Withdraw all</button>
+          ) : (
+            <>
+              <button className="btn" onClick={setUpPayouts}>Set up payouts</button>
+              <p className="small muted">Add the bank account we pay you into. Our payment partner collects the details on their secure page.</p>
+            </>
+          )}
           {dash.withdrawalsFrozen && <p className="small muted">Withdrawals are paused while a security review runs.</p>}
         </div>
         <div className="card stack">

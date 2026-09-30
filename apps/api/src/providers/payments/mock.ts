@@ -42,4 +42,20 @@ export class MockPaymentProvider implements PaymentProvider {
   async submitChargebackEvidence(disputeRef: string, evidence: { summary: string; pdf: Buffer }) {
     this.submittedEvidence.push({ disputeRef, summary: evidence.summary, bytes: evidence.pdf.length });
   }
+
+  /** Mock accounts become payout-enabled when the mock onboarding page is completed. */
+  readonly enabledAccounts = new Set<string>();
+
+  async createPayoutAccount(seller: { id: string }) {
+    return { accountRef: `mock_acct_${seller.id.slice(0, 8)}` };
+  }
+
+  async payoutOnboardingLink(accountRef: string, returnUrl: string) {
+    return { url: `${this.apiBaseUrl}/v1/payments/mock/onboarding/${accountRef}?return=${encodeURIComponent(returnUrl)}` };
+  }
+
+  async payoutAccountStatus(accountRef: string) {
+    const enabled = this.enabledAccounts.has(accountRef);
+    return { payoutsEnabled: enabled, requirementsDue: enabled ? [] : ['external_account'] };
+  }
 }

@@ -47,6 +47,7 @@ export type PaymentEvent =
       amountCents: number;
     }
   | { type: 'chargeback.closed'; disputeRef: string; won: boolean }
+  | { type: 'payout_account.updated'; accountRef: string; payoutsEnabled: boolean }
   | { type: 'ignored' };
 
 export interface PaymentProvider {
@@ -58,4 +59,9 @@ export interface PaymentProvider {
   /** Transfer a seller's released funds to their connected account. */
   payout(destination: string, amountCents: number, currency: string, idempotencyKey: string): Promise<{ ref: string }>;
   submitChargebackEvidence(disputeRef: string, evidence: { summary: string; pdf: Buffer }): Promise<void>;
+  /** Create the seller's payout account (Stripe Connect Express). Identity/bank details are collected by the PSP. */
+  createPayoutAccount(seller: { id: string; email: string }): Promise<{ accountRef: string }>;
+  /** A one-time link to the PSP-hosted onboarding flow. */
+  payoutOnboardingLink(accountRef: string, returnUrl: string, refreshUrl: string): Promise<{ url: string }>;
+  payoutAccountStatus(accountRef: string): Promise<{ payoutsEnabled: boolean; requirementsDue: string[] }>;
 }

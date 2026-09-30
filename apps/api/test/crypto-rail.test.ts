@@ -32,7 +32,7 @@ describe('Web3 stablecoin escrow rail', () => {
     const addr = sellerWallet.address.toLowerCase();
     const link = await seller.api.post('/v1/me/wallet', {
       address: sellerWallet.address,
-      signature: await sellerWallet.signMessage(`Link wallet ${addr} to marketplace account ${seller.id}`),
+      signature: await sellerWallet.signMessage(`Link wallet ${addr} to Bullizard account ${seller.id}`),
     });
     expect(link.status).toBe(200);
     expect((await seller.api.post('/v1/me/wallet', { address: sellerWallet.address, signature: await buyerWallet.signMessage('x') })).status).toBe(400);
