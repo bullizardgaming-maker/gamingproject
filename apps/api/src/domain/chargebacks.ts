@@ -246,6 +246,13 @@ export async function collectEvidence(q: Queryable, chargebackId: string) {
     };
   }
 
+  const attachments = await many(
+    q,
+    `SELECT a.original_name, a.sha256, a.width, a.height, a.created_at,
+            CASE WHEN a.uploader_id = $2 THEN 'buyer' ELSE 'seller' END AS uploaded_by
+       FROM chat_attachments a WHERE a.room_id = $1 AND a.status = 'clean' ORDER BY a.created_at`,
+    [room.id, order.buyer_id],
+  );
   const chain = await verifyChain(q, room.id);
   const chat = await listMessages(q, room.id, 0, 500);
   return {
@@ -253,7 +260,7 @@ export async function collectEvidence(q: Queryable, chargebackId: string) {
     spec: classify(cb.network, cb.reason_code, cb.category),
     common,
     specific,
-    chat: { integrity: chain, messages: chat.map((m) => ({ seq: m.seq, at: m.created_at, from: m.sender_id === order.buyer_id ? 'buyer' : m.sender_id ? 'seller' : 'system', body: m.body, hash: m.hash })) },
+    chat: { integrity: chain, attachments, messages: chat.map((m) => ({ seq: m.seq, at: m.created_at, from: m.sender_id === order.buyer_id ? 'buyer' : m.sender_id ? 'seller' : 'system', body: m.body, hash: m.hash })) },
   };
 }
 
@@ -295,6 +302,12 @@ export function renderPacketPdf(ev: Evidence): Promise<Buffer> {
       `Hash chain ${ev.chat.integrity.valid ? 'VERIFIED' : 'BROKEN at seq ' + ev.chat.integrity.brokenAtSeq}: ${ev.chat.integrity.messages} messages, head ${ev.chat.integrity.headHash}. ` +
         'All buyer–seller communication is required to occur on-platform; off-platform contact is prohibited by the Terms of Service.',
     );
+    if (ev.chat.attachments.length) {
+      doc.moveDown(0.3).text('Image evidence (malware-scanned, re-encoded; SHA-256 of the stored file):');
+      for (const a of ev.chat.attachments) {
+        doc.text(`  • ${a.original_name} (${a.width}×${a.height}) by ${a.uploaded_by} at ${new Date(a.created_at).toISOString()} — ${a.sha256}`);
+      }
+    }
     doc.moveDown(0.3);
     for (const m of ev.chat.messages) doc.text(`  #${m.seq} [${new Date(m.at).toISOString()}] ${m.from}: ${m.body}`);
     doc.end();

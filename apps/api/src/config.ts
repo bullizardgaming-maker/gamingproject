@@ -47,6 +47,15 @@ const Env = z.object({
   REFERRAL_REWARD_CENTS: z.coerce.number().int().min(0).default(500),
   REFERRAL_MIN_ORDER_CENTS: z.coerce.number().int().min(0).default(1000),
   REFERRAL_MONTHLY_CAP: z.coerce.number().int().min(0).default(20),
+  // Uploaded evidence (chat screenshots)
+  STORAGE_PROVIDER: z.enum(['local', 's3']).default('local'),
+  STORAGE_DIR: z.string().default('./data/uploads'),
+  S3_BUCKET: z.string().optional(),
+  S3_REGION: z.string().default('us-east-1'),
+  S3_ENDPOINT: z.string().optional(),
+  MALWARE_SCANNER: z.enum(['clamd', 'dev']).default('dev'),
+  CLAMD_HOST: z.string().default('127.0.0.1'),
+  CLAMD_PORT: z.coerce.number().default(3310),
   RECON_INTERVAL_HOURS: z.coerce.number().default(24),
   RECON_TOLERANCE_CENTS: z.coerce.number().default(0),
   FRAUD_GNN_URL: z.string().optional(),
@@ -75,6 +84,9 @@ export function loadConfig(overrides: Partial<Record<keyof Config, string>> = {}
   const cfg = Env.parse({ ...process.env, ...overrides });
   if (cfg.SANDBOX_MODE && (cfg.PAYMENT_PROVIDER !== 'mock' || cfg.KYC_PROVIDER !== 'mock')) {
     throw new Error('SANDBOX_MODE requires PAYMENT_PROVIDER=mock and KYC_PROVIDER=mock');
+  }
+  if (cfg.NODE_ENV === 'production' && cfg.MALWARE_SCANNER === 'dev') {
+    throw new Error('MALWARE_SCANNER=clamd is required in production');
   }
   if (cfg.NODE_ENV === 'production') {
     for (const key of ['JWT_SECRET', 'DATA_ENCRYPTION_KEYS', 'FINGERPRINT_KEY', 'CRYPTO_INDEXER_SECRET'] as const) {

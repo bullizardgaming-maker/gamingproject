@@ -102,6 +102,10 @@ export async function buildApp(ctx: Ctx, opts: { logger?: PinoLogger } = {}): Pr
   };
   app.addContentTypeParser(['application/json', 'application/csp-report', 'application/reports+json'], { parseAs: 'buffer' }, jsonParser as any);
   app.addContentTypeParser('text/plain', { parseAs: 'string' }, (_req, body, done) => done(null, body));
+  // Chat evidence uploads arrive as raw image bytes; the handler sniffs the real type.
+  app.addContentTypeParser(['image/png', 'image/jpeg', 'image/webp', 'application/octet-stream'], { parseAs: 'buffer', bodyLimit: 8 * 1024 * 1024 }, (_req, body, done) =>
+    done(null, body),
+  );
   app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (_req, body, done) =>
     done(null, Object.fromEntries(new URLSearchParams(body as string))),
   );

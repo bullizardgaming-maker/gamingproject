@@ -17,6 +17,13 @@ services:
     image: redis:7
     ports: ["6379:6379"]
 
+  clamav:
+    image: clamav/clamav:stable
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 30s
+      retries: 10
+
   api:
     build: { context: ., dockerfile: apps/api/Dockerfile }
     env_file: .env
@@ -25,6 +32,10 @@ services:
       REDIS_URL: redis://redis:6379
       RUN_WORKER_IN_PROCESS: "false"
       PUBLIC_WEB_URL: http://localhost:8080
+      MALWARE_SCANNER: clamd
+      CLAMD_HOST: clamav
+      STORAGE_DIR: /data/uploads
+    volumes: [uploads:/data/uploads]
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_started }
@@ -56,3 +67,4 @@ services:
 
 volumes:
   pgdata:
+  uploads:

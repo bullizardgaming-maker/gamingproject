@@ -16,3 +16,6 @@ __pycache__/
 *.pyc
 .venv/
 services/fraud-gnn/models/*.pt
+
+# local uploads
+apps/api/data/

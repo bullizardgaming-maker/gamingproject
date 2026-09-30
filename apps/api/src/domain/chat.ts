@@ -22,7 +22,7 @@ export interface ChatMessage {
   room_id: string;
   seq: number;
   sender_id: string | null;
-  kind: 'text' | 'system' | 'delivery' | 'warning';
+  kind: 'text' | 'system' | 'delivery' | 'warning' | 'attachment';
   body: string;
   flags: string[];
   prev_hash: string;

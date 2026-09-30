@@ -9,7 +9,8 @@ import {
 } from '../domain/orders.js';
 import { buildEscrowTerms } from '../domain/web3.js';
 import { createReview, replyToReview, sellerProfile } from '../domain/reviews.js';
-import { forbidden, notFound } from '../lib/errors.js';
+import { badRequest, forbidden, notFound } from '../lib/errors.js';
+import { readAttachment, uploadAttachment } from '../domain/attachments.js';
 import { audit } from '../domain/audit.js';
 import { me, requestMeta } from '../server.js';
 
@@ -156,6 +157,28 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
     const { body } = z.object({ body: z.string().trim().min(1).max(4_000) }).parse(req.body);
     const msg = await postUserMessage(ctx, Id.parse(req.params).id, me(req), body);
     return reply.status(201).send(msg);
+  });
+
+  /** Upload a screenshot (raw PNG/JPEG/WebP body; file name in X-Filename). */
+  app.post('/chat/rooms/:id/attachments', async (req, reply) => {
+    const { id } = Id.parse(req.params);
+    if (!Buffer.isBuffer(req.body)) throw badRequest('unsupported_file', 'Send the image bytes with Content-Type image/png, image/jpeg or image/webp');
+    const name = typeof req.headers['x-filename'] === 'string' ? decodeURIComponent(req.headers['x-filename']) : 'screenshot';
+    return reply.status(201).send(await uploadAttachment(ctx, id, me(req), name, req.body));
+  });
+
+  app.get('/chat/attachments/:id', async (req, reply) => {
+    const user = me(req);
+    const { att, bytes, isParticipant } = await readAttachment(ctx, Id.parse(req.params).id, user);
+    if (!isParticipant) await audit(ctx.db, req, 'attachment.viewed', { type: 'chat_attachment', id: att.id });
+    return reply
+      .header('Content-Type', att.mime)
+      .header('Content-Disposition', `inline; filename="${att.original_name.replace(/"/g, '')}"`)
+      .header('Cache-Control', 'private, max-age=3600')
+      .header('X-Content-Type-Options', 'nosniff')
+      .header('Content-Security-Policy', "default-src 'none'; sandbox")
+      .header('X-Content-Sha256', att.sha256)
+      .send(bytes);
   });
 
   app.get('/chat/rooms/:id/verify', async (req) => {

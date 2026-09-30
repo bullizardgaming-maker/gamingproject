@@ -11,6 +11,7 @@ import { MockKycProvider } from './providers/kyc/mock.js';
 import { SumsubKycProvider } from './providers/kyc/sumsub.js';
 import type { KycProvider } from './providers/kyc/types.js';
 import { EcbFxProvider, StaticFxProvider, type FxProvider } from './domain/fx.js';
+import { ClamdScanner, EicarOnlyScanner, LocalEncryptedStorage, S3Storage, type FileStorage, type MalwareScanner } from './providers/files.js';
 import {
   ConsoleMessenger,
   MockPhoneChecker,
@@ -39,12 +40,15 @@ export interface Ctx {
   messenger: Messenger;
   phoneChecker: PhoneChecker;
   fx: FxProvider;
+  storage: FileStorage;
+  scanner: MalwareScanner;
   log: Logger;
   apiBaseUrl: string;
 }
 
 export function createContext(cfg: Config, log: Logger, overrides: Partial<Ctx> = {}): Ctx {
   const apiBaseUrl = cfg.PUBLIC_API_URL ?? `http://localhost:${cfg.PORT}`;
+  const keyring = overrides.keyring ?? new Keyring(cfg.DATA_ENCRYPTION_KEYS);
   const payments =
     overrides.payments ??
     (cfg.PAYMENT_PROVIDER === 'stripe'
@@ -63,11 +67,13 @@ export function createContext(cfg: Config, log: Logger, overrides: Partial<Ctx> 
   return {
     cfg,
     db: overrides.db ?? createPool(cfg.DATABASE_URL),
-    keyring: overrides.keyring ?? new Keyring(cfg.DATA_ENCRYPTION_KEYS),
+    keyring,
     pubsub: overrides.pubsub ?? createPubSub(cfg.REDIS_URL),
     payments,
     kyc,
     messenger: overrides.messenger ?? buildMessenger(cfg, log),
+    storage: overrides.storage ?? buildStorage(cfg, keyring),
+    scanner: overrides.scanner ?? (cfg.MALWARE_SCANNER === 'clamd' ? new ClamdScanner(cfg.CLAMD_HOST, cfg.CLAMD_PORT) : new EicarOnlyScanner()),
     fx: overrides.fx ?? (cfg.FX_PROVIDER === 'ecb' ? new EcbFxProvider() : new StaticFxProvider(JSON.parse(cfg.FX_STATIC_RATES))),
     phoneChecker:
       overrides.phoneChecker ??
@@ -77,6 +83,11 @@ export function createContext(cfg: Config, log: Logger, overrides: Partial<Ctx> 
     log,
     apiBaseUrl: overrides.apiBaseUrl ?? apiBaseUrl,
   };
+}
+
+function buildStorage(cfg: Config, keyring: Keyring): FileStorage {
+  if (cfg.STORAGE_PROVIDER === 's3') return new S3Storage(required(cfg.S3_BUCKET, 'S3_BUCKET'), cfg.S3_REGION, cfg.S3_ENDPOINT);
+  return new LocalEncryptedStorage(cfg.STORAGE_DIR, keyring);
 }
 
 function buildMessenger(cfg: Config, log: Logger): Messenger {

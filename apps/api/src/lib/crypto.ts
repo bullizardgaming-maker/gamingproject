@@ -40,6 +40,27 @@ export class Keyring {
     return [this.current, iv.toString('base64'), cipher.getAuthTag().toString('base64'), data.toString('base64')].join(':');
   }
 
+  /** Binary variant: [version length][version][iv 12][tag 16][data]. */
+  encryptBytes(plain: Buffer, aad = ''): Buffer {
+    const iv = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', this.keys.get(this.current)!, iv);
+    cipher.setAAD(Buffer.from(aad));
+    const data = Buffer.concat([cipher.update(plain), cipher.final()]);
+    const v = Buffer.from(this.current);
+    return Buffer.concat([Buffer.from([v.length]), v, iv, cipher.getAuthTag(), data]);
+  }
+
+  decryptBytes(blob: Buffer, aad = ''): Buffer {
+    const vlen = blob[0]!;
+    const key = this.keys.get(blob.subarray(1, 1 + vlen).toString());
+    if (!key) throw new Error('unknown key version');
+    const o = 1 + vlen;
+    const decipher = createDecipheriv('aes-256-gcm', key, blob.subarray(o, o + 12));
+    decipher.setAAD(Buffer.from(aad));
+    decipher.setAuthTag(blob.subarray(o + 12, o + 28));
+    return Buffer.concat([decipher.update(blob.subarray(o + 28)), decipher.final()]);
+  }
+
   decrypt(ciphertext: string, aad = ''): string {
     const [version, iv, tag, data] = ciphertext.split(':');
     const key = this.keys.get(version ?? '');
