@@ -11,7 +11,7 @@ import { withScope } from './events.js';
 import { applyRiskActions, assessOrder, recordSignals, subnetOf } from './fraud.js';
 import { availableCount, markDelivered, releaseReservation, reserveInventory, reserveManualStock, storeManualDelivery } from './inventory.js';
 import { accountId, orderEscrowBalance, post } from './ledger.js';
-import { centsToTokenUnits } from './web3.js';
+import { centsToTokenUnits, orderIdToBytes32 } from './web3.js';
 import { enqueueWebhook } from './webhooks.js';
 
 export type OrderStatus = 'awaiting_payment' | 'paid' | 'delivered' | 'completed' | 'disputed' | 'refunded' | 'cancelled' | 'charged_back';
@@ -220,8 +220,10 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
   });
 
   if (input.rail === 'crypto') {
-    await ctx.db.query(`UPDATE orders SET payment_provider = 'escrow_contract', payment_ref = $2 WHERE id = $1`, [order.id, order.id]);
-    return { order: { ...order, payment_provider: 'escrow_contract', payment_ref: order.id }, checkoutUrl: null, replayed: false };
+    // payment_ref holds the bytes32 order id used on-chain, so the indexer can map events back.
+    const chainRef = orderIdToBytes32(order.id);
+    await ctx.db.query(`UPDATE orders SET payment_provider = 'escrow_contract', payment_ref = $2 WHERE id = $1`, [order.id, chainRef]);
+    return { order: { ...order, payment_provider: 'escrow_contract', payment_ref: chainRef }, checkoutUrl: null, replayed: false };
   }
 
   try {
@@ -500,7 +502,10 @@ export async function cancelOrder(ctx: Ctx, orderId: string, actorId: string | n
 export async function cancelUnpaidExpired(ctx: Ctx, limit = 200): Promise<number> {
   const due = await many<{ id: string }>(
     ctx.db,
-    `SELECT id FROM orders WHERE status = 'awaiting_payment' AND rail = 'fiat' AND payment_expires_at <= now() LIMIT $1`,
+    // Crypto orders get an extra hour so a deposit mined right at expiry is still indexed before we give up.
+    `SELECT id FROM orders WHERE status = 'awaiting_payment'
+        AND payment_expires_at <= now() - CASE rail WHEN 'crypto' THEN interval '1 hour' ELSE interval '0' END
+      LIMIT $1`,
     [limit],
   );
   let n = 0;

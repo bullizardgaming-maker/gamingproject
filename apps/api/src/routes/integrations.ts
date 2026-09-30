@@ -52,7 +52,8 @@ export async function integrationRoutes(app: FastifyInstance, ctx: Ctx) {
       const order = await orderByRef(ref);
       if (!order) throw notFound('Checkout session');
       reply.header('Content-Type', 'text/html; charset=utf-8');
-      reply.header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'");
+      // form-action also governs the post-submit redirect back to the web app.
+      reply.header('Content-Security-Policy', `default-src 'none'; style-src 'unsafe-inline'; form-action 'self' ${new URL(ctx.cfg.PUBLIC_WEB_URL).origin}`);
       return `<!doctype html><html><head><meta charset="utf-8"><title>Mock Hosted Checkout</title>
 <style>body{font:15px system-ui;background:#0b0f17;color:#e6e9ef;display:grid;place-items:center;min-height:100vh;margin:0}
 form{background:#141a26;padding:28px;border-radius:12px;width:340px}button{width:100%;padding:12px;border:0;border-radius:8px;background:#3ddc97;font-weight:600;margin-top:16px;cursor:pointer}

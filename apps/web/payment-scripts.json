@@ -1,0 +1,12 @@
+{
+  "$comment": "PCI DSS 4.0.1 req. 6.4.3 inventory of every script loaded on pages that initiate payment. Each entry needs a business justification. scripts/verify-payment-scripts.mjs fails the build if the built page loads a script that is not listed here or whose integrity hash changed.",
+  "allowedOrigins": ["self"],
+  "scripts": [
+    {
+      "pattern": "^/assets/index-[A-Za-z0-9_-]+\\.js$",
+      "owner": "web team",
+      "justification": "First-party application bundle (routing, checkout redirect to the PSP's hosted page). Card data is never collected by this bundle."
+    }
+  ],
+  "thirdParty": []
+}

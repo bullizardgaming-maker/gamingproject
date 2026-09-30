@@ -25,7 +25,7 @@ const Env = z.object({
   OFFPLATFORM_SUSPEND_STRIKES: z.coerce.number().default(3),
   ORDER_PAYMENT_TTL_MINUTES: z.coerce.number().default(30),
   TOS_VERSION: z.string().default('2026-09-01'),
-  RUN_WORKER_IN_PROCESS: z.coerce.boolean().default(true),
+  RUN_WORKER_IN_PROCESS: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
   // Web3 escrow
   ESCROW_CHAIN_ID: z.coerce.number().default(31337),
   ESCROW_CONTRACT_ADDRESS: z.string().default('0x0000000000000000000000000000000000000000'),
@@ -33,6 +33,8 @@ const Env = z.object({
   ESCROW_TOKEN_USDC: z.string().default('0x0000000000000000000000000000000000000000'),
   ESCROW_TOKEN_USDT: z.string().default('0x0000000000000000000000000000000000000000'),
   CRYPTO_INDEXER_SECRET: z.string().default('dev-only-indexer-secret'),
+  ESCROW_RPC_URL: z.string().optional(),
+  ESCROW_START_BLOCK: z.coerce.number().default(0),
 });
 
 export type Config = z.infer<typeof Env>;
