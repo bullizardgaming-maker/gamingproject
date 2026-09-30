@@ -15,7 +15,7 @@ export interface IntegrityCheck {
   detail?: unknown;
 }
 
-const APPEND_ONLY = ['ledger_entries', 'chat_messages', 'order_events', 'offer_snapshots', 'admin_audit_log'];
+const APPEND_ONLY = ['ledger_entries', 'chat_messages', 'order_events', 'offer_snapshots', 'admin_audit_log', 'invoices'];
 const MIGRATIONS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../migrations');
 
 export async function checkIntegrity(q: Queryable, opts: { chatSample?: number } = {}) {

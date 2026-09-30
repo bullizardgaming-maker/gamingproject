@@ -11,7 +11,7 @@ beforeAll(async () => {
 });
 afterAll(async () => h.close());
 
-async function platformBalance(kind: 'escrow' | 'treasury' | 'reserve' | 'gateway_clearing') {
+async function platformBalance(kind: 'escrow' | 'treasury' | 'reserve' | 'gateway_clearing' | 'tax_payable') {
   return balance(h.ctx.db, await accountId(h.ctx.db, kind, 'USD'));
 }
 
@@ -86,8 +86,10 @@ describe('auto-delivery with 72h inspection escrow', () => {
     // 50.00 at 9.99% -> 5.00 commission (rounded), 45.00 to seller; 10% of commission to reserve.
     expect(await sellerAvailable(h.ctx.db, seller.id)).toBe(45_00);
     expect(await platformBalance('escrow')).toBe(0);
-    expect((await platformBalance('treasury')) + (await platformBalance('reserve'))).toBe(5_00);
+    // Commission is VAT-inclusive: the platform-country VAT inside it (IE 23%: 5.00 * 23/123) is owed to the tax office.
+    expect((await platformBalance('treasury')) + (await platformBalance('reserve')) + (await platformBalance('tax_payable'))).toBe(5_00);
     expect(await platformBalance('reserve')).toBe(50);
+    expect(await platformBalance('tax_payable')).toBe(93);
 
     // Webhooks: signed, idempotency key, delivered.
     const received: Array<{ headers: Record<string, string>; body: string }> = [];

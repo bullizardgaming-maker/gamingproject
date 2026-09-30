@@ -21,7 +21,8 @@ describe('platform earnings withdrawals', () => {
     await buyer.api.post(`/v1/orders/${order.id}/confirm`);
 
     const bal = (await a1.api.get('/v1/admin/treasury')).body.balance;
-    expect(bal.treasuryCents).toBe(9_99 - 99); // commission minus the 10% reserve share (rounded down)
+    // Commission minus the 10% reserve share (rounded down) and the VAT inside it (IE 23%: 9.99 * 23/123 = 1.87).
+    expect(bal.treasuryCents).toBe(9_99 - 99 - 1_87);
     expect((await a1.api.post('/v1/admin/treasury/withdrawals', { amountCents: bal.treasuryCents + 1, note: 'too much' })).status).toBe(400);
 
     const w = (await a1.api.post('/v1/admin/treasury/withdrawals', { amountCents: 5_00, note: 'October revenue' })).body;
@@ -31,7 +32,7 @@ describe('platform earnings withdrawals', () => {
     expect(paid.status).toBe('paid');
     expect(paid.provider_ref).toMatch(/^mock_po_/);
     expect((await a2.api.post(`/v1/admin/treasury/withdrawals/${w.id}/decide`, { approve: true })).body.error.code).toBe('already_decided');
-    expect((await a1.api.get('/v1/admin/treasury')).body.balance.treasuryCents).toBe(9_00 - 5_00);
+    expect((await a1.api.get('/v1/admin/treasury')).body.balance.treasuryCents).toBe(9_99 - 99 - 1_87 - 5_00);
 
     // PSP now holds: 100.00 captured - 5.00 paid to the company bank (the seller hasn't withdrawn).
     const mock = h.ctx.payments as MockPaymentProvider;

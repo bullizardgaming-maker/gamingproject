@@ -10,23 +10,40 @@ import { accountId, balance, post } from './ledger.js';
  * DB constraint too). Only treasury money can leave — escrow, seller balances
  * and the chargeback reserve are never touched.
  */
+export type WithdrawalSource = 'treasury' | 'tax_payable';
+
 export async function treasuryBalance(ctx: Ctx, currency = 'USD') {
-  const [treasury, reserve, withdrawn, pending] = await Promise.all([
+  const pendingFor = (source: WithdrawalSource) =>
+    one<{ s: number }>(ctx.db, `SELECT COALESCE(SUM(amount_cents), 0)::bigint AS s FROM treasury_withdrawals WHERE status = 'pending_approval' AND currency = $1 AND source = $2`, [currency, source]);
+  const [treasury, reserve, withdrawn, taxPayable, pending, pendingTax] = await Promise.all([
     balance(ctx.db, await accountId(ctx.db, 'treasury', currency)),
     balance(ctx.db, await accountId(ctx.db, 'reserve', currency)),
     balance(ctx.db, await accountId(ctx.db, 'platform_withdrawals', currency)),
-    one<{ s: number }>(ctx.db, `SELECT COALESCE(SUM(amount_cents), 0)::bigint AS s FROM treasury_withdrawals WHERE status = 'pending_approval' AND currency = $1`, [currency]),
+    balance(ctx.db, await accountId(ctx.db, 'tax_payable', currency)),
+    pendingFor('treasury'),
+    pendingFor('tax_payable'),
   ]);
-  return { currency, treasuryCents: treasury, reserveCents: reserve, withdrawnToDateCents: withdrawn, pendingApprovalCents: pending.s, availableCents: treasury - pending.s };
+  return {
+    currency,
+    treasuryCents: treasury,
+    reserveCents: reserve,
+    withdrawnToDateCents: withdrawn,
+    pendingApprovalCents: pending.s,
+    availableCents: treasury - pending.s,
+    // VAT/GST collected on commission: not revenue; moved out only to pay it over.
+    taxPayableCents: taxPayable,
+    taxAvailableCents: taxPayable - pendingTax.s,
+  };
 }
 
-export async function requestTreasuryWithdrawal(ctx: Ctx, adminId: string, amountCents: number, note: string, currency = 'USD') {
+export async function requestTreasuryWithdrawal(ctx: Ctx, adminId: string, amountCents: number, note: string, currency = 'USD', source: WithdrawalSource = 'treasury') {
   const b = await treasuryBalance(ctx, currency);
-  if (amountCents > b.availableCents) throw badRequest('insufficient_treasury', `Only ${b.availableCents} cents of platform revenue is available`);
+  const available = source === 'treasury' ? b.availableCents : b.taxAvailableCents;
+  if (amountCents > available) throw badRequest('insufficient_treasury', `Only ${available} cents of ${source === 'treasury' ? 'platform revenue' : 'collected tax'} is available`);
   return one(
     ctx.db,
-    `INSERT INTO treasury_withdrawals (amount_cents, currency, note, requested_by) VALUES ($1, $2, $3, $4) RETURNING *`,
-    [amountCents, currency, note, adminId],
+    `INSERT INTO treasury_withdrawals (amount_cents, currency, note, requested_by, source) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+    [amountCents, currency, note, adminId, source],
   );
 }
 
@@ -42,12 +59,12 @@ export async function decideTreasuryWithdrawal(ctx: Ctx, id: string, adminId: st
     }
     // Serialize against other approvals and re-check the balance under the lock.
     await s.tx.query('SELECT pg_advisory_xact_lock(727276)');
-    const treasury = await balance(s.tx, await accountId(s.tx, 'treasury', w.currency));
-    if (w.amount_cents > treasury) throw badRequest('insufficient_treasury', 'Treasury balance is now lower than this withdrawal');
+    const source = await accountId(s.tx, w.source, w.currency);
+    if (w.amount_cents > (await balance(s.tx, source))) throw badRequest('insufficient_treasury', 'The balance is now lower than this withdrawal');
     await post(
       s.tx,
       [
-        { account: await accountId(s.tx, 'treasury', w.currency), amountCents: -w.amount_cents },
+        { account: source, amountCents: -w.amount_cents },
         { account: await accountId(s.tx, 'platform_withdrawals', w.currency), amountCents: w.amount_cents },
       ],
       `treasury_withdrawal:${w.id}`,
@@ -67,7 +84,7 @@ export async function decideTreasuryWithdrawal(ctx: Ctx, id: string, adminId: st
         s.tx,
         [
           { account: await accountId(s.tx, 'platform_withdrawals', w.currency), amountCents: -w.amount_cents },
-          { account: await accountId(s.tx, 'treasury', w.currency), amountCents: w.amount_cents },
+          { account: await accountId(s.tx, w.source, w.currency), amountCents: w.amount_cents },
         ],
         `treasury_withdrawal_failed:${w.id}`,
       );

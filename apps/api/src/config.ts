@@ -68,6 +68,15 @@ const Env = z.object({
   FX_STATIC_RATES: z.string().default('{"EUR":0.92,"GBP":0.79}'),
   FX_SPREAD_BPS: z.coerce.number().int().min(0).max(1000).default(100),
   FX_MAX_AGE_HOURS: z.coerce.number().default(48),
+  // Tax on commission and invoices. The platform's legal entity:
+  PLATFORM_LEGAL_NAME: z.string().default('Bullizard Ltd'),
+  PLATFORM_TAX_COUNTRY: z.string().length(2).toUpperCase().default('IE'),
+  PLATFORM_VAT_ID: z.string().optional(),
+  PLATFORM_ADDRESS: z.string().default(''),
+  // Non-EU countries where the platform is registered for VAT/GST on digital services (e.g. "GB,NO").
+  TAX_REGISTERED_COUNTRIES: z.string().default(''),
+  VAT_VALIDATION: z.enum(['none', 'vies']).default('none'),
+  INVOICE_SERIES: z.string().regex(/^[A-Z0-9-]{1,10}$/).default('BZ'),
   // Promotions & referrals
   REFERRAL_REWARD_CENTS: z.coerce.number().int().min(0).default(500),
   REFERRAL_MIN_ORDER_CENTS: z.coerce.number().int().min(0).default(1000),

@@ -12,6 +12,7 @@ import { applyRiskActions, assessOrder, recordSignals, subnetOf } from './fraud.
 import { availableCount, markDelivered, releaseReservation, reserveInventory, reserveManualStock, storeManualDelivery } from './inventory.js';
 import { accountId, orderEscrowBalance, post } from './ledger.js';
 import { centsToTokenUnits, orderIdToBytes32 } from './web3.js';
+import { taxForCommission } from './tax.js';
 import { enqueueWebhook } from './webhooks.js';
 import { enqueueEmail } from './notifications.js';
 import { assertSupported, getRate } from './fx.js';
@@ -616,17 +617,31 @@ export async function deliverManually(ctx: Ctx, orderId: string, sellerId: strin
 // ---------------------------------------------------------------------------
 // Completion / release
 // ---------------------------------------------------------------------------
+/** The commission is earned now, so its VAT/GST is fixed now and recorded on the order (for invoices and returns). */
+async function lockCommissionTax(ctx: Ctx, tx: Tx, order: Order) {
+  const t = await taxForCommission(ctx, tx, order.seller_id, order.commission_cents);
+  await tx.query(
+    'UPDATE orders SET tax_country = $2, tax_rate_bps = $3, tax_treatment = $4, commission_tax_cents = $5 WHERE id = $1',
+    [order.id, t.country, t.rateBps, t.treatment, t.taxCents],
+  );
+  return t.taxCents;
+}
+
 async function releaseEscrow(ctx: Ctx, s: TxScope, order: Order & { title: string }, actorId: string | null, reason: string) {
+  // Crypto orders pay the commission on-chain; its tax is recorded the same way for invoices and returns.
+  if (order.rail !== 'fiat') await lockCommissionTax(ctx, s.tx, order);
   if (order.rail === 'fiat') {
     const held = await orderEscrowBalance(s.tx, order.id, order.currency);
     if (held !== order.amount_cents) throw new Error(`escrow imbalance for order ${order.id}: ${held}`);
     const reserveCut = Math.floor((order.commission_cents * RESERVE_SHARE_BPS) / 10_000);
+    const tax = await lockCommissionTax(ctx, s.tx, order);
     await post(
       s.tx,
       [
         { account: await accountId(s.tx, 'escrow', order.currency), amountCents: -order.amount_cents },
-        { account: await accountId(s.tx, 'treasury', order.currency), amountCents: order.commission_cents - reserveCut },
+        { account: await accountId(s.tx, 'treasury', order.currency), amountCents: order.commission_cents - reserveCut - tax },
         { account: await accountId(s.tx, 'reserve', order.currency), amountCents: reserveCut },
+        { account: await accountId(s.tx, 'tax_payable', order.currency), amountCents: tax },
         { account: await accountId(s.tx, 'seller_available', order.currency, order.seller_id), amountCents: order.seller_net_cents },
       ],
       'escrow_release',

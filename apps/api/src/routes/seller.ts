@@ -11,6 +11,8 @@ import { createOffer, requireSeller, submitOwnerProof, updateOffer, uploadInvent
 import { requestWithdrawal } from '../domain/users.js';
 import { payoutStatus, startPayoutOnboarding } from '../domain/payouts.js';
 import { withdrawable } from '../domain/payoutholds.js';
+import { getTaxProfile, setTaxProfile } from '../domain/tax.js';
+import { getInvoice, invoicePdf, listInvoices } from '../domain/invoices.js';
 import { DELIVERY_FILTERS, WEBHOOK_EVENTS, createEndpoint, listDeliveries, redeliver, replayDead, rotateSecret, setEndpointActive } from '../domain/webhooks.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { me } from '../server.js';
@@ -140,6 +142,27 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.post('/seller/payout-account', async (req) => startPayoutOnboarding(ctx, me(req)));
   app.get('/seller/payout-account', async (req) => payoutStatus(ctx, me(req)));
+
+  // --- Tax profile & commission invoices -------------------------------------------------
+  app.get('/seller/tax-profile', async (req) => getTaxProfile(ctx, me(req).id));
+  app.put('/seller/tax-profile', async (req) => {
+    const body = z
+      .object({
+        country: z.string().length(2).regex(/^[A-Za-z]{2}$/),
+        isBusiness: z.boolean(),
+        taxId: z.string().trim().max(20).nullable().optional(),
+        billingAddress: z.string().trim().max(300).nullable().optional(),
+      })
+      .parse(req.body);
+    return setTaxProfile(ctx, me(req).id, body);
+  });
+  app.get('/seller/invoices', async (req) => listInvoices(ctx, me(req).id));
+  app.get('/seller/invoices/:id', async (req) => getInvoice(ctx, Id.parse(req.params).id, me(req).id));
+  app.get('/seller/invoices/:id/pdf', async (req, reply) => {
+    const inv = await getInvoice(ctx, Id.parse(req.params).id, me(req).id);
+    reply.header('Content-Type', 'application/pdf').header('Content-Disposition', `attachment; filename="${inv.number}.pdf"`);
+    return reply.send(await invoicePdf(inv));
+  });
 
   app.get('/seller/payout-hold', async (req) => withdrawable(ctx, ctx.db, me(req).id));
   app.get('/seller/withdrawals', async (req) => many(ctx.db, 'SELECT * FROM withdrawals WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100', [me(req).id]));

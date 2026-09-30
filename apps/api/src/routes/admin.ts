@@ -15,6 +15,8 @@ import { createPromo, listPromos, setPromoActive } from '../domain/promos.js';
 import { withdrawable } from '../domain/payoutholds.js';
 import { retentionPolicy, runRetention } from '../domain/retention.js';
 import { keyStatus, rotateAll } from '../domain/keyrotation.js';
+import { setRate, taxReport } from '../domain/tax.js';
+import { getInvoice, invoicePdf, issueMonthlyInvoices } from '../domain/invoices.js';
 import { decideAdjustment, listAdjustments, requestAdjustment, userLedger } from '../domain/adjustments.js';
 import { decideTreasuryWithdrawal, listTreasuryWithdrawals, requestTreasuryWithdrawal, treasuryBalance } from '../domain/treasury.js';
 
@@ -210,8 +212,10 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
   app.post('/admin/treasury/withdrawals', async (req, reply) => {
     const admin = requireRole(req, 'admin');
-    const body = z.object({ amountCents: z.number().int().positive(), note: z.string().trim().min(3).max(300) }).parse(req.body);
-    const w = await requestTreasuryWithdrawal(ctx, admin.id, body.amountCents, body.note);
+    const body = z
+      .object({ amountCents: z.number().int().positive(), note: z.string().trim().min(3).max(300), source: z.enum(['treasury', 'tax_payable']).default('treasury') })
+      .parse(req.body);
+    const w = await requestTreasuryWithdrawal(ctx, admin.id, body.amountCents, body.note, ctx.cfg.SETTLEMENT_CURRENCY, body.source);
     await audit(ctx.db, req, 'treasury.withdrawal_requested', { type: 'treasury_withdrawal', id: w.id }, body);
     return reply.status(201).send(w);
   });
@@ -226,7 +230,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // --- Manual ledger corrections (four-eyes) -------------------------------------------
   const AdjustmentLine = z.object({
-    kind: z.enum(['gateway_clearing', 'escrow', 'treasury', 'reserve', 'seller_available', 'payouts', 'platform_withdrawals', 'user_credit', 'fx_pnl']),
+    kind: z.enum(['gateway_clearing', 'escrow', 'treasury', 'reserve', 'seller_available', 'payouts', 'platform_withdrawals', 'user_credit', 'fx_pnl', 'tax_payable']),
     ownerId: z.string().uuid().nullable().default(null),
     currency: z.string().length(3).toUpperCase().default(ctx.cfg.SETTLEMENT_CURRENCY),
     amountCents: z.number().int(),
@@ -279,6 +283,43 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const reencrypted = await rotateAll(ctx);
     await audit(ctx.db, req, 'keys.rotated', { type: 'keyring', id: null }, { current: ctx.keyring.currentVersion, reencrypted });
     return { reencrypted, status: await keyStatus(ctx) };
+  });
+
+  // --- Tax ------------------------------------------------------------------------------
+  app.get('/admin/tax/report', async (req, reply) => {
+    requireRole(req, 'admin');
+    const q = z.object({ from: z.string().date(), to: z.string().date(), format: z.enum(['json', 'csv']).default('json') }).parse(req.query);
+    const rows = await taxReport(ctx, q.from, q.to);
+    if (q.format === 'json') return rows;
+    const cols = ['country', 'treatment', 'rate_bps', 'currency', 'orders', 'commission_gross_cents', 'tax_cents', 'commission_net_cents'];
+    reply.header('Content-Type', 'text/csv').header('Content-Disposition', `attachment; filename="tax-${q.from}-${q.to}.csv"`);
+    return [cols.join(','), ...rows.map((r: any) => cols.map((c) => r[c] ?? '').join(','))].join('\n');
+  });
+  app.get('/admin/tax/rates', async (req) => {
+    requireRole(req, 'admin');
+    return many(ctx.db, 'SELECT * FROM tax_rates ORDER BY country, valid_from DESC');
+  });
+  app.put('/admin/tax/rates', async (req) => {
+    requireRole(req, 'admin');
+    const body = z
+      .object({ country: z.string().length(2), rateBps: z.number().int().min(0).max(5000), name: z.string().trim().min(1).max(20).default('VAT'), validFrom: z.string().date() })
+      .parse(req.body);
+    const row = await setRate(ctx, body.country, body.rateBps, body.name, body.validFrom);
+    await audit(ctx.db, req, 'tax.rate_set', { type: 'tax_rate', id: null }, body);
+    return row;
+  });
+  app.post('/admin/invoices/issue', async (req) => {
+    requireRole(req, 'admin');
+    const { month } = z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }).parse(req.body);
+    const res = await issueMonthlyInvoices(ctx, `${month}-01`);
+    await audit(ctx.db, req, 'invoices.issued', { type: 'invoice_period', id: null }, { month, count: res.issued.length });
+    return res;
+  });
+  app.get('/admin/invoices/:id/pdf', async (req, reply) => {
+    requireRole(req, 'admin');
+    const inv = await getInvoice(ctx, Id.parse(req.params).id, null);
+    reply.header('Content-Type', 'application/pdf').header('Content-Disposition', `attachment; filename="${inv.number}.pdf"`);
+    return reply.send(await invoicePdf(inv));
   });
 
   app.get('/admin/retention', async (req) => {

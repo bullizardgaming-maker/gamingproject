@@ -13,6 +13,7 @@ import type { KycProvider } from './providers/kyc/types.js';
 import { EcbFxProvider, StaticFxProvider, type FxProvider } from './domain/fx.js';
 import { ClamdScanner, EicarOnlyScanner, LocalEncryptedStorage, S3Storage, type FileStorage, type MalwareScanner } from './providers/files.js';
 import { AwsKmsSigner, LocalKeySigner, type EscrowSigner } from './providers/signer.js';
+import { NoVatValidator, ViesValidator, type VatValidator } from './providers/vat.js';
 import { NoCaptcha, SiteverifyCaptcha, type CaptchaVerifier } from './providers/captcha.js';
 import {
   ConsoleMessenger,
@@ -47,6 +48,7 @@ export interface Ctx {
   storage: FileStorage;
   scanner: MalwareScanner;
   captcha: CaptchaVerifier;
+  vat: VatValidator;
   /** Null when crypto escrow is not configured. */
   escrowSigner: EscrowSigner | null;
   log: Logger;
@@ -86,6 +88,7 @@ export function createContext(cfg: Config, log: Logger, overrides: Partial<Ctx> 
     captcha:
       overrides.captcha ??
       (cfg.CAPTCHA_PROVIDER === 'none' ? new NoCaptcha() : new SiteverifyCaptcha(cfg.CAPTCHA_PROVIDER, required(cfg.CAPTCHA_SECRET, 'CAPTCHA_SECRET'))),
+    vat: overrides.vat ?? (cfg.VAT_VALIDATION === 'vies' ? new ViesValidator() : new NoVatValidator()),
     escrowSigner:
       overrides.escrowSigner !== undefined
         ? overrides.escrowSigner
