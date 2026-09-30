@@ -167,6 +167,11 @@ export const TEMPLATES = {
     subject: (d) => `Your commission invoice ${d.number}`,
     body: (d, link) => `Invoice ${d.number} for ${d.period} is ready: commission ${money(d.gross_cents, d.currency)}, of which tax ${money(d.tax_cents, d.currency)}. It was already deducted from your sales.\n\n${link('/sell/invoices')}`,
   },
+  staff_roles_changed: {
+    category: 'security',
+    subject: () => 'Your staff access changed',
+    body: (d, link) => `Your Bullizard staff roles are now: ${d.roles.length ? d.roles.join(', ') : 'none'} (changed by ${d.by}). If this is unexpected, contact security immediately. ${link('/account')}`,
+  },
   account_locked: {
     category: 'security',
     subject: () => 'Sign-in paused after failed attempts',

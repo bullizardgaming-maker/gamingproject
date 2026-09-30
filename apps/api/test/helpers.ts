@@ -67,7 +67,7 @@ export function client(app: FastifyInstance, token?: string, headers: Record<str
 let seq = 0;
 
 /** Register a user and fast-path them to the requested tier/role. */
-export async function makeUser(h: Harness, opts: { tier?: 0 | 1 | 2; role?: 'user' | 'arbiter' | 'admin'; device?: string; ip?: string; name?: string } = {}) {
+export async function makeUser(h: Harness, opts: { tier?: 0 | 1 | 2; role?: 'user' | 'arbiter' | 'support' | 'finance' | 'compliance' | 'admin'; device?: string; ip?: string; name?: string } = {}) {
   seq++;
   const email = `user${seq}_${Date.now()}@example.com`;
   const res = await client(h.app, undefined, {

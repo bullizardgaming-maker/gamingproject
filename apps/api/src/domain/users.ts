@@ -18,7 +18,8 @@ export interface User {
   id: string;
   email: string;
   display_name: string;
-  role: 'user' | 'arbiter' | 'admin';
+  role: 'user' | 'arbiter' | 'support' | 'finance' | 'compliance' | 'admin';
+  staff_roles: string[];
   kyc_tier: number;
   status: 'active' | 'suspended';
   email_verified_at: string | null;
@@ -37,7 +38,7 @@ export interface User {
 }
 
 export const PUBLIC_USER_COLUMNS =
-  'id, email, display_name, role, kyc_tier, status, email_verified_at, phone, phone_verified_at, withdrawals_frozen, stripe_account_id, legal_name, created_at, (totp_enabled_at IS NOT NULL) AS totp_enabled, payouts_enabled';
+  'id, email, display_name, role, kyc_tier, status, email_verified_at, phone, phone_verified_at, withdrawals_frozen, stripe_account_id, legal_name, created_at, (totp_enabled_at IS NOT NULL) AS totp_enabled, payouts_enabled, staff_roles';
 
 // ---------------------------------------------------------------------------
 // Authentication. Sessions live in ./sessions.ts (15-minute access tokens +

@@ -60,7 +60,12 @@ describe.skipIf(!hasRedis)('shared rate limits', () => {
   it('counts requests across API nodes through Redis', async () => {
     const cfg = loadConfig({ REDIS_URL, RATE_LIMIT_PER_MINUTE: '5', TRUST_PROXY: 'true' } as any);
     const nodes = await Promise.all([0, 1].map(async () => buildApp(createContext(cfg, { info() {}, warn() {}, error() {} }, { db: h.ctx.db, pubsub: new MemoryPubSub() }))));
-    const ip = `198.51.100.${Math.floor(Math.random() * 200) + 1}`;
+    const ip = `198.51.${Math.floor(Math.random() * 256)}.${Math.floor(Math.random() * 254) + 1}`;
+    // Start from a clean counter for this IP (a previous run within the minute may have used it).
+    const r = new Redis(REDIS_URL);
+    const stale = await r.keys(`bz-rl:*${ip}*`);
+    if (stale.length) await r.del(...stale);
+    r.disconnect();
     const statuses: number[] = [];
     for (let i = 0; i < 8; i++) {
       const res = await nodes[i % 2]!.inject({ method: 'GET', url: '/v1/categories', headers: { 'x-forwarded-for': ip } });

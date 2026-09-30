@@ -13,6 +13,7 @@ import { availableCount, markDelivered, releaseReservation, reserveInventory, re
 import { accountId, orderEscrowBalance, post } from './ledger.js';
 import { centsToTokenUnits, orderIdToBytes32 } from './web3.js';
 import { taxForCommission } from './tax.js';
+import { hasPermission } from './permissions.js';
 import { sellerLeg, sellerRateFor } from './sellerfx.js';
 import { enqueueWebhook } from './webhooks.js';
 import { enqueueEmail } from './notifications.js';
@@ -890,7 +891,7 @@ export async function getOrderFor(q: Queryable, orderId: string, user: { id: str
     [orderId],
   );
   if (!order) throw notFound('Order');
-  const staff = user.role === 'admin' || user.role === 'arbiter';
+  const staff = hasPermission(user, 'orders.view_any');
   if (!staff && order.buyer_id !== user.id && order.seller_id !== user.id) throw notFound('Order');
   const [checklist, dispute, events, review] = await Promise.all([
     maybeOne(q, 'SELECT items, completed_at FROM security_checklists WHERE order_id = $1', [orderId]),

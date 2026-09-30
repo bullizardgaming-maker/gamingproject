@@ -18,7 +18,7 @@ export async function audit(
   const actor = req.user!;
   await q.query(
     `INSERT INTO admin_audit_log (actor_id, actor_role, action, target_type, target_id, details, ip) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [actor.id, actor.role, action, target.type, target.id ?? null, JSON.stringify(details), req.ip],
+    [actor.id, [actor.role, ...(actor.staff_roles ?? [])].filter((r) => r !== 'user').join(',') || actor.role, action, target.type, target.id ?? null, JSON.stringify(details), req.ip],
   );
 }
 

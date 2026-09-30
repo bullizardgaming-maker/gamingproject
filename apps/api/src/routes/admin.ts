@@ -1,15 +1,17 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Ctx } from '../context.js';
-import { many, maybeOne } from '../db.js';
+import { many, maybeOne, one } from '../db.js';
 import { receiveChargeback } from '../domain/chargebacks.js';
 import { withScope } from '../domain/events.js';
 import { reviewOwnerProof } from '../domain/offers.js';
 import { resolveDispute } from '../domain/orders.js';
 import { setReviewHidden } from '../domain/reviews.js';
 import { runReconciliation } from '../domain/reconciliation.js';
-import { notFound } from '../lib/errors.js';
-import { requireRole } from '../server.js';
+import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
+import { ROLE_PERMISSIONS, STAFF_ROLES, permissionsOf, rolesOf } from '../domain/permissions.js';
+import { notify } from '../domain/notifications.js';
+import { requirePermission } from '../server.js';
 import { audit, listAudit } from '../domain/audit.js';
 import { createPromo, listPromos, setPromoActive } from '../domain/promos.js';
 import { withdrawable } from '../domain/payoutholds.js';
@@ -26,7 +28,7 @@ const Id = z.object({ id: z.string().uuid() });
 export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   // --- Arbitration -------------------------------------------------------------------
   app.get('/admin/disputes', async (req) => {
-    requireRole(req, 'arbiter', 'admin');
+    requirePermission(req, 'disputes.manage');
     return many(
       ctx.db,
       `SELECT d.*, o.amount_cents, o.currency, o.buyer_id, o.seller_id, r.id AS room_id
@@ -36,7 +38,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   app.post('/admin/disputes/:id/resolve', async (req) => {
-    const arbiter = requireRole(req, 'arbiter', 'admin');
+    const arbiter = requirePermission(req, 'disputes.manage');
     const body = z.object({ outcome: z.enum(['buyer', 'seller']), note: z.string().min(3).max(2_000) }).parse(req.body);
     const { id } = Id.parse(req.params);
     const res = await resolveDispute(ctx, id, arbiter.id, body.outcome, body.note);
@@ -46,7 +48,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // --- Fraud review queue ---------------------------------------------------------------
   app.get('/admin/risk-flags', async (req) => {
-    requireRole(req, 'admin');
+    requirePermission(req, 'risk.review');
     return many(
       ctx.db,
       `SELECT f.*, u.email, u.display_name, u.withdrawals_frozen FROM risk_flags f JOIN users u ON u.id = f.user_id
@@ -56,7 +58,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   /** Clear (false positive: unfreeze) or confirm (fraud: suspend) a flagged user. */
   app.post('/admin/risk-flags/:id/review', async (req) => {
-    const admin = requireRole(req, 'admin');
+    const admin = requirePermission(req, 'risk.review');
     const { decision } = z.object({ decision: z.enum(['clear', 'confirm']) }).parse(req.body);
     return withScope(ctx, async (s) => {
       const flag = await maybeOne(s.tx, 'SELECT * FROM risk_flags WHERE id = $1 FOR UPDATE', [Id.parse(req.params).id]);
@@ -83,7 +85,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // --- Original Owner Proof review -------------------------------------------------------
   app.get('/admin/owner-proofs', async (req) => {
-    requireRole(req, 'arbiter', 'admin');
+    requirePermission(req, 'owner_proofs.review');
     return many(
       ctx.db,
       `SELECT p.id, p.offer_id, p.seller_id, p.registration_email, p.registration_date, p.billing_name, p.status, p.created_at,
@@ -94,7 +96,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   app.post('/admin/owner-proofs/:id/review', async (req) => {
-    const reviewer = requireRole(req, 'arbiter', 'admin');
+    const reviewer = requirePermission(req, 'owner_proofs.review');
     const body = z.object({ approve: z.boolean(), note: z.string().max(1_000).optional() }).parse(req.body);
     const { id } = Id.parse(req.params);
     const res = await reviewOwnerProof(ctx, id, reviewer.id, body.approve, body.note);
@@ -104,7 +106,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // --- Chargebacks -------------------------------------------------------------------------
   app.get('/admin/chargebacks', async (req) => {
-    requireRole(req, 'admin');
+    requirePermission(req, 'chargebacks.manage');
     return many(
       ctx.db,
       `SELECT id, order_id, provider_ref, network, reason_code, category, amount_cents, received_at, respond_by, status, packet_sha256
@@ -114,7 +116,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   /** Manual intake (e.g. a chargeback notified by email from an acquirer without webhooks). */
   app.post('/admin/chargebacks', async (req, reply) => {
-    requireRole(req, 'admin');
+    requirePermission(req, 'chargebacks.manage');
     const body = z
       .object({
         orderId: z.string().uuid(),
@@ -131,7 +133,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   app.get('/admin/chargebacks/:id/packet.pdf', async (req, reply) => {
-    requireRole(req, 'admin');
+    requirePermission(req, 'chargebacks.manage');
     const { id } = Id.parse(req.params);
     const row = await maybeOne(ctx.db, 'SELECT packet_pdf FROM chargebacks WHERE id = $1', [id]);
     if (!row?.packet_pdf) throw notFound('Representment packet');
@@ -141,7 +143,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   app.post('/admin/reviews/:id/hide', async (req) => {
-    requireRole(req, 'arbiter', 'admin');
+    requirePermission(req, 'reviews.moderate');
     const body = z.object({ hidden: z.boolean().default(true), reason: z.string().min(3).max(200) }).parse(req.body);
     const { id } = Id.parse(req.params);
     const res = await setReviewHidden(ctx, id, body.hidden, body.reason);
@@ -150,7 +152,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   app.post('/admin/users/:id/suspend', async (req) => {
-    requireRole(req, 'admin');
+    requirePermission(req, 'users.suspend');
     const { reason } = z.object({ reason: z.string().min(3).max(500) }).parse(req.body);
     const { id } = Id.parse(req.params);
     await ctx.db.query(`UPDATE users SET status = 'suspended', suspension_reason = $2 WHERE id = $1`, [id, reason]);
@@ -159,12 +161,12 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   app.get('/admin/reconciliation', async (req) => {
-    requireRole(req, 'admin');
+    requirePermission(req, 'reconciliation.run');
     return many(ctx.db, 'SELECT id, started_at, finished_at, status, report FROM reconciliation_runs ORDER BY started_at DESC LIMIT 30');
   });
 
   app.post('/admin/reconciliation/run', async (req) => {
-    requireRole(req, 'admin');
+    requirePermission(req, 'reconciliation.run');
     const run = await runReconciliation(ctx);
     await audit(ctx.db, req, 'reconciliation.run', { type: 'reconciliation_run', id: run.id }, { status: run.status });
     return run;
@@ -172,11 +174,11 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // --- Promo codes --------------------------------------------------------------------------
   app.get('/admin/promos', async (req) => {
-    requireRole(req, 'admin');
+    requirePermission(req, 'promos.manage');
     return listPromos(ctx);
   });
   app.post('/admin/promos', async (req, reply) => {
-    const admin = requireRole(req, 'admin');
+    const admin = requirePermission(req, 'promos.manage');
     const body = z
       .object({
         code: z.string().trim().min(3).max(40).regex(/^[A-Za-z0-9_-]+$/),
@@ -198,7 +200,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return reply.status(201).send(promo);
   });
   app.patch('/admin/promos/:id', async (req) => {
-    requireRole(req, 'admin');
+    requirePermission(req, 'promos.manage');
     const { active } = z.object({ active: z.boolean() }).parse(req.body);
     const { id } = Id.parse(req.params);
     const res = await setPromoActive(ctx, id, active);
@@ -208,11 +210,11 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // --- Platform earnings (four-eyes) ------------------------------------------------------
   app.get('/admin/treasury', async (req) => {
-    requireRole(req, 'admin');
+    requirePermission(req, 'treasury.request');
     return { balance: await treasuryBalance(ctx), withdrawals: await listTreasuryWithdrawals(ctx) };
   });
   app.post('/admin/treasury/withdrawals', async (req, reply) => {
-    const admin = requireRole(req, 'admin');
+    const admin = requirePermission(req, 'treasury.request');
     const body = z
       .object({ amountCents: z.number().int().positive(), note: z.string().trim().min(3).max(300), source: z.enum(['treasury', 'tax_payable']).default('treasury') })
       .parse(req.body);
@@ -221,7 +223,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return reply.status(201).send(w);
   });
   app.post('/admin/treasury/withdrawals/:id/decide', async (req) => {
-    const admin = requireRole(req, 'admin');
+    const admin = requirePermission(req, 'treasury.approve');
     const { approve } = z.object({ approve: z.boolean() }).parse(req.body);
     const { id } = Id.parse(req.params);
     const res = await decideTreasuryWithdrawal(ctx, id, admin.id, approve);
@@ -237,18 +239,18 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     amountCents: z.number().int(),
   });
   app.get('/admin/ledger/adjustments', async (req) => {
-    requireRole(req, 'admin');
+    requirePermission(req, 'ledger.adjust');
     return listAdjustments(ctx);
   });
   app.post('/admin/ledger/adjustments', async (req, reply) => {
-    const admin = requireRole(req, 'admin');
+    const admin = requirePermission(req, 'ledger.adjust');
     const body = z.object({ reason: z.string().trim().min(10).max(1_000), orderId: z.string().uuid().optional(), lines: z.array(AdjustmentLine).min(2).max(10) }).parse(req.body);
     const a = await requestAdjustment(ctx, admin.id, body);
     await audit(ctx.db, req, 'ledger.adjustment_requested', { type: 'ledger_adjustment', id: a.id }, body);
     return reply.status(201).send(a);
   });
   app.post('/admin/ledger/adjustments/:id/decide', async (req) => {
-    const admin = requireRole(req, 'admin');
+    const admin = requirePermission(req, 'ledger.adjust');
     const { approve } = z.object({ approve: z.boolean() }).parse(req.body);
     const { id } = Id.parse(req.params);
     const res = await decideAdjustment(ctx, id, admin.id, approve);
@@ -256,14 +258,14 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return res;
   });
   app.get('/admin/users/:id/ledger', async (req) => {
-    requireRole(req, 'admin');
+    requirePermission(req, 'ledger.view');
     const { id } = Id.parse(req.params);
     await audit(ctx.db, req, 'ledger.user_viewed', { type: 'user', id });
     return userLedger(ctx, id);
   });
 
   app.put('/admin/users/:id/payout-hold', async (req) => {
-    requireRole(req, 'admin');
+    requirePermission(req, 'payout_holds.set');
     const { id } = Id.parse(req.params);
     const { days, reason } = z.object({ days: z.number().int().min(0).max(90).nullable(), reason: z.string().trim().min(3).max(300) }).parse(req.body);
     await ctx.db.query('UPDATE users SET payout_hold_days = $2 WHERE id = $1', [id, days]);
@@ -273,14 +275,14 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // --- Encryption keys & escrow signer --------------------------------------------------
   app.get('/admin/keys', async (req) => {
-    requireRole(req, 'admin');
+    requirePermission(req, 'keys.manage');
     return {
       data: await keyStatus(ctx),
       escrowSigner: ctx.escrowSigner ? { kind: ctx.escrowSigner.kind, address: await ctx.escrowSigner.address() } : null,
     };
   });
   app.post('/admin/keys/rotate', async (req) => {
-    requireRole(req, 'admin');
+    requirePermission(req, 'keys.manage');
     const reencrypted = await rotateAll(ctx);
     await audit(ctx.db, req, 'keys.rotated', { type: 'keyring', id: null }, { current: ctx.keyring.currentVersion, reencrypted });
     return { reencrypted, status: await keyStatus(ctx) };
@@ -288,11 +290,11 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // --- Currency position (sellers paid in EUR/GBP) ---------------------------------------
   app.get('/admin/fx/position', async (req) => {
-    requireRole(req, 'admin');
+    requirePermission(req, 'fx.manage');
     return { positions: await fxPosition(ctx), conversions: await many(ctx.db, 'SELECT * FROM fx_conversions ORDER BY created_at DESC LIMIT 50') };
   });
   app.post('/admin/fx/conversions', async (req, reply) => {
-    const admin = requireRole(req, 'admin');
+    const admin = requirePermission(req, 'fx.manage');
     const body = z
       .object({ fromCurrency: z.string().length(3), fromCents: z.number().int().positive(), toCurrency: z.string().length(3), toCents: z.number().int().positive(), reference: z.string().trim().min(3).max(200) })
       .parse(req.body);
@@ -303,7 +305,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // --- Tax ------------------------------------------------------------------------------
   app.get('/admin/tax/report', async (req, reply) => {
-    requireRole(req, 'admin');
+    requirePermission(req, 'tax.manage');
     const q = z.object({ from: z.string().date(), to: z.string().date(), format: z.enum(['json', 'csv']).default('json') }).parse(req.query);
     const rows = await taxReport(ctx, q.from, q.to);
     if (q.format === 'json') return rows;
@@ -312,11 +314,11 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return [cols.join(','), ...rows.map((r: any) => cols.map((c) => r[c] ?? '').join(','))].join('\n');
   });
   app.get('/admin/tax/rates', async (req) => {
-    requireRole(req, 'admin');
+    requirePermission(req, 'tax.manage');
     return many(ctx.db, 'SELECT * FROM tax_rates ORDER BY country, valid_from DESC');
   });
   app.put('/admin/tax/rates', async (req) => {
-    requireRole(req, 'admin');
+    requirePermission(req, 'tax.manage');
     const body = z
       .object({ country: z.string().length(2), rateBps: z.number().int().min(0).max(5000), name: z.string().trim().min(1).max(20).default('VAT'), validFrom: z.string().date() })
       .parse(req.body);
@@ -325,32 +327,70 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return row;
   });
   app.post('/admin/invoices/issue', async (req) => {
-    requireRole(req, 'admin');
+    requirePermission(req, 'invoices.manage');
     const { month } = z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }).parse(req.body);
     const res = await issueMonthlyInvoices(ctx, `${month}-01`);
     await audit(ctx.db, req, 'invoices.issued', { type: 'invoice_period', id: null }, { month, count: res.issued.length });
     return res;
   });
   app.get('/admin/invoices/:id/pdf', async (req, reply) => {
-    requireRole(req, 'admin');
+    requirePermission(req, 'invoices.manage');
     const inv = await getInvoice(ctx, Id.parse(req.params).id, null);
     reply.header('Content-Type', 'application/pdf').header('Content-Disposition', `attachment; filename="${inv.number}.pdf"`);
     return reply.send(await invoicePdf(inv));
   });
 
   app.get('/admin/retention', async (req) => {
-    requireRole(req, 'admin');
+    requirePermission(req, 'retention.manage');
     return { policy: retentionPolicy(ctx), runs: await many(ctx.db, 'SELECT * FROM retention_runs ORDER BY started_at DESC LIMIT 30') };
   });
   app.post('/admin/retention/run', async (req) => {
-    requireRole(req, 'admin');
+    requirePermission(req, 'retention.manage');
     const res = await runRetention(ctx);
     await audit(ctx.db, req, 'retention.run', { type: 'retention_run', id: res.id }, res.counts);
     return res;
   });
 
+  // --- Staff & permissions -------------------------------------------------------------
+  app.get('/admin/staff', async (req) => {
+    requirePermission(req, 'staff.manage');
+    const rows = await many(
+      ctx.db,
+      `SELECT id, email, display_name, role, staff_roles, totp_enabled_at IS NOT NULL AS totp_enabled, status FROM users
+        WHERE role <> 'user' OR cardinality(staff_roles) > 0 ORDER BY display_name`,
+    );
+    return rows.map((u) => ({ ...u, permissions: [...permissionsOf(u)].sort() }));
+  });
+  app.get('/admin/roles', async (req) => {
+    requirePermission(req, 'staff.manage');
+    return ROLE_PERMISSIONS;
+  });
+  app.put('/admin/staff/:id', async (req) => {
+    const admin = requirePermission(req, 'staff.manage');
+    const { id } = Id.parse(req.params);
+    const body = z.object({ roles: z.array(z.enum(STAFF_ROLES)).max(5), reason: z.string().trim().min(3).max(300) }).parse(req.body);
+    if (id === admin.id) throw forbidden('self_change', 'Ask another admin to change your own access');
+    const roles = [...new Set(body.roles)];
+    return withScope(ctx, async (s) => {
+      const target = await maybeOne(s.tx, 'SELECT id, role, staff_roles, totp_enabled_at, status FROM users WHERE id = $1 AND deleted_at IS NULL FOR UPDATE', [id]);
+      if (!target) throw notFound('User');
+      if (roles.length && req.staffMfaRequired && !target.totp_enabled_at) throw badRequest('mfa_required_for_staff', 'The user must turn on two-factor login before getting staff access');
+      // Never leave the platform without an admin.
+      if (rolesOf(target).includes('admin') && !roles.includes('admin')) {
+        await s.tx.query('SELECT pg_advisory_xact_lock(727279)');
+        const { n } = await one(s.tx, `SELECT count(*)::int AS n FROM users WHERE (role = 'admin' OR 'admin' = ANY(staff_roles)) AND status = 'active' AND deleted_at IS NULL AND id <> $1`, [id]);
+        if (n === 0) throw conflict('last_admin', 'This is the last admin');
+      }
+      const [primary, ...extra] = roles;
+      await s.tx.query('UPDATE users SET role = $2, staff_roles = $3 WHERE id = $1', [id, primary ?? 'user', extra]);
+      await audit(s.tx, req, 'staff.roles_changed', { type: 'user', id }, { from: rolesOf(target), to: roles, reason: body.reason });
+      await notify(s.tx, id, 'staff_roles_changed', { roles, by: admin.display_name });
+      return { id, roles, permissions: [...permissionsOf({ role: primary ?? 'user', staff_roles: extra })].sort() };
+    });
+  });
+
   app.get('/admin/audit', async (req) => {
-    requireRole(req, 'admin');
+    requirePermission(req, 'audit.view');
     const f = z
       .object({
         actor: z.string().uuid().optional(),
@@ -365,7 +405,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   app.get('/admin/ledger/summary', async (req) => {
-    requireRole(req, 'admin');
+    requirePermission(req, 'ledger.view');
     return many(
       ctx.db,
       `SELECT a.kind, a.currency, COALESCE(SUM(e.amount_cents), 0)::bigint AS balance_cents

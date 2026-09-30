@@ -14,6 +14,7 @@ import type { Ctx } from './context.js';
 import { AppError, forbidden, unauthorized } from './lib/errors.js';
 import { authenticateApiKey } from './domain/apikeys.js';
 import { userFromToken, type User } from './domain/users.js';
+import { hasPermission, type Permission } from './domain/permissions.js';
 import { publicRoutes } from './routes/public.js';
 import { orderRoutes } from './routes/orders.js';
 import { sellerRoutes } from './routes/seller.js';
@@ -60,9 +61,10 @@ export function me(req: FastifyRequest): User {
   return req.user;
 }
 
-export function requireRole(req: FastifyRequest, ...roles: Array<User['role']>): User {
+/** Staff routes: the signed-in user must hold `permission` through one of their roles, with a 2FA session. */
+export function requirePermission(req: FastifyRequest, permission: Permission): User {
   const user = me(req);
-  if (!roles.includes(user.role)) throw forbidden('insufficient_role', 'Insufficient permissions');
+  if (!hasPermission(user, permission)) throw forbidden('insufficient_permission', `Missing permission ${permission}`);
   if (req.staffMfaRequired && !user.session_mfa) {
     throw forbidden('mfa_required', 'Staff actions need two-factor login. Turn it on in Account, then sign in again.');
   }
@@ -147,7 +149,7 @@ export async function buildApp(ctx: Ctx, opts: { logger?: PinoLogger } = {}): Pr
   });
   await app.register(websocket, { options: { maxPayload: 64 * 1024 } });
 
-  // Session auth (optional on every route; handlers call me()/requireRole()).
+  // Session auth (optional on every route; handlers call me()/requirePermission()).
   app.addHook('onRequest', async (req) => {
     req.staffMfaRequired = staffMfaRequired;
     const header = req.headers.authorization;

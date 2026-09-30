@@ -14,6 +14,7 @@ import { REFRESH_TTL_DAYS, issueAccessToken, listSessions, refreshSession, revok
 import { enqueueEmail, getPreferences, setPreferences } from '../domain/notifications.js';
 import { AppError, unauthorized } from '../lib/errors.js';
 import { deleteAccount, exportData } from '../domain/privacy.js';
+import { isStaff as isStaffUser, permissionsOf } from '../domain/permissions.js';
 import {
   getPushPreferences, listInbox, listPushSubscriptions, markAllRead, markRead, removePushSubscription, setPushPreferences, subscribePush, unreadCount, unsubscribePush,
 } from '../domain/inbox.js';
@@ -117,6 +118,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   app.get('/me', async (req) => ({ user: me(req) }));
+  app.get('/me/permissions', async (req) => ({ permissions: [...permissionsOf(me(req))].sort() }));
 
   app.post('/me/password', strict, async (req) => {
     const body = z.object({ currentPassword: z.string(), newPassword: z.string().min(10).max(200) }).parse(req.body);
@@ -158,7 +160,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   // --- Notification centre & push ---------------------------------------------------------
-  const isStaff = (u: { role: string }) => u.role !== 'user';
+  const isStaff = (u: { role: string; staff_roles?: string[] | null }) => isStaffUser(u);
   app.get('/me/notifications', async (req) => {
     const q = z.object({ unread: z.enum(['true', 'false']).optional(), before: z.string().datetime().optional(), limit: z.coerce.number().int().positive().max(100).optional() }).parse(req.query);
     return listInbox(ctx, me(req).id, { unreadOnly: q.unread === 'true', before: q.before, limit: q.limit });
