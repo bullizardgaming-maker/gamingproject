@@ -34,6 +34,8 @@ const Env = z.object({
   TWILIO_FROM: z.string().optional(),
   // Sandbox deployments expose /v1/sandbox/* for sellers testing bots. Requires the mock payment provider.
   SANDBOX_MODE: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
+  // Undelivered manual orders are refunded automatically this long after the promised delivery time.
+  LATE_AUTO_REFUND_HOURS: z.coerce.number().int().min(1).default(48),
   RECON_INTERVAL_HOURS: z.coerce.number().default(24),
   RECON_TOLERANCE_CENTS: z.coerce.number().default(0),
   FRAUD_GNN_URL: z.string().optional(),

@@ -149,6 +149,12 @@ export class StripePaymentProvider implements PaymentProvider {
     return { url: link.url };
   }
 
+  async platformPayout(amountCents: number, currency: string, idempotencyKey: string) {
+    // A Stripe Payout from the platform balance to the platform's default bank account.
+    const payout = await this.stripe.payouts.create({ amount: amountCents, currency: currency.toLowerCase() }, { idempotencyKey });
+    return { ref: payout.id };
+  }
+
   async platformBalance(currency: string) {
     const b = await this.stripe.balance.retrieve();
     const cur = currency.toLowerCase();

@@ -58,6 +58,7 @@ export function client(app: FastifyInstance, token?: string, headers: Record<str
     get: (url: string, extra?: Record<string, string>) => call('GET', url, undefined, extra),
     post: (url: string, payload?: unknown, extra?: Record<string, string>) => call('POST', url, payload ?? {}, extra),
     patch: (url: string, payload?: unknown) => call('PATCH', url, payload),
+    put: (url: string, payload?: unknown) => call('PUT', url, payload),
     del: (url: string) => call('DELETE', url),
   };
 }

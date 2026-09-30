@@ -26,6 +26,7 @@ export const OfferBody = z.object({
   deliveryMode: z.enum(['auto', 'manual']),
   stock: z.number().int().min(0).max(1_000_000).optional(),
   lowStockThreshold: z.number().int().min(0).max(100_000).optional(),
+  deliveryHours: z.number().int().min(1).max(168).optional().describe('Promised delivery time for manual orders, in hours'),
 });
 
 export const InventoryBody = z.object({
@@ -57,6 +58,12 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
       tiers: SELLER_TIERS,
       balances: { availableCents: available, pendingEscrowCents: escrow.pending },
       withdrawalsFrozen: user.withdrawals_frozen,
+      shop: await one(
+        ctx.db,
+        `SELECT (shop_paused AND (shop_paused_until IS NULL OR shop_paused_until > now())) AS paused,
+                shop_paused_until AS until, shop_pause_message AS message FROM users WHERE id = $1`,
+        [user.id],
+      ),
       stats,
     };
   });
@@ -76,7 +83,7 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/offers', async (req, reply) => reply.status(201).send(await createOffer(ctx, me(req), OfferBody.parse(req.body))));
 
   app.patch('/offers/:id', async (req) => {
-    const body = OfferBody.pick({ title: true, description: true, priceCents: true, stock: true, lowStockThreshold: true })
+    const body = OfferBody.pick({ title: true, description: true, priceCents: true, stock: true, lowStockThreshold: true, deliveryHours: true })
       .partial()
       .extend({ version: z.number().int().min(0), status: z.enum(['active', 'paused', 'removed']).optional() })
       .parse(req.body);
@@ -109,6 +116,23 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/seller/withdrawals', async (req, reply) => {
     const { amountCents } = z.object({ amountCents: z.number().int().positive() }).parse(req.body);
     return reply.status(201).send(await requestWithdrawal(ctx, me(req).id, amountCents));
+  });
+
+  /** Holiday mode: listings disappear from the market and can't be bought until resumed (or `until` passes). */
+  app.put('/seller/shop-status', async (req) => {
+    const user = me(req);
+    const body = z
+      .object({ paused: z.boolean(), until: z.string().datetime().optional(), message: z.string().trim().max(200).optional() })
+      .parse(req.body);
+    if (body.until && new Date(body.until) <= new Date()) throw badRequest('invalid_until', 'Pick a time in the future');
+    const row = await one(
+      ctx.db,
+      `UPDATE users SET shop_paused = $2, shop_paused_until = $3, shop_pause_message = $4 WHERE id = $1
+       RETURNING shop_paused AS paused, shop_paused_until AS until, shop_pause_message AS message`,
+      [user.id, body.paused, body.paused ? body.until ?? null : null, body.paused ? body.message ?? null : null],
+    );
+    const open = await one<{ n: number }>(ctx.db, `SELECT count(*)::int AS n FROM orders WHERE seller_id = $1 AND status = 'paid'`, [user.id]);
+    return { ...row, ordersStillToDeliver: open.n };
   });
 
   app.post('/seller/payout-account', async (req) => startPayoutOnboarding(ctx, me(req)));

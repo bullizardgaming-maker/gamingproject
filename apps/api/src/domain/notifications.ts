@@ -51,6 +51,20 @@ export const TEMPLATES = {
     subject: (d) => `Refund issued for ${d.title}`,
     body: (d, link) => `${money(d.amount_cents, d.currency)} has been refunded to your original payment method. Card refunds usually appear within 5–10 business days.\n\n${link(`/orders/${d.order_id}`)}`,
   },
+  delivery_late: {
+    category: 'orders',
+    subject: (d) => `Your order is late: ${d.title}`,
+    body: (d, link) =>
+      `The seller promised delivery by ${when(d.delivery_due_at)} and hasn't delivered yet. You can wait, or cancel now for a full refund. ` +
+      `If it still isn't delivered within ${d.auto_refund_hours} hours, we refund you automatically.\n\n${link(`/orders/${d.order_id}`)}`,
+  },
+  delivery_overdue: {
+    category: 'selling',
+    subject: (d) => `Overdue: deliver ${d.title} now`,
+    body: (d, link) =>
+      `You promised delivery by ${when(d.delivery_due_at)}. The buyer can now cancel for a full refund, and the order is refunded automatically in ${d.auto_refund_hours} hours. ` +
+      `Late deliveries lower your on-time rate, which buyers see on your profile.\n\n${link(`/orders/${d.order_id}`)}`,
+  },
   protection_ending: {
     category: 'reminders',
     subject: (d) => `24 hours left to check ${d.title}`,

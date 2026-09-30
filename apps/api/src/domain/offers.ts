@@ -14,12 +14,15 @@ export interface OfferInput {
   deliveryMode: 'auto' | 'manual';
   stock?: number;
   lowStockThreshold?: number;
+  deliveryHours?: number;
 }
 
 export const OFFER_LIST_SQL = `
   SELECT f.id, f.seller_id, f.category_slug, f.game, f.title, f.description, f.price_cents, f.currency, f.delivery_mode,
          f.status, f.owner_proof_status, f.version, f.created_at, f.updated_at, f.low_stock_threshold,
-         c.kind AS category_kind, c.risk_class, u.display_name AS seller_name,
+         c.kind AS category_kind, c.risk_class, u.display_name AS seller_name, f.delivery_hours,
+         (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now())) AS shop_paused,
+         u.shop_paused_until, u.shop_pause_message,
          CASE WHEN f.delivery_mode = 'auto'
               THEN (SELECT count(*)::int FROM inventory_items i WHERE i.offer_id = f.id AND i.status = 'available')
               ELSE f.stock END AS stock,
@@ -44,10 +47,10 @@ export async function createOffer(ctx: Ctx, seller: { id: string; kyc_tier: numb
   const stock = input.deliveryMode === 'manual' ? (cat.kind === 'account' ? 1 : input.stock ?? 1) : 0;
   const offer = await one(
     ctx.db,
-    `INSERT INTO offers (seller_id, category_slug, game, title, description, price_cents, currency, delivery_mode, stock, low_stock_threshold)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+    `INSERT INTO offers (seller_id, category_slug, game, title, description, price_cents, currency, delivery_mode, stock, low_stock_threshold, delivery_hours)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
     [seller.id, input.categorySlug, input.game, input.title, input.description ?? '', input.priceCents, input.currency ?? 'USD',
-     input.deliveryMode, stock, input.lowStockThreshold ?? 5],
+     input.deliveryMode, stock, input.lowStockThreshold ?? 5, input.deliveryHours ?? 24],
   );
   return getOffer(ctx.db, offer.id);
 }
@@ -68,16 +71,17 @@ export async function updateOffer(
   sellerId: string,
   offerId: string,
   version: number,
-  patch: Partial<Pick<OfferInput, 'title' | 'description' | 'priceCents' | 'stock' | 'lowStockThreshold'>> & { status?: 'active' | 'paused' | 'removed' },
+  patch: Partial<Pick<OfferInput, 'title' | 'description' | 'priceCents' | 'stock' | 'lowStockThreshold' | 'deliveryHours'>> & { status?: 'active' | 'paused' | 'removed' },
 ) {
   const res = await ctx.db.query(
     `UPDATE offers SET
         title = COALESCE($4, title), description = COALESCE($5, description), price_cents = COALESCE($6, price_cents),
         stock = CASE WHEN delivery_mode = 'manual' THEN COALESCE($7, stock) ELSE stock END,
         low_stock_threshold = COALESCE($8, low_stock_threshold), status = COALESCE($9, status),
+        delivery_hours = COALESCE($10, delivery_hours),
         version = version + 1, updated_at = now()
       WHERE id = $1 AND seller_id = $2 AND version = $3 RETURNING id`,
-    [offerId, sellerId, version, patch.title, patch.description, patch.priceCents, patch.stock, patch.lowStockThreshold, patch.status],
+    [offerId, sellerId, version, patch.title, patch.description, patch.priceCents, patch.stock, patch.lowStockThreshold, patch.status, patch.deliveryHours],
   );
   if (res.rowCount === 0) {
     const cur = await maybeOne(ctx.db, 'SELECT seller_id, version FROM offers WHERE id = $1', [offerId]);

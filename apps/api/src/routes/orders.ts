@@ -5,7 +5,7 @@ import { maybeOne, one } from '../db.js';
 import { getOrCreateInquiryRoom, listMessages, listRooms, postUserMessage, roomForParticipant, verifyChain } from '../domain/chat.js';
 import { revealDelivered } from '../domain/inventory.js';
 import {
-  cancelOrder, confirmOrder, createOrder, deliverManually, getOrderFor, listOrders, openDispute, updateChecklist,
+  cancelLateOrder, cancelOrder, confirmOrder, createOrder, deliverManually, getOrderFor, listOrders, openDispute, updateChecklist,
 } from '../domain/orders.js';
 import { buildEscrowTerms } from '../domain/web3.js';
 import { createReview, replyToReview, sellerProfile } from '../domain/reviews.js';
@@ -70,6 +70,9 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/orders/:id/confirm', async (req) => confirmOrder(ctx, Id.parse(req.params).id, me(req).id));
 
   app.post('/orders/:id/cancel', async (req) => cancelOrder(ctx, Id.parse(req.params).id, me(req).id, 'buyer_cancelled'));
+
+  /** Paid but undelivered past the promised delivery time: full refund. */
+  app.post('/orders/:id/cancel-late', async (req) => cancelLateOrder(ctx, Id.parse(req.params).id, me(req).id));
 
   app.post('/orders/:id/dispute', async (req) => {
     const { reason } = z.object({ reason: z.string().trim().min(10).max(2_000) }).parse(req.body);

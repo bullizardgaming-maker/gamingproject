@@ -112,7 +112,7 @@ export async function buildApp(ctx: Ctx, opts: { logger?: PinoLogger } = {}): Pr
     origin: [ctx.cfg.PUBLIC_WEB_URL],
     credentials: true,
     allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Device-Fingerprint'],
-    methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   });
   await app.register(rateLimit, { max: ctx.cfg.NODE_ENV === 'test' ? 100_000 : 300, timeWindow: '1 minute' });
   await app.register(websocket, { options: { maxPayload: 64 * 1024 } });

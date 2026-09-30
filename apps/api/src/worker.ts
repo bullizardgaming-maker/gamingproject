@@ -1,5 +1,5 @@
 import type { Ctx } from './context.js';
-import { autoCompleteExpired, cancelUnpaidExpired } from './domain/orders.js';
+import { autoCompleteExpired, cancelUnpaidExpired, handleLateDeliveries } from './domain/orders.js';
 import { dispatchDueWebhooks } from './domain/webhooks.js';
 import { dispatchEmails, queueProtectionReminders } from './domain/notifications.js';
 import { maybeRunScheduledReconciliation } from './domain/reconciliation.js';
@@ -24,16 +24,17 @@ async function job<T>(ctx: Ctx, name: string, fn: () => Promise<T>, fallback: T)
 }
 
 export async function runJobsOnce(ctx: Ctx) {
-  const [released, expired, webhooks, reminders] = await Promise.all([
+  const [released, expired, webhooks, reminders, late] = await Promise.all([
     job(ctx, 'auto_release', () => autoCompleteExpired(ctx), 0),
     job(ctx, 'expire_unpaid', () => cancelUnpaidExpired(ctx), 0),
     job(ctx, 'webhooks', () => dispatchDueWebhooks(ctx), 0),
     job(ctx, 'protection_reminders', () => queueProtectionReminders(ctx), 0),
+    job(ctx, 'late_deliveries', () => handleLateDeliveries(ctx), { notified: 0, refunded: 0 }),
   ]);
   const reconciled = await job(ctx, 'reconciliation_scheduler', () => maybeRunScheduledReconciliation(ctx), false);
   // Send after the jobs above so emails they queued go out in the same tick.
   const emails = await job(ctx, 'emails', () => dispatchEmails(ctx), 0);
-  return { released, expired, webhooks, reminders, reconciled, emails };
+  return { released, expired, webhooks, reminders, late, reconciled, emails };
 }
 
 export function startWorker(ctx: Ctx, intervalMs = 2_000) {

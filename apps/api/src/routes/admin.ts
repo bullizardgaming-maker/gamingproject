@@ -11,6 +11,7 @@ import { runReconciliation } from '../domain/reconciliation.js';
 import { notFound } from '../lib/errors.js';
 import { requireRole } from '../server.js';
 import { audit, listAudit } from '../domain/audit.js';
+import { decideTreasuryWithdrawal, listTreasuryWithdrawals, requestTreasuryWithdrawal, treasuryBalance } from '../domain/treasury.js';
 
 const Id = z.object({ id: z.string().uuid() });
 
@@ -159,6 +160,27 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const run = await runReconciliation(ctx);
     await audit(ctx.db, req, 'reconciliation.run', { type: 'reconciliation_run', id: run.id }, { status: run.status });
     return run;
+  });
+
+  // --- Platform earnings (four-eyes) ------------------------------------------------------
+  app.get('/admin/treasury', async (req) => {
+    requireRole(req, 'admin');
+    return { balance: await treasuryBalance(ctx), withdrawals: await listTreasuryWithdrawals(ctx) };
+  });
+  app.post('/admin/treasury/withdrawals', async (req, reply) => {
+    const admin = requireRole(req, 'admin');
+    const body = z.object({ amountCents: z.number().int().positive(), note: z.string().trim().min(3).max(300) }).parse(req.body);
+    const w = await requestTreasuryWithdrawal(ctx, admin.id, body.amountCents, body.note);
+    await audit(ctx.db, req, 'treasury.withdrawal_requested', { type: 'treasury_withdrawal', id: w.id }, body);
+    return reply.status(201).send(w);
+  });
+  app.post('/admin/treasury/withdrawals/:id/decide', async (req) => {
+    const admin = requireRole(req, 'admin');
+    const { approve } = z.object({ approve: z.boolean() }).parse(req.body);
+    const { id } = Id.parse(req.params);
+    const res = await decideTreasuryWithdrawal(ctx, id, admin.id, approve);
+    await audit(ctx.db, req, approve ? 'treasury.withdrawal_approved' : 'treasury.withdrawal_rejected', { type: 'treasury_withdrawal', id });
+    return res;
   });
 
   app.get('/admin/audit', async (req) => {

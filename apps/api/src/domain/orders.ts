@@ -160,12 +160,14 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
   const order = await withScope(ctx, async (s) => {
     const offer = await maybeOne(
       s.tx,
-      `SELECT f.*, c.kind AS category_kind, c.risk_class, c.promo_rate_bps, c.name AS category_name, u.status AS seller_status
+      `SELECT f.*, c.kind AS category_kind, c.risk_class, c.promo_rate_bps, c.name AS category_name, u.status AS seller_status,
+              (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now())) AS shop_paused, u.shop_pause_message
          FROM offers f JOIN categories c ON c.slug = f.category_slug JOIN users u ON u.id = f.seller_id
         WHERE f.id = $1`,
       [input.offerId],
     );
     if (!offer || offer.status !== 'active' || offer.seller_status !== 'active') throw notFound('Offer');
+    if (offer.shop_paused) throw conflict('shop_paused', offer.shop_pause_message || 'This seller is away and not taking orders right now');
     if (offer.seller_id === buyer.id) throw forbidden('own_offer', 'You cannot buy your own offer');
     if (offer.category_kind === 'account' && input.quantity !== 1) throw badRequest('invalid_quantity', 'Accounts are sold one at a time');
 
@@ -346,7 +348,13 @@ async function postRefund(tx: Tx, order: Order) {
 
 /** Shared by fiat capture and on-chain EscrowCreated. */
 async function onFunded(ctx: Ctx, s: TxScope, order: Order & { delivery_mode: string; category_kind: string; title: string }) {
-  await transition(s.tx, order, 'paid', null, 'payment_captured', ', paid_at = now()');
+  // Manual orders get a delivery deadline from the listing's promised delivery time.
+  await transition(
+    s.tx, order, 'paid', null, 'payment_captured',
+    `, paid_at = now(), delivery_due_at = CASE WHEN $4 = 'manual'
+         THEN now() + make_interval(hours => (SELECT delivery_hours FROM offers WHERE id = orders.offer_id)) END`,
+    [order.delivery_mode],
+  );
   const room = await roomOf(s.tx, order.id);
   await appendMessage(s, room.id, null, 'system', `Payment received: ${(order.amount_cents / 100).toFixed(2)} ${order.currency} is locked in escrow.`);
 
@@ -680,4 +688,69 @@ export async function listOrders(q: Queryable, userId: string, role: 'buyer' | '
       WHERE o.${col} = $1 AND ($2::text IS NULL OR o.status = $2) ORDER BY o.created_at DESC LIMIT $3`,
     [userId, status ?? null, Math.min(limit, 200)],
   );
+}
+
+// ---------------------------------------------------------------------------
+// Late manual deliveries
+// ---------------------------------------------------------------------------
+/** Buyer may cancel for a full refund once the promised delivery time has passed. */
+export async function cancelLateOrder(ctx: Ctx, orderId: string, buyerId: string) {
+  return withScope(ctx, async (s) => {
+    const order = await lockOrder(s.tx, orderId);
+    if (order.buyer_id !== buyerId) throw forbidden('not_buyer', 'Only the buyer can cancel');
+    if (order.rail !== 'fiat') throw conflict('onchain', 'Crypto escrow is reclaimed on-chain after the delivery deadline');
+    if (order.status !== 'paid') throw conflict('invalid_state', 'Only paid orders that were not delivered can be cancelled');
+    const due = (order as any).delivery_due_at as string | null;
+    if (!due || new Date(due) > new Date()) throw conflict('not_late', 'The seller still has time to deliver this order');
+    await refundOrder(ctx, s, order, buyerId, 'buyer_cancelled_late_delivery');
+    return { refunded: true };
+  });
+}
+
+/**
+ * Worker: when a manual order passes its promised delivery time, tell the buyer
+ * they can cancel for a full refund and nudge the seller. If it's still
+ * undelivered LATE_AUTO_REFUND_HOURS later, refund it automatically.
+ */
+export async function handleLateDeliveries(ctx: Ctx) {
+  const late = await many<{ id: string; buyer_id: string; seller_id: string; title: string; delivery_due_at: string }>(
+    ctx.db,
+    `SELECT o.id, o.buyer_id, o.seller_id, f.title, o.delivery_due_at FROM orders o JOIN offers f ON f.id = o.offer_id
+      WHERE o.status = 'paid' AND o.delivery_due_at < now() AND o.late_notified_at IS NULL LIMIT 200`,
+  );
+  for (const o of late) {
+    await withScope(ctx, async (s) => {
+      const res = await s.tx.query('UPDATE orders SET late_notified_at = now() WHERE id = $1 AND late_notified_at IS NULL', [o.id]);
+      if (!res.rowCount) return;
+      const data = { order_id: o.id, title: o.title, delivery_due_at: o.delivery_due_at, auto_refund_hours: ctx.cfg.LATE_AUTO_REFUND_HOURS };
+      await enqueueEmail(s.tx, o.buyer_id, 'delivery_late', data);
+      await enqueueEmail(s.tx, o.seller_id, 'delivery_overdue', data);
+      const room = await roomOf(s.tx, o.id);
+      await appendMessage(
+        s, room.id, null, 'warning',
+        `The promised delivery time has passed. The buyer can now cancel for a full refund; the order is refunded automatically if it isn't delivered within ${ctx.cfg.LATE_AUTO_REFUND_HOURS} hours.`,
+      );
+    });
+  }
+
+  const overdue = await many<{ id: string }>(
+    ctx.db,
+    `SELECT id FROM orders WHERE status = 'paid' AND rail = 'fiat' AND NOT escrow_frozen
+        AND delivery_due_at < now() - make_interval(hours => $1) LIMIT 100`,
+    [ctx.cfg.LATE_AUTO_REFUND_HOURS],
+  );
+  let refunded = 0;
+  for (const { id } of overdue) {
+    try {
+      await withScope(ctx, async (s) => {
+        const order = await lockOrder(s.tx, id);
+        if (order.status !== 'paid') return;
+        await refundOrder(ctx, s, order, null, 'late_delivery_auto_refund');
+        refunded++;
+      });
+    } catch (err) {
+      ctx.log.error({ err, orderId: id }, 'late auto-refund failed');
+    }
+  }
+  return { notified: late.length, refunded };
 }

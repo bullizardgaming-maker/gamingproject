@@ -64,7 +64,7 @@ async function buildReport(ctx: Ctx, currency: string): Promise<ReconReport> {
   if (escrowMismatch.length) issues.push({ check: 'order_escrow_mismatch', detail: escrowMismatch });
 
   const totals: Record<string, number> = {};
-  for (const kind of ['gateway_clearing', 'escrow', 'treasury', 'reserve', 'payouts'] as const) {
+  for (const kind of ['gateway_clearing', 'escrow', 'treasury', 'reserve', 'payouts', 'platform_withdrawals'] as const) {
     totals[kind] = await balance(ctx.db, await accountId(ctx.db, kind, currency));
   }
   totals.seller_balances = (
@@ -76,8 +76,9 @@ async function buildReport(ctx: Ctx, currency: string): Promise<ReconReport> {
     )
   ).s;
 
-  // Money the PSP should be holding for us.
-  const expected = -totals.gateway_clearing! - totals.payouts!;
+  // Money the PSP should be holding for us: everything captured (net of refunds, fees and
+  // chargebacks), minus what was paid out to sellers and to the company bank account.
+  const expected = -totals.gateway_clearing! - totals.payouts! - totals.platform_withdrawals!;
   const actual = await ctx.payments.platformBalance(currency);
   const difference = actual === null ? null : actual - expected;
   if (difference !== null && Math.abs(difference) > ctx.cfg.RECON_TOLERANCE_CENTS) {

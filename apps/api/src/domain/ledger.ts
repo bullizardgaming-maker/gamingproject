@@ -2,7 +2,16 @@ import { randomUUID } from 'node:crypto';
 import type { Queryable, Tx } from '../db.js';
 import { one } from '../db.js';
 
-export type AccountKind = 'gateway_clearing' | 'escrow' | 'treasury' | 'reserve' | 'seller_available' | 'payouts';
+export type AccountKind =
+  | 'gateway_clearing'
+  | 'escrow'
+  | 'treasury'
+  | 'reserve'
+  | 'seller_available'
+  | 'payouts'
+  | 'platform_withdrawals'
+  | 'user_credit'
+  | 'fx_pnl';
 
 /**
  * Double-entry ledger. Every posting is a set of entries sharing a txn_id whose
@@ -58,6 +67,10 @@ export async function orderEscrowBalance(q: Queryable, orderId: string, currency
     [escrow, orderId],
   );
   return row.b;
+}
+
+export async function userCredit(q: Queryable, userId: string, currency = 'USD'): Promise<number> {
+  return balance(q, await accountId(q, 'user_credit', currency, userId));
 }
 
 export async function sellerAvailable(q: Queryable, sellerId: string, currency = 'USD'): Promise<number> {

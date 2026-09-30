@@ -38,7 +38,12 @@ export async function searchOffers(q: Queryable, p: SearchParams) {
     params.push(v);
     return `$${params.length}`;
   };
-  const where: string[] = [`f.status = 'active'`, `u.status = 'active'`, `u.deleted_at IS NULL`];
+  const where: string[] = [
+    `f.status = 'active'`,
+    `u.status = 'active'`,
+    `u.deleted_at IS NULL`,
+    `NOT (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now()))`,
+  ];
   const text = p.q?.trim();
   let rank = '0';
   if (text) {

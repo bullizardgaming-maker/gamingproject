@@ -46,6 +46,10 @@ export class MockPaymentProvider implements PaymentProvider {
   /** Tests set this to simulate the PSP's reported balance; null skips the external check. */
   balanceOverride: number | null = null;
 
+  async platformPayout(_amount: number, _currency: string, idempotencyKey: string) {
+    return { ref: `mock_po_${idempotencyKey}` };
+  }
+
   async platformBalance() {
     return this.balanceOverride;
   }

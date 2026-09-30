@@ -66,6 +66,8 @@ export interface PaymentProvider {
   /** A one-time link to the PSP-hosted onboarding flow. */
   payoutOnboardingLink(accountRef: string, returnUrl: string, refreshUrl: string): Promise<{ url: string }>;
   payoutAccountStatus(accountRef: string): Promise<{ payoutsEnabled: boolean; requirementsDue: string[] }>;
+  /** Send platform revenue to the company's own bank account. */
+  platformPayout(amountCents: number, currency: string, idempotencyKey: string): Promise<{ ref: string }>;
   /** Total platform balance held at the PSP (available + pending), or null if unsupported. */
   platformBalance(currency: string): Promise<number | null>;
 }
