@@ -90,6 +90,18 @@ export function buildOpenApi(opts: { serverUrl: string; sandbox: boolean }) {
         responses: { '201': { description: 'Sent' }, ...errors },
       },
     },
+    '/v1/merchant/invoices': {
+      get: { tags: ['Reports'], summary: 'List your commission invoices', security: scope('reports:read'), responses: { '200': { description: 'Newest first' }, ...errors } },
+    },
+    '/v1/merchant/invoices/{id}/pdf': {
+      get: {
+        tags: ['Reports'],
+        summary: 'Download an invoice as PDF',
+        security: scope('reports:read'),
+        parameters: [idParam()],
+        responses: { '200': { description: 'PDF', content: { 'application/pdf': {} } }, ...errors, '404': { description: 'Not found' } },
+      },
+    },
     '/v1/merchant/webhooks/deliveries': {
       get: {
         tags: ['Webhooks'],

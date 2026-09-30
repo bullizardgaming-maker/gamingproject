@@ -90,6 +90,14 @@ const OrderSummary = z.object({
   protection: z.enum(['inspection_72h', 'insurance_14d']),
 });
 
+const Payout = z.object({
+  withdrawal_id: uuid,
+  amount_cents: cents,
+  currency: z.string(),
+  status: z.enum(['paid', 'failed']),
+  provider_ref: z.string().nullable(),
+});
+
 const envelope = <T extends z.ZodTypeAny>(type: string, data: T) =>
   z.object({
     id: z.string().describe('Event id. Also sent as the Idempotency-Key header and unchanged across retries: process each id once.'),
@@ -111,6 +119,21 @@ export const WEBHOOK_PAYLOADS = {
     'chargeback.created',
     z.object({ order_id: uuid, network: z.enum(['visa', 'mastercard']), reason_code: z.string(), amount_cents: cents, seller_protected: z.boolean() }),
   ),
+  'payout.paid': envelope('payout.paid', Payout).describe('A withdrawal was sent to your payout account.'),
+  'payout.failed': envelope('payout.failed', Payout.extend({ failure_reason: z.string() })).describe('A withdrawal was rejected by the payment provider; the amount is back in your balance.'),
+  'invoice.issued': envelope(
+    'invoice.issued',
+    z.object({
+      invoice_id: uuid,
+      number: z.string(),
+      period_start: z.string(),
+      period_end: z.string().describe('Exclusive'),
+      currency: z.string(),
+      net_cents: cents,
+      tax_cents: cents,
+      gross_cents: cents,
+    }),
+  ).describe('Your monthly commission invoice was issued. Fetch the PDF with GET /v1/merchant/invoices/{id}/pdf.'),
 } as const;
 
 export const WebhookDeliveriesQuery = z.object({

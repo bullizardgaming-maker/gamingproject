@@ -1,7 +1,7 @@
 import { SignJWT, jwtVerify } from 'jose';
 import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
-import { maybeOne, one } from '../db.js';
+import { maybeOne, one, withTx } from '../db.js';
 import { hashPassword, hmacSha256, randomDigits, randomToken, safeEqual, verifyPassword } from '../lib/crypto.js';
 import { AppError, badRequest, conflict, unauthorized } from '../lib/errors.js';
 import { withScope } from './events.js';
@@ -11,6 +11,7 @@ import { checkSecondFactor } from './mfa.js';
 import { withdrawable } from './payoutholds.js';
 import { referrerForCode } from './referrals.js';
 import { enqueueEmail } from './notifications.js';
+import { enqueueWebhook } from './webhooks.js';
 import { activeSession, createSession, revokeOtherSessions, type IssuedSession } from './sessions.js';
 
 export interface User {
@@ -372,9 +373,12 @@ export async function requestWithdrawal(ctx: Ctx, userId: string, amountCents: n
 
   try {
     const { ref } = await ctx.payments.payout(w.destination, amountCents, currency, `withdrawal_${w.id}`);
-    const paid = await one(ctx.db, `UPDATE withdrawals SET status = 'paid', provider_ref = $2 WHERE id = $1 RETURNING *`, [w.id, ref]);
-    await enqueueEmail(ctx.db, userId, 'withdrawal_paid', { amount_cents: amountCents, currency, provider_ref: ref });
-    return paid;
+    return await withTx(ctx.db, async (tx) => {
+      const paid = await one(tx, `UPDATE withdrawals SET status = 'paid', provider_ref = $2 WHERE id = $1 RETURNING *`, [w.id, ref]);
+      await enqueueEmail(tx, userId, 'withdrawal_paid', { amount_cents: amountCents, currency, provider_ref: ref });
+      await enqueueWebhook(tx, userId, 'payout.paid', { withdrawal_id: w.id, amount_cents: amountCents, currency, status: 'paid', provider_ref: ref });
+      return paid;
+    });
   } catch (err) {
     // Payout failed: return the funds to the seller's balance.
     await withScope(ctx, async (s) => {
@@ -387,8 +391,11 @@ export async function requestWithdrawal(ctx: Ctx, userId: string, amountCents: n
         ],
         `withdrawal_failed:${w.id}`,
       );
+      const reason = (err as Error).message.slice(0, 200);
+      await enqueueEmail(s.tx, userId, 'withdrawal_failed', { amount_cents: amountCents, currency, reason });
+      await enqueueWebhook(s.tx, userId, 'payout.failed', { withdrawal_id: w.id, amount_cents: amountCents, currency, status: 'failed', provider_ref: null, failure_reason: reason });
     });
-    throw err;
+    throw new AppError(502, 'payout_failed', 'The payment provider rejected this payout; the amount is back in your balance', { reason: (err as Error).message.slice(0, 200) });
   }
 }
 

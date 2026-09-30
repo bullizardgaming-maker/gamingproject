@@ -48,6 +48,13 @@ const Env = z.object({
   EMAIL_PROVIDER: z.enum(['console', 'postmark']).default('console'),
   EMAIL_FROM: z.string().default('Bullizard <no-reply@bullizard.local>'),
   POSTMARK_SERVER_TOKEN: z.string().optional(),
+  // Web Push (VAPID). Generate keys: npx web-push generate-vapid-keys. Push is off without them.
+  VAPID_PUBLIC_KEY: z.string().optional(),
+  VAPID_PRIVATE_KEY: z.string().optional(),
+  VAPID_SUBJECT: z.string().default('mailto:support@bullizard.local'),
+  PUSH_ALLOWED_HOSTS: z
+    .string()
+    .default('fcm.googleapis.com,updates.push.services.mozilla.com,*.push.apple.com,*.notify.windows.com'),
   SMS_PROVIDER: z.enum(['console', 'twilio']).default('console'),
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
@@ -100,6 +107,7 @@ const Env = z.object({
   RETENTION_ORDER_IP_DAYS: z.coerce.number().int().min(30).default(540),     // chargebacks can arrive ~540 days later
   RETENTION_SESSIONS_DAYS: z.coerce.number().int().min(1).default(90),       // after expiry or sign-out
   RETENTION_NOTIFICATIONS_DAYS: z.coerce.number().int().min(1).default(90),
+  RETENTION_INBOX_DAYS: z.coerce.number().int().min(7).default(180),
   RETENTION_WEBHOOK_DELIVERIES_DAYS: z.coerce.number().int().min(1).default(90),
   RETENTION_SECURITY_LOGS_DAYS: z.coerce.number().int().min(1).default(90),  // CSP reports, one-time codes, reset links
   RECON_INTERVAL_HOURS: z.coerce.number().default(24),

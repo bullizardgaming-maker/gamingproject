@@ -13,6 +13,7 @@ import type { KycProvider } from './providers/kyc/types.js';
 import { EcbFxProvider, StaticFxProvider, type FxProvider } from './domain/fx.js';
 import { ClamdScanner, EicarOnlyScanner, LocalEncryptedStorage, S3Storage, type FileStorage, type MalwareScanner } from './providers/files.js';
 import { AwsKmsSigner, LocalKeySigner, type EscrowSigner } from './providers/signer.js';
+import { NoPush, WebPushSender, type PushSender } from './providers/push.js';
 import { NoVatValidator, ViesValidator, type VatValidator } from './providers/vat.js';
 import { NoCaptcha, SiteverifyCaptcha, type CaptchaVerifier } from './providers/captcha.js';
 import {
@@ -49,6 +50,7 @@ export interface Ctx {
   scanner: MalwareScanner;
   captcha: CaptchaVerifier;
   vat: VatValidator;
+  push: PushSender;
   /** Null when crypto escrow is not configured. */
   escrowSigner: EscrowSigner | null;
   log: Logger;
@@ -88,6 +90,11 @@ export function createContext(cfg: Config, log: Logger, overrides: Partial<Ctx> 
     captcha:
       overrides.captcha ??
       (cfg.CAPTCHA_PROVIDER === 'none' ? new NoCaptcha() : new SiteverifyCaptcha(cfg.CAPTCHA_PROVIDER, required(cfg.CAPTCHA_SECRET, 'CAPTCHA_SECRET'))),
+    push:
+      overrides.push ??
+      (cfg.VAPID_PUBLIC_KEY && cfg.VAPID_PRIVATE_KEY
+        ? new WebPushSender(cfg.VAPID_PUBLIC_KEY, cfg.VAPID_PRIVATE_KEY, cfg.VAPID_SUBJECT, cfg.NODE_ENV === 'production')
+        : new NoPush()),
     vat: overrides.vat ?? (cfg.VAT_VALIDATION === 'vies' ? new ViesValidator() : new NoVatValidator()),
     escrowSigner:
       overrides.escrowSigner !== undefined

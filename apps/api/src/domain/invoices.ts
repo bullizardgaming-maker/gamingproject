@@ -2,6 +2,8 @@ import PDFDocument from 'pdfkit';
 import type { Ctx } from '../context.js';
 import { many, maybeOne, one, withTx } from '../db.js';
 import { notFound } from '../lib/errors.js';
+import { notify } from './notifications.js';
+import { enqueueWebhook } from './webhooks.js';
 
 /**
  * Monthly commission invoices. One per seller, month and currency, covering every order
@@ -104,12 +106,19 @@ async function issueInvoice(ctx: Ctx, sellerId: string, currency: string, period
     const issuer = { name: ctx.cfg.PLATFORM_LEGAL_NAME, country: ctx.cfg.PLATFORM_TAX_COUNTRY, vatId: ctx.cfg.PLATFORM_VAT_ID ?? null, address: ctx.cfg.PLATFORM_ADDRESS };
     const number = `${series}-${String(seq.next).padStart(6, '0')}`;
     await tx.query('UPDATE invoice_sequences SET next = next + 1 WHERE series = $1', [series]);
-    return one(
+    const inv = await one(
       tx,
       `INSERT INTO invoices (number, seller_id, period_start, period_end, currency, net_cents, tax_cents, gross_cents, seller, issuer, lines, totals)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
       [number, sellerId, periodStart, periodEnd, currency, sum('netCents'), sum('taxCents'), sum('grossCents'), seller, issuer, JSON.stringify(lines), JSON.stringify(totals)],
     );
+    const summary = {
+      invoice_id: inv.id, number, period_start: periodStart, period_end: periodEnd, currency,
+      net_cents: sum('netCents'), tax_cents: sum('taxCents'), gross_cents: sum('grossCents'),
+    };
+    await enqueueWebhook(tx, sellerId, 'invoice.issued', summary);
+    await notify(tx, sellerId, 'invoice_issued', { ...summary, period: periodStart.slice(0, 7) }, `invoice_issued:${inv.id}`);
+    return inv;
   });
 }
 

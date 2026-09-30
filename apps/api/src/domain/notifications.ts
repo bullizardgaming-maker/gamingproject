@@ -4,9 +4,10 @@ import { many, maybeOne, withTx } from '../db.js';
 import { badRequest } from '../lib/errors.js';
 
 /**
- * Transactional email. Business code calls enqueueEmail() inside its own
- * transaction (outbox pattern), so an email exists if and only if the event it
- * describes committed. The worker renders and sends, honouring preferences.
+ * Notifications. Business code calls notify() (alias enqueueEmail) inside its own transaction
+ * (outbox pattern), so a notification exists if and only if the event it describes committed.
+ * Each one lands in the user's in-app inbox, and the worker delivers it by email and Web Push
+ * according to the user's per-category preferences for each channel, and live to open tabs.
  */
 export type EmailCategory = 'orders' | 'selling' | 'disputes' | 'reminders' | 'account' | 'security' | 'operations';
 
@@ -23,6 +24,8 @@ export const EMAIL_CATEGORIES: Record<EmailCategory, { label: string; mandatory?
 type Data = Record<string, any>;
 interface Template {
   category: EmailCategory;
+  /** false for messages carrying secrets (reset links) that must only go to the mailbox. */
+  inbox?: boolean;
   subject: (d: Data) => string;
   body: (d: Data, link: (path: string) => string) => string;
 }
@@ -123,6 +126,7 @@ export const TEMPLATES = {
   },
   password_reset: {
     category: 'security',
+    inbox: false,
     subject: () => 'Reset your Bullizard password',
     body: (d) =>
       `Someone asked to reset the password for this account${d.ip ? ` (from IP ${d.ip})` : ''}. Use this link within ${d.minutes} minutes:\n\n${d.url}\n\n` +
@@ -153,6 +157,16 @@ export const TEMPLATES = {
     subject: () => 'We signed out a device that may be compromised',
     body: (d, link) => `A sign-in token for one of your devices (${d.userAgent ?? 'unknown browser'}) was used twice, which usually means it was copied. We signed that device out. Change your password if you didn't expect this: ${link('/account')}`,
   },
+  withdrawal_failed: {
+    category: 'selling',
+    subject: (d) => `Payout of ${money(d.amount_cents, d.currency)} failed`,
+    body: (d, link) => `Your payout of ${money(d.amount_cents, d.currency)} could not be sent (${d.reason}). The money is back in your balance. Check your payout account: ${link('/sell')}`,
+  },
+  invoice_issued: {
+    category: 'selling',
+    subject: (d) => `Your commission invoice ${d.number}`,
+    body: (d, link) => `Invoice ${d.number} for ${d.period} is ready: commission ${money(d.gross_cents, d.currency)}, of which tax ${money(d.tax_cents, d.currency)}. It was already deducted from your sales.\n\n${link('/sell/invoices')}`,
+  },
   account_locked: {
     category: 'security',
     subject: () => 'Sign-in paused after failed attempts',
@@ -163,10 +177,30 @@ export const TEMPLATES = {
 export type TemplateName = keyof typeof TEMPLATES;
 
 export async function enqueueEmail(q: Queryable, userId: string, template: TemplateName, data: Data, dedupeKey?: string) {
-  await q.query(
-    `INSERT INTO notifications (user_id, template, data, dedupe_key) VALUES ($1, $2, $3, $4) ON CONFLICT (dedupe_key) DO NOTHING`,
+  const { rowCount } = await q.query(
+    `INSERT INTO notifications (user_id, template, data, dedupe_key) VALUES ($1, $2, $3, $4) ON CONFLICT (dedupe_key) DO NOTHING RETURNING id`,
     [userId, template, JSON.stringify(data), dedupeKey ?? null],
   );
+  if (!rowCount) return; // duplicate (dedupe key): already notified
+  const t = TEMPLATES[template] as Template;
+  if (t.inbox === false) return;
+  const item = inboxText(t, data);
+  await q.query(
+    `INSERT INTO inbox_items (user_id, template, category, title, body, link) VALUES ($1, $2, $3, $4, $5, $6)`,
+    [userId, template, t.category, item.title, item.body, item.link],
+  );
+}
+
+/** Every notification goes to the inbox and, per preferences, to email and push. */
+export const notify = enqueueEmail;
+
+/** Inbox wording: the email subject as title, its first paragraph as body, its first app link as the target. */
+function inboxText(t: Template, data: Data) {
+  const MARK = '\u0000';
+  const raw = t.body(data, (path) => `${MARK}${path}${MARK}`);
+  const link = raw.split(MARK)[1] ?? null;
+  const first = raw.split('\n\n')[0]!.split(MARK).filter((_, i) => i % 2 === 0).join('').replace(/[:\s]+$/, '').trim();
+  return { title: t.subject(data).slice(0, 200), body: first.length > 300 ? `${first.slice(0, 297)}...` : first, link };
 }
 
 // ---------------------------------------------------------------------------

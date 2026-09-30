@@ -4,7 +4,7 @@ import { hmacSha256, randomToken, safeEqual } from '../lib/crypto.js';
 import { badRequest, unauthorized } from '../lib/errors.js';
 import { PUBLIC_USER_COLUMNS, type User } from './users.js';
 
-export const API_SCOPES = ['orders:read', 'orders:write', 'inventory:write', 'offers:write', 'chat:write', 'webhooks:manage'] as const;
+export const API_SCOPES = ['orders:read', 'orders:write', 'inventory:write', 'offers:write', 'chat:write', 'webhooks:manage', 'reports:read'] as const;
 export type ApiScope = (typeof API_SCOPES)[number];
 
 /** Key format: mk_<prefix>_<secret>. Only an HMAC of the full key is stored. */

@@ -5,6 +5,7 @@ import { many, maybeOne } from '../db.js';
 import { postUserMessage } from '../domain/chat.js';
 import { bulkUpdatePrices, uploadInventory } from '../domain/offers.js';
 import { deliverManually } from '../domain/orders.js';
+import { getInvoice, invoicePdf, listInvoices } from '../domain/invoices.js';
 import { listDeliveries, redeliver, replayDead } from '../domain/webhooks.js';
 import { notFound } from '../lib/errors.js';
 import { me, requireScope } from '../server.js';
@@ -67,5 +68,13 @@ export async function merchantRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/merchant/webhooks/:id/replay', { preHandler: scope('webhooks:manage') }, async (req) => {
     const { since } = ReplayBody.parse(req.body ?? {});
     return replayDead(ctx, me(req).id, Id.parse(req.params).id, since);
+  });
+
+  // --- Invoices (and accounting exports) -------------------------------------------------
+  app.get('/merchant/invoices', { preHandler: scope('reports:read') }, async (req) => listInvoices(ctx, me(req).id));
+  app.get('/merchant/invoices/:id/pdf', { preHandler: scope('reports:read') }, async (req, reply) => {
+    const inv = await getInvoice(ctx, Id.parse(req.params).id, me(req).id);
+    reply.header('Content-Type', 'application/pdf').header('Content-Disposition', `attachment; filename="${inv.number}.pdf"`);
+    return reply.send(await invoicePdf(inv));
   });
 }

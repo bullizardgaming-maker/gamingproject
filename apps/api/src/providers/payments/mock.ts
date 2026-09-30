@@ -32,10 +32,15 @@ export class MockPaymentProvider implements PaymentProvider {
   }
 
   async refund(paymentRef: string) {
+    if (this.faults.refund) throw new Error(this.faults.refund);
     return { ref: `mock_re_${paymentRef}_${randomUUID().slice(0, 8)}` };
   }
 
+  /** Fault injection for tests and failover drills: the next calls of that kind throw this message. */
+  faults: { payout?: string; refund?: string } = {};
+
   async payout(_destination: string, _amount: number, _currency: string, idempotencyKey: string) {
+    if (this.faults.payout) throw new Error(this.faults.payout);
     return { ref: `mock_tr_${idempotencyKey}` };
   }
 

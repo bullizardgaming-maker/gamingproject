@@ -14,6 +14,9 @@ import { REFRESH_TTL_DAYS, issueAccessToken, listSessions, refreshSession, revok
 import { enqueueEmail, getPreferences, setPreferences } from '../domain/notifications.js';
 import { AppError, unauthorized } from '../lib/errors.js';
 import { deleteAccount, exportData } from '../domain/privacy.js';
+import {
+  getPushPreferences, listInbox, listPushSubscriptions, markAllRead, markRead, removePushSubscription, setPushPreferences, subscribePush, unreadCount, unsubscribePush,
+} from '../domain/inbox.js';
 import { me, requestMeta } from '../server.js';
 
 const Credentials = z.object({ email: z.string().email().max(254), password: z.string().min(10).max(200), captchaToken: z.string().max(4096).optional() });
@@ -152,6 +155,44 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   app.patch('/me/email-preferences', async (req) => {
     const changes = z.record(z.string(), z.boolean()).parse(req.body);
     return setPreferences(ctx.db, me(req).id, changes);
+  });
+
+  // --- Notification centre & push ---------------------------------------------------------
+  const isStaff = (u: { role: string }) => u.role !== 'user';
+  app.get('/me/notifications', async (req) => {
+    const q = z.object({ unread: z.enum(['true', 'false']).optional(), before: z.string().datetime().optional(), limit: z.coerce.number().int().positive().max(100).optional() }).parse(req.query);
+    return listInbox(ctx, me(req).id, { unreadOnly: q.unread === 'true', before: q.before, limit: q.limit });
+  });
+  app.get('/me/notifications/unread-count', async (req) => ({ unread: await unreadCount(ctx, me(req).id) }));
+  app.post('/me/notifications/:id/read', async (req) => markRead(ctx, me(req).id, z.object({ id: z.string().uuid() }).parse(req.params).id));
+  app.post('/me/notifications/read-all', async (req) => markAllRead(ctx, me(req).id));
+
+  app.get('/push/config', async () => ({ enabled: ctx.push.enabled, vapidPublicKey: ctx.push.publicKey }));
+  app.get('/me/push-subscriptions', async (req) => listPushSubscriptions(ctx, me(req).id));
+  app.post('/me/push-subscriptions', async (req, reply) => {
+    // The browser's PushSubscription.toJSON(): { endpoint, keys: { p256dh, auth } }
+    const body = z
+      .object({ endpoint: z.string().url().max(1_000), keys: z.object({ p256dh: z.string().min(20).max(200), auth: z.string().min(8).max(100) }) })
+      .parse(req.body);
+    const ua = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : undefined;
+    return reply.status(201).send(await subscribePush(ctx, me(req).id, { endpoint: body.endpoint, ...body.keys }, ua));
+  });
+  app.delete('/me/push-subscriptions/:id', async (req, reply) => {
+    await removePushSubscription(ctx, me(req).id, z.object({ id: z.string().uuid() }).parse(req.params).id);
+    return reply.status(204).send();
+  });
+  app.post('/me/push-subscriptions/unsubscribe', async (req, reply) => {
+    const { endpoint } = z.object({ endpoint: z.string().max(1_000) }).parse(req.body);
+    await unsubscribePush(ctx, me(req).id, endpoint);
+    return reply.status(204).send();
+  });
+  app.get('/me/push-preferences', async (req) => {
+    const u = me(req);
+    return getPushPreferences(ctx, u.id, isStaff(u));
+  });
+  app.patch('/me/push-preferences', async (req) => {
+    const u = me(req);
+    return setPushPreferences(ctx, u.id, isStaff(u), z.record(z.string(), z.boolean()).parse(req.body));
   });
 
   // --- Two-factor login -------------------------------------------------------------

@@ -16,6 +16,9 @@ export const WEBHOOK_EVENTS = [
   'offer.low_stock',
   'chat.message',
   'chargeback.created',
+  'payout.paid',
+  'payout.failed',
+  'invoice.issued',
 ] as const;
 export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number];
 

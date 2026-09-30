@@ -21,6 +21,7 @@ export function retentionPolicy(ctx: Ctx) {
     orderIpDays: c.RETENTION_ORDER_IP_DAYS,
     sessionsDays: c.RETENTION_SESSIONS_DAYS,
     notificationsDays: c.RETENTION_NOTIFICATIONS_DAYS,
+    inboxDays: c.RETENTION_INBOX_DAYS,
     webhookDeliveriesDays: c.RETENTION_WEBHOOK_DELIVERIES_DAYS,
     securityLogsDays: c.RETENTION_SECURITY_LOGS_DAYS,
   };
@@ -85,6 +86,7 @@ export async function runRetention(ctx: Ctx, existingRunId?: string) {
       [c.RETENTION_SESSIONS_DAYS],
     );
     counts.notifications = await count(ctx, `DELETE FROM notifications WHERE status <> 'pending' AND created_at < now() - make_interval(days => $1)`, [c.RETENTION_NOTIFICATIONS_DAYS]);
+    counts.inboxItems = await count(ctx, `DELETE FROM inbox_items WHERE created_at < now() - make_interval(days => $1)`, [c.RETENTION_INBOX_DAYS]);
     counts.webhookDeliveries = await count(ctx, `DELETE FROM webhook_deliveries WHERE status <> 'pending' AND created_at < now() - make_interval(days => $1)`, [c.RETENTION_WEBHOOK_DELIVERIES_DAYS]);
     counts.verificationCodes = await count(ctx, `DELETE FROM verification_codes WHERE created_at < now() - make_interval(days => $1)`, [c.RETENTION_SECURITY_LOGS_DAYS]);
     counts.passwordResets = await count(ctx, `DELETE FROM password_resets WHERE created_at < now() - make_interval(days => $1)`, [c.RETENTION_SECURITY_LOGS_DAYS]);
