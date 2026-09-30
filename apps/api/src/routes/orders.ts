@@ -163,7 +163,12 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/chat/rooms/:id/attachments', async (req, reply) => {
     const { id } = Id.parse(req.params);
     if (!Buffer.isBuffer(req.body)) throw badRequest('unsupported_file', 'Send the image bytes with Content-Type image/png, image/jpeg or image/webp');
-    const name = typeof req.headers['x-filename'] === 'string' ? decodeURIComponent(req.headers['x-filename']) : 'screenshot';
+    let name = 'screenshot';
+    try {
+      if (typeof req.headers['x-filename'] === 'string') name = decodeURIComponent(req.headers['x-filename']);
+    } catch {
+      /* malformed percent-encoding: keep the default name */
+    }
     return reply.status(201).send(await uploadAttachment(ctx, id, me(req), name, req.body));
   });
 

@@ -1,11 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { lookup } from 'node:dns/promises';
-import { isIP } from 'node:net';
 import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { many, withTx } from '../db.js';
 import { hmacSha256, randomToken } from '../lib/crypto.js';
 import { badRequest } from '../lib/errors.js';
+import { fetchPublic, isPrivateAddress } from '../lib/netguard.js';
 
 export const WEBHOOK_EVENTS = [
   'order.created', // order funded: buyer payment captured and locked in escrow
@@ -62,22 +61,8 @@ function assertSafeUrlShape(raw: string, production: boolean) {
   if (!['http:', 'https:'].includes(url.protocol)) throw badRequest('invalid_url', 'Webhook URL must be http(s)');
 }
 
-/** SSRF guard: refuse to deliver to loopback, link-local or private networks in production. */
-export function isPrivateAddress(ip: string): boolean {
-  if (isIP(ip) === 4) {
-    const [a, b] = ip.split('.').map(Number) as [number, number];
-    return a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
-  }
-  const v6 = ip.toLowerCase();
-  if (v6.startsWith('::ffff:')) return isPrivateAddress(v6.slice(7));
-  return v6 === '::1' || v6 === '::' || v6.startsWith('fc') || v6.startsWith('fd') || v6.startsWith('fe80');
-}
-
-async function assertPublicDestination(url: string) {
-  const { hostname } = new URL(url);
-  const addrs = isIP(hostname) ? [{ address: hostname }] : await lookup(hostname, { all: true });
-  if (addrs.some((a) => isPrivateAddress(a.address))) throw new Error(`destination ${hostname} resolves to a private address`);
-}
+// SSRF guard lives in lib/netguard (re-exported for existing callers).
+export { isPrivateAddress };
 
 // ---------------------------------------------------------------------------
 // Outbox
@@ -110,8 +95,11 @@ interface ClaimedDelivery {
   secret_ciphertext: string;
 }
 
-export async function dispatchDueWebhooks(ctx: Ctx, opts: { limit?: number; fetchImpl?: typeof fetch } = {}): Promise<number> {
-  const fetchImpl = opts.fetchImpl ?? fetch;
+type FetchLike = (url: string, init: { method: string; redirect: 'manual'; signal: AbortSignal; headers: Record<string, string>; body: string }) => Promise<{ status: number }>;
+
+export async function dispatchDueWebhooks(ctx: Ctx, opts: { limit?: number; fetchImpl?: FetchLike } = {}): Promise<number> {
+  // Production deliveries may only reach public addresses, checked at connect time.
+  const fetchImpl: FetchLike = opts.fetchImpl ?? (ctx.cfg.NODE_ENV === 'production' ? fetchPublic : fetch);
   const claimed = await withTx(ctx.db, (tx) =>
     many<ClaimedDelivery>(
       tx,
@@ -131,13 +119,12 @@ export async function dispatchDueWebhooks(ctx: Ctx, opts: { limit?: number; fetc
   return claimed.length;
 }
 
-async function deliver(ctx: Ctx, d: ClaimedDelivery, fetchImpl: typeof fetch) {
+async function deliver(ctx: Ctx, d: ClaimedDelivery, fetchImpl: FetchLike) {
   const body = JSON.stringify(d.payload);
   const secret = ctx.keyring.decrypt(d.secret_ciphertext, 'webhook');
   let statusCode: number | null = null;
   let error: string | null = null;
   try {
-    if (ctx.cfg.NODE_ENV === 'production') await assertPublicDestination(d.url);
     const res = await fetchImpl(d.url, {
       method: 'POST',
       redirect: 'manual',

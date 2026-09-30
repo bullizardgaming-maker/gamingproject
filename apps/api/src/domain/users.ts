@@ -109,13 +109,46 @@ async function noteSignIn(ctx: Ctx, userId: string, meta: AuthMeta) {
   await recordSignals(ctx.db, userId, { device: meta.device, ip_subnet: subnetOf(meta.ip) });
 }
 
+// ---------------------------------------------------------------------------
+// Per-account lockout: LOGIN_MAX_FAILURES wrong passwords or 2FA codes pause sign-in for
+// LOGIN_LOCK_MINUTES, doubling with each lock (capped at a day). Per-IP limits alone
+// can be dodged by spreading guesses across many addresses.
+// ---------------------------------------------------------------------------
+async function assertNotLocked(ctx: Ctx, userId: string) {
+  const row = await maybeOne<{ until: string | null }>(ctx.db, 'SELECT login_locked_until AS until FROM users WHERE id = $1 AND login_locked_until > now()', [userId]);
+  if (row) throw new AppError(429, 'account_locked', 'Too many failed sign-in attempts. Try again later or reset your password.', { retryAfter: row.until });
+}
+
+async function noteFailedLogin(ctx: Ctx, userId: string) {
+  const max = ctx.cfg.LOGIN_MAX_FAILURES;
+  const row = await maybeOne<{ locked_minutes: number | null }>(
+    ctx.db,
+    `UPDATE users SET
+        failed_logins = CASE WHEN failed_logins + 1 >= $2 THEN 0 ELSE failed_logins + 1 END,
+        login_lock_count = login_lock_count + CASE WHEN failed_logins + 1 >= $2 THEN 1 ELSE 0 END,
+        login_locked_until = CASE WHEN failed_logins + 1 >= $2
+          THEN now() + make_interval(mins => LEAST($3 * 2 ^ login_lock_count, 1440)::int) ELSE login_locked_until END
+      WHERE id = $1
+      RETURNING CASE WHEN failed_logins = 0 THEN LEAST($3 * 2 ^ (login_lock_count - 1), 1440)::int END AS locked_minutes`,
+    [userId, max, ctx.cfg.LOGIN_LOCK_MINUTES],
+  );
+  if (row?.locked_minutes) await enqueueEmail(ctx.db, userId, 'account_locked', { failures: max, minutes: row.locked_minutes });
+}
+
+async function clearFailedLogins(q: Queryable, userId: string) {
+  await q.query('UPDATE users SET failed_logins = 0, login_lock_count = 0, login_locked_until = NULL WHERE id = $1 AND (failed_logins > 0 OR login_lock_count > 0)', [userId]);
+}
+
 export async function login(ctx: Ctx, input: { email: string; password: string } & AuthMeta) {
   const row = await maybeOne<User & { password_hash: string }>(ctx.db, `SELECT ${PUBLIC_USER_COLUMNS}, password_hash FROM users WHERE email = $1 AND deleted_at IS NULL`, [input.email]);
   // Always run a hash comparison so response time does not reveal whether the email exists.
   const ok = await verifyPassword(input.password, row?.password_hash ?? 'scrypt$32768$AAAAAAAAAAAAAAAAAAAAAA==$AAAA');
+  if (row) await assertNotLocked(ctx, row.id);
+  if (row && !ok) await noteFailedLogin(ctx, row.id);
   if (!row || !ok) throw unauthorized('Invalid email or password');
   const { password_hash: _, ...user } = row;
   if (user.totp_enabled) return { mfaRequired: true as const, mfaToken: await issueChallenge(ctx, user.id) };
+  await clearFailedLogins(ctx.db, user.id);
   await noteSignIn(ctx, user.id, input);
   return sessionResponse(user, await createSession(ctx, user.id, { mfa: false, userAgent: input.userAgent, ip: input.ip }));
 }
@@ -128,7 +161,15 @@ export async function completeMfaLogin(ctx: Ctx, mfaToken: string, code: string,
   } catch {
     throw unauthorized('Sign-in expired. Enter your password again.');
   }
-  const method = await checkSecondFactor(ctx, userId, code);
+  await assertNotLocked(ctx, userId);
+  let method: Awaited<ReturnType<typeof checkSecondFactor>>;
+  try {
+    method = await checkSecondFactor(ctx, userId, code);
+  } catch (err) {
+    if (err instanceof AppError && err.status === 401) await noteFailedLogin(ctx, userId);
+    throw err;
+  }
+  await clearFailedLogins(ctx.db, userId);
   await noteSignIn(ctx, userId, meta);
   const user = await one<User>(ctx.db, `SELECT ${PUBLIC_USER_COLUMNS} FROM users WHERE id = $1`, [userId]);
   return { ...sessionResponse(user, await createSession(ctx, userId, { mfa: true, userAgent: meta.userAgent, ip: meta.ip })), method };
@@ -173,7 +214,7 @@ export async function resetPassword(ctx: Ctx, token: string, newPassword: string
     );
     if (!row) throw badRequest('invalid_reset_link', 'This reset link has expired or was already used. Request a new one.');
     await s.tx.query('UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL', [row.user_id]);
-    await s.tx.query('UPDATE users SET password_hash = $2 WHERE id = $1', [row.user_id, hash]);
+    await s.tx.query('UPDATE users SET password_hash = $2, failed_logins = 0, login_lock_count = 0, login_locked_until = NULL WHERE id = $1', [row.user_id, hash]);
     await revokeOtherSessions(s.tx, row.user_id, null, 'password_reset');
     await enqueueEmail(s.tx, row.user_id, 'password_changed', {});
     return { reset: true };

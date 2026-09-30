@@ -3,16 +3,25 @@ import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { many, one } from '../db.js';
 import type { TxScope } from './events.js';
-import { isPrivateAddress } from './webhooks.js';
 
 export type SignalKind = 'device' | 'ip_subnet' | 'wallet' | 'card';
+
+/** Loopback, private, link-local and CGNAT addresses (our own network, not a client's). */
+function isInternalAddress(ip: string): boolean {
+  if (isIP(ip) === 4) {
+    const [a, b] = ip.split('.').map(Number) as [number, number];
+    return a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
+  }
+  const v6 = ip.toLowerCase();
+  return v6 === '::1' || v6 === '::' || v6.startsWith('fc') || v6.startsWith('fd') || v6.startsWith('fe80');
+}
 
 /** Collapse an IP to its /24 (IPv4) or /48 (IPv6) — the granularity at which proxy farms cluster. */
 export function subnetOf(ip: string | undefined | null): string | null {
   if (!ip) return null;
   const clean = ip.startsWith('::ffff:') ? ip.slice(7) : ip;
   // Loopback/private addresses carry no signal (local dev, internal proxies).
-  if (isPrivateAddress(clean)) return null;
+  if (isInternalAddress(clean)) return null;
   if (isIP(clean) === 4) return clean.split('.').slice(0, 3).join('.') + '.0/24';
   if (isIP(clean) === 6) {
     const parts = clean.split(':');

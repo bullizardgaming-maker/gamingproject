@@ -40,8 +40,11 @@ export interface RequestMeta {
   device?: string;
 }
 
+let geoHeader: string | undefined;
+
 export function requestMeta(req: FastifyRequest): RequestMeta {
-  const country = req.headers['cf-ipcountry'] ?? req.headers['x-geo-country'];
+  // Only the edge's own header is believed; a client-sent one would let buyers fake their country.
+  const country = geoHeader ? req.headers[geoHeader] : undefined;
   const device = req.headers['x-device-fingerprint'];
   return {
     ip: req.ip,
@@ -77,12 +80,24 @@ export function requireScope(ctx: Ctx) {
   };
 }
 
+export function parseTrustProxy(v: string): boolean | number | string[] {
+  if (v === 'false' || v === '') return false;
+  if (v === 'true') return true;
+  if (/^\d+$/.test(v)) return Number(v);
+  return v.split(',').map((s) => s.trim()).filter(Boolean);
+}
+
 export async function buildApp(ctx: Ctx, opts: { logger?: PinoLogger } = {}): Promise<FastifyInstance> {
+  geoHeader = ctx.cfg.GEO_COUNTRY_HEADER;
   const app = Fastify({
     ...(opts.logger ? { loggerInstance: opts.logger } : { logger: false }),
-    trustProxy: true,
+    trustProxy: parseTrustProxy(ctx.cfg.TRUST_PROXY) as boolean, // hop counts are supported at runtime; the types omit them
     bodyLimit: 12 * 1024 * 1024,
-    genReqId: (req) => (typeof req.headers['x-request-id'] === 'string' ? req.headers['x-request-id'].slice(0, 64) : randomUUID()),
+    // Caller-supplied request ids are kept only if they are plain tokens (no log forging).
+    genReqId: (req) => {
+      const id = req.headers['x-request-id'];
+      return typeof id === 'string' && /^[A-Za-z0-9._:-]{1,64}$/.test(id) ? id : randomUUID();
+    },
   }) as unknown as FastifyInstance;
 
   app.decorateRequest('user', null);

@@ -39,7 +39,7 @@ Full stack in containers: `docker compose up --build` (web on :8080). Add `--pro
 ## Tests
 
 ```bash
-npm test -w apps/api          # 80 tests, needs Postgres (TEST_DATABASE_URL, default market_test) and Redis for the multi-node test
+npm test -w apps/api          # 108 tests, needs Postgres (TEST_DATABASE_URL, default market_test) and Redis for the multi-node test
 npm test -w contracts         # 10 Hardhat tests
 cd services/fraud-gnn && pip install -r requirements.txt && pytest -q   # 9 tests
 npm run build -w apps/web     # includes the payment-page script inventory check
@@ -50,7 +50,9 @@ Highlights of what the tests prove: exactly one of 25 simultaneous buyers gets a
 ## Key API surfaces
 
 - `POST /v1/orders` → hosted checkout URL (card) or EIP-712 escrow terms (`GET /v1/orders/:id/crypto-terms`, USDC/USDT)
-- `POST /v1/orders/:id/{deliver,confirm,dispute,cancel}`, `PATCH /v1/orders/:id/checklist`
+- `POST /v1/orders/quote` (currency, promo code, store credit breakdown)
+- `POST /v1/orders/:id/{deliver,confirm,dispute,cancel,cancel-late}`, `PATCH /v1/orders/:id/checklist`
+- `POST /v1/chat/rooms/:id/attachments` (screenshot evidence, malware-scanned)
 - `GET /v1/ws` WebSocket chat and notifications (protocol documented in `apps/api/src/ws/gateway.ts`)
 - Merchant API (API-key auth): `GET /v1/merchant/orders`, `POST /v1/merchant/inventory`, `PATCH /v1/merchant/prices`, `POST /v1/merchant/orders/:id/deliver`
 - Webhooks: `order.created` (funded), `order.delivered`, `order.completed`, `order.disputed`, `order.refunded`, `order.cancelled`, `offer.low_stock`, `chat.message`, `chargeback.created`, signed with `X-Hook-Signature` = hex HMAC-SHA256 of the raw body
@@ -58,5 +60,7 @@ Highlights of what the tests prove: exactly one of 25 simultaneous buyers gets a
 Seller API reference: `/v1/docs` (OpenAPI JSON at `/v1/openapi.json`). Run a sandbox with `SANDBOX_MODE=true` (mock payments and KYC only) to get `/v1/sandbox/*` test helpers.
 
 Monitoring: Prometheus metrics at `/metrics` (set `METRICS_TOKEN`), health at `/healthz` and `/readyz`, alert rules in `deploy/monitoring/alerts.yml`, errors to Sentry with `SENTRY_DSN`.
+
+Load test: `npm run loadtest -w apps/api` (see the header of `apps/api/scripts/loadtest-flash-sale.ts`; run against a throwaway database with raised rate limits).
 
 See `docs/ARCHITECTURE.md` for the rest.

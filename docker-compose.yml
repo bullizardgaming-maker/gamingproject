@@ -32,6 +32,7 @@ services:
       REDIS_URL: redis://redis:6379
       RUN_WORKER_IN_PROCESS: "false"
       PUBLIC_WEB_URL: http://localhost:8080
+      TRUST_PROXY: uniquelocal # the web container's nginx, on the private compose network
       MALWARE_SCANNER: clamd
       CLAMD_HOST: clamav
       STORAGE_DIR: /data/uploads

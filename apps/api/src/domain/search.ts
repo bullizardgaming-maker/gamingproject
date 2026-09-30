@@ -49,7 +49,7 @@ export async function searchOffers(q: Queryable, p: SearchParams) {
   if (text) {
     const t = arg(text);
     // word_similarity (<%) matches a typo'd or partial word inside a longer name: "eldn" -> "Elden Ring".
-    where.push(`(f.search @@ websearch_to_tsquery('simple', ${t}) OR lower(${t}) <% lower(f.game) OR lower(${t}) <% lower(f.title) OR f.title ILIKE '%' || ${t} || '%')`);
+    where.push(`(f.search @@ websearch_to_tsquery('simple', ${t}) OR lower(${t}) <% lower(f.game) OR lower(${t}) <% lower(f.title) OR f.title ILIKE '%' || ${arg(text.replace(/[\\%_]/g, '\\$&'))} || '%')`); // wildcards in the query are literal
     rank = `ts_rank(f.search, websearch_to_tsquery('simple', ${t})) + word_similarity(lower(${t}), lower(f.game))`;
   }
   if (p.game) where.push(`lower(f.game) = lower(${arg(p.game)})`);
@@ -120,9 +120,9 @@ export async function suggestGames(q: Queryable, prefix: string, limit = 8) {
   return many<{ game: string; offers: number }>(
     q,
     `SELECT f.game, count(*)::int AS offers FROM offers f
-      WHERE f.status = 'active' AND (lower(f.game) LIKE lower($1) || '%' OR lower($1) <% lower(f.game))
+      WHERE f.status = 'active' AND (lower(f.game) LIKE lower($3) || '%' OR lower($1) <% lower(f.game))
       GROUP BY f.game ORDER BY max(word_similarity(lower($1), lower(f.game))) DESC, offers DESC LIMIT $2`,
-    [prefix, Math.min(limit, 20)],
+    [prefix, Math.min(limit, 20), prefix.replace(/[\\%_]/g, '\\$&')],
   );
 }
 

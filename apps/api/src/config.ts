@@ -8,6 +8,15 @@ const Env = z.object({
   // Requests per minute per client IP (general limit; auth endpoints are stricter).
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(300),
   AUTH_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(10),
+  // Which proxies may set X-Forwarded-For: "false" (direct), a hop count ("1" behind one
+  // load balancer) or comma-separated addresses/CIDRs. Trusting everyone would let any
+  // client pick its own IP and dodge rate limits and fraud checks.
+  TRUST_PROXY: z.string().default('false'),
+  // Header carrying the client's country, set by the edge (e.g. cf-ipcountry). Ignored unless set.
+  GEO_COUNTRY_HEADER: z.string().toLowerCase().optional(),
+  // Failed password/2FA attempts before an account is locked for a while (doubles each time).
+  LOGIN_MAX_FAILURES: z.coerce.number().int().min(3).default(10),
+  LOGIN_LOCK_MINUTES: z.coerce.number().int().min(1).default(15),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   SENTRY_DSN: z.string().optional(),
   SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0),

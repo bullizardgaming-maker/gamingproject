@@ -153,6 +153,11 @@ export const TEMPLATES = {
     subject: () => 'We signed out a device that may be compromised',
     body: (d, link) => `A sign-in token for one of your devices (${d.userAgent ?? 'unknown browser'}) was used twice, which usually means it was copied. We signed that device out. Change your password if you didn't expect this: ${link('/account')}`,
   },
+  account_locked: {
+    category: 'security',
+    subject: () => 'Sign-in paused after failed attempts',
+    body: (d, link) => `There were ${d.failures} failed sign-in attempts on your account, so sign-in is paused for ${d.minutes} minutes. If this wasn't you, your account is safe, but consider turning on two-factor login. You can also reset your password now: ${link('/forgot-password')}`,
+  },
 } satisfies Record<string, Template>;
 
 export type TemplateName = keyof typeof TEMPLATES;

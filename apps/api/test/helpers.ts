@@ -17,7 +17,8 @@ export interface Harness {
 const silent = { info() {}, warn() {}, error: (o: unknown, m?: string) => console.error(m, o) };
 
 export async function setup(overrides: Record<string, string> = {}): Promise<Harness> {
-  const cfg = loadConfig(overrides as any);
+  // Tests simulate clients on different IPs through X-Forwarded-For, as if behind a trusted proxy.
+  const cfg = loadConfig({ TRUST_PROXY: 'true', ...overrides } as any);
   const db = createPool(cfg.DATABASE_URL);
   await db.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
   await migrate(db);
