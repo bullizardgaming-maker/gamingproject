@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { api, apiBlob, money } from '../api';
 import { useSession } from '../session';
 
-type Tab = 'disputes' | 'risk' | 'proofs' | 'chargebacks' | 'ledger';
+type Tab = 'disputes' | 'risk' | 'proofs' | 'chargebacks' | 'ledger' | 'recon' | 'audit';
 
 const TABS: Array<{ id: Tab; label: string; adminOnly?: boolean }> = [
   { id: 'disputes', label: 'Disputes' },
@@ -11,6 +11,8 @@ const TABS: Array<{ id: Tab; label: string; adminOnly?: boolean }> = [
   { id: 'risk', label: 'Fraud review', adminOnly: true },
   { id: 'chargebacks', label: 'Chargebacks', adminOnly: true },
   { id: 'ledger', label: 'Ledger', adminOnly: true },
+  { id: 'recon', label: 'Reconciliation', adminOnly: true },
+  { id: 'audit', label: 'Audit log', adminOnly: true },
 ];
 
 const fmt = (d: string) => new Date(d).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -28,6 +30,8 @@ export function Admin() {
     proofs: '/admin/owner-proofs',
     chargebacks: '/admin/chargebacks',
     ledger: '/admin/ledger/summary',
+    recon: '/admin/reconciliation',
+    audit: '/admin/audit?limit=200',
   };
 
   const load = useCallback(async () => {
@@ -158,6 +162,36 @@ export function Admin() {
                   </tr>
                 );
               })}
+            </tbody>
+          </table>
+        </div>
+      ) : tab === 'recon' ? (
+        <div className="stack">
+          <button className="btn ghost" style={{ alignSelf: 'flex-start' }} onClick={() => act(() => api('/admin/reconciliation/run', { body: {} }))}>Run now</button>
+          {rows.map((r) => (
+            <details key={r.id} className="card">
+              <summary style={{ cursor: 'pointer' }}>
+                <span className={`chip ${r.status === 'ok' ? 'released' : r.status === 'running' ? 'held' : 'disputed'}`}>{r.status}</span>{' '}
+                {fmt(r.started_at)} · {r.report?.issues?.length ?? 0} issues · {r.report?.warnings?.length ?? 0} warnings
+              </summary>
+              <pre className="secret" style={{ marginTop: 12, maxHeight: 320, overflow: 'auto' }}>{JSON.stringify(r.report, null, 2)}</pre>
+            </details>
+          ))}
+        </div>
+      ) : tab === 'audit' ? (
+        <div className="card table-wrap">
+          <table className="data">
+            <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Target</th><th>Details</th></tr></thead>
+            <tbody>
+              {rows.map((e) => (
+                <tr key={e.id}>
+                  <td className="small mono">{fmt(e.created_at)}</td>
+                  <td className="small">{e.actor_name}<div className="muted">{e.actor_role} · {e.ip}</div></td>
+                  <td className="mono small">{e.action}</td>
+                  <td className="small">{e.target_type} <span className="mono muted">{e.target_id?.slice(0, 8)}</span></td>
+                  <td className="small muted">{Object.keys(e.details ?? {}).length ? JSON.stringify(e.details) : ''}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

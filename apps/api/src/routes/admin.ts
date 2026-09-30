@@ -10,6 +10,7 @@ import { setReviewHidden } from '../domain/reviews.js';
 import { runReconciliation } from '../domain/reconciliation.js';
 import { notFound } from '../lib/errors.js';
 import { requireRole } from '../server.js';
+import { audit, listAudit } from '../domain/audit.js';
 
 const Id = z.object({ id: z.string().uuid() });
 
@@ -28,7 +29,10 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/admin/disputes/:id/resolve', async (req) => {
     const arbiter = requireRole(req, 'arbiter', 'admin');
     const body = z.object({ outcome: z.enum(['buyer', 'seller']), note: z.string().min(3).max(2_000) }).parse(req.body);
-    return resolveDispute(ctx, Id.parse(req.params).id, arbiter.id, body.outcome, body.note);
+    const { id } = Id.parse(req.params);
+    const res = await resolveDispute(ctx, id, arbiter.id, body.outcome, body.note);
+    await audit(ctx.db, req, 'dispute.resolve', { type: 'dispute', id }, body);
+    return res;
   });
 
   // --- Fraud review queue ---------------------------------------------------------------
@@ -63,6 +67,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
       } else {
         await s.tx.query(`UPDATE users SET status = 'suspended', suspension_reason = 'fraud_confirmed', withdrawals_frozen = true WHERE id = $1`, [flag.user_id]);
       }
+      await audit(s.tx, req, `risk_flag.${decision}`, { type: 'user', id: flag.user_id }, { flagId: flag.id, score: flag.score });
       return { userId: flag.user_id, decision };
     });
   });
@@ -82,7 +87,10 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/admin/owner-proofs/:id/review', async (req) => {
     const reviewer = requireRole(req, 'arbiter', 'admin');
     const body = z.object({ approve: z.boolean(), note: z.string().max(1_000).optional() }).parse(req.body);
-    return reviewOwnerProof(ctx, Id.parse(req.params).id, reviewer.id, body.approve, body.note);
+    const { id } = Id.parse(req.params);
+    const res = await reviewOwnerProof(ctx, id, reviewer.id, body.approve, body.note);
+    await audit(ctx.db, req, 'owner_proof.review', { type: 'owner_proof', id }, { ...body, result: res.status });
+    return res;
   });
 
   // --- Chargebacks -------------------------------------------------------------------------
@@ -108,13 +116,17 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
         disputeRef: z.string().max(100).optional(),
       })
       .parse(req.body);
-    return reply.status(201).send(await receiveChargeback(ctx, body));
+    const cb = await receiveChargeback(ctx, body);
+    await audit(ctx.db, req, 'chargeback.create', { type: 'order', id: body.orderId }, body);
+    return reply.status(201).send(cb);
   });
 
   app.get('/admin/chargebacks/:id/packet.pdf', async (req, reply) => {
     requireRole(req, 'admin');
-    const row = await maybeOne(ctx.db, 'SELECT packet_pdf FROM chargebacks WHERE id = $1', [Id.parse(req.params).id]);
+    const { id } = Id.parse(req.params);
+    const row = await maybeOne(ctx.db, 'SELECT packet_pdf FROM chargebacks WHERE id = $1', [id]);
     if (!row?.packet_pdf) throw notFound('Representment packet');
+    await audit(ctx.db, req, 'chargeback.packet_viewed', { type: 'chargeback', id });
     reply.header('Content-Type', 'application/pdf').header('Content-Disposition', 'inline; filename="representment.pdf"');
     return reply.send(row.packet_pdf);
   });
@@ -122,13 +134,18 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/admin/reviews/:id/hide', async (req) => {
     requireRole(req, 'arbiter', 'admin');
     const body = z.object({ hidden: z.boolean().default(true), reason: z.string().min(3).max(200) }).parse(req.body);
-    return setReviewHidden(ctx, Id.parse(req.params).id, body.hidden, body.reason);
+    const { id } = Id.parse(req.params);
+    const res = await setReviewHidden(ctx, id, body.hidden, body.reason);
+    await audit(ctx.db, req, body.hidden ? 'review.hide' : 'review.unhide', { type: 'review', id }, body);
+    return res;
   });
 
   app.post('/admin/users/:id/suspend', async (req) => {
     requireRole(req, 'admin');
     const { reason } = z.object({ reason: z.string().min(3).max(500) }).parse(req.body);
-    await ctx.db.query(`UPDATE users SET status = 'suspended', suspension_reason = $2 WHERE id = $1`, [Id.parse(req.params).id, reason]);
+    const { id } = Id.parse(req.params);
+    await ctx.db.query(`UPDATE users SET status = 'suspended', suspension_reason = $2 WHERE id = $1`, [id, reason]);
+    await audit(ctx.db, req, 'user.suspend', { type: 'user', id }, { reason });
     return { suspended: true };
   });
 
@@ -139,7 +156,24 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.post('/admin/reconciliation/run', async (req) => {
     requireRole(req, 'admin');
-    return runReconciliation(ctx);
+    const run = await runReconciliation(ctx);
+    await audit(ctx.db, req, 'reconciliation.run', { type: 'reconciliation_run', id: run.id }, { status: run.status });
+    return run;
+  });
+
+  app.get('/admin/audit', async (req) => {
+    requireRole(req, 'admin');
+    const f = z
+      .object({
+        actor: z.string().uuid().optional(),
+        targetType: z.string().max(40).optional(),
+        targetId: z.string().max(100).optional(),
+        action: z.string().max(60).optional(),
+        before: z.coerce.number().int().optional(),
+        limit: z.coerce.number().int().min(1).max(500).optional(),
+      })
+      .parse(req.query);
+    return listAudit(ctx, { ...f, actorId: f.actor });
   });
 
   app.get('/admin/ledger/summary', async (req) => {

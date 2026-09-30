@@ -4,6 +4,12 @@ const Env = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().default(4000),
   PUBLIC_WEB_URL: z.string().default('http://localhost:5173'),
+  PUBLIC_API_URL: z.string().optional(), // defaults to http://localhost:PORT
+  LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
+  SENTRY_DSN: z.string().optional(),
+  SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0),
+  // Bearer token required to scrape /metrics. Without it /metrics is disabled in production.
+  METRICS_TOKEN: z.string().optional(),
   DATABASE_URL: z.string().default('postgres://market:market@localhost:5432/market'),
   REDIS_URL: z.string().optional(),
   JWT_SECRET: z.string().min(32).default('dev-only-jwt-secret-change-me-please-0000'),
@@ -26,6 +32,8 @@ const Env = z.object({
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_FROM: z.string().optional(),
+  // Sandbox deployments expose /v1/sandbox/* for sellers testing bots. Requires the mock payment provider.
+  SANDBOX_MODE: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
   RECON_INTERVAL_HOURS: z.coerce.number().default(24),
   RECON_TOLERANCE_CENTS: z.coerce.number().default(0),
   FRAUD_GNN_URL: z.string().optional(),
@@ -52,6 +60,9 @@ export type Config = z.infer<typeof Env>;
 
 export function loadConfig(overrides: Partial<Record<keyof Config, string>> = {}): Config {
   const cfg = Env.parse({ ...process.env, ...overrides });
+  if (cfg.SANDBOX_MODE && (cfg.PAYMENT_PROVIDER !== 'mock' || cfg.KYC_PROVIDER !== 'mock')) {
+    throw new Error('SANDBOX_MODE requires PAYMENT_PROVIDER=mock and KYC_PROVIDER=mock');
+  }
   if (cfg.NODE_ENV === 'production') {
     for (const key of ['JWT_SECRET', 'DATA_ENCRYPTION_KEYS', 'FINGERPRINT_KEY', 'CRYPTO_INDEXER_SECRET'] as const) {
       if (!process.env[key]) throw new Error(`${key} must be set explicitly in production`);

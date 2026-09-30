@@ -16,7 +16,7 @@ export interface OfferInput {
   lowStockThreshold?: number;
 }
 
-const OFFER_LIST_SQL = `
+export const OFFER_LIST_SQL = `
   SELECT f.id, f.seller_id, f.category_slug, f.game, f.title, f.description, f.price_cents, f.currency, f.delivery_mode,
          f.status, f.owner_proof_status, f.version, f.created_at, f.updated_at, f.low_stock_threshold,
          c.kind AS category_kind, c.risk_class, u.display_name AS seller_name,
@@ -56,20 +56,6 @@ export async function getOffer(q: Queryable, id: string) {
   const offer = await maybeOne(q, `${OFFER_LIST_SQL} WHERE f.id = $1`, [id]);
   if (!offer) throw notFound('Offer');
   return offer;
-}
-
-export async function listOffers(q: Queryable, f: { category?: string; game?: string; q?: string; sellerId?: string; limit?: number; offset?: number }) {
-  return many(
-    q,
-    `${OFFER_LIST_SQL}
-      WHERE f.status = 'active' AND u.status = 'active' AND u.deleted_at IS NULL
-        AND ($1::text IS NULL OR f.category_slug = $1)
-        AND ($2::text IS NULL OR f.game ILIKE $2)
-        AND ($3::text IS NULL OR f.title ILIKE '%' || $3 || '%' OR f.game ILIKE '%' || $3 || '%')
-        AND ($4::uuid IS NULL OR f.seller_id = $4)
-      ORDER BY f.created_at DESC LIMIT $5 OFFSET $6`,
-    [f.category ?? null, f.game ?? null, f.q ?? null, f.sellerId ?? null, Math.min(f.limit ?? 50, 100), f.offset ?? 0],
-  );
 }
 
 /**

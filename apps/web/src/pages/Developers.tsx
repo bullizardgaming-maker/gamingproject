@@ -55,6 +55,10 @@ export function Developers() {
         Automate your shop: read orders, push stock, change prices, deliver and reply to buyers. Every request is recorded exactly like an
         action in the website.
       </p>
+      <p>
+        <a className="btn ghost" href="/v1/docs/" target="_blank" rel="noreferrer">Full API reference</a>{' '}
+        <a className="small" href="/v1/openapi.json" target="_blank" rel="noreferrer">OpenAPI JSON</a>
+      </p>
       <div className="card">
         <div className="table-wrap">
           <table className="data">

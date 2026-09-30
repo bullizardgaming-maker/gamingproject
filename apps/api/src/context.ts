@@ -42,7 +42,7 @@ export interface Ctx {
 }
 
 export function createContext(cfg: Config, log: Logger, overrides: Partial<Ctx> = {}): Ctx {
-  const apiBaseUrl = `http://localhost:${cfg.PORT}`;
+  const apiBaseUrl = cfg.PUBLIC_API_URL ?? `http://localhost:${cfg.PORT}`;
   const payments =
     overrides.payments ??
     (cfg.PAYMENT_PROVIDER === 'stripe'

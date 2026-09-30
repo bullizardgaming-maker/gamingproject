@@ -7,7 +7,7 @@ import { bulkUpdatePrices, uploadInventory } from '../domain/offers.js';
 import { deliverManually } from '../domain/orders.js';
 import { notFound } from '../lib/errors.js';
 import { me, requireScope } from '../server.js';
-import { InventoryBody } from './seller.js';
+import { ChatMessageBody, DeliverBody, InventoryUploadBody, MerchantOrdersQuery, PricesBody } from '../api-schemas.js';
 
 /**
  * Seller automation API, authenticated with `Authorization: Bearer mk_...` API keys.
@@ -19,13 +19,7 @@ export async function merchantRoutes(app: FastifyInstance, ctx: Ctx) {
   const Id = z.object({ id: z.string().uuid() });
 
   app.get('/merchant/orders', { preHandler: scope('orders:read') }, async (req) => {
-    const q = z
-      .object({
-        status: z.string().optional(),
-        since: z.string().datetime().optional(),
-        limit: z.coerce.number().int().positive().max(200).default(50),
-      })
-      .parse(req.query);
+    const q = MerchantOrdersQuery.parse(req.query);
     return many(
       ctx.db,
       `SELECT o.id, o.offer_id, f.title AS offer_title, o.buyer_id, o.quantity, o.amount_cents, o.currency, o.commission_bps,
@@ -45,29 +39,22 @@ export async function merchantRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   app.post('/merchant/orders/:id/deliver', { preHandler: scope('orders:write') }, async (req) => {
-    const { payload } = z.object({ payload: z.string().max(8_000).optional() }).parse(req.body ?? {});
+    const { payload } = DeliverBody.parse(req.body ?? {});
     return deliverManually(ctx, Id.parse(req.params).id, me(req).id, payload);
   });
 
   app.post('/merchant/inventory', { preHandler: scope('inventory:write') }, async (req) => {
-    const body = InventoryBody.extend({ offerId: z.string().uuid() }).parse(req.body);
+    const body = InventoryUploadBody.parse(req.body);
     return uploadInventory(ctx, me(req).id, body.offerId, body.format, body.content);
   });
 
   app.patch('/merchant/prices', { preHandler: scope('offers:write') }, async (req) => {
-    const { updates } = z
-      .object({
-        updates: z
-          .array(z.object({ offerId: z.string().uuid(), priceCents: z.number().int().positive().max(100_000_00), version: z.number().int().optional() }))
-          .min(1)
-          .max(500),
-      })
-      .parse(req.body);
+    const { updates } = PricesBody.parse(req.body);
     return { results: await bulkUpdatePrices(ctx, me(req).id, updates) };
   });
 
   app.post('/merchant/chat/:id/messages', { preHandler: scope('chat:write') }, async (req, reply) => {
-    const { body } = z.object({ body: z.string().trim().min(1).max(4_000) }).parse(req.body);
+    const { body } = ChatMessageBody.parse(req.body);
     return reply.status(201).send(await postUserMessage(ctx, Id.parse(req.params).id, me(req), body));
   });
 }

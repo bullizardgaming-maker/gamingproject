@@ -3,22 +3,36 @@ import { autoCompleteExpired, cancelUnpaidExpired } from './domain/orders.js';
 import { dispatchDueWebhooks } from './domain/webhooks.js';
 import { dispatchEmails, queueProtectionReminders } from './domain/notifications.js';
 import { maybeRunScheduledReconciliation } from './domain/reconciliation.js';
+import { heartbeat } from './observability.js';
 
 /**
  * Background jobs. Every job is safe to run on several worker processes at
  * once: rows are claimed with row locks / SKIP LOCKED and state transitions are
  * guarded by the expected current status.
  */
+/** Runs a job, records its heartbeat (or error) so monitoring can alert on stalled jobs. */
+async function job<T>(ctx: Ctx, name: string, fn: () => Promise<T>, fallback: T): Promise<T> {
+  try {
+    const r = await fn();
+    await heartbeat(ctx, name).catch(() => {});
+    return r;
+  } catch (err) {
+    ctx.log.error({ err, job: name }, 'background job failed');
+    await heartbeat(ctx, name, err).catch(() => {});
+    return fallback;
+  }
+}
+
 export async function runJobsOnce(ctx: Ctx) {
   const [released, expired, webhooks, reminders] = await Promise.all([
-    autoCompleteExpired(ctx),
-    cancelUnpaidExpired(ctx),
-    dispatchDueWebhooks(ctx),
-    queueProtectionReminders(ctx),
+    job(ctx, 'auto_release', () => autoCompleteExpired(ctx), 0),
+    job(ctx, 'expire_unpaid', () => cancelUnpaidExpired(ctx), 0),
+    job(ctx, 'webhooks', () => dispatchDueWebhooks(ctx), 0),
+    job(ctx, 'protection_reminders', () => queueProtectionReminders(ctx), 0),
   ]);
-  const reconciled = await maybeRunScheduledReconciliation(ctx);
+  const reconciled = await job(ctx, 'reconciliation_scheduler', () => maybeRunScheduledReconciliation(ctx), false);
   // Send after the jobs above so emails they queued go out in the same tick.
-  const emails = await dispatchEmails(ctx);
+  const emails = await job(ctx, 'emails', () => dispatchEmails(ctx), 0);
   return { released, expired, webhooks, reminders, reconciled, emails };
 }
 
@@ -47,9 +61,11 @@ export function startWorker(ctx: Ctx, intervalMs = 2_000) {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const { loadConfig } = await import('./config.js');
   const { createContext } = await import('./context.js');
+  const { asCtxLogger, createLogger, initSentry } = await import('./observability.js');
   const cfg = loadConfig();
-  const log = { info: console.log, warn: console.warn, error: console.error };
+  initSentry(cfg);
+  const log = asCtxLogger(createLogger(cfg).child({ component: 'worker' }));
   const ctx = createContext(cfg, log);
   startWorker(ctx);
-  log.info('worker started');
+  log.info({}, 'worker started');
 }

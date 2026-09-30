@@ -4,17 +4,16 @@ import { migrate } from './db.js';
 import { buildApp } from './server.js';
 import { startWorker } from './worker.js';
 import { startIndexer } from './indexer.js';
+import { asCtxLogger, createLogger, initSentry } from './observability.js';
 
 const cfg = loadConfig();
-const log = {
-  info: (o: unknown, m?: string) => console.log(m ?? '', typeof o === 'string' ? o : JSON.stringify(o)),
-  warn: (o: unknown, m?: string) => console.warn(m ?? '', JSON.stringify(o)),
-  error: (o: unknown, m?: string) => console.error(m ?? '', o),
-};
+initSentry(cfg);
+const logger = createLogger(cfg);
+const log = asCtxLogger(logger);
 const ctx = createContext(cfg, log);
-await migrate(ctx.db, (m) => log.info(m));
+await migrate(ctx.db, (m) => log.info({ migration: m }, 'migration applied'));
 
-const app = await buildApp(ctx, { logger: cfg.NODE_ENV !== 'test' });
+const app = await buildApp(ctx, { logger });
 const stopWorker = cfg.RUN_WORKER_IN_PROCESS ? startWorker(ctx) : () => {};
 const stopIndexer = startIndexer(ctx);
 await app.listen({ port: cfg.PORT, host: '0.0.0.0' });

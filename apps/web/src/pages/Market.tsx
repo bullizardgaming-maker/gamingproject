@@ -45,32 +45,49 @@ export function OfferBadges({ offer }: { offer: Offer }) {
   );
 }
 
+interface SearchResult {
+  items: Offer[];
+  total: number;
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+  facets: { categories: Array<{ category_slug: string; count: number }> };
+}
+
+const SORT_LABELS: Record<string, string> = {
+  relevance: 'Best match',
+  newest: 'Newest',
+  price_asc: 'Price: low to high',
+  price_desc: 'Price: high to low',
+  rating: 'Seller rating',
+  best_selling: 'Best-selling sellers',
+};
+
 export function Market() {
   const [params, setParams] = useSearchParams();
   const [categories, setCategories] = useState<Category[]>([]);
-  const [offers, setOffers] = useState<Offer[] | null>(null);
+  const [result, setResult] = useState<SearchResult | null>(null);
   const [error, setError] = useState('');
-  const category = params.get('category') ?? '';
-  const q = params.get('q') ?? '';
+  const get = (k: string) => params.get(k) ?? '';
+  const q = get('q');
 
   useEffect(() => {
     api<Category[]>('/categories').then(setCategories).catch(() => {});
   }, []);
 
   useEffect(() => {
-    const qs = new URLSearchParams();
-    if (category) qs.set('category', category);
-    if (q) qs.set('q', q);
-    setOffers(null);
-    api<Offer[]>(`/offers?${qs}`).then(setOffers).catch((e) => setError(e.message));
-  }, [category, q]);
+    setResult(null);
+    api<SearchResult>(`/offers?${params}`).then(setResult).catch((e) => setError(e.message));
+  }, [params]);
 
-  const set = (k: string, v: string) => {
+  const set = (changes: Record<string, string>) => {
     const next = new URLSearchParams(params);
-    if (v) next.set(k, v);
-    else next.delete(k);
+    for (const [k, v] of Object.entries(changes)) v ? next.set(k, v) : next.delete(k);
+    if (!('page' in changes)) next.delete('page');
     setParams(next);
   };
+  const countFor = (slug: string) => result?.facets.categories.find((c) => c.category_slug === slug)?.count ?? 0;
+  const page = Number(get('page') || 1);
 
   return (
     <div className="stack">
@@ -79,43 +96,71 @@ export function Market() {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            set('q', String(new FormData(e.currentTarget).get('q') ?? ''));
+            set({ q: String(new FormData(e.currentTarget).get('q') ?? '') });
           }}
           style={{ minWidth: 260, flex: '0 1 360px' }}
         >
-          <input name="q" defaultValue={q} placeholder="Search games or listings" aria-label="Search" />
+          <input name="q" defaultValue={q} key={q} placeholder="Search games or listings" aria-label="Search" />
         </form>
       </div>
       <div className="filters" role="group" aria-label="Category">
-        <button aria-pressed={!category} onClick={() => set('category', '')}>All</button>
+        <button aria-pressed={!get('category')} onClick={() => set({ category: '' })}>All</button>
         {categories.map((c) => (
-          <button key={c.slug} aria-pressed={category === c.slug} onClick={() => set('category', c.slug)}>
-            {c.name}
+          <button key={c.slug} aria-pressed={get('category') === c.slug} onClick={() => set({ category: c.slug })}>
+            {c.name} <span className="muted">{countFor(c.slug)}</span>
           </button>
         ))}
       </div>
+      <div className="row small">
+        <label className="row" style={{ gap: 6 }}>
+          <input type="checkbox" style={{ width: 'auto' }} checked={get('delivery') === 'instant'} onChange={(e) => set({ delivery: e.target.checked ? 'instant' : '' })} />
+          Instant delivery
+        </label>
+        <label className="row" style={{ gap: 6 }}>
+          <input type="checkbox" style={{ width: 'auto' }} checked={get('ownerVerified') === 'true'} onChange={(e) => set({ ownerVerified: e.target.checked ? 'true' : '' })} />
+          Owner-verified accounts
+        </label>
+        <label className="row" style={{ gap: 6 }}>
+          Max price $
+          <input type="number" min={0} style={{ width: 90 }} defaultValue={get('maxPrice') ? Number(get('maxPrice')) / 100 : ''}
+            onBlur={(e) => set({ maxPrice: e.target.value ? String(Math.round(Number(e.target.value) * 100)) : '' })} />
+        </label>
+        <select value={get('sort') || (q ? 'relevance' : 'newest')} onChange={(e) => set({ sort: e.target.value })} style={{ width: 200 }} aria-label="Sort">
+          {Object.entries(SORT_LABELS).filter(([k]) => q || k !== 'relevance').map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+      </div>
       {error && <div className="alert">{error}</div>}
-      {offers === null ? (
+      {result === null ? (
         <p className="muted">Loading listings…</p>
-      ) : offers.length === 0 ? (
+      ) : result.items.length === 0 ? (
         <div className="card">
           <h3>No listings match</h3>
           <p className="muted">Try another category or search term, or <Link to="/sell">list something yourself</Link>.</p>
         </div>
       ) : (
-        <div className="grid three">
-          {offers.map((o) => (
-            <Link key={o.id} to={`/offers/${o.id}`} className="card offer">
-              <div className="eyebrow" style={{ marginBottom: 0 }}>{o.game}</div>
-              <div className="title">{o.title}</div>
-              <OfferBadges offer={o} />
-              <div className="row spread">
-                <span className="price">{money(o.price_cents, o.currency)}</span>
-                <span className="small muted">{o.stock} in stock · {o.seller_name}</span>
-              </div>
-            </Link>
-          ))}
-        </div>
+        <>
+          <p className="small muted">{result.total} listing{result.total === 1 ? '' : 's'}</p>
+          <div className="grid three">
+            {result.items.map((o) => (
+              <Link key={o.id} to={`/offers/${o.id}`} className="card offer">
+                <div className="eyebrow" style={{ marginBottom: 0 }}>{o.game}</div>
+                <div className="title">{o.title}</div>
+                <OfferBadges offer={o} />
+                <div className="row spread">
+                  <span className="price">{money(o.price_cents, o.currency)}</span>
+                  <span className="small muted">
+                    {o.seller_review_count > 0 ? `★ ${o.seller_rating} · ` : ''}{o.stock} in stock · {o.seller_name}
+                  </span>
+                </div>
+              </Link>
+            ))}
+          </div>
+          <div className="row">
+            <button className="btn ghost" disabled={page <= 1} onClick={() => set({ page: String(page - 1) })}>Previous</button>
+            <span className="small muted">Page {page} of {Math.max(1, Math.ceil(result.total / result.pageSize))}</span>
+            <button className="btn ghost" disabled={!result.hasMore} onClick={() => set({ page: String(page + 1) })}>Next</button>
+          </div>
+        </>
       )}
     </div>
   );

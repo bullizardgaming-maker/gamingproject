@@ -10,6 +10,7 @@ import { Redis } from 'ioredis';
 export interface PubSub {
   publish(channel: string, payload: unknown): Promise<void>;
   onMessage(handler: (channel: string, payload: any) => void): void;
+  ping(): Promise<boolean>;
   close(): Promise<void>;
 }
 
@@ -23,6 +24,9 @@ export class MemoryPubSub implements PubSub {
   }
   onMessage(handler: (channel: string, payload: any) => void) {
     this.emitter.on('msg', handler);
+  }
+  async ping() {
+    return true;
   }
   async close() {
     this.emitter.removeAllListeners();
@@ -48,6 +52,9 @@ export class RedisPubSub implements PubSub {
   }
   onMessage(handler: (channel: string, payload: any) => void) {
     this.handlers.push(handler);
+  }
+  async ping() {
+    return (await this.pub.ping()) === 'PONG';
   }
   async close() {
     this.sub.disconnect();

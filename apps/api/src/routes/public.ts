@@ -3,7 +3,8 @@ import { z } from 'zod';
 import type { Ctx } from '../context.js';
 import { many } from '../db.js';
 import { SELLER_TIERS } from '../domain/commission.js';
-import { getOffer, listOffers } from '../domain/offers.js';
+import { getOffer } from '../domain/offers.js';
+import { SORTS, searchOffers, suggestGames } from '../domain/search.js';
 import { beginSetup, disable, enable, remainingRecoveryCodes } from '../domain/mfa.js';
 import { changePassword, requestPasswordReset, resetPassword, completeMfaLogin, confirmVerificationCode, login, register, sendVerificationCode, startKyc } from '../domain/users.js';
 import { REFRESH_TTL_DAYS, issueAccessToken, listSessions, refreshSession, revokeByRefreshToken, revokeFamily, revokeOtherSessions, revokeSessionById } from '../domain/sessions.js';
@@ -179,17 +180,35 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   );
 
   app.get('/offers', async (req) => {
+    const bool = z.enum(['true', 'false']).transform((v) => v === 'true');
     const q = z
       .object({
-        category: z.string().optional(),
-        game: z.string().optional(),
         q: z.string().max(100).optional(),
+        category: z.string().max(40).optional(),
+        game: z.string().max(80).optional(),
+        minPrice: z.coerce.number().int().min(0).optional(),
+        maxPrice: z.coerce.number().int().min(0).optional(),
+        delivery: z.enum(['instant', 'manual']).optional(),
+        ownerVerified: bool.optional(),
+        minRating: z.coerce.number().min(1).max(5).optional(),
+        inStock: bool.optional(),
         seller: z.string().uuid().optional(),
-        limit: z.coerce.number().int().positive().max(100).optional(),
-        offset: z.coerce.number().int().min(0).optional(),
+        sort: z.enum(SORTS).optional(),
+        page: z.coerce.number().int().min(1).max(500).optional(),
+        pageSize: z.coerce.number().int().min(1).max(60).optional(),
       })
       .parse(req.query);
-    return listOffers(ctx.db, { ...q, sellerId: q.seller });
+    return searchOffers(ctx.db, {
+      ...q,
+      minPriceCents: q.minPrice,
+      maxPriceCents: q.maxPrice,
+      sellerId: q.seller,
+    });
+  });
+
+  app.get('/games', async (req) => {
+    const { q } = z.object({ q: z.string().trim().min(1).max(60) }).parse(req.query);
+    return suggestGames(ctx.db, q);
   });
 
   app.get('/offers/:id', async (req) => {

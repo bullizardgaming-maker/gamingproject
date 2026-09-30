@@ -10,6 +10,7 @@ import {
 import { buildEscrowTerms } from '../domain/web3.js';
 import { createReview, replyToReview, sellerProfile } from '../domain/reviews.js';
 import { forbidden, notFound } from '../lib/errors.js';
+import { audit } from '../domain/audit.js';
 import { me, requestMeta } from '../server.js';
 
 const Id = z.object({ id: z.string().uuid() });
@@ -43,7 +44,13 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
     return listOrders(ctx.db, me(req).id, q.as, q.status);
   });
 
-  app.get('/orders/:id', async (req) => getOrderFor(ctx.db, Id.parse(req.params).id, me(req)));
+  app.get('/orders/:id', async (req) => {
+    const user = me(req);
+    const order = await getOrderFor(ctx.db, Id.parse(req.params).id, user);
+    // Staff reading someone else's order (and its chat) is logged.
+    if (order.buyer_id !== user.id && order.seller_id !== user.id) await audit(ctx.db, req, 'order.viewed', { type: 'order', id: order.id });
+    return order;
+  });
 
   /** Buyer-only: decrypt delivered codes/credentials. */
   app.get('/orders/:id/items', async (req, reply) => {
@@ -118,7 +125,9 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/chat/rooms/:id/messages', async (req) => {
     const { id } = Id.parse(req.params);
     const { afterSeq, limit } = z.object({ afterSeq: z.coerce.number().int().min(0).default(0), limit: z.coerce.number().int().positive().max(500).default(200) }).parse(req.query);
-    await roomForParticipant(ctx.db, id, me(req));
+    const user = me(req);
+    const room = await roomForParticipant(ctx.db, id, user);
+    if (room.buyer_id !== user.id && room.seller_id !== user.id && afterSeq === 0) await audit(ctx.db, req, 'chat.viewed', { type: 'chat_room', id });
     return listMessages(ctx.db, id, afterSeq, limit);
   });
 
