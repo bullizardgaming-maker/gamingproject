@@ -24,6 +24,8 @@ export interface Offer {
   high_risk_secondary: boolean;
   owner_proof_status: string;
   seller_completed_orders: number;
+  seller_rating: number | null;
+  seller_review_count: number;
   version: number;
 }
 

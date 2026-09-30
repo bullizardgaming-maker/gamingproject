@@ -5,10 +5,11 @@ import { many } from '../db.js';
 import { SELLER_TIERS } from '../domain/commission.js';
 import { getOffer, listOffers } from '../domain/offers.js';
 import { beginSetup, disable, enable, remainingRecoveryCodes } from '../domain/mfa.js';
-import { changePassword, completeMfaLogin, confirmVerificationCode, login, register, sendVerificationCode, startKyc } from '../domain/users.js';
+import { changePassword, requestPasswordReset, resetPassword, completeMfaLogin, confirmVerificationCode, login, register, sendVerificationCode, startKyc } from '../domain/users.js';
 import { REFRESH_TTL_DAYS, issueAccessToken, listSessions, refreshSession, revokeByRefreshToken, revokeFamily, revokeOtherSessions, revokeSessionById } from '../domain/sessions.js';
 import { enqueueEmail, getPreferences, setPreferences } from '../domain/notifications.js';
 import { AppError, unauthorized } from '../lib/errors.js';
+import { deleteAccount, exportData } from '../domain/privacy.js';
 import { me, requestMeta } from '../server.js';
 
 const Credentials = z.object({ email: z.string().email().max(254), password: z.string().min(10).max(200) });
@@ -72,11 +73,34 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     return reply.status(204).send();
   });
 
+  app.post('/auth/password/forgot', strict, async (req, reply) => {
+    const { email } = z.object({ email: z.string().email().max(254) }).parse(req.body);
+    await requestPasswordReset(ctx, email, requestMeta(req).ip);
+    return reply.status(202).send({ message: 'If an account uses this email, a reset link is on its way.' });
+  });
+
+  app.post('/auth/password/reset', strict, async (req) => {
+    const body = z.object({ token: z.string().min(20).max(200), newPassword: z.string().min(10).max(200) }).parse(req.body);
+    return resetPassword(ctx, body.token, body.newPassword);
+  });
+
   app.get('/me', async (req) => ({ user: me(req) }));
 
   app.post('/me/password', strict, async (req) => {
     const body = z.object({ currentPassword: z.string(), newPassword: z.string().min(10).max(200) }).parse(req.body);
     return changePassword(ctx, me(req), body.currentPassword, body.newPassword);
+  });
+
+  // --- Privacy (GDPR) ------------------------------------------------------------------
+  app.get('/me/export', { config: { rateLimit: { max: ctx.cfg.NODE_ENV === 'test' ? 1_000 : 5, timeWindow: '1 hour' } } }, async (req, reply) => {
+    reply.header('Content-Disposition', 'attachment; filename="bullizard-data.json"').header('Cache-Control', 'no-store');
+    return exportData(ctx, me(req).id);
+  });
+  app.post('/me/delete', strict, async (req, reply) => {
+    const body = z.object({ password: z.string(), code: z.string().trim().optional() }).parse(req.body);
+    const res = await deleteAccount(ctx, me(req), body.password, body.code);
+    reply.clearCookie(COOKIE, { path: '/v1/auth' });
+    return res;
   });
 
   // --- Signed-in devices ---------------------------------------------------------------

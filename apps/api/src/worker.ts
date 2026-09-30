@@ -2,6 +2,7 @@ import type { Ctx } from './context.js';
 import { autoCompleteExpired, cancelUnpaidExpired } from './domain/orders.js';
 import { dispatchDueWebhooks } from './domain/webhooks.js';
 import { dispatchEmails, queueProtectionReminders } from './domain/notifications.js';
+import { maybeRunScheduledReconciliation } from './domain/reconciliation.js';
 
 /**
  * Background jobs. Every job is safe to run on several worker processes at
@@ -15,9 +16,10 @@ export async function runJobsOnce(ctx: Ctx) {
     dispatchDueWebhooks(ctx),
     queueProtectionReminders(ctx),
   ]);
+  const reconciled = await maybeRunScheduledReconciliation(ctx);
   // Send after the jobs above so emails they queued go out in the same tick.
   const emails = await dispatchEmails(ctx);
-  return { released, expired, webhooks, reminders, emails };
+  return { released, expired, webhooks, reminders, reconciled, emails };
 }
 
 export function startWorker(ctx: Ctx, intervalMs = 2_000) {

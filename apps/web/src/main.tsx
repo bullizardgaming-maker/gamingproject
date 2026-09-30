@@ -9,7 +9,7 @@ import { OrderPage } from './pages/OrderPage';
 import { InquiryChat, Orders } from './pages/Orders';
 import { Sell } from './pages/Sell';
 import { Developers } from './pages/Developers';
-import { Account, Login } from './pages/Account';
+import { Account, ForgotPassword, Login, ResetPassword } from './pages/Account';
 import { Admin } from './pages/Admin';
 import './styles.css';
 
@@ -59,6 +59,8 @@ function App() {
           <Route path="/developers" element={<Developers />} />
           <Route path="/login" element={<Login />} />
           <Route path="/account" element={<Account />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/admin" element={<Admin />} />
           <Route path="*" element={<div className="card"><h2>Page not found</h2><Link to="/market">Go to the market</Link></div>} />
         </Routes>

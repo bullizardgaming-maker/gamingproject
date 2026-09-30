@@ -32,6 +32,7 @@ interface OrderDetail {
   room_id: string;
   checklist: { items: Array<{ key: string; label: string; done: boolean }>; completed_at: string | null } | null;
   dispute: { reason: string; status: string } | null;
+  review: { rating: number; comment: string; seller_reply: string | null } | null;
   events: Array<{ from_status: string | null; to_status: string; reason: string; created_at: string }>;
 }
 
@@ -191,6 +192,15 @@ export function OrderPage() {
             </details>
           )}
 
+          {isBuyer && order.status === 'completed' && !order.review && <ReviewForm orderId={order.id} onDone={load} />}
+          {order.review && (
+            <div className="card stack">
+              <h3>Review</h3>
+              <p><span className="mono">{'★'.repeat(order.review.rating)}{'☆'.repeat(5 - order.review.rating)}</span> {order.review.comment}</p>
+              {order.review.seller_reply && <p className="small muted">Seller replied: {order.review.seller_reply}</p>}
+            </div>
+          )}
+
           {order.dispute && (
             <div className="alert">
               <b>Dispute ({order.dispute.status.replace('_', ' ')}):</b> {order.dispute.reason}
@@ -246,6 +256,36 @@ function CryptoDeposit({ orderId }: { orderId: string }) {
       </div>
       {error && <div className="alert">{error}</div>}
       {terms !== null && <pre className="secret" style={{ whiteSpace: 'pre-wrap', maxHeight: 260, overflow: 'auto' }}>{JSON.stringify(terms, null, 2)}</pre>}
+    </div>
+  );
+}
+
+function ReviewForm({ orderId, onDone }: { orderId: string; onDone: () => void }) {
+  const [rating, setRating] = useState(5);
+  const [comment, setComment] = useState('');
+  const [error, setError] = useState('');
+  const submit = async () => {
+    setError('');
+    try {
+      await api(`/orders/${orderId}/review`, { body: { rating, comment } });
+      onDone();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+  return (
+    <div className="card stack">
+      <h3>Rate this seller</h3>
+      <div className="row" role="radiogroup" aria-label="Rating">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <button key={n} type="button" className={`btn ${n <= rating ? '' : 'ghost'}`} aria-checked={n === rating} role="radio" onClick={() => setRating(n)}>
+            {n}★
+          </button>
+        ))}
+      </div>
+      <textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder="What went well or badly? (optional)" maxLength={1000} style={{ minHeight: 70 }} />
+      {error && <div className="alert">{error}</div>}
+      <button className="btn" onClick={submit}>Post review</button>
     </div>
   );
 }

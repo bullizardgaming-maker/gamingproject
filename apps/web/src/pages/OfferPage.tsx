@@ -54,7 +54,9 @@ export function OfferPage() {
         <OfferBadges offer={offer} />
         <p style={{ whiteSpace: 'pre-wrap' }}>{offer.description || <span className="muted">The seller has not added a description.</span>}</p>
         <p className="small muted">
-          Sold by <b>{offer.seller_name}</b> · {offer.seller_completed_orders} completed orders · identity verified
+          Sold by <b>{offer.seller_name}</b> ·{' '}
+          {offer.seller_review_count > 0 ? `★ ${offer.seller_rating} (${offer.seller_review_count} reviews)` : 'no reviews yet'} ·{' '}
+          {offer.seller_completed_orders} completed orders · identity verified
         </p>
         {offer.high_risk_secondary && (
           <div className="alert">

@@ -34,6 +34,8 @@ export type PaymentEvent =
         cardLast4?: string;
         cardFingerprint?: string;
         billingCountry?: string;
+        /** Processing fee the PSP deducted from this payment, in minor units. */
+        feeCents?: number;
         raw?: unknown;
       };
     }
@@ -64,4 +66,6 @@ export interface PaymentProvider {
   /** A one-time link to the PSP-hosted onboarding flow. */
   payoutOnboardingLink(accountRef: string, returnUrl: string, refreshUrl: string): Promise<{ url: string }>;
   payoutAccountStatus(accountRef: string): Promise<{ payoutsEnabled: boolean; requirementsDue: string[] }>;
+  /** Total platform balance held at the PSP (available + pending), or null if unsupported. */
+  platformBalance(currency: string): Promise<number | null>;
 }

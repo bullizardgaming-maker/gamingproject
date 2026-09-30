@@ -57,7 +57,7 @@ export class StripePaymentProvider implements PaymentProvider {
     switch (event.type) {
       case 'checkout.session.completed': {
         if (obj.payment_status !== 'paid') return { type: 'ignored' };
-        const pi: any = await this.stripe.paymentIntents.retrieve(obj.payment_intent as string, { expand: ['latest_charge'] });
+        const pi: any = await this.stripe.paymentIntents.retrieve(obj.payment_intent as string, { expand: ['latest_charge.balance_transaction'] });
         const charge = pi.latest_charge;
         const card = charge?.payment_method_details?.card;
         const checks = card?.checks ?? {};
@@ -74,6 +74,7 @@ export class StripePaymentProvider implements PaymentProvider {
             cardLast4: card?.last4,
             cardFingerprint: card?.fingerprint,
             billingCountry: charge?.billing_details?.address?.country ?? card?.country,
+            feeCents: typeof charge?.balance_transaction === 'object' ? charge.balance_transaction.fee : undefined,
             raw: { payment_intent: pi.id, charge: charge?.id, outcome: charge?.outcome },
           },
         };
@@ -146,6 +147,13 @@ export class StripePaymentProvider implements PaymentProvider {
   async payoutOnboardingLink(accountRef: string, returnUrl: string, refreshUrl: string) {
     const link = await this.stripe.accountLinks.create({ account: accountRef, return_url: returnUrl, refresh_url: refreshUrl, type: 'account_onboarding' });
     return { url: link.url };
+  }
+
+  async platformBalance(currency: string) {
+    const b = await this.stripe.balance.retrieve();
+    const cur = currency.toLowerCase();
+    const sum = (list: Array<{ amount: number; currency: string }>) => list.filter((x) => x.currency === cur).reduce((s, x) => s + x.amount, 0);
+    return sum(b.available) + sum(b.pending);
   }
 
   async payoutAccountStatus(accountRef: string) {

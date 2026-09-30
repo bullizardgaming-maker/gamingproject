@@ -97,6 +97,7 @@ small{color:#8b93a7}</style></head><body><form method="post" action="/v1/payment
           cardLast4: '4242',
           cardFingerprint: body.cardFingerprint ?? `mockcard_${order.buyer_id.slice(0, 8)}`,
           billingCountry: body.billingCountry ?? order.buyer_ip_country ?? 'US',
+          feeCents: body.feeCents ? Number(body.feeCents) : undefined,
         },
       };
       // Exercise the same signed-webhook path a real PSP would use.

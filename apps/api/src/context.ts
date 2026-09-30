@@ -10,7 +10,16 @@ import type { PaymentProvider } from './providers/payments/types.js';
 import { MockKycProvider } from './providers/kyc/mock.js';
 import { SumsubKycProvider } from './providers/kyc/sumsub.js';
 import type { KycProvider } from './providers/kyc/types.js';
-import { ConsoleMessenger, PostmarkMessenger, type Messenger } from './providers/messaging.js';
+import {
+  ConsoleMessenger,
+  MockPhoneChecker,
+  PostmarkMessenger,
+  RoutingMessenger,
+  TwilioLookupChecker,
+  TwilioSmsMessenger,
+  type Messenger,
+  type PhoneChecker,
+} from './providers/messaging.js';
 
 export interface Logger {
   info(obj: unknown, msg?: string): void;
@@ -27,6 +36,7 @@ export interface Ctx {
   payments: PaymentProvider;
   kyc: KycProvider;
   messenger: Messenger;
+  phoneChecker: PhoneChecker;
   log: Logger;
   apiBaseUrl: string;
 }
@@ -55,14 +65,26 @@ export function createContext(cfg: Config, log: Logger, overrides: Partial<Ctx> 
     pubsub: overrides.pubsub ?? createPubSub(cfg.REDIS_URL),
     payments,
     kyc,
-    messenger:
-      overrides.messenger ??
-      (cfg.EMAIL_PROVIDER === 'postmark'
-        ? new PostmarkMessenger(required(cfg.POSTMARK_SERVER_TOKEN, 'POSTMARK_SERVER_TOKEN'), cfg.EMAIL_FROM, new ConsoleMessenger((m) => log.info(m)))
-        : new ConsoleMessenger((m) => log.info(m))),
+    messenger: overrides.messenger ?? buildMessenger(cfg, log),
+    phoneChecker:
+      overrides.phoneChecker ??
+      (cfg.SMS_PROVIDER === 'twilio'
+        ? new TwilioLookupChecker(required(cfg.TWILIO_ACCOUNT_SID, 'TWILIO_ACCOUNT_SID'), required(cfg.TWILIO_AUTH_TOKEN, 'TWILIO_AUTH_TOKEN'))
+        : new MockPhoneChecker()),
     log,
     apiBaseUrl: overrides.apiBaseUrl ?? apiBaseUrl,
   };
+}
+
+function buildMessenger(cfg: Config, log: Logger): Messenger {
+  const consoleOut = new ConsoleMessenger((m) => log.info(m));
+  const email =
+    cfg.EMAIL_PROVIDER === 'postmark' ? new PostmarkMessenger(required(cfg.POSTMARK_SERVER_TOKEN, 'POSTMARK_SERVER_TOKEN'), cfg.EMAIL_FROM) : consoleOut;
+  const sms =
+    cfg.SMS_PROVIDER === 'twilio'
+      ? new TwilioSmsMessenger(required(cfg.TWILIO_ACCOUNT_SID, 'TWILIO_ACCOUNT_SID'), required(cfg.TWILIO_AUTH_TOKEN, 'TWILIO_AUTH_TOKEN'), required(cfg.TWILIO_FROM, 'TWILIO_FROM'))
+      : consoleOut;
+  return new RoutingMessenger({ email, sms });
 }
 
 function required(v: string | undefined, name: string): string {

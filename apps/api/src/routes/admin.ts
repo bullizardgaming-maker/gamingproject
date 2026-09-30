@@ -6,6 +6,8 @@ import { receiveChargeback } from '../domain/chargebacks.js';
 import { withScope } from '../domain/events.js';
 import { reviewOwnerProof } from '../domain/offers.js';
 import { resolveDispute } from '../domain/orders.js';
+import { setReviewHidden } from '../domain/reviews.js';
+import { runReconciliation } from '../domain/reconciliation.js';
 import { notFound } from '../lib/errors.js';
 import { requireRole } from '../server.js';
 
@@ -117,11 +119,27 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return reply.send(row.packet_pdf);
   });
 
+  app.post('/admin/reviews/:id/hide', async (req) => {
+    requireRole(req, 'arbiter', 'admin');
+    const body = z.object({ hidden: z.boolean().default(true), reason: z.string().min(3).max(200) }).parse(req.body);
+    return setReviewHidden(ctx, Id.parse(req.params).id, body.hidden, body.reason);
+  });
+
   app.post('/admin/users/:id/suspend', async (req) => {
     requireRole(req, 'admin');
     const { reason } = z.object({ reason: z.string().min(3).max(500) }).parse(req.body);
     await ctx.db.query(`UPDATE users SET status = 'suspended', suspension_reason = $2 WHERE id = $1`, [Id.parse(req.params).id, reason]);
     return { suspended: true };
+  });
+
+  app.get('/admin/reconciliation', async (req) => {
+    requireRole(req, 'admin');
+    return many(ctx.db, 'SELECT id, started_at, finished_at, status, report FROM reconciliation_runs ORDER BY started_at DESC LIMIT 30');
+  });
+
+  app.post('/admin/reconciliation/run', async (req) => {
+    requireRole(req, 'admin');
+    return runReconciliation(ctx);
   });
 
   app.get('/admin/ledger/summary', async (req) => {

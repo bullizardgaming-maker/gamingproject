@@ -2,7 +2,7 @@ import { SignJWT, jwtVerify } from 'jose';
 import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { maybeOne, one } from '../db.js';
-import { hashPassword, hmacSha256, randomDigits, safeEqual, verifyPassword } from '../lib/crypto.js';
+import { hashPassword, hmacSha256, randomDigits, randomToken, safeEqual, verifyPassword } from '../lib/crypto.js';
 import { AppError, badRequest, conflict, unauthorized } from '../lib/errors.js';
 import { withScope } from './events.js';
 import { recordSignals, subnetOf } from './fraud.js';
@@ -108,7 +108,7 @@ async function noteSignIn(ctx: Ctx, userId: string, meta: AuthMeta) {
 }
 
 export async function login(ctx: Ctx, input: { email: string; password: string } & AuthMeta) {
-  const row = await maybeOne<User & { password_hash: string }>(ctx.db, `SELECT ${PUBLIC_USER_COLUMNS}, password_hash FROM users WHERE email = $1`, [input.email]);
+  const row = await maybeOne<User & { password_hash: string }>(ctx.db, `SELECT ${PUBLIC_USER_COLUMNS}, password_hash FROM users WHERE email = $1 AND deleted_at IS NULL`, [input.email]);
   // Always run a hash comparison so response time does not reveal whether the email exists.
   const ok = await verifyPassword(input.password, row?.password_hash ?? 'scrypt$32768$AAAAAAAAAAAAAAAAAAAAAA==$AAAA');
   if (!row || !ok) throw unauthorized('Invalid email or password');
@@ -130,6 +130,52 @@ export async function completeMfaLogin(ctx: Ctx, mfaToken: string, code: string,
   await noteSignIn(ctx, userId, meta);
   const user = await one<User>(ctx.db, `SELECT ${PUBLIC_USER_COLUMNS} FROM users WHERE id = $1`, [userId]);
   return { ...sessionResponse(user, await createSession(ctx, userId, { mfa: true, userAgent: meta.userAgent, ip: meta.ip })), method };
+}
+
+// ---------------------------------------------------------------------------
+// Password reset by email
+// ---------------------------------------------------------------------------
+const RESET_TTL_MINUTES = 30;
+
+/**
+ * Always resolves the same way whether or not the email exists, so the endpoint
+ * can't be used to discover accounts. At most 3 links per hour per account.
+ */
+export async function requestPasswordReset(ctx: Ctx, email: string, ip?: string) {
+  const user = await maybeOne<{ id: string }>(ctx.db, 'SELECT id FROM users WHERE email = $1 AND deleted_at IS NULL', [email]);
+  if (!user) return;
+  const recent = await one<{ n: number }>(
+    ctx.db,
+    `SELECT count(*)::int AS n FROM password_resets WHERE user_id = $1 AND created_at > now() - interval '1 hour'`,
+    [user.id],
+  );
+  if (recent.n >= 3) return;
+  const token = randomToken(32);
+  await withScope(ctx, async (s) => {
+    await s.tx.query(
+      `INSERT INTO password_resets (user_id, token_hash, ip, expires_at) VALUES ($1, $2, $3, now() + make_interval(mins => $4))`,
+      [user.id, hmacSha256(ctx.cfg.FINGERPRINT_KEY, `reset:${token}`), ip ?? null, RESET_TTL_MINUTES],
+    );
+    await enqueueEmail(s.tx, user.id, 'password_reset', { url: `${ctx.cfg.PUBLIC_WEB_URL}/reset-password?token=${token}`, minutes: RESET_TTL_MINUTES, ip });
+  });
+}
+
+/** Sets the new password, burns every outstanding reset link and signs out all devices. 2FA stays on. */
+export async function resetPassword(ctx: Ctx, token: string, newPassword: string) {
+  const hash = await hashPassword(newPassword);
+  return withScope(ctx, async (s) => {
+    const row = await maybeOne(
+      s.tx,
+      `SELECT id, user_id FROM password_resets WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now() FOR UPDATE`,
+      [hmacSha256(ctx.cfg.FINGERPRINT_KEY, `reset:${token}`)],
+    );
+    if (!row) throw badRequest('invalid_reset_link', 'This reset link has expired or was already used. Request a new one.');
+    await s.tx.query('UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL', [row.user_id]);
+    await s.tx.query('UPDATE users SET password_hash = $2 WHERE id = $1', [row.user_id, hash]);
+    await revokeOtherSessions(s.tx, row.user_id, null, 'password_reset');
+    await enqueueEmail(s.tx, row.user_id, 'password_changed', {});
+    return { reset: true };
+  });
 }
 
 /** Change password: signs out every other device and emails the user. */
@@ -155,7 +201,19 @@ const MAX_CODE_ATTEMPTS = 5;
 export async function sendVerificationCode(ctx: Ctx, user: User, channel: 'email' | 'sms', phone?: string) {
   const target = channel === 'email' ? user.email : phone;
   if (!target) throw badRequest('phone_required', 'Phone number is required');
-  if (channel === 'sms' && !/^\+[1-9]\d{7,14}$/.test(target)) throw badRequest('invalid_phone', 'Phone must be in E.164 format, e.g. +14155550123');
+  if (channel === 'sms') {
+    if (!/^\+[1-9]\d{7,14}$/.test(target)) throw badRequest('invalid_phone', 'Phone must be in E.164 format, e.g. +14155550123');
+    const taken = await maybeOne(
+      ctx.db,
+      'SELECT 1 FROM users WHERE phone = $1 AND phone_verified_at IS NOT NULL AND deleted_at IS NULL AND id <> $2',
+      [target, user.id],
+    );
+    if (taken) throw conflict('phone_in_use', 'This number is already verified on another account');
+    const check = await ctx.phoneChecker.check(target);
+    if (!check.ok) {
+      throw badRequest('phone_not_supported', 'Use a mobile number from a carrier. Virtual and VoIP numbers can’t be used for verification.');
+    }
+  }
   const recent = await one<{ n: number }>(
     ctx.db,
     `SELECT count(*)::int AS n FROM verification_codes WHERE user_id = $1 AND channel = $2 AND created_at > now() - interval '1 hour'`,
@@ -187,7 +245,16 @@ export async function confirmVerificationCode(ctx: Ctx, user: User, channel: 'em
     }
     await s.tx.query('UPDATE verification_codes SET consumed_at = now() WHERE id = $1', [row.id]);
     if (channel === 'email') await s.tx.query('UPDATE users SET email_verified_at = now() WHERE id = $1', [user.id]);
-    else await s.tx.query('UPDATE users SET phone = $2, phone_verified_at = now() WHERE id = $1', [user.id, row.target]);
+    else {
+      try {
+        await s.tx.query('SAVEPOINT phone');
+        await s.tx.query('UPDATE users SET phone = $2, phone_verified_at = now() WHERE id = $1', [user.id, row.target]);
+      } catch (err: any) {
+        if (err.code !== '23505') throw err;
+        await s.tx.query('ROLLBACK TO SAVEPOINT phone');
+        throw conflict('phone_in_use', 'This number is already verified on another account');
+      }
+    }
     await s.tx.query(
       `UPDATE users SET kyc_tier = GREATEST(kyc_tier, 1) WHERE id = $1 AND email_verified_at IS NOT NULL AND phone_verified_at IS NOT NULL`,
       [user.id],

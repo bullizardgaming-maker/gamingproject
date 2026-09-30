@@ -274,7 +274,7 @@ export async function handlePaymentCaptured(ctx: Ctx, ev: Extract<PaymentEvent, 
       return order; // idempotent replay
     }
 
-    await postCapture(s.tx, order);
+    await postCapture(s.tx, order, ev.details.feeCents);
     await s.tx.query(
       `INSERT INTO payment_details (order_id, provider, avs_result, cvv_result, card_brand, card_last4, card_fingerprint, billing_country, ip_country, raw)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
@@ -306,7 +306,7 @@ async function hasLedgerTxn(q: Queryable, orderId: string, memo: string) {
   return !!(await maybeOne(q, 'SELECT 1 FROM ledger_entries WHERE order_id = $1 AND memo = $2 LIMIT 1', [orderId, memo]));
 }
 
-async function postCapture(tx: Tx, order: Order) {
+async function postCapture(tx: Tx, order: Order, feeCents = 0) {
   await post(
     tx,
     [
@@ -316,6 +316,18 @@ async function postCapture(tx: Tx, order: Order) {
     'payment_captured',
     order.id,
   );
+  // The PSP keeps its processing fee; the platform pays it out of revenue, never out of escrow.
+  if (feeCents > 0) {
+    await post(
+      tx,
+      [
+        { account: await accountId(tx, 'gateway_clearing', order.currency), amountCents: feeCents },
+        { account: await accountId(tx, 'treasury', order.currency), amountCents: -feeCents },
+      ],
+      'psp_fee',
+      order.id,
+    );
+  }
 }
 
 async function postRefund(tx: Tx, order: Order) {
@@ -651,12 +663,13 @@ export async function getOrderFor(q: Queryable, orderId: string, user: { id: str
   if (!order) throw notFound('Order');
   const staff = user.role === 'admin' || user.role === 'arbiter';
   if (!staff && order.buyer_id !== user.id && order.seller_id !== user.id) throw notFound('Order');
-  const [checklist, dispute, events] = await Promise.all([
+  const [checklist, dispute, events, review] = await Promise.all([
     maybeOne(q, 'SELECT items, completed_at FROM security_checklists WHERE order_id = $1', [orderId]),
     maybeOne(q, 'SELECT * FROM disputes WHERE order_id = $1', [orderId]),
     many(q, 'SELECT from_status, to_status, reason, created_at FROM order_events WHERE order_id = $1 ORDER BY id', [orderId]),
+    maybeOne(q, 'SELECT id, rating, comment, seller_reply, created_at FROM reviews WHERE order_id = $1', [orderId]),
   ]);
-  return { ...order, checklist, dispute, events };
+  return { ...order, checklist, dispute, events, review };
 }
 
 export async function listOrders(q: Queryable, userId: string, role: 'buyer' | 'seller', status?: string, limit = 50) {

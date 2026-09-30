@@ -8,15 +8,16 @@ import { badRequest } from '../lib/errors.js';
  * transaction (outbox pattern), so an email exists if and only if the event it
  * describes committed. The worker renders and sends, honouring preferences.
  */
-export type EmailCategory = 'orders' | 'selling' | 'disputes' | 'reminders' | 'account' | 'security';
+export type EmailCategory = 'orders' | 'selling' | 'disputes' | 'reminders' | 'account' | 'security' | 'operations';
 
-export const EMAIL_CATEGORIES: Record<EmailCategory, { label: string; mandatory?: boolean }> = {
+export const EMAIL_CATEGORIES: Record<EmailCategory, { label: string; mandatory?: boolean; staffOnly?: boolean }> = {
   orders: { label: 'Purchases: payment received, delivery, refunds' },
   selling: { label: 'Sales: new orders to deliver, payouts' },
   disputes: { label: 'Disputes and chargebacks', mandatory: true },
   reminders: { label: 'Reminders before your protection window ends' },
   account: { label: 'Verification and payout account updates', mandatory: true },
   security: { label: 'Security alerts', mandatory: true },
+  operations: { label: 'Staff alerts (reconciliation, operations)', mandatory: true, staffOnly: true },
 };
 
 type Data = Record<string, any>;
@@ -101,6 +102,23 @@ export const TEMPLATES = {
     subject: () => 'New sign-in to your Bullizard account',
     body: (d, link) => `Your account was signed in from a new device (${d.userAgent ?? 'unknown browser'}, IP ${d.ip ?? 'unknown'}) at ${when(d.at)}.\n\nNot you? Change your password and sign out other devices: ${link('/account')}`,
   },
+  password_reset: {
+    category: 'security',
+    subject: () => 'Reset your Bullizard password',
+    body: (d) =>
+      `Someone asked to reset the password for this account${d.ip ? ` (from IP ${d.ip})` : ''}. Use this link within ${d.minutes} minutes:\n\n${d.url}\n\n` +
+      `If you didn't ask for this, ignore this email; your password stays the same.`,
+  },
+  new_review: {
+    category: 'selling',
+    subject: (d) => `New ${d.rating}-star review`,
+    body: (d, link) => `A buyer rated order "${d.title}" ${d.rating}/5${d.comment ? `: "${d.comment}"` : '.'}\n\nYou can post one public reply: ${link('/sell')}`,
+  },
+  reconciliation_alert: {
+    category: 'operations',
+    subject: (d) => `Reconciliation ${d.status}: ${d.issues} issue(s)`,
+    body: (d, link) => `The ${d.started_at} money reconciliation found ${d.issues} issue(s):\n\n${(d.summary as string[]).join('\n')}\n\n${link('/admin')}`,
+  },
   password_changed: {
     category: 'security',
     subject: () => 'Your password was changed',
@@ -133,7 +151,7 @@ export async function enqueueEmail(q: Queryable, userId: string, template: Templ
 export async function getPreferences(q: Queryable, userId: string) {
   const row = await maybeOne<{ email_preferences: Record<string, boolean> }>(q, 'SELECT email_preferences FROM users WHERE id = $1', [userId]);
   const prefs = row?.email_preferences ?? {};
-  return (Object.keys(EMAIL_CATEGORIES) as EmailCategory[]).map((c) => ({
+  return (Object.keys(EMAIL_CATEGORIES) as EmailCategory[]).filter((c) => !EMAIL_CATEGORIES[c].staffOnly).map((c) => ({
     category: c,
     label: EMAIL_CATEGORIES[c].label,
     mandatory: !!EMAIL_CATEGORIES[c].mandatory,

@@ -43,6 +43,13 @@ export class MockPaymentProvider implements PaymentProvider {
     this.submittedEvidence.push({ disputeRef, summary: evidence.summary, bytes: evidence.pdf.length });
   }
 
+  /** Tests set this to simulate the PSP's reported balance; null skips the external check. */
+  balanceOverride: number | null = null;
+
+  async platformBalance() {
+    return this.balanceOverride;
+  }
+
   /** Mock accounts become payout-enabled when the mock onboarding page is completed. */
   readonly enabledAccounts = new Set<string>();
 

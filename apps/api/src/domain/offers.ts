@@ -24,7 +24,9 @@ const OFFER_LIST_SQL = `
               THEN (SELECT count(*)::int FROM inventory_items i WHERE i.offer_id = f.id AND i.status = 'available')
               ELSE f.stock END AS stock,
          (c.kind = 'account' AND f.owner_proof_status <> 'verified') AS high_risk_secondary,
-         (SELECT count(*)::int FROM orders o WHERE o.seller_id = f.seller_id AND o.status = 'completed') AS seller_completed_orders
+         (SELECT count(*)::int FROM orders o WHERE o.seller_id = f.seller_id AND o.status = 'completed') AS seller_completed_orders,
+         (SELECT round(avg(rating)::numeric, 2) FROM reviews r WHERE r.seller_id = f.seller_id AND NOT r.hidden) AS seller_rating,
+         (SELECT count(*)::int FROM reviews r WHERE r.seller_id = f.seller_id AND NOT r.hidden) AS seller_review_count
     FROM offers f JOIN categories c ON c.slug = f.category_slug JOIN users u ON u.id = f.seller_id`;
 
 export function requireSeller(user: { kyc_tier: number; status: string }) {
@@ -60,7 +62,7 @@ export async function listOffers(q: Queryable, f: { category?: string; game?: st
   return many(
     q,
     `${OFFER_LIST_SQL}
-      WHERE f.status = 'active' AND u.status = 'active'
+      WHERE f.status = 'active' AND u.status = 'active' AND u.deleted_at IS NULL
         AND ($1::text IS NULL OR f.category_slug = $1)
         AND ($2::text IS NULL OR f.game ILIKE $2)
         AND ($3::text IS NULL OR f.title ILIKE '%' || $3 || '%' OR f.game ILIKE '%' || $3 || '%')

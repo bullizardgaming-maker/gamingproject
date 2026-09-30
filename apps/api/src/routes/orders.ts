@@ -8,6 +8,7 @@ import {
   cancelOrder, confirmOrder, createOrder, deliverManually, getOrderFor, listOrders, openDispute, updateChecklist,
 } from '../domain/orders.js';
 import { buildEscrowTerms } from '../domain/web3.js';
+import { createReview, replyToReview, sellerProfile } from '../domain/reviews.js';
 import { forbidden, notFound } from '../lib/errors.js';
 import { me, requestMeta } from '../server.js';
 
@@ -90,6 +91,20 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!order || order.buyer_id !== user.id) throw notFound('Order');
     if (order.rail !== 'crypto' || order.status !== 'awaiting_payment') throw forbidden('not_payable', 'Order is not awaiting a crypto deposit');
     return buildEscrowTerms(ctx, order, wallet, order.seller_wallet, token);
+  });
+
+  // --- Reviews ------------------------------------------------------------------
+  app.post('/orders/:id/review', async (req, reply) => {
+    const body = z.object({ rating: z.number().int().min(1).max(5), comment: z.string().max(1_000).default('') }).parse(req.body);
+    return reply.status(201).send(await createReview(ctx, Id.parse(req.params).id, me(req).id, body.rating, body.comment));
+  });
+  app.post('/reviews/:id/reply', async (req) => {
+    const { reply } = z.object({ reply: z.string().trim().min(1).max(1_000) }).parse(req.body);
+    return replyToReview(ctx, Id.parse(req.params).id, me(req).id, reply);
+  });
+  app.get('/sellers/:id', async (req) => {
+    const q = z.object({ limit: z.coerce.number().int().positive().max(50).default(20), offset: z.coerce.number().int().min(0).default(0) }).parse(req.query);
+    return sellerProfile(ctx.db, Id.parse(req.params).id, q.limit, q.offset);
   });
 
   // --- Chat (REST mirror of the WebSocket protocol) ----------------------------------

@@ -69,6 +69,7 @@ export function Login() {
         {error && <div className="alert">{error}</div>}
         <button className="btn" type="submit">{mode === 'login' ? 'Sign in' : 'Create account'}</button>
       </form>
+      {mode === 'login' && <Link to="/forgot-password" className="small">Forgot your password?</Link>}
       <button className="btn ghost" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
         {mode === 'login' ? 'New here? Create an account' : 'Already have an account? Sign in'}
       </button>
@@ -256,6 +257,7 @@ export function Account() {
       <Devices />
       <PasswordChange />
       <EmailPreferences />
+      <PrivacyControls />
     </div>
   );
 }
@@ -349,6 +351,101 @@ function EmailPreferences() {
           </label>
         ))}
       </div>
+    </div>
+  );
+}
+
+export function ForgotPassword() {
+  const [sent, setSent] = useState(false);
+  const submit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    await api('/auth/password/forgot', { body: { email: new FormData(e.currentTarget).get('email') } }).catch(() => {});
+    setSent(true);
+  };
+  return (
+    <form className="card stack" style={{ maxWidth: 440, margin: '24px auto' }} onSubmit={submit}>
+      <h2>Reset your password</h2>
+      {sent ? (
+        <div className="ok">If an account uses that email, a reset link is on its way. It works for 30 minutes.</div>
+      ) : (
+        <>
+          <label className="field">Email<input name="email" type="email" required autoComplete="email" /></label>
+          <button className="btn">Email me a reset link</button>
+        </>
+      )}
+    </form>
+  );
+}
+
+export function ResetPassword() {
+  const [params] = useSearchParams();
+  const nav = useNavigate();
+  const [error, setError] = useState('');
+  const submit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setError('');
+    try {
+      await api('/auth/password/reset', { body: { token: params.get('token'), newPassword: new FormData(e.currentTarget).get('newPassword') } });
+      nav('/login?reset=1');
+    } catch (err: any) {
+      setError(err.code === 'validation_error' ? 'Use at least 10 characters.' : err.message);
+    }
+  };
+  return (
+    <form className="card stack" style={{ maxWidth: 440, margin: '24px auto' }} onSubmit={submit}>
+      <h2>Choose a new password</h2>
+      <label className="field">New password<input name="newPassword" type="password" required minLength={10} autoComplete="new-password" /></label>
+      <p className="small muted">You'll be signed out on all devices. Two-factor login stays on.</p>
+      {error && <div className="alert">{error} {error.includes('expired') && <Link to="/forgot-password">Request a new link</Link>}</div>}
+      <button className="btn">Set password</button>
+    </form>
+  );
+}
+
+function PrivacyControls() {
+  const { user, refresh } = useSession();
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState('');
+  const download = async () => {
+    const data = await api('/me/export');
+    const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'bullizard-data.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+  const remove = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>;
+    setError('');
+    try {
+      await api('/me/delete', { body: { password: f.password, code: f.code || undefined } });
+      session.set(null);
+      refresh();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+  return (
+    <div className="card stack">
+      <h3>Your data</h3>
+      <div className="row">
+        <button className="btn ghost" onClick={download}>Download my data</button>
+        <button className="btn dispute" onClick={() => setOpen(!open)}>Delete my account</button>
+      </div>
+      {open && (
+        <form className="stack" onSubmit={remove}>
+          <p className="small muted">
+            Your profile, listings and sign-in details are erased and you can't undo this. Order and payment records and order chats are kept,
+            without your name or email, because the law and open disputes require them. Finish open orders and withdraw your balance first.
+          </p>
+          <label className="field">Password<input name="password" type="password" required autoComplete="current-password" /></label>
+          {user?.totp_enabled && <label className="field">Two-factor code<input name="code" className="mono" required /></label>}
+          {error && <div className="alert">{error}</div>}
+          <button className="btn dispute">Delete my account permanently</button>
+        </form>
+      )}
     </div>
   );
 }
