@@ -13,6 +13,7 @@ import { availableCount, markDelivered, releaseReservation, reserveInventory, re
 import { accountId, orderEscrowBalance, post } from './ledger.js';
 import { centsToTokenUnits, orderIdToBytes32 } from './web3.js';
 import { enqueueWebhook } from './webhooks.js';
+import { enqueueEmail } from './notifications.js';
 
 export type OrderStatus = 'awaiting_payment' | 'paid' | 'delivered' | 'completed' | 'disputed' | 'refunded' | 'cancelled' | 'charged_back';
 
@@ -66,10 +67,10 @@ export const SECURITY_CHECKLIST = [
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-async function lockOrder(tx: Tx, orderId: string): Promise<Order & { delivery_mode: string; category_kind: string }> {
+async function lockOrder(tx: Tx, orderId: string): Promise<Order & { delivery_mode: string; category_kind: string; title: string }> {
   const order = await maybeOne(
     tx,
-    `SELECT o.*, f.delivery_mode, c.kind AS category_kind
+    `SELECT o.*, f.delivery_mode, f.title, c.kind AS category_kind
        FROM orders o JOIN offers f ON f.id = o.offer_id JOIN categories c ON c.slug = f.category_slug
       WHERE o.id = $1 FOR UPDATE OF o`,
     [orderId],
@@ -103,6 +104,13 @@ async function transition(
 
 function roomOf(tx: Queryable, orderId: string) {
   return one<{ id: string }>(tx, 'SELECT id FROM chat_rooms WHERE order_id = $1', [orderId]);
+}
+
+function emailData(o: Order & { title: string }, extra: Record<string, unknown> = {}) {
+  return {
+    order_id: o.id, title: o.title, quantity: o.quantity, amount_cents: o.amount_cents, currency: o.currency,
+    seller_net_cents: o.seller_net_cents, protection: o.protection, ...extra,
+  };
 }
 
 function orderSummary(o: Order) {
@@ -325,7 +333,7 @@ async function postRefund(tx: Tx, order: Order) {
 }
 
 /** Shared by fiat capture and on-chain EscrowCreated. */
-async function onFunded(ctx: Ctx, s: TxScope, order: Order & { delivery_mode: string; category_kind: string }) {
+async function onFunded(ctx: Ctx, s: TxScope, order: Order & { delivery_mode: string; category_kind: string; title: string }) {
   await transition(s.tx, order, 'paid', null, 'payment_captured', ', paid_at = now()');
   const room = await roomOf(s.tx, order.id);
   await appendMessage(s, room.id, null, 'system', `Payment received: ${(order.amount_cents / 100).toFixed(2)} ${order.currency} is locked in escrow.`);
@@ -334,6 +342,8 @@ async function onFunded(ctx: Ctx, s: TxScope, order: Order & { delivery_mode: st
   const { action } = await applyRiskActions(ctx, s, order, risk);
 
   await enqueueWebhook(s.tx, order.seller_id, 'order.created', orderSummary(order));
+  await enqueueEmail(s.tx, order.buyer_id, 'order_paid', emailData(order));
+  await enqueueEmail(s.tx, order.seller_id, 'seller_new_order', emailData(order, { delivery_mode: order.delivery_mode }));
   s.notifyUser(order.seller_id, 'order.created', { orderId: order.id });
   s.notifyUser(order.buyer_id, 'order.paid', { orderId: order.id });
 
@@ -351,7 +361,7 @@ async function onFunded(ctx: Ctx, s: TxScope, order: Order & { delivery_mode: st
   }
 }
 
-async function deliver(ctx: Ctx, s: TxScope, order: Order & { category_kind: string }, actorId: string | null, reason: string) {
+async function deliver(ctx: Ctx, s: TxScope, order: Order & { category_kind: string; title: string }, actorId: string | null, reason: string) {
   const count = await markDelivered(s.tx, order.id);
   const window = PROTECTION_WINDOWS[order.protection];
   await transition(
@@ -372,6 +382,8 @@ async function deliver(ctx: Ctx, s: TxScope, order: Order & { category_kind: str
     ]);
   }
   await enqueueWebhook(s.tx, order.seller_id, 'order.delivered', orderSummary(order));
+  const { protection_ends_at } = await one<{ protection_ends_at: string }>(s.tx, 'SELECT protection_ends_at FROM orders WHERE id = $1', [order.id]);
+  await enqueueEmail(s.tx, order.buyer_id, 'order_delivered', emailData(order, { protection_ends_at }));
   s.notifyUser(order.buyer_id, 'order.delivered', { orderId: order.id });
   s.notifyUser(order.seller_id, 'order.delivered', { orderId: order.id });
 }
@@ -392,7 +404,7 @@ export async function deliverManually(ctx: Ctx, orderId: string, sellerId: strin
 // ---------------------------------------------------------------------------
 // Completion / release
 // ---------------------------------------------------------------------------
-async function releaseEscrow(ctx: Ctx, s: TxScope, order: Order, actorId: string | null, reason: string) {
+async function releaseEscrow(ctx: Ctx, s: TxScope, order: Order & { title: string }, actorId: string | null, reason: string) {
   if (order.rail === 'fiat') {
     const held = await orderEscrowBalance(s.tx, order.id, order.currency);
     if (held !== order.amount_cents) throw new Error(`escrow imbalance for order ${order.id}: ${held}`);
@@ -413,6 +425,7 @@ async function releaseEscrow(ctx: Ctx, s: TxScope, order: Order, actorId: string
   const room = await roomOf(s.tx, order.id);
   await appendMessage(s, room.id, null, 'system', `Order completed. ${(order.seller_net_cents / 100).toFixed(2)} ${order.currency} released to the seller (commission ${(order.commission_bps / 100).toFixed(2)}%).`);
   await enqueueWebhook(s.tx, order.seller_id, 'order.completed', orderSummary(order));
+  if (order.rail === 'fiat') await enqueueEmail(s.tx, order.seller_id, 'seller_paid', emailData(order));
   s.notifyUser(order.seller_id, 'order.completed', { orderId: order.id });
   s.notifyUser(order.buyer_id, 'order.completed', { orderId: order.id });
 }
@@ -534,6 +547,7 @@ export async function openDispute(ctx: Ctx, orderId: string, userId: string, rea
     const room = await roomOf(s.tx, orderId);
     await appendMessage(s, room.id, null, 'system', `Dispute opened: "${reason}". Escrow is frozen. An arbitration specialist will review this chat log — keep all evidence here.`);
     await enqueueWebhook(s.tx, order.seller_id, 'order.disputed', { ...orderSummary(order), reason });
+    for (const uid of [order.buyer_id, order.seller_id]) await enqueueEmail(s.tx, uid, 'dispute_opened', emailData(order, { reason }));
     s.notifyUser(order.buyer_id, 'order.disputed', { orderId });
     s.notifyUser(order.seller_id, 'order.disputed', { orderId });
     return dispute;
@@ -550,6 +564,9 @@ export async function resolveDispute(ctx: Ctx, disputeId: string, arbiterId: str
       'UPDATE disputes SET status = $2, resolution_note = $3, resolved_by = $4, resolved_at = now() WHERE id = $1',
       [disputeId, outcome === 'buyer' ? 'resolved_buyer' : 'resolved_seller', note, arbiterId],
     );
+    for (const uid of [order.buyer_id, order.seller_id]) {
+      await enqueueEmail(s.tx, uid, 'dispute_resolved', emailData(order, { outcome, note }));
+    }
     if (outcome === 'seller') {
       await releaseEscrow(ctx, s, order, arbiterId, 'dispute_resolved_seller');
     } else {
@@ -559,7 +576,7 @@ export async function resolveDispute(ctx: Ctx, disputeId: string, arbiterId: str
   });
 }
 
-async function refundOrder(ctx: Ctx, s: TxScope, order: Order & { delivery_mode: string }, actorId: string | null, reason: string) {
+async function refundOrder(ctx: Ctx, s: TxScope, order: Order & { delivery_mode: string; title: string }, actorId: string | null, reason: string) {
   // The PSP refund is idempotent (keyed on the payment ref), so calling it inside the
   // transaction is safe: on rollback a retry re-uses the same refund.
   if (order.rail === 'fiat' && order.payment_ref) await ctx.payments.refund(order.payment_ref, order.amount_cents);
@@ -576,6 +593,7 @@ async function refundOrder(ctx: Ctx, s: TxScope, order: Order & { delivery_mode:
   const room = await roomOf(s.tx, order.id);
   await appendMessage(s, room.id, null, 'system', `Order refunded to the buyer (${(order.amount_cents / 100).toFixed(2)} ${order.currency}).`);
   await enqueueWebhook(s.tx, order.seller_id, 'order.refunded', orderSummary(order));
+  if (order.rail === 'fiat') await enqueueEmail(s.tx, order.buyer_id, 'order_refunded', emailData(order));
   s.notifyUser(order.buyer_id, 'order.refunded', { orderId: order.id });
   s.notifyUser(order.seller_id, 'order.refunded', { orderId: order.id });
 }

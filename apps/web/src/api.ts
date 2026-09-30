@@ -56,22 +56,55 @@ function deviceFingerprint(): string {
   }
 }
 
-export async function api<T = any>(path: string, init: { method?: string; body?: unknown; headers?: Record<string, string> } = {}): Promise<T> {
+let refreshing: Promise<boolean> | null = null;
+
+/**
+ * Exchange the httpOnly refresh cookie for a new access token. Single-flight so
+ * parallel 401s trigger one refresh; a 409 means another tab just rotated the
+ * cookie, so we retry once with the newer cookie.
+ */
+export function refreshAccessToken(): Promise<boolean> {
+  refreshing ??= (async () => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const res = await fetch(`${BASE}/v1/auth/refresh`, { method: 'POST', credentials: 'include' });
+      if (res.ok) {
+        session.set((await res.json()).token);
+        return true;
+      }
+      if (res.status !== 409) break;
+    }
+    session.set(null);
+    return false;
+  })().finally(() => {
+    refreshing = null;
+  });
+  return refreshing;
+}
+
+export async function api<T = any>(path: string, init: { method?: string; body?: unknown; headers?: Record<string, string> } = {}, retried = false): Promise<T> {
   const headers: Record<string, string> = { 'X-Device-Fingerprint': deviceFingerprint(), ...init.headers };
   if (init.body !== undefined) headers['Content-Type'] = 'application/json';
   if (session.token) headers.Authorization = `Bearer ${session.token}`;
   const res = await fetch(`${BASE}/v1${path}`, {
     method: init.method ?? (init.body !== undefined ? 'POST' : 'GET'),
     headers,
+    credentials: 'include',
     body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
   });
   if (res.status === 204) return undefined as T;
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    if (res.status === 401) session.set(null);
+    if (res.status === 401 && !retried && session.token && !path.startsWith('/auth/') && (await refreshAccessToken())) {
+      return api<T>(path, init, true);
+    }
     throw new ApiError(res.status, data.error?.code ?? 'error', data.error?.message ?? `Request failed (${res.status})`);
   }
   return data as T;
+}
+
+export async function signOut() {
+  await fetch(`${BASE}/v1/auth/logout`, { method: 'POST', credentials: 'include', headers: session.token ? { Authorization: `Bearer ${session.token}` } : {} }).catch(() => {});
+  session.set(null);
 }
 
 export const money = (cents: number, currency = 'USD') =>
@@ -120,9 +153,11 @@ class Realtime {
       for (const m of msgs) if ((this.rooms.get(m.room_id) ?? 0) < m.seq) this.rooms.set(m.room_id, m.seq);
       this.listeners.forEach((l) => l(frame));
     };
-    ws.onclose = () => {
+    ws.onclose = async (ev) => {
       this.ws = null;
       if (!session.token) return;
+      // Access token expired while connected or before auth: refresh, then reconnect.
+      if (ev.code === 4401 && !(await refreshAccessToken())) return;
       setTimeout(() => this.connect(), this.backoff);
       this.backoff = Math.min(this.backoff * 2, 15_000);
     };

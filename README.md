@@ -39,7 +39,7 @@ Full stack in containers: `docker compose up --build` (web on :8080). Add `--pro
 ## Tests
 
 ```bash
-npm test -w apps/api          # 48 tests, needs Postgres (TEST_DATABASE_URL, default market_test) and Redis for the multi-node test
+npm test -w apps/api          # 58 tests, needs Postgres (TEST_DATABASE_URL, default market_test) and Redis for the multi-node test
 npm test -w contracts         # 10 Hardhat tests
 cd services/fraud-gnn && pip install -r requirements.txt && pytest -q   # 9 tests
 npm run build -w apps/web     # includes the payment-page script inventory check

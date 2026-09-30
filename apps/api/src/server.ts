@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
+import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
@@ -92,10 +93,11 @@ export async function buildApp(ctx: Ctx, opts: { logger?: boolean } = {}): Promi
     done(null, Object.fromEntries(new URLSearchParams(body as string))),
   );
 
+  await app.register(cookie);
   await app.register(helmet, { contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: 'same-site' } });
   await app.register(cors, {
     origin: [ctx.cfg.PUBLIC_WEB_URL],
-    credentials: false,
+    credentials: true,
     allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Device-Fingerprint'],
     methods: ['GET', 'POST', 'PATCH', 'DELETE'],
   });

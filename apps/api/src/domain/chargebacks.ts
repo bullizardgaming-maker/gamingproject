@@ -8,6 +8,7 @@ import { listMessages, verifyChain } from './chat.js';
 import { withScope } from './events.js';
 import { accountId, orderEscrowBalance, post, sellerAvailable } from './ledger.js';
 import { enqueueWebhook } from './webhooks.js';
+import { enqueueEmail } from './notifications.js';
 
 export type ChargebackCategory = 'fraud' | 'not_as_described' | 'credit_not_processed';
 
@@ -111,6 +112,9 @@ export async function receiveChargeback(ctx: Ctx, input: ChargebackInput) {
         order.id, order.status, 'charged_back', 'chargeback_received', { network: input.network, reason_code: input.reasonCode },
       ]);
     }
+    await enqueueEmail(s.tx, order.seller_id, 'chargeback_received', {
+      order_id: order.id, network: input.network, reason_code: input.reasonCode, amount_cents: amount, seller_protected: order.seller_protected,
+    });
     await enqueueWebhook(s.tx, order.seller_id, 'chargeback.created', {
       order_id: order.id, network: input.network, reason_code: input.reasonCode, amount_cents: amount, seller_protected: order.seller_protected,
     });

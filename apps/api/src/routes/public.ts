@@ -1,11 +1,14 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { Ctx } from '../context.js';
 import { many } from '../db.js';
 import { SELLER_TIERS } from '../domain/commission.js';
 import { getOffer, listOffers } from '../domain/offers.js';
 import { beginSetup, disable, enable, remainingRecoveryCodes } from '../domain/mfa.js';
-import { completeMfaLogin, confirmVerificationCode, issueToken, login, register, sendVerificationCode, startKyc } from '../domain/users.js';
+import { changePassword, completeMfaLogin, confirmVerificationCode, login, register, sendVerificationCode, startKyc } from '../domain/users.js';
+import { REFRESH_TTL_DAYS, issueAccessToken, listSessions, refreshSession, revokeByRefreshToken, revokeFamily, revokeOtherSessions, revokeSessionById } from '../domain/sessions.js';
+import { enqueueEmail, getPreferences, setPreferences } from '../domain/notifications.js';
+import { AppError, unauthorized } from '../lib/errors.js';
 import { me, requestMeta } from '../server.js';
 
 const Credentials = z.object({ email: z.string().email().max(254), password: z.string().min(10).max(200) });
@@ -14,40 +17,111 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   const strict = { config: { rateLimit: { max: ctx.cfg.NODE_ENV === 'test' ? 10_000 : 10, timeWindow: '1 minute' } } };
 
   // --- Auth -----------------------------------------------------------------
+  // Browsers get the refresh token as an httpOnly, SameSite=Strict cookie scoped to /v1/auth,
+  // so page scripts can never read it. Native/mobile clients send `X-Token-Delivery: body`.
+  const COOKIE = 'bz_rt';
+  const secure = ctx.cfg.NODE_ENV === 'production';
+  const deliver = (req: FastifyRequest, reply: FastifyReply, res: { refreshToken: string } & Record<string, unknown>) => {
+    reply.setCookie(COOKIE, res.refreshToken, {
+      httpOnly: true, secure, sameSite: 'strict', path: '/v1/auth', maxAge: REFRESH_TTL_DAYS * 86_400,
+    });
+    if (req.headers['x-token-delivery'] === 'body') return res;
+    const { refreshToken: _omit, ...rest } = res;
+    return rest;
+  };
+  const meta = (req: FastifyRequest) => {
+    const m = requestMeta(req);
+    return { ip: m.ip, device: m.device, userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : undefined };
+  };
+
   app.post('/auth/register', strict, async (req, reply) => {
     const body = Credentials.extend({ displayName: z.string().trim().min(2).max(40) }).parse(req.body);
-    const m = requestMeta(req);
-    const res = await register(ctx, { ...body, ip: m.ip, device: m.device });
-    return reply.status(201).send(res);
+    const res = await register(ctx, { ...body, ...meta(req) });
+    return reply.status(201).send(deliver(req, reply, res));
   });
 
-  app.post('/auth/login', strict, async (req) => {
+  app.post('/auth/login', strict, async (req, reply) => {
     const body = Credentials.parse(req.body);
-    const m = requestMeta(req);
-    return login(ctx, { ...body, ip: m.ip, device: m.device });
+    const res = await login(ctx, { ...body, ...meta(req) });
+    return 'refreshToken' in res ? deliver(req, reply, res) : res;
   });
 
-  app.post('/auth/mfa', strict, async (req) => {
+  app.post('/auth/mfa', strict, async (req, reply) => {
     const body = z.object({ mfaToken: z.string(), code: z.string().trim().min(6).max(20) }).parse(req.body);
-    return completeMfaLogin(ctx, body.mfaToken, body.code);
+    return deliver(req, reply, await completeMfaLogin(ctx, body.mfaToken, body.code, meta(req)));
+  });
+
+  app.post('/auth/refresh', { config: { rateLimit: { max: ctx.cfg.NODE_ENV === 'test' ? 10_000 : 60, timeWindow: '1 minute' } } }, async (req, reply) => {
+    const { refreshToken } = z.object({ refreshToken: z.string().optional() }).parse(req.body ?? {});
+    const token = refreshToken ?? req.cookies[COOKIE];
+    if (!token) throw unauthorized('Sign in again');
+    try {
+      const s = await refreshSession(ctx, token, meta(req));
+      return deliver(req, reply, { token: s.accessToken, refreshToken: s.refreshToken, expiresIn: s.expiresIn });
+    } catch (err) {
+      if (err instanceof AppError && err.status === 401) reply.clearCookie(COOKIE, { path: '/v1/auth' });
+      throw err;
+    }
+  });
+
+  app.post('/auth/logout', async (req, reply) => {
+    const token = (req.body as any)?.refreshToken ?? req.cookies[COOKIE];
+    if (token) await revokeByRefreshToken(ctx, token);
+    else if (req.user?.session_family) await revokeFamily(ctx, req.user.id, req.user.session_family, 'signed_out');
+    reply.clearCookie(COOKIE, { path: '/v1/auth' });
+    return reply.status(204).send();
   });
 
   app.get('/me', async (req) => ({ user: me(req) }));
 
+  app.post('/me/password', strict, async (req) => {
+    const body = z.object({ currentPassword: z.string(), newPassword: z.string().min(10).max(200) }).parse(req.body);
+    return changePassword(ctx, me(req), body.currentPassword, body.newPassword);
+  });
+
+  // --- Signed-in devices ---------------------------------------------------------------
+  app.get('/me/sessions', async (req) => {
+    const user = me(req);
+    return listSessions(ctx, user.id, user.session_family);
+  });
+  app.delete('/me/sessions/:id', async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    await revokeSessionById(ctx, me(req).id, id);
+    return reply.status(204).send();
+  });
+  app.post('/me/sessions/revoke-others', async (req) => {
+    const user = me(req);
+    return { signedOutDevices: await revokeOtherSessions(ctx.db, user.id, user.session_family ?? null, 'revoked_by_user') };
+  });
+
+  // --- Email preferences ---------------------------------------------------------------
+  app.get('/me/email-preferences', async (req) => getPreferences(ctx.db, me(req).id));
+  app.patch('/me/email-preferences', async (req) => {
+    const changes = z.record(z.string(), z.boolean()).parse(req.body);
+    return setPreferences(ctx.db, me(req).id, changes);
+  });
+
   // --- Two-factor login -------------------------------------------------------------
+  // Turning 2FA on or off signs out every other device and sends a security email.
   app.post('/me/2fa/setup', strict, async (req) => beginSetup(ctx, me(req)));
   app.post('/me/2fa/enable', strict, async (req) => {
     const { code } = z.object({ code: z.string().trim() }).parse(req.body);
     const user = me(req);
     const res = await enable(ctx, user.id, code);
-    // Upgrade the current session so the user doesn't have to sign in again.
-    return { ...res, token: await issueToken(ctx, user.id, { mfa: true }) };
+    // The current device proved the second factor, so its session becomes a two-factor session.
+    await ctx.db.query('UPDATE sessions SET mfa = true WHERE family_id = $1', [user.session_family]);
+    await revokeOtherSessions(ctx.db, user.id, user.session_family ?? null, 'mfa_enabled');
+    await enqueueEmail(ctx.db, user.id, 'mfa_changed', { enabled: true });
+    return { ...res, token: await issueAccessToken(ctx, user.id, user.session_id!) };
   });
   app.post('/me/2fa/disable', strict, async (req) => {
     const { code } = z.object({ code: z.string().trim() }).parse(req.body);
     const user = me(req);
     await disable(ctx, user.id, code);
-    return { token: await issueToken(ctx, user.id) };
+    await ctx.db.query('UPDATE sessions SET mfa = false WHERE family_id = $1', [user.session_family]);
+    await revokeOtherSessions(ctx.db, user.id, user.session_family ?? null, 'mfa_disabled');
+    await enqueueEmail(ctx.db, user.id, 'mfa_changed', { enabled: false });
+    return { token: await issueAccessToken(ctx, user.id, user.session_id!) };
   });
   app.get('/me/2fa', async (req) => {
     const user = me(req);

@@ -7,6 +7,7 @@ import { parseBulkUpload } from '../src/domain/inventory.js';
 import { backoffSeconds, isPrivateAddress, signPayload } from '../src/domain/webhooks.js';
 import { Keyring, hashPassword, verifyPassword } from '../src/lib/crypto.js';
 import { createHmac } from 'node:crypto';
+import { describeUserAgent } from '../src/domain/sessions.js';
 
 describe('tiered commission', () => {
   it('maps monthly volume to tiers', () => {
@@ -114,5 +115,13 @@ describe('misc domain helpers', () => {
     expect(classify('visa', '13.3').category).toBe('not_as_described');
     expect(classify('visa', '13.6').category).toBe('credit_not_processed');
     expect(classify('mastercard', '4853', 'credit_not_processed').category).toBe('credit_not_processed');
+  });
+});
+
+describe('device labels', () => {
+  it('summarises user agents', () => {
+    expect(describeUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36')).toBe('Chrome on Windows');
+    expect(describeUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile Safari/604.1')).toBe('Safari on iOS');
+    expect(describeUserAgent(null)).toBe('Unknown device');
   });
 });

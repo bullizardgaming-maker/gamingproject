@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { Ctx } from '../context.js';
 import { listMessages, postUserMessage, roomForParticipant } from '../domain/chat.js';
 import { getUser, userFromToken, type User } from '../domain/users.js';
+import { activeSession } from '../domain/sessions.js';
 import { AppError } from '../lib/errors.js';
 
 /**
@@ -76,7 +77,11 @@ export function registerGateway(app: FastifyInstance, ctx: Ctx) {
         if (frame.type === 'message') clientMsgId = frame.clientMsgId;
 
         if (frame.type === 'auth') {
-          user = await userFromToken(ctx, frame.token);
+          try {
+            user = await userFromToken(ctx, frame.token);
+          } catch {
+            return ws.close(4401, 'invalid session'); // client refreshes its access token and reconnects
+          }
           add(users, user.id, ws);
           return send(ws, { type: 'ready', userId: user.id });
         }
@@ -103,9 +108,10 @@ export function registerGateway(app: FastifyInstance, ctx: Ctx) {
             if (tokens <= 0) throw new AppError(429, 'rate_limited', 'Slow down');
             tokens--;
             // Re-read the user so a suspension applies to open sockets too.
+            // Re-check the account and session so suspensions and sign-outs apply to open sockets too.
             const fresh = await getUser(ctx.db, user.id);
-            if (!fresh) throw new AppError(401, 'unauthorized', 'Account no longer exists');
-            user = fresh;
+            if (!fresh || (user.session_id && !(await activeSession(ctx.db, user.session_id)))) return ws.close(4401, 'session ended');
+            user = { ...fresh, session_id: user.session_id, session_family: user.session_family, session_mfa: user.session_mfa };
             const msg = await postUserMessage(ctx, frame.roomId, user, frame.body);
             return send(ws, { type: 'ack', roomId: frame.roomId, clientMsgId: frame.clientMsgId, seq: msg.seq, id: msg.id });
           }

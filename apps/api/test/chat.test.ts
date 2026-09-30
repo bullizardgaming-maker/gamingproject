@@ -142,5 +142,12 @@ describe('websocket gateway', () => {
     s.ws.send('not json');
     expect((await s.next((m) => m.type === 'error')).code).toBe('bad_frame');
     s.ws.close();
+    // A forged token closes the socket with 4401 so the client knows to refresh.
+    const closed = await new Promise<number>((resolve) => {
+      const ws = new WebSocket(wsUrl);
+      ws.on('open', () => ws.send(JSON.stringify({ type: 'auth', token: 'forged' })));
+      ws.on('close', (code) => resolve(code));
+    });
+    expect(closed).toBe(4401);
   });
 });

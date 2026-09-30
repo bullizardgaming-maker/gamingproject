@@ -8,6 +8,8 @@ import { withScope } from './events.js';
 import { recordSignals, subnetOf } from './fraud.js';
 import { accountId, post, sellerAvailable } from './ledger.js';
 import { checkSecondFactor } from './mfa.js';
+import { enqueueEmail } from './notifications.js';
+import { activeSession, createSession, revokeOtherSessions, type IssuedSession } from './sessions.js';
 
 export interface User {
   id: string;
@@ -27,23 +29,18 @@ export interface User {
   payouts_enabled: boolean;
   /** True when the current session was established with a second factor. */
   session_mfa?: boolean;
+  session_id?: string;
+  session_family?: string;
 }
 
 export const PUBLIC_USER_COLUMNS =
   'id, email, display_name, role, kyc_tier, status, email_verified_at, phone, phone_verified_at, withdrawals_frozen, stripe_account_id, legal_name, created_at, (totp_enabled_at IS NOT NULL) AS totp_enabled, payouts_enabled';
 
 // ---------------------------------------------------------------------------
-// Sessions (short-lived HS256 JWTs; the user row is re-read on every request so
-// suspensions and tier changes take effect immediately).
+// Authentication. Sessions live in ./sessions.ts (15-minute access tokens +
+// rotating refresh tokens). The user row and session are re-read on every
+// request, so suspensions, tier changes and sign-outs apply immediately.
 // ---------------------------------------------------------------------------
-export async function issueToken(ctx: Ctx, userId: string, opts: { mfa?: boolean } = {}): Promise<string> {
-  return new SignJWT({ purpose: 'session', mfa: !!opts.mfa })
-    .setProtectedHeader({ alg: 'HS256' })
-    .setSubject(userId)
-    .setIssuedAt()
-    .setExpirationTime('12h')
-    .sign(new TextEncoder().encode(ctx.cfg.JWT_SECRET));
-}
 
 /** Short-lived token proving the password step passed; only exchangeable for a session via /auth/mfa. */
 async function issueChallenge(ctx: Ctx, userId: string): Promise<string> {
@@ -57,23 +54,35 @@ async function issueChallenge(ctx: Ctx, userId: string): Promise<string> {
 
 async function verifyJwt(ctx: Ctx, token: string, purpose: string) {
   const { payload } = await jwtVerify(token, new TextEncoder().encode(ctx.cfg.JWT_SECRET), { algorithms: ['HS256'] });
-  // Tokens issued before the purpose claim existed are sessions.
-  if ((payload.purpose ?? 'session') !== purpose) throw new Error('wrong token purpose');
+  if (payload.purpose !== purpose) throw new Error('wrong token purpose');
   return payload;
 }
 
 export async function userFromToken(ctx: Ctx, token: string): Promise<User> {
   try {
     const payload = await verifyJwt(ctx, token, 'session');
+    const session = await activeSession(ctx.db, String(payload.sid));
+    if (!session || session.user_id !== payload.sub) throw new Error('session revoked');
     const user = await maybeOne<User>(ctx.db, `SELECT ${PUBLIC_USER_COLUMNS} FROM users WHERE id = $1`, [payload.sub]);
     if (!user) throw new Error('unknown user');
-    return { ...user, session_mfa: payload.mfa === true };
+    return { ...user, session_mfa: session.mfa, session_id: session.id, session_family: session.family_id };
   } catch {
     throw unauthorized('Invalid or expired session');
   }
 }
 
-export async function register(ctx: Ctx, input: { email: string; password: string; displayName: string; ip?: string; device?: string }) {
+export interface AuthMeta {
+  ip?: string;
+  device?: string;
+  userAgent?: string;
+}
+
+function sessionResponse(user: User, s: IssuedSession) {
+  // `token` is the access token (kept under this name for API compatibility).
+  return { user, token: s.accessToken, refreshToken: s.refreshToken, expiresIn: s.expiresIn };
+}
+
+export async function register(ctx: Ctx, input: { email: string; password: string; displayName: string } & AuthMeta) {
   const hash = await hashPassword(input.password);
   try {
     const user = await one<User>(
@@ -82,26 +91,35 @@ export async function register(ctx: Ctx, input: { email: string; password: strin
       [input.email, hash, input.displayName],
     );
     await recordSignals(ctx.db, user.id, { device: input.device, ip_subnet: subnetOf(input.ip) });
-    return { user, token: await issueToken(ctx, user.id) };
+    return sessionResponse(user, await createSession(ctx, user.id, { mfa: false, userAgent: input.userAgent, ip: input.ip }));
   } catch (err: any) {
     if (err.code === '23505') throw conflict('email_taken', 'An account with this email already exists');
     throw err;
   }
 }
 
-export async function login(ctx: Ctx, input: { email: string; password: string; ip?: string; device?: string }) {
+/** Email the user when a sign-in comes from a device we haven't seen on this account. */
+async function noteSignIn(ctx: Ctx, userId: string, meta: AuthMeta) {
+  if (meta.device) {
+    const known = await maybeOne(ctx.db, `SELECT 1 FROM risk_signals WHERE user_id = $1 AND kind = 'device' AND value = $2`, [userId, meta.device]);
+    if (!known) await enqueueEmail(ctx.db, userId, 'new_signin', { userAgent: meta.userAgent, ip: meta.ip, at: new Date().toISOString() });
+  }
+  await recordSignals(ctx.db, userId, { device: meta.device, ip_subnet: subnetOf(meta.ip) });
+}
+
+export async function login(ctx: Ctx, input: { email: string; password: string } & AuthMeta) {
   const row = await maybeOne<User & { password_hash: string }>(ctx.db, `SELECT ${PUBLIC_USER_COLUMNS}, password_hash FROM users WHERE email = $1`, [input.email]);
   // Always run a hash comparison so response time does not reveal whether the email exists.
   const ok = await verifyPassword(input.password, row?.password_hash ?? 'scrypt$32768$AAAAAAAAAAAAAAAAAAAAAA==$AAAA');
   if (!row || !ok) throw unauthorized('Invalid email or password');
-  await recordSignals(ctx.db, row.id, { device: input.device, ip_subnet: subnetOf(input.ip) });
   const { password_hash: _, ...user } = row;
   if (user.totp_enabled) return { mfaRequired: true as const, mfaToken: await issueChallenge(ctx, user.id) };
-  return { user, token: await issueToken(ctx, user.id) };
+  await noteSignIn(ctx, user.id, input);
+  return sessionResponse(user, await createSession(ctx, user.id, { mfa: false, userAgent: input.userAgent, ip: input.ip }));
 }
 
 /** Second login step: exchange the challenge token plus a TOTP or recovery code for a session. */
-export async function completeMfaLogin(ctx: Ctx, mfaToken: string, code: string) {
+export async function completeMfaLogin(ctx: Ctx, mfaToken: string, code: string, meta: AuthMeta = {}) {
   let userId: string;
   try {
     userId = String((await verifyJwt(ctx, mfaToken, 'mfa_challenge')).sub);
@@ -109,8 +127,23 @@ export async function completeMfaLogin(ctx: Ctx, mfaToken: string, code: string)
     throw unauthorized('Sign-in expired. Enter your password again.');
   }
   const method = await checkSecondFactor(ctx, userId, code);
+  await noteSignIn(ctx, userId, meta);
   const user = await one<User>(ctx.db, `SELECT ${PUBLIC_USER_COLUMNS} FROM users WHERE id = $1`, [userId]);
-  return { user, token: await issueToken(ctx, userId, { mfa: true }), method };
+  return { ...sessionResponse(user, await createSession(ctx, userId, { mfa: true, userAgent: meta.userAgent, ip: meta.ip })), method };
+}
+
+/** Change password: signs out every other device and emails the user. */
+export async function changePassword(ctx: Ctx, user: User, current: string, next: string) {
+  const row = await one<{ password_hash: string }>(ctx.db, 'SELECT password_hash FROM users WHERE id = $1', [user.id]);
+  if (!(await verifyPassword(current, row.password_hash))) throw unauthorized('Current password is incorrect');
+  if (current === next) throw badRequest('same_password', 'Choose a password you have not used here before');
+  const hash = await hashPassword(next);
+  return withScope(ctx, async (s) => {
+    await s.tx.query('UPDATE users SET password_hash = $2 WHERE id = $1', [user.id, hash]);
+    const signedOut = await revokeOtherSessions(s.tx, user.id, user.session_family ?? null, 'password_changed');
+    await enqueueEmail(s.tx, user.id, 'password_changed', {});
+    return { signedOutDevices: signedOut };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -184,8 +217,10 @@ export async function applyKycResult(ctx: Ctx, result: { externalId: string; sta
     await s.tx.query('UPDATE kyc_verifications SET status = $2, result = $3, updated_at = now() WHERE id = $1', [v.id, result.status, JSON.stringify(result.raw ?? {})]);
     if (result.status === 'approved') {
       await s.tx.query('UPDATE users SET kyc_tier = 2, legal_name = COALESCE($2, legal_name) WHERE id = $1', [v.user_id, result.legalName ?? null]);
+      await enqueueEmail(s.tx, v.user_id, 'kyc_result', { approved: true });
       s.notifyUser(v.user_id, 'kyc.approved', {});
     } else if (result.status === 'rejected') {
+      await enqueueEmail(s.tx, v.user_id, 'kyc_result', { approved: false });
       s.notifyUser(v.user_id, 'kyc.rejected', {});
     }
     return v;
@@ -218,7 +253,9 @@ export async function requestWithdrawal(ctx: Ctx, userId: string, amountCents: n
 
   try {
     const { ref } = await ctx.payments.payout(w.destination, amountCents, currency, `withdrawal_${w.id}`);
-    return one(ctx.db, `UPDATE withdrawals SET status = 'paid', provider_ref = $2 WHERE id = $1 RETURNING *`, [w.id, ref]);
+    const paid = await one(ctx.db, `UPDATE withdrawals SET status = 'paid', provider_ref = $2 WHERE id = $1 RETURNING *`, [w.id, ref]);
+    await enqueueEmail(ctx.db, userId, 'withdrawal_paid', { amount_cents: amountCents, currency, provider_ref: ref });
+    return paid;
   } catch (err) {
     // Payout failed: return the funds to the seller's balance.
     await withScope(ctx, async (s) => {

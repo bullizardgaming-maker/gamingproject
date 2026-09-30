@@ -10,7 +10,7 @@ import type { PaymentProvider } from './providers/payments/types.js';
 import { MockKycProvider } from './providers/kyc/mock.js';
 import { SumsubKycProvider } from './providers/kyc/sumsub.js';
 import type { KycProvider } from './providers/kyc/types.js';
-import { ConsoleMessenger, type Messenger } from './providers/messaging.js';
+import { ConsoleMessenger, PostmarkMessenger, type Messenger } from './providers/messaging.js';
 
 export interface Logger {
   info(obj: unknown, msg?: string): void;
@@ -55,7 +55,11 @@ export function createContext(cfg: Config, log: Logger, overrides: Partial<Ctx> 
     pubsub: overrides.pubsub ?? createPubSub(cfg.REDIS_URL),
     payments,
     kyc,
-    messenger: overrides.messenger ?? new ConsoleMessenger((m) => log.info(m)),
+    messenger:
+      overrides.messenger ??
+      (cfg.EMAIL_PROVIDER === 'postmark'
+        ? new PostmarkMessenger(required(cfg.POSTMARK_SERVER_TOKEN, 'POSTMARK_SERVER_TOKEN'), cfg.EMAIL_FROM, new ConsoleMessenger((m) => log.info(m)))
+        : new ConsoleMessenger((m) => log.info(m))),
     log,
     apiBaseUrl: overrides.apiBaseUrl ?? apiBaseUrl,
   };

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import QRCode from 'qrcode';
 import { api, session } from '../api';
@@ -253,6 +253,102 @@ export function Account() {
       </div>
 
       <TwoFactor />
+      <Devices />
+      <PasswordChange />
+      <EmailPreferences />
+    </div>
+  );
+}
+
+function Devices() {
+  const [devices, setDevices] = useState<any[] | null>(null);
+  const [error, setError] = useState('');
+  const load = () => api<any[]>('/me/sessions').then(setDevices).catch((e) => setError(e.message));
+  useEffect(() => {
+    load();
+  }, []);
+  const run = async (fn: () => Promise<unknown>) => {
+    setError('');
+    try {
+      await fn();
+      await load();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+  return (
+    <div className="card stack">
+      <div className="row spread">
+        <h3 style={{ margin: 0 }}>Signed-in devices</h3>
+        {devices && devices.length > 1 && (
+          <button className="btn ghost" onClick={() => run(() => api('/me/sessions/revoke-others', { body: {} }))}>Sign out all other devices</button>
+        )}
+      </div>
+      {error && <div className="alert">{error}</div>}
+      {devices?.map((d) => (
+        <div key={d.id} className="row spread small" style={{ borderTop: '1px solid var(--rule)', paddingTop: 10 }}>
+          <span>
+            <b>{d.device}</b>
+            {d.current && <span className="chip released" style={{ marginLeft: 8 }}>this device</span>}
+            <div className="muted">
+              {d.ip ?? 'unknown IP'} · last active {new Date(d.lastActiveAt).toLocaleString()}
+            </div>
+          </span>
+          {!d.current && <button className="btn ghost" onClick={() => run(() => api(`/me/sessions/${d.id}`, { method: 'DELETE' }))}>Sign out</button>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PasswordChange() {
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'alert'; text: string } | null>(null);
+  const submit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const f = Object.fromEntries(new FormData(form)) as Record<string, string>;
+    try {
+      const r = await api<{ signedOutDevices: number }>('/me/password', { body: f });
+      form.reset();
+      setMsg({ kind: 'ok', text: `Password changed. ${r.signedOutDevices} other device${r.signedOutDevices === 1 ? ' was' : 's were'} signed out.` });
+    } catch (err: any) {
+      setMsg({ kind: 'alert', text: err.code === 'validation_error' ? 'New password must be at least 10 characters.' : err.message });
+    }
+  };
+  return (
+    <form className="card stack" onSubmit={submit}>
+      <h3>Change password</h3>
+      <div className="grid two">
+        <label className="field">Current password<input name="currentPassword" type="password" required autoComplete="current-password" /></label>
+        <label className="field">New password<input name="newPassword" type="password" required minLength={10} autoComplete="new-password" /></label>
+      </div>
+      <p className="small muted">Changing your password signs out every other device.</p>
+      {msg && <div className={msg.kind}>{msg.text}</div>}
+      <button className="btn ghost">Change password</button>
+    </form>
+  );
+}
+
+function EmailPreferences() {
+  const [prefs, setPrefs] = useState<Array<{ category: string; label: string; mandatory: boolean; enabled: boolean }>>([]);
+  useEffect(() => {
+    api('/me/email-preferences').then(setPrefs).catch(() => {});
+  }, []);
+  const toggle = async (category: string, enabled: boolean) => setPrefs(await api('/me/email-preferences', { method: 'PATCH', body: { [category]: enabled } }));
+  return (
+    <div className="card stack checklist">
+      <h3>Email notifications</h3>
+      <div>
+        {prefs.map((p) => (
+          <label key={p.category}>
+            <input type="checkbox" checked={p.enabled} disabled={p.mandatory} onChange={(e) => toggle(p.category, e.target.checked)} />
+            <span>
+              {p.label}
+              {p.mandatory && <span className="small muted"> · always on</span>}
+            </span>
+          </label>
+        ))}
+      </div>
     </div>
   );
 }

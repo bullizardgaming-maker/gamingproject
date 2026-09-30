@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
-import { api, session, type User } from './api';
+import { api, session, signOut, type User } from './api';
 
 interface SessionState {
   user: User | null;
@@ -36,7 +36,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('session', onChange);
   }, [refresh]);
 
-  return <Ctx.Provider value={{ user, loading, refresh, signOut: () => session.set(null) }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ user, loading, refresh, signOut: () => void signOut() }}>{children}</Ctx.Provider>;
 }
 
 export const useSession = () => useContext(Ctx);

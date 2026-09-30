@@ -1,6 +1,7 @@
 import type { Ctx } from './context.js';
 import { autoCompleteExpired, cancelUnpaidExpired } from './domain/orders.js';
 import { dispatchDueWebhooks } from './domain/webhooks.js';
+import { dispatchEmails, queueProtectionReminders } from './domain/notifications.js';
 
 /**
  * Background jobs. Every job is safe to run on several worker processes at
@@ -8,12 +9,15 @@ import { dispatchDueWebhooks } from './domain/webhooks.js';
  * guarded by the expected current status.
  */
 export async function runJobsOnce(ctx: Ctx) {
-  const [released, expired, webhooks] = await Promise.all([
+  const [released, expired, webhooks, reminders] = await Promise.all([
     autoCompleteExpired(ctx),
     cancelUnpaidExpired(ctx),
     dispatchDueWebhooks(ctx),
+    queueProtectionReminders(ctx),
   ]);
-  return { released, expired, webhooks };
+  // Send after the jobs above so emails they queued go out in the same tick.
+  const emails = await dispatchEmails(ctx);
+  return { released, expired, webhooks, reminders, emails };
 }
 
 export function startWorker(ctx: Ctx, intervalMs = 2_000) {
@@ -24,7 +28,7 @@ export function startWorker(ctx: Ctx, intervalMs = 2_000) {
     running = true;
     try {
       const r = await runJobsOnce(ctx);
-      if (r.released || r.expired || r.webhooks) ctx.log.info(r, 'worker tick');
+      if (r.released || r.expired || r.webhooks || r.emails) ctx.log.info(r, 'worker tick');
     } catch (err) {
       ctx.log.error({ err: (err as Error).message }, 'worker tick failed');
     } finally {
