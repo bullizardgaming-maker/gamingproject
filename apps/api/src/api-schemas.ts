@@ -112,3 +112,10 @@ export const WEBHOOK_PAYLOADS = {
     z.object({ order_id: uuid, network: z.enum(['visa', 'mastercard']), reason_code: z.string(), amount_cents: cents, seller_protected: z.boolean() }),
   ),
 } as const;
+
+export const WebhookDeliveriesQuery = z.object({
+  status: z.enum(['failing', 'dead', 'pending', 'succeeded', 'all']).default('failing').describe('`failing` = still retrying after an error; `dead` = retries used up'),
+  endpointId: z.string().uuid().optional(),
+  limit: z.coerce.number().int().positive().max(500).default(100),
+});
+export const ReplayBody = z.object({ since: z.string().datetime().optional().describe('Only deliveries created at or after this time') });

@@ -12,6 +12,7 @@ import { notFound } from '../lib/errors.js';
 import { requireRole } from '../server.js';
 import { audit, listAudit } from '../domain/audit.js';
 import { createPromo, listPromos, setPromoActive } from '../domain/promos.js';
+import { decideAdjustment, listAdjustments, requestAdjustment, userLedger } from '../domain/adjustments.js';
 import { decideTreasuryWithdrawal, listTreasuryWithdrawals, requestTreasuryWithdrawal, treasuryBalance } from '../domain/treasury.js';
 
 const Id = z.object({ id: z.string().uuid() });
@@ -218,6 +219,39 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const res = await decideTreasuryWithdrawal(ctx, id, admin.id, approve);
     await audit(ctx.db, req, approve ? 'treasury.withdrawal_approved' : 'treasury.withdrawal_rejected', { type: 'treasury_withdrawal', id });
     return res;
+  });
+
+  // --- Manual ledger corrections (four-eyes) -------------------------------------------
+  const AdjustmentLine = z.object({
+    kind: z.enum(['gateway_clearing', 'escrow', 'treasury', 'reserve', 'seller_available', 'payouts', 'platform_withdrawals', 'user_credit', 'fx_pnl']),
+    ownerId: z.string().uuid().nullable().default(null),
+    currency: z.string().length(3).toUpperCase().default(ctx.cfg.SETTLEMENT_CURRENCY),
+    amountCents: z.number().int(),
+  });
+  app.get('/admin/ledger/adjustments', async (req) => {
+    requireRole(req, 'admin');
+    return listAdjustments(ctx);
+  });
+  app.post('/admin/ledger/adjustments', async (req, reply) => {
+    const admin = requireRole(req, 'admin');
+    const body = z.object({ reason: z.string().trim().min(10).max(1_000), orderId: z.string().uuid().optional(), lines: z.array(AdjustmentLine).min(2).max(10) }).parse(req.body);
+    const a = await requestAdjustment(ctx, admin.id, body);
+    await audit(ctx.db, req, 'ledger.adjustment_requested', { type: 'ledger_adjustment', id: a.id }, body);
+    return reply.status(201).send(a);
+  });
+  app.post('/admin/ledger/adjustments/:id/decide', async (req) => {
+    const admin = requireRole(req, 'admin');
+    const { approve } = z.object({ approve: z.boolean() }).parse(req.body);
+    const { id } = Id.parse(req.params);
+    const res = await decideAdjustment(ctx, id, admin.id, approve);
+    await audit(ctx.db, req, approve ? 'ledger.adjustment_posted' : 'ledger.adjustment_rejected', { type: 'ledger_adjustment', id });
+    return res;
+  });
+  app.get('/admin/users/:id/ledger', async (req) => {
+    requireRole(req, 'admin');
+    const { id } = Id.parse(req.params);
+    await audit(ctx.db, req, 'ledger.user_viewed', { type: 'user', id });
+    return userLedger(ctx, id);
   });
 
   app.get('/admin/audit', async (req) => {

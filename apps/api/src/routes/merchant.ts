@@ -5,9 +5,10 @@ import { many, maybeOne } from '../db.js';
 import { postUserMessage } from '../domain/chat.js';
 import { bulkUpdatePrices, uploadInventory } from '../domain/offers.js';
 import { deliverManually } from '../domain/orders.js';
+import { listDeliveries, redeliver, replayDead } from '../domain/webhooks.js';
 import { notFound } from '../lib/errors.js';
 import { me, requireScope } from '../server.js';
-import { ChatMessageBody, DeliverBody, InventoryUploadBody, MerchantOrdersQuery, PricesBody } from '../api-schemas.js';
+import { ChatMessageBody, DeliverBody, InventoryUploadBody, MerchantOrdersQuery, PricesBody, ReplayBody, WebhookDeliveriesQuery } from '../api-schemas.js';
 
 /**
  * Seller automation API, authenticated with `Authorization: Bearer mk_...` API keys.
@@ -56,5 +57,15 @@ export async function merchantRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/merchant/chat/:id/messages', { preHandler: scope('chat:write') }, async (req, reply) => {
     const { body } = ChatMessageBody.parse(req.body);
     return reply.status(201).send(await postUserMessage(ctx, Id.parse(req.params).id, me(req), body));
+  });
+
+  // --- Webhook deliveries (for bots that watch their own integration health) --------------
+  app.get('/merchant/webhooks/deliveries', { preHandler: scope('webhooks:manage') }, async (req) => {
+    return listDeliveries(ctx, me(req).id, WebhookDeliveriesQuery.parse(req.query));
+  });
+  app.post('/merchant/webhooks/deliveries/:id/redeliver', { preHandler: scope('webhooks:manage') }, async (req) => redeliver(ctx, me(req).id, Id.parse(req.params).id));
+  app.post('/merchant/webhooks/:id/replay', { preHandler: scope('webhooks:manage') }, async (req) => {
+    const { since } = ReplayBody.parse(req.body ?? {});
+    return replayDead(ctx, me(req).id, Id.parse(req.params).id, since);
   });
 }

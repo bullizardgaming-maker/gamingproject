@@ -90,6 +90,37 @@ export function buildOpenApi(opts: { serverUrl: string; sandbox: boolean }) {
         responses: { '201': { description: 'Sent' }, ...errors },
       },
     },
+    '/v1/merchant/webhooks/deliveries': {
+      get: {
+        tags: ['Webhooks'],
+        summary: 'List webhook deliveries',
+        description: 'Defaults to deliveries that are failing and still being retried. Includes the payload, last HTTP status and error.',
+        security: scope('webhooks:manage'),
+        parameters: queryParams(S.WebhookDeliveriesQuery),
+        responses: { '200': { description: 'Deliveries, newest first' }, ...errors },
+      },
+    },
+    '/v1/merchant/webhooks/deliveries/{id}/redeliver': {
+      post: {
+        tags: ['Webhooks'],
+        summary: 'Send a delivery again now',
+        description: 'Resets its retry budget. The event id (and `Idempotency-Key`) is unchanged, so you can de-duplicate.',
+        security: scope('webhooks:manage'),
+        parameters: [idParam()],
+        responses: { '200': { description: 'Queued' }, ...errors, '404': { description: 'Not yours, or the endpoint is disabled' } },
+      },
+    },
+    '/v1/merchant/webhooks/{id}/replay': {
+      post: {
+        tags: ['Webhooks'],
+        summary: 'Re-queue all dead deliveries of an endpoint',
+        description: 'Use after fixing an outage on your side. Up to 5,000 of the newest dead deliveries.',
+        security: scope('webhooks:manage'),
+        parameters: [idParam()],
+        requestBody: { required: false, content: { 'application/json': { schema: json(S.ReplayBody, 'input') } } },
+        responses: { '200': { description: '`{ requeued }`' }, ...errors },
+      },
+    },
   };
 
   if (opts.sandbox) {

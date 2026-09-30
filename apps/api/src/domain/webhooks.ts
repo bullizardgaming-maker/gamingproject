@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
-import { many, withTx } from '../db.js';
+import { many, maybeOne, withTx } from '../db.js';
 import { hmacSha256, randomToken } from '../lib/crypto.js';
-import { badRequest } from '../lib/errors.js';
+import { badRequest, notFound } from '../lib/errors.js';
 import { fetchPublic, isPrivateAddress } from '../lib/netguard.js';
 
 export const WEBHOOK_EVENTS = [
@@ -159,4 +159,76 @@ async function deliver(ctx: Ctx, d: ClaimedDelivery, fetchImpl: FetchLike) {
       WHERE id = $1`,
     [d.id, dead ? 'dead' : 'pending', statusCode, error, backoffSeconds(d.attempts)],
   );
+}
+
+// ---------------------------------------------------------------------------
+// Merchant self-service: inspect failures, redeliver, replay, re-enable
+// ---------------------------------------------------------------------------
+export const DELIVERY_FILTERS = ['failing', 'dead', 'pending', 'succeeded', 'all'] as const;
+
+/** `failing` = still retrying after at least one failed attempt. */
+export async function listDeliveries(
+  ctx: Ctx,
+  userId: string,
+  f: { endpointId?: string; status?: (typeof DELIVERY_FILTERS)[number]; limit?: number },
+) {
+  const status = f.status ?? 'all';
+  return many(
+    ctx.db,
+    `SELECT d.id, d.endpoint_id, e.url, d.event_type, d.status, d.attempts, d.last_status_code, d.last_error,
+            d.next_attempt_at, d.created_at, d.delivered_at, d.payload
+       FROM webhook_deliveries d JOIN webhook_endpoints e ON e.id = d.endpoint_id
+      WHERE e.user_id = $1 AND ($2::uuid IS NULL OR e.id = $2)
+        AND CASE $3 WHEN 'all' THEN true
+                    WHEN 'failing' THEN d.status = 'pending' AND d.last_error IS NOT NULL
+                    ELSE d.status = $3 END
+      ORDER BY d.created_at DESC LIMIT $4`,
+    [userId, f.endpointId ?? null, status, Math.min(f.limit ?? 100, 500)],
+  );
+}
+
+/**
+ * Send one delivery again now with a fresh retry budget. The payload, and so the
+ * event id merchants de-duplicate on, is unchanged.
+ */
+export async function redeliver(ctx: Ctx, userId: string, deliveryId: string) {
+  const row = await maybeOne(
+    ctx.db,
+    `UPDATE webhook_deliveries d
+        SET status = 'pending', attempts = 0, next_attempt_at = now(), last_error = NULL, last_status_code = NULL
+       FROM webhook_endpoints e
+      WHERE d.id = $1 AND e.id = d.endpoint_id AND e.user_id = $2 AND e.active
+      RETURNING d.id, d.event_type, d.status`,
+    [deliveryId, userId],
+  );
+  if (!row) throw notFound('Delivery (or its endpoint is disabled)');
+  return row;
+}
+
+/** Re-queue every dead delivery of an endpoint (optionally since a time), e.g. after fixing an outage. */
+export async function replayDead(ctx: Ctx, userId: string, endpointId: string, since?: string) {
+  const { rowCount } = await ctx.db.query(
+    `UPDATE webhook_deliveries d
+        SET status = 'pending', attempts = 0, next_attempt_at = now(), last_error = NULL, last_status_code = NULL
+       FROM webhook_endpoints e
+      WHERE e.id = d.endpoint_id AND e.id = $1 AND e.user_id = $2 AND e.active
+        AND d.status = 'dead' AND ($3::timestamptz IS NULL OR d.created_at >= $3)
+        AND d.id IN (SELECT id FROM webhook_deliveries WHERE endpoint_id = $1 AND status = 'dead' ORDER BY created_at DESC LIMIT 5000)`,
+    [endpointId, userId, since ?? null],
+  );
+  return { requeued: rowCount ?? 0 };
+}
+
+export async function setEndpointActive(ctx: Ctx, userId: string, endpointId: string, active: boolean) {
+  const row = await maybeOne(ctx.db, 'UPDATE webhook_endpoints SET active = $3 WHERE id = $1 AND user_id = $2 RETURNING id, url, events, active', [endpointId, userId, active]);
+  if (!row) throw notFound('Webhook endpoint');
+  return row;
+}
+
+/** New signing secret, shown once. Deliveries already queued are signed with it too. */
+export async function rotateSecret(ctx: Ctx, userId: string, endpointId: string) {
+  const secret = `whsec_${randomToken(32)}`;
+  const row = await maybeOne(ctx.db, 'UPDATE webhook_endpoints SET secret_ciphertext = $3 WHERE id = $1 AND user_id = $2 RETURNING id', [endpointId, userId, ctx.keyring.encrypt(secret, 'webhook')]);
+  if (!row) throw notFound('Webhook endpoint');
+  return { id: endpointId, secret };
 }

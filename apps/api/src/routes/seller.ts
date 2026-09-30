@@ -10,7 +10,7 @@ import { sellerAvailable } from '../domain/ledger.js';
 import { createOffer, requireSeller, submitOwnerProof, updateOffer, uploadInventory } from '../domain/offers.js';
 import { requestWithdrawal } from '../domain/users.js';
 import { payoutStatus, startPayoutOnboarding } from '../domain/payouts.js';
-import { WEBHOOK_EVENTS, createEndpoint } from '../domain/webhooks.js';
+import { DELIVERY_FILTERS, WEBHOOK_EVENTS, createEndpoint, listDeliveries, redeliver, replayDead, rotateSecret, setEndpointActive } from '../domain/webhooks.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { me } from '../server.js';
 
@@ -182,16 +182,16 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     return reply.status(204).send();
   });
   app.get('/developer/webhooks/:id/deliveries', async (req) => {
-    const { id } = Id.parse(req.params);
-    const rows = await many(
-      ctx.db,
-      `SELECT d.id, d.event_type, d.status, d.attempts, d.last_status_code, d.last_error, d.next_attempt_at, d.created_at, d.delivered_at, d.payload
-         FROM webhook_deliveries d JOIN webhook_endpoints e ON e.id = d.endpoint_id
-        WHERE e.id = $1 AND e.user_id = $2 ORDER BY d.created_at DESC LIMIT 100`,
-      [id, me(req).id],
-    );
-    return rows;
+    const { status } = z.object({ status: z.enum(DELIVERY_FILTERS).default('all') }).parse(req.query);
+    return listDeliveries(ctx, me(req).id, { endpointId: Id.parse(req.params).id, status });
   });
+  app.post('/developer/webhooks/deliveries/:id/redeliver', async (req) => redeliver(ctx, me(req).id, Id.parse(req.params).id));
+  app.post('/developer/webhooks/:id/replay', async (req) => {
+    const { since } = z.object({ since: z.string().datetime().optional() }).parse(req.body ?? {});
+    return replayDead(ctx, me(req).id, Id.parse(req.params).id, since);
+  });
+  app.post('/developer/webhooks/:id/enable', async (req) => setEndpointActive(ctx, me(req).id, Id.parse(req.params).id, true));
+  app.post('/developer/webhooks/:id/rotate-secret', async (req) => rotateSecret(ctx, me(req).id, Id.parse(req.params).id));
   app.post('/developer/webhooks/:id/test', async (req) => {
     const { id } = Id.parse(req.params);
     const user = me(req);
