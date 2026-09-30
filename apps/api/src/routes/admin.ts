@@ -14,6 +14,7 @@ import { audit, listAudit } from '../domain/audit.js';
 import { createPromo, listPromos, setPromoActive } from '../domain/promos.js';
 import { withdrawable } from '../domain/payoutholds.js';
 import { retentionPolicy, runRetention } from '../domain/retention.js';
+import { keyStatus, rotateAll } from '../domain/keyrotation.js';
 import { decideAdjustment, listAdjustments, requestAdjustment, userLedger } from '../domain/adjustments.js';
 import { decideTreasuryWithdrawal, listTreasuryWithdrawals, requestTreasuryWithdrawal, treasuryBalance } from '../domain/treasury.js';
 
@@ -263,6 +264,21 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     await ctx.db.query('UPDATE users SET payout_hold_days = $2 WHERE id = $1', [id, days]);
     await audit(ctx.db, req, 'user.payout_hold_set', { type: 'user', id }, { days, reason });
     return withdrawable(ctx, ctx.db, id);
+  });
+
+  // --- Encryption keys & escrow signer --------------------------------------------------
+  app.get('/admin/keys', async (req) => {
+    requireRole(req, 'admin');
+    return {
+      data: await keyStatus(ctx),
+      escrowSigner: ctx.escrowSigner ? { kind: ctx.escrowSigner.kind, address: await ctx.escrowSigner.address() } : null,
+    };
+  });
+  app.post('/admin/keys/rotate', async (req) => {
+    requireRole(req, 'admin');
+    const reencrypted = await rotateAll(ctx);
+    await audit(ctx.db, req, 'keys.rotated', { type: 'keyring', id: null }, { current: ctx.keyring.currentVersion, reencrypted });
+    return { reencrypted, status: await keyStatus(ctx) };
   });
 
   app.get('/admin/retention', async (req) => {

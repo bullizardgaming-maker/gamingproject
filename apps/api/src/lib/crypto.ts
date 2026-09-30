@@ -32,6 +32,24 @@ export class Keyring {
     this.current = entries[entries.length - 1]!.split(':')[0]!;
   }
 
+  /** Version new data is encrypted with (the last key listed). */
+  get currentVersion() {
+    return this.current;
+  }
+  get versions() {
+    return [...this.keys.keys()];
+  }
+  static versionOf(ciphertext: string) {
+    return ciphertext.slice(0, ciphertext.indexOf(':'));
+  }
+  static versionOfBytes(blob: Buffer) {
+    return blob.subarray(1, 1 + blob[0]!).toString();
+  }
+  /** Decrypt with whichever key made it and encrypt with the current key. */
+  reencrypt(ciphertext: string, aad = '') {
+    return this.encrypt(this.decrypt(ciphertext, aad), aad);
+  }
+
   encrypt(plaintext: string, aad = ''): string {
     const iv = randomBytes(12);
     const cipher = createCipheriv('aes-256-gcm', this.keys.get(this.current)!, iv);

@@ -97,10 +97,10 @@ export async function uploadAttachment(ctx: Ctx, roomId: string, user: { id: str
     );
     const att = await one(
       s.tx,
-      `INSERT INTO chat_attachments (id, room_id, uploader_id, message_id, original_name, mime, bytes, width, height, sha256, storage_key, status, scan_result)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'clean', $12)
+      `INSERT INTO chat_attachments (id, room_id, uploader_id, message_id, original_name, mime, bytes, width, height, sha256, storage_key, status, scan_result, key_version)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'clean', $12, $13)
        RETURNING id, message_id, original_name, mime, bytes, width, height, sha256, created_at`,
-      [id, roomId, user.id, msg.id, name, MIME[kind], out.data.length, out.info.width, out.info.height, hash, key, `${ctx.scanner.name}: clean`],
+      [id, roomId, user.id, msg.id, name, MIME[kind], out.data.length, out.info.width, out.info.height, hash, key, `${ctx.scanner.name}: clean`, ctx.storage.keyVersion],
     );
     const counterpart = room.buyer_id === user.id ? room.seller_id : room.buyer_id;
     s.notifyUser(counterpart, 'chat.message', { roomId, seq: msg.seq });

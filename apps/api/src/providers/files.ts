@@ -1,8 +1,8 @@
 import { connect } from 'node:net';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import type { Keyring } from '../lib/crypto.js';
+import { Keyring } from '../lib/crypto.js';
 
 // ---------------------------------------------------------------------------
 // Storage for uploaded evidence
@@ -12,6 +12,14 @@ export interface FileStorage {
   get(key: string): Promise<Buffer>;
   /** Idempotent: deleting a missing key is not an error. */
   delete(key: string): Promise<void>;
+  /**
+   * Re-encrypt a stored file with the current data key, if this store encrypts with the
+   * application keyring. Returns the key version the file ends up under, or null when the
+   * store encrypts by itself (S3 server-side encryption) and there is nothing to do.
+   */
+  rekey(key: string): Promise<string | null>;
+  /** Key version new files are written with (null if the store encrypts by itself). */
+  readonly keyVersion: string | null;
 }
 
 /** Local disk, encrypted with the data keyring (development / single-server). */
@@ -35,6 +43,19 @@ export class LocalEncryptedStorage implements FileStorage {
   async delete(key: string) {
     await rm(this.file(key), { force: true });
   }
+  get keyVersion() {
+    return this.keyring.currentVersion;
+  }
+  async rekey(key: string) {
+    const f = this.file(key);
+    const blob = await readFile(f);
+    if (Keyring.versionOfBytes(blob) === this.keyring.currentVersion) return this.keyring.currentVersion;
+    const fresh = this.keyring.encryptBytes(this.keyring.decryptBytes(blob, `file:${key}`), `file:${key}`);
+    // Write beside and rename, so a crash never leaves a half-written file.
+    await writeFile(`${f}.rekey`, fresh, { mode: 0o600 });
+    await rename(`${f}.rekey`, f);
+    return this.keyring.currentVersion;
+  }
 }
 
 /** S3 or any S3-compatible store (R2, MinIO). Server-side encryption on; the bucket must be private. */
@@ -56,6 +77,10 @@ export class S3Storage implements FileStorage {
   }
   async delete(key: string) {
     await this.s3.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+  }
+  readonly keyVersion = null;
+  async rekey() {
+    return null;
   }
 }
 

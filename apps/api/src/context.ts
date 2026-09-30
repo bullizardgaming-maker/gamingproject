@@ -12,6 +12,7 @@ import { SumsubKycProvider } from './providers/kyc/sumsub.js';
 import type { KycProvider } from './providers/kyc/types.js';
 import { EcbFxProvider, StaticFxProvider, type FxProvider } from './domain/fx.js';
 import { ClamdScanner, EicarOnlyScanner, LocalEncryptedStorage, S3Storage, type FileStorage, type MalwareScanner } from './providers/files.js';
+import { AwsKmsSigner, LocalKeySigner, type EscrowSigner } from './providers/signer.js';
 import { NoCaptcha, SiteverifyCaptcha, type CaptchaVerifier } from './providers/captcha.js';
 import {
   ConsoleMessenger,
@@ -44,6 +45,8 @@ export interface Ctx {
   storage: FileStorage;
   scanner: MalwareScanner;
   captcha: CaptchaVerifier;
+  /** Null when crypto escrow is not configured. */
+  escrowSigner: EscrowSigner | null;
   log: Logger;
   apiBaseUrl: string;
 }
@@ -79,6 +82,14 @@ export function createContext(cfg: Config, log: Logger, overrides: Partial<Ctx> 
     captcha:
       overrides.captcha ??
       (cfg.CAPTCHA_PROVIDER === 'none' ? new NoCaptcha() : new SiteverifyCaptcha(cfg.CAPTCHA_PROVIDER, required(cfg.CAPTCHA_SECRET, 'CAPTCHA_SECRET'))),
+    escrowSigner:
+      overrides.escrowSigner !== undefined
+        ? overrides.escrowSigner
+        : cfg.ESCROW_SIGNER === 'aws_kms'
+          ? new AwsKmsSigner(cfg.ESCROW_KMS_KEY_ID!)
+          : cfg.ESCROW_SIGNER_PRIVATE_KEY
+            ? new LocalKeySigner(cfg.ESCROW_SIGNER_PRIVATE_KEY)
+            : null,
     fx: overrides.fx ?? (cfg.FX_PROVIDER === 'ecb' ? new EcbFxProvider() : new StaticFxProvider(JSON.parse(cfg.FX_STATIC_RATES))),
     phoneChecker:
       overrides.phoneChecker ??

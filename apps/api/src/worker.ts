@@ -6,6 +6,7 @@ import { maybeRunScheduledReconciliation } from './domain/reconciliation.js';
 import { heartbeat } from './observability.js';
 import { maybeRefreshRates } from './domain/fx.js';
 import { maybeRunScheduledRetention } from './domain/retention.js';
+import { maybeRotateKeys } from './domain/keyrotation.js';
 
 /**
  * Background jobs. Every job is safe to run on several worker processes at
@@ -36,6 +37,7 @@ export async function runJobsOnce(ctx: Ctx) {
   ]);
   const reconciled = await job(ctx, 'reconciliation_scheduler', () => maybeRunScheduledReconciliation(ctx), false);
   await job(ctx, 'retention', () => maybeRunScheduledRetention(ctx), false);
+  await job(ctx, 'key_rotation', () => maybeRotateKeys(ctx), null);
   // Send after the jobs above so emails they queued go out in the same tick.
   const emails = await job(ctx, 'emails', () => dispatchEmails(ctx), 0);
   return { released, expired, webhooks, reminders, late, reconciled, emails };

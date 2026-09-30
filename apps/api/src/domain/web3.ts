@@ -1,4 +1,4 @@
-import { Wallet, getAddress, id as keccakId } from 'ethers';
+import { getAddress, id as keccakId } from 'ethers';
 import type { Ctx } from '../context.js';
 import { badRequest } from '../lib/errors.js';
 import type { Order } from './orders.js';
@@ -52,7 +52,7 @@ export async function buildEscrowTerms(
   sellerWallet: string | null,
   token: 'USDC' | 'USDT',
 ) {
-  if (!ctx.cfg.ESCROW_SIGNER_PRIVATE_KEY) throw badRequest('crypto_disabled', 'Crypto escrow is not configured');
+  if (!ctx.escrowSigner) throw badRequest('crypto_disabled', 'Crypto escrow is not configured');
   if (!sellerWallet) throw badRequest('seller_no_wallet', 'Seller has not linked a payout wallet');
   const { bps, delays } = milestonesFor(order.category_kind);
   const now = Math.floor(Date.now() / 1000);
@@ -74,6 +74,6 @@ export async function buildEscrowTerms(
     chainId: ctx.cfg.ESCROW_CHAIN_ID,
     verifyingContract: getAddress(ctx.cfg.ESCROW_CONTRACT_ADDRESS),
   };
-  const signature = await new Wallet(ctx.cfg.ESCROW_SIGNER_PRIVATE_KEY).signTypedData(domain, ESCROW_TYPES, terms);
+  const signature = await ctx.escrowSigner.signTypedData(domain, ESCROW_TYPES, terms);
   return { domain, types: ESCROW_TYPES, terms, signature };
 }

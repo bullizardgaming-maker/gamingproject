@@ -104,7 +104,11 @@ const Env = z.object({
   // Web3 escrow
   ESCROW_CHAIN_ID: z.coerce.number().default(31337),
   ESCROW_CONTRACT_ADDRESS: z.string().default('0x0000000000000000000000000000000000000000'),
+  // Who signs escrow terms: an AWS KMS secp256k1 key (production) or a private key in env (dev/tests).
+  ESCROW_SIGNER: z.enum(['local', 'aws_kms']).default('local'),
+  ESCROW_KMS_KEY_ID: z.string().optional(),
   ESCROW_SIGNER_PRIVATE_KEY: z.string().optional(),
+  ESCROW_ALLOW_LOCAL_KEY_IN_PRODUCTION: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
   ESCROW_TOKEN_USDC: z.string().default('0x0000000000000000000000000000000000000000'),
   ESCROW_TOKEN_USDT: z.string().default('0x0000000000000000000000000000000000000000'),
   CRYPTO_INDEXER_SECRET: z.string().default('dev-only-indexer-secret'),
@@ -122,6 +126,10 @@ export function loadConfig(overrides: Partial<Record<keyof Config, string>> = {}
   if (cfg.NODE_ENV === 'production' && cfg.MALWARE_SCANNER === 'dev') {
     throw new Error('MALWARE_SCANNER=clamd is required in production');
   }
+  if (cfg.NODE_ENV === 'production' && cfg.ESCROW_SIGNER === 'local' && cfg.ESCROW_SIGNER_PRIVATE_KEY && !cfg.ESCROW_ALLOW_LOCAL_KEY_IN_PRODUCTION) {
+    throw new Error('Use ESCROW_SIGNER=aws_kms in production: the escrow signing key must not sit in an environment variable');
+  }
+  if (cfg.ESCROW_SIGNER === 'aws_kms' && !cfg.ESCROW_KMS_KEY_ID) throw new Error('ESCROW_KMS_KEY_ID is required with ESCROW_SIGNER=aws_kms');
   if (cfg.NODE_ENV === 'production') {
     for (const key of ['JWT_SECRET', 'DATA_ENCRYPTION_KEYS', 'FINGERPRINT_KEY', 'CRYPTO_INDEXER_SECRET'] as const) {
       if (!process.env[key]) throw new Error(`${key} must be set explicitly in production`);
