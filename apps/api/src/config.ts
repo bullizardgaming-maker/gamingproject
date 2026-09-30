@@ -5,6 +5,9 @@ const Env = z.object({
   PORT: z.coerce.number().default(4000),
   PUBLIC_WEB_URL: z.string().default('http://localhost:5173'),
   PUBLIC_API_URL: z.string().optional(), // defaults to http://localhost:PORT
+  // Requests per minute per client IP (general limit; auth endpoints are stricter).
+  RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(300),
+  AUTH_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(10),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   SENTRY_DSN: z.string().optional(),
   SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0),

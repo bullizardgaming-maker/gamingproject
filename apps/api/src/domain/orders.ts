@@ -262,6 +262,19 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
     if (existing) return { order: existing, checkoutUrl: null, replayed: true };
   }
 
+  // Cheap sold-out check before any locking or writes: during a flash sale most attempts
+  // fail here instead of doing the full order transaction just to roll it back.
+  // (Not a guarantee — reservation below is still the source of truth.)
+  const hasStock = await maybeOne(
+    ctx.db,
+    `SELECT CASE WHEN f.delivery_mode = 'auto'
+                 THEN EXISTS (SELECT 1 FROM inventory_items i WHERE i.offer_id = f.id AND i.status = 'available' OFFSET $2 - 1 LIMIT 1)
+                 ELSE f.stock >= $2 END AS ok
+       FROM offers f WHERE f.id = $1`,
+    [input.offerId, input.quantity],
+  );
+  if (hasStock && !hasStock.ok) throw conflict('out_of_stock', 'Not enough stock for this order');
+
   const order = await withScope(ctx, async (s) => {
     const offer = await maybeOne(
       s.tx,

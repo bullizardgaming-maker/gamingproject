@@ -118,7 +118,7 @@ export async function buildApp(ctx: Ctx, opts: { logger?: PinoLogger } = {}): Pr
     allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Device-Fingerprint'],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   });
-  await app.register(rateLimit, { max: ctx.cfg.NODE_ENV === 'test' ? 100_000 : 300, timeWindow: '1 minute' });
+  await app.register(rateLimit, { max: ctx.cfg.NODE_ENV === 'test' ? 100_000 : ctx.cfg.RATE_LIMIT_PER_MINUTE, timeWindow: '1 minute' });
   await app.register(websocket, { options: { maxPayload: 64 * 1024 } });
 
   // Session auth (optional on every route; handlers call me()/requireRole()).

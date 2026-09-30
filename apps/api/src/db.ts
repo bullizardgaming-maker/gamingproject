@@ -12,8 +12,8 @@ export type Db = pg.Pool;
 export type Tx = pg.PoolClient;
 export type Queryable = pg.Pool | pg.PoolClient;
 
-export function createPool(url: string): Db {
-  return new pg.Pool({ connectionString: url, max: 20 });
+export function createPool(url: string, max = Number(process.env.DB_POOL_MAX ?? 20)): Db {
+  return new pg.Pool({ connectionString: url, max });
 }
 
 export async function withTx<T>(db: Db, fn: (tx: Tx) => Promise<T>): Promise<T> {

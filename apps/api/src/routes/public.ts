@@ -19,7 +19,7 @@ import { me, requestMeta } from '../server.js';
 const Credentials = z.object({ email: z.string().email().max(254), password: z.string().min(10).max(200) });
 
 export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
-  const strict = { config: { rateLimit: { max: ctx.cfg.NODE_ENV === 'test' ? 10_000 : 10, timeWindow: '1 minute' } } };
+  const strict = { config: { rateLimit: { max: ctx.cfg.NODE_ENV === 'test' ? 10_000 : ctx.cfg.AUTH_RATE_LIMIT_PER_MINUTE, timeWindow: '1 minute' } } };
 
   // --- Auth -----------------------------------------------------------------
   // Browsers get the refresh token as an httpOnly, SameSite=Strict cookie scoped to /v1/auth,

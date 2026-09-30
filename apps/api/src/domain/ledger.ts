@@ -24,14 +24,20 @@ export type AccountKind =
  *   seller_available  seller balance eligible for withdrawal
  *   payouts           funds sent out to sellers' external accounts
  */
+/**
+ * Find (or create) a ledger account. A plain read first: an upsert would take a row
+ * lock on shared accounts (escrow, gateway) until the surrounding transaction ends
+ * and serialize every concurrent payment behind it. Only a missing account is inserted.
+ */
 export async function accountId(q: Queryable, kind: AccountKind, currency: string, ownerId: string | null = null): Promise<string> {
-  const row = await one<{ id: string }>(
-    q,
-    `INSERT INTO ledger_accounts (owner_id, kind, currency) VALUES ($1, $2, $3)
-       ON CONFLICT (owner_id, kind, currency) DO UPDATE SET kind = EXCLUDED.kind
-       RETURNING id`,
-    [ownerId, kind, currency],
-  );
+  const find = () =>
+    q.query<{ id: string }>('SELECT id FROM ledger_accounts WHERE owner_id IS NOT DISTINCT FROM $1 AND kind = $2 AND currency = $3', [ownerId, kind, currency]);
+  let row = (await find()).rows[0];
+  if (!row) {
+    await q.query('INSERT INTO ledger_accounts (owner_id, kind, currency) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [ownerId, kind, currency]);
+    row = (await find()).rows[0];
+    if (!row) throw new Error(`ledger account ${kind}/${currency} could not be created`);
+  }
   return row.id;
 }
 
