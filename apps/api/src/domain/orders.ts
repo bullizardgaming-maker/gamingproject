@@ -14,6 +14,7 @@ import { accountId, orderEscrowBalance, post } from './ledger.js';
 import { centsToTokenUnits, orderIdToBytes32 } from './web3.js';
 import { taxForCommission } from './tax.js';
 import { hasPermission } from './permissions.js';
+import { assertWalletClear } from './aml.js';
 import { sellerLeg, sellerRateFor } from './sellerfx.js';
 import { enqueueWebhook } from './webhooks.js';
 import { enqueueEmail } from './notifications.js';
@@ -261,6 +262,7 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
   if (buyer.kyc_tier < 1) throw forbidden('kyc_required', 'Verify your email and phone (Tier 1) before purchasing');
   if (!input.acceptTos) throw badRequest('tos_required', 'You must accept the Terms of Service');
   if (input.rail === 'crypto' && !input.walletAddress) throw badRequest('wallet_required', 'walletAddress is required for crypto escrow');
+  if (input.walletAddress) await assertWalletClear(ctx, buyer.id, input.walletAddress);
 
   if (input.idempotencyKey) {
     const existing = await maybeOne<Order>(ctx.db, 'SELECT * FROM orders WHERE buyer_id = $1 AND idempotency_key = $2', [buyer.id, input.idempotencyKey]);

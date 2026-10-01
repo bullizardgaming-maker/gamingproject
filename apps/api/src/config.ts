@@ -84,6 +84,20 @@ const Env = z.object({
   TAX_REGISTERED_COUNTRIES: z.string().default(''),
   VAT_VALIDATION: z.enum(['none', 'vies']).default('none'),
   INVOICE_SERIES: z.string().regex(/^[A-Z0-9-]{1,10}$/).default('BZ'),
+  // AML. Sanctions lists: 'ofac' downloads the OFAC SDN list; SANCTIONS_EXTRA_LISTS adds others as
+  // "name=url" pairs in the simple CSV format (ref,kind,name,program), e.g. EU/UK/UN exports from your data vendor.
+  SANCTIONS_SOURCE: z.enum(['none', 'ofac']).default('none'),
+  SANCTIONS_OFAC_SDN_URL: z.string().default('https://www.treasury.gov/ofac/downloads/sdn.csv'),
+  SANCTIONS_OFAC_ALT_URL: z.string().default('https://www.treasury.gov/ofac/downloads/alt.csv'),
+  SANCTIONS_EXTRA_LISTS: z.string().optional(),
+  SANCTIONS_HOLD_SCORE: z.coerce.number().min(0).max(1).default(0.9),   // name similarity that pauses payouts
+  SANCTIONS_REVIEW_SCORE: z.coerce.number().min(0).max(1).default(0.75), // opens a case for review only
+  SANCTIONS_RESCREEN_DAYS: z.coerce.number().int().min(1).default(30),
+  AML_RAPID_WITHDRAWAL_CENTS: z.coerce.number().int().default(500_000),
+  AML_THRESHOLD_CENTS: z.coerce.number().int().default(100_000),         // structuring band: 80-100% of this
+  AML_VOLUME_SPIKE_MIN_CENTS: z.coerce.number().int().default(500_000),
+  AML_BUYER_CONCENTRATION_MIN_CENTS: z.coerce.number().int().default(200_000),
+  AML_NEW_ACCOUNT_VOLUME_CENTS: z.coerce.number().int().default(300_000),
   // Promotions & referrals
   REFERRAL_REWARD_CENTS: z.coerce.number().int().min(0).default(500),
   REFERRAL_MIN_ORDER_CENTS: z.coerce.number().int().min(0).default(1000),

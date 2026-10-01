@@ -1,5 +1,6 @@
 import type { Ctx } from '../context.js';
 import { many, maybeOne, one } from '../db.js';
+import { sellerBalances } from './sellerfx.js';
 import { hashPassword, randomToken, verifyPassword } from '../lib/crypto.js';
 import { AppError, unauthorized } from '../lib/errors.js';
 import { withScope } from './events.js';
@@ -64,15 +65,19 @@ export async function deleteAccount(ctx: Ctx, user: User, password: string, code
     await checkSecondFactor(ctx, user.id, code);
   }
 
+  // Accounts under compliance review can't be erased (records must be kept); generic wording, no tipping off.
+  const review = await maybeOne(ctx.db, `SELECT 1 FROM aml_cases WHERE user_id = $1 AND status IN ('open', 'escalated', 'reported') LIMIT 1`, [user.id]);
+  if (review) throw new AppError(409, 'cannot_close_now', 'Your account cannot be closed right now. Please contact support.');
   const open = await maybeOne(
     ctx.db,
     `SELECT count(*)::int AS n FROM orders WHERE (buyer_id = $1 OR seller_id = $1) AND status IN ('awaiting_payment', 'paid', 'delivered', 'disputed')`,
     [user.id],
   );
   if (open?.n) throw new AppError(409, 'open_orders', `Finish or cancel your ${open.n} open order(s) first`);
-  const bal = await sellerAvailable(ctx.db, user.id);
-  if (bal > 0) throw new AppError(409, 'balance_remaining', 'Withdraw your remaining balance first');
-  if (bal < 0) throw new AppError(409, 'balance_owed', 'Your balance is negative after a chargeback. Contact support to settle it first.');
+  // Every currency the seller holds money in (EUR/GBP sellers too).
+  const balances = (await sellerBalances(ctx.db, user.id)).map((b) => Number(b.cents));
+  if (balances.some((b) => b > 0)) throw new AppError(409, 'balance_remaining', 'Withdraw your remaining balance first');
+  if (balances.some((b) => b < 0)) throw new AppError(409, 'balance_owed', 'Your balance is negative after a chargeback. Contact support to settle it first.');
 
   const scrambled = await hashPassword(randomToken(32));
   return withScope(ctx, async (s) => {

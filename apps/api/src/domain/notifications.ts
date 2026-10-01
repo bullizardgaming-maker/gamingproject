@@ -167,6 +167,11 @@ export const TEMPLATES = {
     subject: (d) => `Your commission invoice ${d.number}`,
     body: (d, link) => `Invoice ${d.number} for ${d.period} is ready: commission ${money(d.gross_cents, d.currency)}, of which tax ${money(d.tax_cents, d.currency)}. It was already deducted from your sales.\n\n${link('/sell/invoices')}`,
   },
+  aml_case_opened: {
+    category: 'operations',
+    subject: (d) => `Compliance case: ${d.rule} (${d.severity})`,
+    body: (d, link) => `A ${d.severity}-severity compliance case was opened (${d.rule}). Review it: ${link(`/admin/aml/${d.case_id}`)}`,
+  },
   staff_roles_changed: {
     category: 'security',
     subject: () => 'Your staff access changed',

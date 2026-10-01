@@ -11,6 +11,7 @@ import { runReconciliation } from '../domain/reconciliation.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { ROLE_PERMISSIONS, STAFF_ROLES, permissionsOf, rolesOf } from '../domain/permissions.js';
 import { notify } from '../domain/notifications.js';
+import { addNote, decideCase, getCase, listCases, openCase, refreshLists, rescreenSellers, runMonitoring, screenUser } from '../domain/aml.js';
 import { requirePermission } from '../server.js';
 import { audit, listAudit } from '../domain/audit.js';
 import { createPromo, listPromos, setPromoActive } from '../domain/promos.js';
@@ -349,6 +350,65 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const res = await runRetention(ctx);
     await audit(ctx.db, req, 'retention.run', { type: 'retention_run', id: res.id }, res.counts);
     return res;
+  });
+
+  // --- AML ---------------------------------------------------------------------------------
+  app.get('/admin/aml/cases', async (req) => {
+    requirePermission(req, 'aml.review');
+    const { status } = z.object({ status: z.enum(['open', 'escalated', 'cleared', 'reported']).optional() }).parse(req.query);
+    return listCases(ctx, status);
+  });
+  app.get('/admin/aml/cases/:id', async (req) => {
+    requirePermission(req, 'aml.review');
+    const { id } = Id.parse(req.params);
+    await audit(ctx.db, req, 'aml.case_viewed', { type: 'aml_case', id });
+    return getCase(ctx, id);
+  });
+  app.post('/admin/aml/cases/:id/notes', async (req, reply) => {
+    const staff = requirePermission(req, 'aml.review');
+    const { note } = z.object({ note: z.string().trim().min(3).max(2_000) }).parse(req.body);
+    await addNote(ctx, Id.parse(req.params).id, staff.id, note);
+    return reply.status(204).send();
+  });
+  app.post('/admin/aml/cases/:id/decide', async (req) => {
+    const body = z
+      .object({ decision: z.enum(['clear', 'escalate', 'hold', 'report']), note: z.string().trim().min(3).max(2_000), sarReference: z.string().trim().max(100).optional() })
+      .parse(req.body);
+    const staff = requirePermission(req, body.decision === 'report' ? 'aml.sar' : 'aml.review');
+    const { id } = Id.parse(req.params);
+    const res = await decideCase(ctx, id, staff.id, body);
+    await audit(ctx.db, req, `aml.case_${body.decision}`, { type: 'aml_case', id }, { note: body.note, sarReference: body.sarReference });
+    return res;
+  });
+  app.post('/admin/aml/cases', async (req, reply) => {
+    requirePermission(req, 'aml.review');
+    const body = z.object({ userId: z.string().uuid(), reason: z.string().trim().min(10).max(2_000), holdPayouts: z.boolean().default(false) }).parse(req.body);
+    await openCase(ctx, body.userId, { source: 'manual', rule: 'manual_referral', severity: body.holdPayouts ? 'high' : 'medium', holdsPayouts: body.holdPayouts, details: { reason: body.reason } });
+    await audit(ctx.db, req, 'aml.case_opened', { type: 'user', id: body.userId }, body);
+    return reply.status(201).send(await listCases(ctx, 'open'));
+  });
+  app.post('/admin/aml/users/:id/screen', async (req) => {
+    requirePermission(req, 'aml.review');
+    const { id } = Id.parse(req.params);
+    await audit(ctx.db, req, 'aml.screened', { type: 'user', id });
+    return screenUser(ctx, id);
+  });
+  app.get('/admin/aml/lists', async (req) => {
+    requirePermission(req, 'aml.review');
+    return many(ctx.db, 'SELECT list, version, entries, loaded_at FROM sanctions_lists ORDER BY list');
+  });
+  app.post('/admin/aml/lists/refresh', async (req) => {
+    requirePermission(req, 'aml.review');
+    const changed = await refreshLists(ctx);
+    const rescreened = await rescreenSellers(ctx);
+    await audit(ctx.db, req, 'aml.lists_refreshed', { type: 'sanctions_lists', id: null }, { changed, rescreened });
+    return { changed, rescreened };
+  });
+  app.post('/admin/aml/monitoring/run', async (req) => {
+    requirePermission(req, 'aml.review');
+    const opened = await runMonitoring(ctx);
+    await audit(ctx.db, req, 'aml.monitoring_run', { type: 'aml', id: null }, { opened: opened.length });
+    return { opened };
   });
 
   // --- Staff & permissions -------------------------------------------------------------

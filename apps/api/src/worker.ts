@@ -9,6 +9,7 @@ import { maybeRunScheduledRetention } from './domain/retention.js';
 import { maybeRotateKeys } from './domain/keyrotation.js';
 import { maybeIssueInvoices } from './domain/invoices.js';
 import { dispatchInbox } from './domain/inbox.js';
+import { maybeRunAml } from './domain/aml.js';
 
 /**
  * Background jobs. Every job is safe to run on several worker processes at
@@ -44,6 +45,7 @@ export async function runJobsOnce(ctx: Ctx) {
   // Send after the jobs above so emails they queued go out in the same tick.
   const emails = await job(ctx, 'emails', () => dispatchEmails(ctx), 0);
   await job(ctx, 'inbox', () => dispatchInbox(ctx), 0);
+  await job(ctx, 'aml', () => maybeRunAml(ctx), null);
   return { released, expired, webhooks, reminders, late, reconciled, emails };
 }
 

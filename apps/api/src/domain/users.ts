@@ -9,6 +9,7 @@ import { recordSignals, subnetOf } from './fraud.js';
 import { accountId, post, sellerAvailable } from './ledger.js';
 import { checkSecondFactor } from './mfa.js';
 import { withdrawable } from './payoutholds.js';
+import { ensureScreenedForPayout, screenUser } from './aml.js';
 import { referrerForCode } from './referrals.js';
 import { enqueueEmail } from './notifications.js';
 import { enqueueWebhook } from './webhooks.js';
@@ -332,6 +333,7 @@ export async function applyKycResult(ctx: Ctx, result: { externalId: string; sta
       await s.tx.query('UPDATE users SET kyc_tier = 2, legal_name = COALESCE($2, legal_name) WHERE id = $1', [v.user_id, result.legalName ?? null]);
       await enqueueEmail(s.tx, v.user_id, 'kyc_result', { approved: true });
       s.notifyUser(v.user_id, 'kyc.approved', {});
+      s.defer(async () => void (await screenUser(ctx, v.user_id)));
     } else if (result.status === 'rejected') {
       await enqueueEmail(s.tx, v.user_id, 'kyc_result', { approved: false });
       s.notifyUser(v.user_id, 'kyc.rejected', {});
@@ -344,11 +346,15 @@ export async function applyKycResult(ctx: Ctx, result: { externalId: string; sta
 // Withdrawals (Tier 2 only)
 // ---------------------------------------------------------------------------
 export async function requestWithdrawal(ctx: Ctx, userId: string, amountCents: number, currency = ctx.cfg.SETTLEMENT_CURRENCY) {
+  await ensureScreenedForPayout(ctx, userId);
   const w = await withScope(ctx, async (s) => {
     // Lock the user row to serialize concurrent withdrawals against the same balance.
     const user = await one<User>(s.tx, `SELECT ${PUBLIC_USER_COLUMNS} FROM users WHERE id = $1 FOR UPDATE`, [userId]);
     if (user.kyc_tier < 2) throw new AppError(403, 'kyc_required', 'Tier 2 identity verification is required to withdraw');
     if (user.withdrawals_frozen || user.status !== 'active') throw new AppError(423, 'withdrawals_frozen', 'Withdrawals are frozen pending a security review');
+    // Compliance hold: deliberately the same generic wording, never mentioning AML (no tipping off).
+    const { aml_hold } = await one<{ aml_hold: boolean }>(s.tx, 'SELECT aml_hold FROM users WHERE id = $1', [userId]);
+    if (aml_hold) throw new AppError(423, 'withdrawals_frozen', 'Withdrawals are paused while we complete a routine review');
     if (!user.stripe_account_id || !user.payouts_enabled) throw badRequest('no_payout_account', 'Set up your payout account first');
     const bal = await withdrawable(ctx, s.tx, userId, currency);
     if (amountCents > bal.withdrawableCents) {

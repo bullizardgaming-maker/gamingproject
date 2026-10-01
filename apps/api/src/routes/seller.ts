@@ -11,6 +11,7 @@ import { createOffer, requireSeller, submitOwnerProof, updateOffer, uploadInvent
 import { requestWithdrawal } from '../domain/users.js';
 import { payoutStatus, startPayoutOnboarding } from '../domain/payouts.js';
 import { withdrawable } from '../domain/payoutholds.js';
+import { screenUser } from '../domain/aml.js';
 import { payoutCurrency, sellerBalances, setPayoutCurrency } from '../domain/sellerfx.js';
 import { getTaxProfile, setTaxProfile } from '../domain/tax.js';
 import { getInvoice, invoicePdf, listInvoices } from '../domain/invoices.js';
@@ -197,6 +198,7 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     if (recovered.toLowerCase() !== address.toLowerCase()) throw badRequest('invalid_signature', `Sign exactly: "${message}"`);
     await ctx.db.query('UPDATE users SET wallet_address = $2 WHERE id = $1', [user.id, address.toLowerCase()]);
     await recordSignals(ctx.db, user.id, { wallet: address.toLowerCase() });
+    await screenUser(ctx, user.id);
     return { wallet: address.toLowerCase() };
   });
 
