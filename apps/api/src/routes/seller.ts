@@ -17,6 +17,7 @@ import { screenUser } from '../domain/aml.js';
 import { payoutCurrency, sellerBalances, setPayoutCurrency } from '../domain/sellerfx.js';
 import { getTaxProfile, setTaxProfile } from '../domain/tax.js';
 import { getInvoice, invoicePdf, listInvoices } from '../domain/invoices.js';
+import { listCreditNotes } from '../domain/clawback.js';
 import { DELIVERY_FILTERS, WEBHOOK_EVENTS, createEndpoint, listDeliveries, redeliver, replayDead, rotateSecret, setEndpointActive } from '../domain/webhooks.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { me } from '../server.js';
@@ -172,6 +173,7 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     return setTaxProfile(ctx, me(req).id, body);
   });
   app.get('/seller/invoices', async (req) => listInvoices(ctx, me(req).id));
+  app.get('/seller/credit-notes', async (req) => listCreditNotes(ctx, me(req).id));
   app.get('/seller/invoices/:id', async (req) => getInvoice(ctx, Id.parse(req.params).id, me(req).id));
   app.get('/seller/invoices/:id/pdf', async (req, reply) => {
     const inv = await getInvoice(ctx, Id.parse(req.params).id, me(req).id);

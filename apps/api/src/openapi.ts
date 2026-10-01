@@ -109,7 +109,7 @@ export function buildOpenApi(opts: { serverUrl: string; sandbox: boolean }) {
         description:
           'CSV (default) or JSON. Amounts are integer cents with a currency column. `statement` is your balance ledger with opening, running and closing balances; `sales` includes commission, the tax inside it, and what was credited in your payout currency.',
         security: scope('reports:read'),
-        parameters: [{ name: 'kind', in: 'path', required: true, schema: { type: 'string', enum: ['sales', 'statement', 'payouts', 'invoices'] } }, ...queryParams(S.ExportQuery)],
+        parameters: [{ name: 'kind', in: 'path', required: true, schema: { type: 'string', enum: ['sales', 'statement', 'payouts', 'invoices', 'credit_notes'] } }, ...queryParams(S.ExportQuery)],
         responses: { '200': { description: 'The export', content: { 'text/csv': {}, 'application/json': {} } }, ...errors },
       },
     },

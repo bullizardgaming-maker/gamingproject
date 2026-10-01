@@ -119,6 +119,18 @@ export const WEBHOOK_PAYLOADS = {
     'chargeback.created',
     z.object({ order_id: uuid, network: z.enum(['visa', 'mastercard']), reason_code: z.string(), amount_cents: cents, seller_protected: z.boolean() }),
   ),
+  'order.clawback': envelope(
+    'order.clawback',
+    OrderSummary.extend({
+      refund_id: uuid,
+      refund_cents: cents.describe('Refunded to the buyer (settlement currency)'),
+      paid_by: z.enum(['seller', 'platform', 'reserve']),
+      seller_debited_cents: cents.describe('Taken from your balance, in seller_currency (0 if the platform paid)'),
+      seller_currency: z.string(),
+      credit_note: z.string(),
+      fully_refunded: z.boolean(),
+    }),
+  ).describe('A completed order was refunded after release. If paid_by is seller, your share was clawed back.'),
   'payout.paid': envelope('payout.paid', Payout).describe('A withdrawal was sent to your payout account.'),
   'payout.failed': envelope('payout.failed', Payout.extend({ failure_reason: z.string() })).describe('A withdrawal was rejected by the payment provider; the amount is back in your balance.'),
   'invoice.issued': envelope(

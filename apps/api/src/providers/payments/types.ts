@@ -60,7 +60,8 @@ export interface PaymentProvider {
   /** Verify signature and normalize the provider webhook. Must throw on bad signature. */
   parseWebhook(rawBody: Buffer, headers: Record<string, string | string[] | undefined>): Promise<PaymentEvent>;
   /** Refund in the currency the card was charged in. settledAmountCents = what the PSP debited in the settlement currency, when known. */
-  refund(paymentRef: string, amountCents: number, currency: string): Promise<{ ref: string; settledAmountCents?: number }>;
+  /** `idempotencyKey` must differ for each separate (partial) refund of the same payment. */
+  refund(paymentRef: string, amountCents: number, currency: string, idempotencyKey?: string): Promise<{ ref: string; settledAmountCents?: number }>;
   /** Transfer a seller's released funds to their connected account. */
   payout(destination: string, amountCents: number, currency: string, idempotencyKey: string): Promise<{ ref: string }>;
   submitChargebackEvidence(disputeRef: string, evidence: { summary: string; pdf: Buffer }): Promise<void>;

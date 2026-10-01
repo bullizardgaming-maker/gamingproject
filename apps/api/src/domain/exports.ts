@@ -7,7 +7,7 @@ import { badRequest } from '../lib/errors.js';
  * (for spreadsheets and bookkeeping tools) or JSON (for bots). Amounts are in cents with
  * a currency column, so nothing is lost to rounding or locale formatting.
  */
-export const EXPORT_KINDS = ['sales', 'statement', 'payouts', 'invoices'] as const;
+export const EXPORT_KINDS = ['sales', 'statement', 'payouts', 'invoices', 'credit_notes'] as const;
 export type ExportKind = (typeof EXPORT_KINDS)[number];
 
 /** CSV cell: quoted when needed; leading = + - @ neutralised so spreadsheets don't run it as a formula. */
@@ -90,6 +90,16 @@ export async function buildExport(q: Queryable, sellerId: string, kind: ExportKi
           q,
           `SELECT id AS withdrawal_id, created_at, status, currency, amount_cents, provider_ref FROM withdrawals
             WHERE user_id = $1 AND created_at >= $2::date AND created_at < $3::date ORDER BY created_at`,
+          [sellerId, range.from, range.to],
+        ),
+      };
+    case 'credit_notes':
+      return {
+        columns: ['number', 'issued_at', 'order_id', 'currency', 'net_cents', 'tax_cents', 'gross_cents', 'reason', 'credit_note_id'],
+        rows: await many(
+          q,
+          `SELECT number, issued_at, order_id, currency, net_cents, tax_cents, gross_cents, reason, id AS credit_note_id FROM credit_notes
+            WHERE seller_id = $1 AND issued_at >= $2::date AND issued_at < $3::date ORDER BY issued_at, number`,
           [sellerId, range.from, range.to],
         ),
       };

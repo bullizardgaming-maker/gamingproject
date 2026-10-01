@@ -58,7 +58,7 @@ describe('tax on commission', () => {
     expect(report.find((r: any) => r.country === 'DE')).toMatchObject({ treatment: 'standard', rate_bps: 1900, orders: 1 });
     const csv = await admin.api.get(`/v1/admin/tax/report?from=${today}&to=${tomorrow}&format=csv`);
     expect(csv.headers['content-type']).toMatch(/text\/csv/);
-    expect(String(csv.body).split('\n')[0]).toBe('country,treatment,rate_bps,currency,orders,commission_gross_cents,tax_cents,commission_net_cents');
+    expect(String(csv.body).split('\n')[0]).toBe('country,treatment,rate_bps,currency,orders,credit_notes,commission_gross_cents,tax_cents,commission_net_cents');
 
     // Paying the tax over: four-eyes withdrawal from tax_payable, not from revenue.
     const admin2 = await makeUser(h, { role: 'admin' });

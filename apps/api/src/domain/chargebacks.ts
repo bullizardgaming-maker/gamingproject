@@ -77,8 +77,10 @@ export async function receiveChargeback(ctx: Ctx, input: ChargebackInput) {
       if (dup) return dup;
     }
     const spec = classify(input.network, input.reasonCode, input.subtype);
-    // Only the card-paid part can be charged back (promo discounts and store credit weren't on the card).
-    const amount = Math.min(input.amountCents, Number(order.charged_cents ?? order.amount_cents));
+    // Only the card-paid part can be charged back (promo discounts and store credit weren't on the card),
+    // less anything already refunded to the card after release.
+    const { card_refunded } = await one<{ card_refunded: number }>(s.tx, 'SELECT COALESCE(SUM(card_cents), 0)::bigint AS card_refunded FROM post_release_refunds WHERE order_id = $1', [order.id]);
+    const amount = Math.max(0, Math.min(input.amountCents, Number(order.charged_cents ?? order.amount_cents) - Number(card_refunded)));
 
     // Pull the money back: from escrow if still held, else seller balance / reserve.
     const allocation: Record<string, number> = {};

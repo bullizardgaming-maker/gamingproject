@@ -106,11 +106,11 @@ export class StripePaymentProvider implements PaymentProvider {
     }
   }
 
-  async refund(paymentRef: string, amountCents: number, _currency: string) {
+  async refund(paymentRef: string, amountCents: number, _currency: string, idempotencyKey?: string) {
     const session = await this.stripe.checkout.sessions.retrieve(paymentRef);
     const refund: any = await this.stripe.refunds.create(
       { payment_intent: session.payment_intent as string, amount: amountCents, expand: ['balance_transaction'] },
-      { idempotencyKey: `refund_${paymentRef}_${amountCents}` },
+      { idempotencyKey: idempotencyKey ?? `refund_${paymentRef}_${amountCents}` },
     );
     const bt = refund.balance_transaction;
     return { ref: refund.id, settledAmountCents: bt && typeof bt === 'object' ? Math.abs(bt.amount) : undefined };

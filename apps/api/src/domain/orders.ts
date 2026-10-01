@@ -44,6 +44,10 @@ export interface Order {
   presentment_amount_cents: number;
   fx_rate: number;
   seller_currency: string | null;
+  commission_tax_cents: number | null;
+  tax_country: string | null;
+  tax_rate_bps: number | null;
+  tax_treatment: string | null;
   seller_fx_rate: number | null;
   listing_currency: string | null;
   promo_code_id: string | null;
@@ -84,7 +88,7 @@ export const SECURITY_CHECKLIST = [
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-async function lockOrder(tx: Tx, orderId: string): Promise<Order & { delivery_mode: string; category_kind: string; title: string }> {
+export async function lockOrder(tx: Tx, orderId: string): Promise<Order & { delivery_mode: string; category_kind: string; title: string }> {
   const order = await maybeOne(
     tx,
     `SELECT o.*, f.delivery_mode, f.title, c.kind AS category_kind
@@ -96,7 +100,7 @@ async function lockOrder(tx: Tx, orderId: string): Promise<Order & { delivery_mo
   return order;
 }
 
-async function transition(
+export async function transition(
   tx: Tx,
   order: Pick<Order, 'id' | 'status'>,
   to: OrderStatus,
@@ -119,18 +123,18 @@ async function transition(
   order.status = to;
 }
 
-function roomOf(tx: Queryable, orderId: string) {
+export function roomOf(tx: Queryable, orderId: string) {
   return one<{ id: string }>(tx, 'SELECT id FROM chat_rooms WHERE order_id = $1', [orderId]);
 }
 
-function emailData(o: Order & { title: string }, extra: Record<string, unknown> = {}) {
+export function emailData(o: Order & { title: string }, extra: Record<string, unknown> = {}) {
   return {
     order_id: o.id, title: o.title, quantity: o.quantity, amount_cents: o.amount_cents, currency: o.currency,
     seller_net_cents: o.seller_net_cents, protection: o.protection, ...extra,
   };
 }
 
-function orderSummary(o: Order) {
+export function orderSummary(o: Order) {
   return {
     id: o.id,
     offer_id: o.offer_id,

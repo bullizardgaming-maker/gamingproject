@@ -13,6 +13,7 @@ export const PERMISSIONS = [
   'aml.review',
   'aml.sar',
   'chargebacks.manage',
+  'orders.refund_after_release',
   'reconciliation.run',
   'promos.manage',
   'treasury.request',
@@ -34,10 +35,10 @@ export const STAFF_ROLES = ['arbiter', 'support', 'finance', 'compliance', 'admi
 export type StaffRole = (typeof STAFF_ROLES)[number];
 
 export const ROLE_PERMISSIONS: Record<StaffRole, readonly Permission[]> = {
-  arbiter: ['orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate'],
+  arbiter: ['orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'orders.refund_after_release'],
   support: ['orders.view_any', 'reviews.moderate', 'ledger.view'],
   finance: [
-    'chargebacks.manage', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view', 'ledger.adjust',
+    'chargebacks.manage', 'orders.refund_after_release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view', 'ledger.adjust',
     'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage',
   ],
   compliance: ['orders.view_any', 'risk.review', 'users.suspend', 'aml.review', 'aml.sar', 'payout_holds.set', 'ledger.view', 'audit.view', 'retention.manage'],

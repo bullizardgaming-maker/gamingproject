@@ -157,6 +157,12 @@ export const TEMPLATES = {
     subject: () => 'We signed out a device that may be compromised',
     body: (d, link) => `A sign-in token for one of your devices (${d.userAgent ?? 'unknown browser'}) was used twice, which usually means it was copied. We signed that device out. Change your password if you didn't expect this: ${link('/account')}`,
   },
+  clawback: {
+    category: 'selling',
+    subject: (d) => `Refund after release: ${d.title}`,
+    body: (d, link) =>
+      `After reviewing order "${d.title}", we refunded the buyer (${d.reason}). Your share, ${money(d.amount_cents, d.currency)}, has been taken from your balance; if your balance goes below zero, it's recovered from your next sales. Commission was returned too (credit note ${d.credit_note}).\n\n${link(`/orders/${d.order_id}`)}`,
+  },
   withdrawal_failed: {
     category: 'selling',
     subject: (d) => `Payout of ${money(d.amount_cents, d.currency)} failed`,

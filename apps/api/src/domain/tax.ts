@@ -111,11 +111,17 @@ export async function getTaxProfile(ctx: Ctx, userId: string) {
 export async function taxReport(ctx: Ctx, from: string, to: string) {
   return many(
     ctx.db,
-    `SELECT tax_country AS country, tax_treatment AS treatment, tax_rate_bps AS rate_bps, currency,
-            count(*)::int AS orders, SUM(commission_cents)::bigint AS commission_gross_cents,
-            SUM(commission_tax_cents)::bigint AS tax_cents, SUM(commission_cents - commission_tax_cents)::bigint AS commission_net_cents
-       FROM orders
-      WHERE tax_treatment IS NOT NULL AND completed_at >= $1::date AND completed_at < $2::date
+    // Commission earned in the period, less credit notes issued in it (refunds after release).
+    `SELECT country, treatment, rate_bps, currency, SUM(orders)::int AS orders, SUM(credit_notes)::int AS credit_notes,
+            SUM(gross)::bigint AS commission_gross_cents, SUM(tax)::bigint AS tax_cents, SUM(gross - tax)::bigint AS commission_net_cents
+       FROM (
+         SELECT tax_country AS country, tax_treatment AS treatment, tax_rate_bps AS rate_bps, currency, 1 AS orders, 0 AS credit_notes,
+                commission_cents AS gross, commission_tax_cents AS tax
+           FROM orders WHERE tax_treatment IS NOT NULL AND completed_at >= $1::date AND completed_at < $2::date
+         UNION ALL
+         SELECT tax_country, tax_treatment, tax_rate_bps, currency, 0, 1, -gross_cents, -tax_cents
+           FROM credit_notes WHERE tax_treatment IS NOT NULL AND issued_at >= $1::date AND issued_at < $2::date
+       ) x
       GROUP BY 1, 2, 3, 4 ORDER BY 1, 2, 3`,
     [from, to],
   );

@@ -11,6 +11,7 @@ import { runReconciliation } from '../domain/reconciliation.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { ROLE_PERMISSIONS, STAFF_ROLES, permissionsOf, rolesOf } from '../domain/permissions.js';
 import { notify } from '../domain/notifications.js';
+import { refundAfterRelease } from '../domain/clawback.js';
 import { addNote, decideCase, getCase, listCases, openCase, refreshLists, rescreenSellers, runMonitoring, screenUser } from '../domain/aml.js';
 import { requirePermission } from '../server.js';
 import { audit, listAudit } from '../domain/audit.js';
@@ -310,7 +311,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const q = z.object({ from: z.string().date(), to: z.string().date(), format: z.enum(['json', 'csv']).default('json') }).parse(req.query);
     const rows = await taxReport(ctx, q.from, q.to);
     if (q.format === 'json') return rows;
-    const cols = ['country', 'treatment', 'rate_bps', 'currency', 'orders', 'commission_gross_cents', 'tax_cents', 'commission_net_cents'];
+    const cols = ['country', 'treatment', 'rate_bps', 'currency', 'orders', 'credit_notes', 'commission_gross_cents', 'tax_cents', 'commission_net_cents'];
     reply.header('Content-Type', 'text/csv').header('Content-Disposition', `attachment; filename="tax-${q.from}-${q.to}.csv"`);
     return [cols.join(','), ...rows.map((r: any) => cols.map((c) => r[c] ?? '').join(','))].join('\n');
   });
@@ -349,6 +350,18 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     requirePermission(req, 'retention.manage');
     const res = await runRetention(ctx);
     await audit(ctx.db, req, 'retention.run', { type: 'retention_run', id: res.id }, res.counts);
+    return res;
+  });
+
+  // --- Refunds after release ------------------------------------------------------------
+  app.post('/admin/orders/:id/refund-after-release', async (req) => {
+    const staff = requirePermission(req, 'orders.refund_after_release');
+    const { id } = Id.parse(req.params);
+    const body = z
+      .object({ amountCents: z.number().int().positive().optional(), paidBy: z.enum(['seller', 'platform', 'reserve']), reason: z.string().trim().min(10).max(500) })
+      .parse(req.body);
+    const res = await refundAfterRelease(ctx, id, staff.id, body);
+    await audit(ctx.db, req, 'order.refunded_after_release', { type: 'order', id }, { ...body, refundId: res.refund.id, creditNote: res.creditNote.number });
     return res;
   });
 

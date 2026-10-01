@@ -19,6 +19,7 @@ export const WEBHOOK_EVENTS = [
   'payout.paid',
   'payout.failed',
   'invoice.issued',
+  'order.clawback',
 ] as const;
 export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number];
 
