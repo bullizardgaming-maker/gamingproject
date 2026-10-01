@@ -19,3 +19,4 @@ services/fraud-gnn/models/*.pt
 
 # local uploads
 apps/api/data/
+*.tsbuildinfo

@@ -1,0 +1,95 @@
+/*
+ * Tailwind + shadcn/ui theme. Everything here lives in cascade layers, while the hand-written
+ * styles.css is unlayered, so existing pages keep their look and new shadcn / skiper-ui /
+ * 21st.dev components get Tailwind utilities and the tokens below.
+ */
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* shadcn tokens mapped onto the Bullizard "Frost" palette (see styles.css). */
+:root {
+  --background: #eef1f5;
+  --foreground: #16202e;
+  --card: #f8fafc;
+  --card-foreground: #16202e;
+  --popover: #f8fafc;
+  --popover-foreground: #16202e;
+  --primary: #16202e;
+  --primary-foreground: #f8fafc;
+  --secondary: #e2e7ee;
+  --secondary-foreground: #16202e;
+  --muted: #e2e7ee;
+  --muted-foreground: #5b6b82;
+  --accent: #d8f0ec;
+  --accent-foreground: #0f8b7e;
+  --destructive: #b8326a;
+  --border: #cfd6e0;
+  --input: #cfd6e0;
+  --ring: #16202e;
+  --chart-1: #0f8b7e;
+  --chart-2: #d98e04;
+  --chart-3: #b8326a;
+  --chart-4: #5b6b82;
+  --chart-5: #16202e;
+  /* --radius (10px) is already defined in styles.css and shared. */
+}
+
+.dark {
+  --background: #0d131c;
+  --foreground: #eef1f5;
+  --card: #16202e;
+  --card-foreground: #eef1f5;
+  --popover: #16202e;
+  --popover-foreground: #eef1f5;
+  --primary: #eef1f5;
+  --primary-foreground: #16202e;
+  --secondary: #1f2b3c;
+  --secondary-foreground: #eef1f5;
+  --muted: #1f2b3c;
+  --muted-foreground: #9aa8bb;
+  --accent: #123a37;
+  --accent-foreground: #5fd3c4;
+  --destructive: #e0608f;
+  --border: #2a3749;
+  --input: #2a3749;
+  --ring: #9aa8bb;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  /* Money-state colours, usable as bg-held, text-released, border-disputed, ... */
+  --color-held: #d98e04;
+  --color-released: #0f8b7e;
+  --color-disputed: #b8326a;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --font-display: 'Bricolage Grotesque', 'Segoe UI', sans-serif;
+}

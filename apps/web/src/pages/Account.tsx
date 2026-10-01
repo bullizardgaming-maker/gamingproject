@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import QRCode from 'qrcode';
-import { api, session } from '../api';
+import { DEMO, api, session } from '../api';
+import { DemoSignIn } from '../demo/DemoUi';
 import { useSession } from '../session';
 
 export function Login() {
@@ -55,7 +56,9 @@ export function Login() {
   }
 
   return (
-    <div className="card stack" style={{ maxWidth: 440, margin: '24px auto' }}>
+    <div className="stack" style={{ maxWidth: 640, margin: '24px auto' }}>
+    {DEMO && mode === 'login' && <DemoSignIn next={params.get('next') ?? '/market'} />}
+    <div className="card stack" style={{ maxWidth: 440, width: '100%', margin: '0 auto' }}>
       <h2>{mode === 'login' ? 'Sign in' : 'Create an account'}</h2>
       <form className="stack" onSubmit={submit}>
         {mode === 'register' && (
@@ -73,6 +76,7 @@ export function Login() {
       <button className="btn ghost" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
         {mode === 'login' ? 'New here? Create an account' : 'Already have an account? Sign in'}
       </button>
+    </div>
     </div>
   );
 }
@@ -187,7 +191,7 @@ function CodeStep({ channel, done, onDone }: { channel: 'email' | 'sms'; done: b
         </button>
       ) : (
         <div className="row">
-          <input className="mono" inputMode="numeric" maxLength={6} placeholder="6-digit code" value={code} onChange={(e) => setCode(e.target.value)} style={{ maxWidth: 160 }} />
+          <input className="mono" inputMode="numeric" maxLength={6} placeholder={DEMO ? 'Demo code: 123456' : '6-digit code'} value={code} onChange={(e) => setCode(e.target.value)} style={{ maxWidth: 180 }} />
           <button
             className="btn"
             onClick={async () => {

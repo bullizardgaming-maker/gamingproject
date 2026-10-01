@@ -189,3 +189,12 @@ table.data td { padding: 12px 8px; border-bottom: 1px solid var(--rule); vertica
 .hero > *, .order-layout > *, .split > *, .windows > *, .grid > * { min-width: 0; }
 .topbar .shell { min-width: 0; }
 .nav { min-width: 0; }
+
+/* ---------- Demo preview ---------- */
+.demo-banner { background: var(--ink); color: var(--paper); font-size: 13px; }
+.demo-banner .shell { min-height: 40px; padding-top: 6px; padding-bottom: 6px; gap: 12px; }
+.demo-banner .btn.ghost { color: var(--paper); border-color: #4a5a72; padding: 4px 12px; font-size: 13px; }
+.demo-banner .btn.ghost:hover { border-color: var(--paper); }
+.demo-account { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; cursor: pointer; font: inherit; }
+.demo-account:hover { border-color: var(--ink); }
+.checkout-card { max-width: 520px; margin: 32px auto; }

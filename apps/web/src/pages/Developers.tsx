@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api } from '../api';
+import { API_ORIGIN, DEMO, api } from '../api';
 import { useSession } from '../session';
 
 const SCOPES = ['orders:read', 'orders:write', 'inventory:write', 'offers:write', 'chat:write'];
@@ -56,8 +56,14 @@ export function Developers() {
         action in the website.
       </p>
       <p>
-        <a className="btn ghost" href="/v1/docs/" target="_blank" rel="noreferrer">Full API reference</a>{' '}
-        <a className="small" href="/v1/openapi.json" target="_blank" rel="noreferrer">OpenAPI JSON</a>
+        {DEMO ? (
+          <span className="small muted">The full API reference is served by the API itself, which this preview doesn't include.</span>
+        ) : (
+          <>
+            <a className="btn ghost" href={`${API_ORIGIN}/v1/docs/`} target="_blank" rel="noreferrer">Full API reference</a>{' '}
+            <a className="small" href={`${API_ORIGIN}/v1/openapi.json`} target="_blank" rel="noreferrer">OpenAPI JSON</a>
+          </>
+        )}
       </p>
       <div className="card">
         <div className="table-wrap">

@@ -36,6 +36,26 @@ With `PAYMENT_PROVIDER=mock`, checkout opens a mock hosted payment page that pos
 
 Full stack in containers: `docker compose up --build` (web on :8080). Add `--profile gnn` for the fraud model service.
 
+## Preview on Vercel
+
+The repo is set up for Vercel (`vercel.json` at the root, and `apps/web/vercel.json` if the project's Root Directory is `apps/web`).
+Every push builds the web app; with no backend attached, previews run in **demo mode**: an in-browser mock of the API with
+sample listings, orders and chats, one-click demo accounts (buyer, seller, admin), a stand-in for the hosted card checkout,
+and simulated seller replies. Verification codes in the demo are `123456`; "Reset demo" in the banner restores the sample data.
+
+To point a deployment at a real API instead, set these Vercel environment variables:
+
+| Variable | Value |
+|---|---|
+| `VITE_DEMO` | `false` |
+| `VITE_API_URL` | the API origin, e.g. `https://api.yourdomain.com` (it's added to the page's CSP) |
+
+…and set the API's `PUBLIC_WEB_URL` to the Vercel domain so CORS and the refresh cookie work.
+
+UI components: the web app has Tailwind CSS v4 and a shadcn `components.json` (aliases `@/components`, `@/lib/utils`;
+theme tokens mapped to the Bullizard palette in `src/tailwind.css`), so registry components drop in with
+`npx shadcn add <component>` (e.g. `npx shadcn add @skiper-ui/skiper40`), run from `apps/web`.
+
 ## Tests
 
 ```bash

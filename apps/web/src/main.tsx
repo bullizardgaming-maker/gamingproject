@@ -11,6 +11,9 @@ import { Sell } from './pages/Sell';
 import { Developers } from './pages/Developers';
 import { Account, ForgotPassword, Login, ResetPassword } from './pages/Account';
 import { Admin } from './pages/Admin';
+import { DEMO } from './api';
+import { DemoBanner, DemoCheckout } from './demo/DemoUi';
+import './tailwind.css';
 import './styles.css';
 
 function TopBar() {
@@ -46,6 +49,7 @@ function TopBar() {
 function App() {
   return (
     <SessionProvider>
+      {DEMO && <DemoBanner />}
       <TopBar />
       <main className="shell">
         <Routes>
@@ -62,6 +66,7 @@ function App() {
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/admin" element={<Admin />} />
+          {DEMO && <Route path="/demo-checkout/:id" element={<DemoCheckout />} />}
           <Route path="*" element={<div className="card"><h2>Page not found</h2><Link to="/market">Go to the market</Link></div>} />
         </Routes>
       </main>

@@ -20,7 +20,10 @@ const fmt = (d: string) => new Date(d).toLocaleString([], { month: 'short', day:
 export function Admin() {
   const { user } = useSession();
   const [tab, setTab] = useState<Tab>('disputes');
-  const [rows, setRows] = useState<any[] | null>(null);
+  // Rows are tagged with the tab they were loaded for, so a tab switch never renders
+  // one tab's rows with another tab's columns while the new data is loading.
+  const [loaded, setLoaded] = useState<{ tab: Tab; rows: any[] } | null>(null);
+  const rows = loaded?.tab === tab ? loaded.rows : null;
   const [error, setError] = useState('');
   const [mfaNeeded, setMfaNeeded] = useState(false);
 
@@ -35,14 +38,14 @@ export function Admin() {
   };
 
   const load = useCallback(async () => {
-    setRows(null);
+    setLoaded(null);
     setError('');
     try {
-      setRows(await api<any[]>(path[tab]));
+      setLoaded({ tab, rows: await api<any[]>(path[tab]) });
     } catch (e: any) {
       if (e.code === 'mfa_required') setMfaNeeded(true);
       else setError(e.message);
-      setRows([]);
+      setLoaded({ tab, rows: [] });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
