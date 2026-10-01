@@ -6,10 +6,12 @@ import { postUserMessage } from '../domain/chat.js';
 import { bulkUpdatePrices, uploadInventory } from '../domain/offers.js';
 import { deliverManually } from '../domain/orders.js';
 import { getInvoice, invoicePdf, listInvoices } from '../domain/invoices.js';
+import { EXPORT_KINDS, buildExport, exportRange, toCsv } from '../domain/exports.js';
+import { payoutCurrency } from '../domain/sellerfx.js';
 import { listDeliveries, redeliver, replayDead } from '../domain/webhooks.js';
 import { notFound } from '../lib/errors.js';
 import { me, requireScope } from '../server.js';
-import { ChatMessageBody, DeliverBody, InventoryUploadBody, MerchantOrdersQuery, PricesBody, ReplayBody, WebhookDeliveriesQuery } from '../api-schemas.js';
+import { ChatMessageBody, DeliverBody, InventoryUploadBody, ExportQuery, MerchantOrdersQuery, PricesBody, ReplayBody, WebhookDeliveriesQuery } from '../api-schemas.js';
 
 /**
  * Seller automation API, authenticated with `Authorization: Bearer mk_...` API keys.
@@ -76,5 +78,17 @@ export async function merchantRoutes(app: FastifyInstance, ctx: Ctx) {
     const inv = await getInvoice(ctx, Id.parse(req.params).id, me(req).id);
     reply.header('Content-Type', 'application/pdf').header('Content-Disposition', `attachment; filename="${inv.number}.pdf"`);
     return reply.send(await invoicePdf(inv));
+  });
+
+  app.get('/merchant/reports/:kind', { preHandler: scope('reports:read') }, async (req, reply) => {
+    const { kind } = z.object({ kind: z.enum(EXPORT_KINDS) }).parse(req.params);
+    const q = ExportQuery.parse(req.query);
+    const sellerId = me(req).id;
+    const range = exportRange(q.from, q.to);
+    const currency = q.currency ?? (await payoutCurrency(ctx, ctx.db, sellerId));
+    const out = await buildExport(ctx.dbRead, sellerId, kind, range, currency);
+    if (q.format === 'json') return { kind, ...range, rows: out.rows };
+    reply.header('Content-Type', 'text/csv; charset=utf-8').header('Content-Disposition', `attachment; filename="bullizard-${kind}-${range.from}-to-${range.to}.csv"`);
+    return toCsv(out.columns, out.rows);
   });
 }

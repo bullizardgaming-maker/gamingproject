@@ -141,4 +141,10 @@ export const WebhookDeliveriesQuery = z.object({
   endpointId: z.string().uuid().optional(),
   limit: z.coerce.number().int().positive().max(500).default(100),
 });
+export const ExportQuery = z.object({
+  from: z.string().date().optional().describe('Default: first day of this month'),
+  to: z.string().date().optional().describe('Exclusive. Default: tomorrow. At most one year after from'),
+  currency: z.string().length(3).toUpperCase().optional().describe('Statement only: which balance (default: your payout currency)'),
+  format: z.enum(['csv', 'json']).default('csv'),
+});
 export const ReplayBody = z.object({ since: z.string().datetime().optional().describe('Only deliveries created at or after this time') });

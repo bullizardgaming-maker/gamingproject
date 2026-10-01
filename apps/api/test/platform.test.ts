@@ -103,8 +103,8 @@ describe('seller API docs', () => {
     expect(spec.openapi).toBe('3.1.0');
     for (const [path, ops] of Object.entries<any>(spec.paths)) {
       for (const method of Object.keys(ops)) {
-        const url = path.replace(/\{id\}/g, '00000000-0000-0000-0000-000000000000');
-        expect(h.app.hasRoute({ method: method.toUpperCase() as any, url: url.replace('00000000-0000-0000-0000-000000000000', ':id') }), `${method} ${path}`).toBe(true);
+        const url = path.replace(/\{(\w+)\}/g, ':$1');
+        expect(h.app.hasRoute({ method: method.toUpperCase() as any, url }), `${method} ${path}`).toBe(true);
       }
     }
     expect(Object.keys(spec.webhooks)).toContain('order.created');

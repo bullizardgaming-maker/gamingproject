@@ -11,6 +11,8 @@ import { createOffer, requireSeller, submitOwnerProof, updateOffer, uploadInvent
 import { requestWithdrawal } from '../domain/users.js';
 import { payoutStatus, startPayoutOnboarding } from '../domain/payouts.js';
 import { withdrawable } from '../domain/payoutholds.js';
+import { ExportQuery } from '../api-schemas.js';
+import { EXPORT_KINDS, buildExport, exportRange, toCsv, type ExportKind } from '../domain/exports.js';
 import { screenUser } from '../domain/aml.js';
 import { payoutCurrency, sellerBalances, setPayoutCurrency } from '../domain/sellerfx.js';
 import { getTaxProfile, setTaxProfile } from '../domain/tax.js';
@@ -175,6 +177,20 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     const inv = await getInvoice(ctx, Id.parse(req.params).id, me(req).id);
     reply.header('Content-Type', 'application/pdf').header('Content-Disposition', `attachment; filename="${inv.number}.pdf"`);
     return reply.send(await invoicePdf(inv));
+  });
+
+  const sendExport = async (req: any, reply: any, sellerId: string, kind: ExportKind) => {
+    const q = ExportQuery.parse(req.query);
+    const range = exportRange(q.from, q.to);
+    const currency = q.currency ?? (await payoutCurrency(ctx, ctx.db, sellerId));
+    const out = await buildExport(ctx.dbRead, sellerId, kind, range, currency);
+    if (q.format === 'json') return { kind, ...range, currency: kind === 'statement' ? currency : undefined, rows: out.rows };
+    reply.header('Content-Type', 'text/csv; charset=utf-8').header('Content-Disposition', `attachment; filename="bullizard-${kind}-${range.from}-to-${range.to}.csv"`);
+    return toCsv(out.columns, out.rows);
+  };
+  app.get('/seller/exports/:kind', async (req, reply) => {
+    const { kind } = z.object({ kind: z.enum(EXPORT_KINDS) }).parse(req.params);
+    return sendExport(req, reply, me(req).id, kind);
   });
 
   app.get('/seller/payout-hold', async (req) => {
