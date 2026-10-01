@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import QRCode from 'qrcode';
 import { DEMO, api, session } from '../api';
 import { DemoSignIn } from '../demo/DemoUi';
+import { PushSettings } from '../components/NotificationSettings';
 import { useSession } from '../session';
 
 export function Login() {
@@ -260,7 +261,9 @@ export function Account() {
       <TwoFactor />
       <Devices />
       <PasswordChange />
+      <div id="notifications" />
       <EmailPreferences />
+      <PushSettings />
       <PrivacyControls />
     </div>
   );

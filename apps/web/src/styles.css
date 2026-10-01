@@ -149,6 +149,8 @@ table.data td { padding: 12px 8px; border-bottom: 1px solid var(--rule); vertica
 .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
 .filters button { border: 1px solid var(--rule); background: var(--paper); padding: 7px 12px; border-radius: 999px; cursor: pointer; font-size: 14px; }
 .filters button[aria-pressed='true'] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.filters a { border: 1px solid var(--rule); background: var(--paper); padding: 7px 14px; border-radius: 999px; font-size: 14px; text-decoration: none; }
+.filters a[aria-current='page'] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 .offer { display: grid; gap: 10px; text-decoration: none; }
 .offer:hover { border-color: var(--ink); }
 .offer .price { font: 600 22px/1 var(--mono); }

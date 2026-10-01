@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, NavLink, useLocation } from 'react-router-dom';
 import { api, money } from '../api';
 import { FeeLadder } from '../components/FeeLadder';
 import { useSession } from '../session';
+import { SellerMoney } from './SellerMoney';
 
 interface Dashboard {
   tier: { name: string; accountRateBps: number; otherRateBps: number };
   monthlySalesCents: number;
   next: { tier: { name: string; minMonthlySalesCents: number }; remainingCents: number } | null;
-  balances: { availableCents: number; pendingEscrowCents: number };
+  payoutCurrency?: string;
+  balances: { availableCents: number; pendingEscrowCents: number; withdrawableCents?: number; onHoldCents?: number; currency?: string };
   withdrawalsFrozen: boolean;
   stats: { completed: number; in_progress: number; disputed: number; charged_back: number };
 }
@@ -28,6 +30,7 @@ interface SellerOffer {
 
 export function Sell() {
   const { user, refresh } = useSession();
+  const moneyTab = useLocation().pathname.startsWith('/sell/money');
   const [dash, setDash] = useState<Dashboard | null>(null);
   const [offers, setOffers] = useState<SellerOffer[]>([]);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'alert'; text: string } | null>(null);
@@ -60,7 +63,24 @@ export function Sell() {
       </div>
     );
   }
+  const tabs = (
+    <nav className="filters" aria-label="Seller sections">
+      <NavLink end to="/sell">Shop</NavLink>
+      <NavLink to="/sell/money">Money &amp; tax</NavLink>
+    </nav>
+  );
+  if (moneyTab) {
+    return (
+      <div className="stack">
+        <h1 style={{ fontSize: 40 }}>Your shop</h1>
+        {tabs}
+        <SellerMoney />
+      </div>
+    );
+  }
   if (!dash) return <p className="muted">Loading your shop…</p>;
+  const cur = dash.payoutCurrency ?? 'USD';
+  const withdrawable = dash.balances.withdrawableCents ?? dash.balances.availableCents;
 
   const progress = dash.next ? dash.monthlySalesCents / dash.next.tier.minMonthlySalesCents : 1;
 
@@ -75,8 +95,8 @@ export function Sell() {
 
   const withdraw = async () => {
     try {
-      await api('/seller/withdrawals', { body: { amountCents: dash.balances.availableCents } });
-      setMsg({ kind: 'ok', text: `Withdrawal of ${money(dash.balances.availableCents)} sent.` });
+      await api('/seller/withdrawals', { body: { amountCents: withdrawable, currency: cur } });
+      setMsg({ kind: 'ok', text: `Withdrawal of ${money(withdrawable, cur)} sent.` });
       load();
     } catch (e: any) {
       setMsg({ kind: 'alert', text: e.message });
@@ -86,6 +106,7 @@ export function Sell() {
   return (
     <div className="stack">
       <h1 style={{ fontSize: 40 }}>Your shop</h1>
+      {tabs}
       <div className="grid three">
         <div className="card stack">
           <div className="eyebrow">Level</div>
@@ -100,10 +121,13 @@ export function Sell() {
         </div>
         <div className="card stack">
           <div className="eyebrow">Balance</div>
-          <h2 className="mono" style={{ margin: 0 }}>{money(dash.balances.availableCents)}</h2>
-          <p className="small muted">{money(dash.balances.pendingEscrowCents)} still in escrow on open orders.</p>
+          <h2 className="mono" style={{ margin: 0 }}>{money(withdrawable, cur)}</h2>
+          <p className="small muted">
+            Ready to withdraw.{dash.balances.onHoldCents ? ` ${money(dash.balances.onHoldCents, cur)} on payout hold.` : ''} {money(dash.balances.pendingEscrowCents)} still in escrow on open orders.{' '}
+            <Link to="/sell/money">Details</Link>
+          </p>
           {user.payouts_enabled ? (
-            <button className="btn" disabled={dash.withdrawalsFrozen || dash.balances.availableCents <= 0} onClick={withdraw}>Withdraw all</button>
+            <button className="btn" disabled={dash.withdrawalsFrozen || withdrawable <= 0} onClick={withdraw}>Withdraw all</button>
           ) : (
             <>
               <button className="btn" onClick={setUpPayouts}>Set up payouts</button>

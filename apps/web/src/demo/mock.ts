@@ -7,7 +7,7 @@
  */
 import { CATEGORIES, DEMO_CODE, seed, type DemoState, type DemoUser } from './seed';
 
-const KEY = 'bz.demo.v2';
+const KEY = 'bz.demo.v3';
 const day = 86_400_000;
 const now = () => new Date().toISOString();
 const rid = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2) + Date.now().toString(16));
@@ -42,6 +42,13 @@ type Frame = Record<string, unknown>;
 let push: (frame: Frame) => void = () => {};
 export function onDemoFrame(fn: (frame: Frame) => void) {
   push = fn;
+}
+
+let viewer: string | null = null; // the signed-in demo user, so only their notifications are pushed live
+function notify(userId: string, category: string, template: string, title: string, body: string, link: string | null) {
+  const item = { id: rid(), user_id: userId, template, category, title, body, link, read_at: null, created_at: now() };
+  state.inbox.unshift(item);
+  if (userId === viewer) setTimeout(() => push({ type: 'notification', event: 'inbox.new', data: item }), 0);
 }
 
 class HttpError extends Error {
@@ -161,6 +168,7 @@ function deliverOrder(o: any, payload?: string) {
   o.delivered_at = now();
   o.protection_ends_at = new Date(Date.now() + (o.protection === 'insurance_14d' ? 14 * day : 3 * day)).toISOString();
   transition(o, 'delivered', offer.delivery_mode === 'auto' ? 'auto_delivery' : 'manual_delivery');
+  notify(o.buyer_id, 'orders', 'order.delivered', 'Your order was delivered', `${o.offer_title}: check it within your protection window.`, `/orders/${o.id}`);
   live(appendMessage(o.room_id, null, 'delivery', offer.delivery_mode === 'auto' ? 'Delivered automatically. Your codes are on this order page.' : 'The seller marked this order as delivered.'));
 }
 
@@ -171,6 +179,7 @@ function releaseOrder(o: any, reason: string) {
   state.monthlySales[o.seller_id] = (state.monthlySales[o.seller_id] ?? 0) + o.amount_cents;
   state.platform.escrow -= o.amount_cents;
   state.platform.treasury += o.amount_cents - o.seller_net_cents;
+  notify(o.seller_id, 'selling', 'order.released', 'Payment released', `$${(o.seller_net_cents / 100).toFixed(2)} from “${o.offer_title}” was added to your balance.`, '/sell/money');
   live(appendMessage(o.room_id, null, 'system', `Order completed. $${(o.seller_net_cents / 100).toFixed(2)} released to the seller (fee ${(o.commission_bps / 100).toFixed(2)}%).`));
 }
 
@@ -181,6 +190,7 @@ export function payDemoOrder(orderId: string) {
   transition(o, 'paid', 'payment_captured');
   o.paid_at = now();
   state.platform.escrow += o.amount_cents;
+  notify(o.seller_id, 'selling', 'order.paid', 'New order', `${o.offer_title}: the buyer has paid. Deliver from the order page.`, `/orders/${o.id}`);
   live(appendMessage(o.room_id, null, 'system', `Payment received: $${(o.amount_cents / 100).toFixed(2)} is locked in escrow.`));
   const offer = state.offers.find((f) => f.id === o.offer_id)!;
   if (offer.delivery_mode === 'auto') deliverOrder(o);
@@ -539,7 +549,9 @@ route('GET', '/seller/dashboard', ({ me }) => {
     monthlySalesCents: t.sales,
     next: t.next ? { tier: t.next, remainingCents: t.next.minMonthlySalesCents - t.sales } : null,
     tiers: TIERS,
-    balances: { availableCents: state.balances[u.id] ?? 0, pendingEscrowCents: mine.filter((o) => ['paid', 'delivered', 'disputed'].includes(o.status)).reduce((s, o) => s + o.seller_net_cents, 0) },
+    payoutCurrency: state.payoutCurrency[u.id] ?? 'USD',
+    allBalances: [{ currency: 'USD', cents: state.balances[u.id] ?? 0 }],
+    balances: { availableCents: state.balances[u.id] ?? 0, withdrawableCents: holdOf(u.id).withdrawableCents, onHoldCents: holdOf(u.id).heldCents, currency: 'USD', pendingEscrowCents: mine.filter((o) => ['paid', 'delivered', 'disputed'].includes(o.status)).reduce((s, o) => s + o.seller_net_cents, 0) },
     withdrawalsFrozen: u.withdrawals_frozen,
     stats: {
       completed: sellerStats(u.id).completed,
@@ -605,11 +617,85 @@ route('GET', '/seller/payout-account', ({ me }) => {
 route('POST', '/seller/withdrawals', ({ me, body }) => {
   const u = needSeller(me);
   const available = state.balances[u.id] ?? 0;
-  if (!(body.amountCents > 0) || body.amountCents > available) fail(400, 'insufficient_funds', `Available balance is ${available} cents`);
+  const { withdrawableCents } = holdOf(u.id);
+  if (!(body.amountCents > 0) || body.amountCents > withdrawableCents) fail(400, 'insufficient_funds', `You can withdraw up to ${withdrawableCents} cents right now`);
   state.balances[u.id] = available - body.amountCents;
   const w = { id: rid(), amount_cents: body.amountCents, currency: 'USD', status: 'paid', created_at: now() };
   state.withdrawals.push({ ...w, user_id: u.id });
+  notify(u.id, 'selling', 'payout.paid', 'Payout sent', `$${(body.amountCents / 100).toFixed(2)} is on its way to your bank.`, '/sell/money');
   return w;
+});
+
+// --- Seller money: payout holds, currency, tax, invoices ------------------------------------
+function holdOf(sellerId: string) {
+  const [level, holdDays] = state.completedBefore[sellerId]! > 150 ? ['established', 3] : ['new', 7];
+  const available = state.balances[sellerId] ?? 0;
+  const recent = state.orders
+    .filter((o) => o.seller_id === sellerId && o.status === 'completed' && Date.parse(o.completed_at) > Date.now() - holdDays * day)
+    .map((o) => ({ unlocksAt: new Date(Date.parse(o.completed_at) + holdDays * day).toISOString(), cents: o.seller_net_cents }));
+  // A couple of sales from "earlier this week" so the hold has something to show before any demo orders complete.
+  const earlier = [{ unlocksAt: new Date(Date.now() + 2 * day).toISOString(), cents: Math.round(available * 0.08) }, { unlocksAt: new Date(Date.now() + day).toISOString(), cents: Math.round(available * 0.05) }];
+  const upcoming = [...recent, ...earlier].filter((u) => u.cents > 0).sort((a, b) => a.unlocksAt.localeCompare(b.unlocksAt));
+  const heldCents = Math.min(available, upcoming.reduce((s, u) => s + u.cents, 0));
+  return { level, holdDays, currency: 'USD', availableCents: available, heldCents, withdrawableCents: available - heldCents, upcoming };
+}
+route('GET', '/seller/payout-hold', ({ me }) => holdOf(needSeller(me).id));
+route('PUT', '/seller/payout-currency', ({ me, body }) => {
+  const u = needSeller(me);
+  if (!['USD', 'EUR', 'GBP'].includes(body.currency)) fail(400, 'unsupported_currency', 'Choose USD, EUR or GBP');
+  state.payoutCurrency[u.id] = body.currency;
+  return { payoutCurrency: body.currency };
+});
+const EU = new Set('AT BE BG HR CY CZ DK EE FI FR DE GR HU IE IT LV LT LU MT NL PL PT RO SK SI ES SE'.split(' '));
+const VAT: Record<string, number> = { DE: 1900, FR: 2000, ES: 2100, IT: 2200, NL: 2100, IE: 2300, SE: 2500, PL: 2300, AT: 2000, BE: 2100, GB: 2000 };
+function taxView(p: any) {
+  const country = p.country ?? 'US';
+  const treatment = EU.has(country) || country === 'GB' ? (p.isBusiness && p.taxIdVerified ? 'reverse_charge' : 'standard') : 'outside_scope';
+  return { ...p, commissionTax: { country, treatment, rateBps: treatment === 'standard' ? VAT[country] ?? 2100 : 0 } };
+}
+const blankTax = { country: null, isBusiness: false, taxId: null, taxIdVerified: false, billingAddress: null };
+route('GET', '/seller/tax-profile', ({ me }) => taxView(state.taxProfiles[needSeller(me).id] ?? blankTax));
+route('PUT', '/seller/tax-profile', ({ me, body }) => {
+  const u = needSeller(me);
+  if (!body.country) fail(400, 'validation_error', 'Choose your country');
+  const taxId = body.isBusiness && body.taxId ? String(body.taxId).replace(/\s/g, '').toUpperCase() : null;
+  // Real VIES check happens server-side; here any well-formed EU-style number "verifies".
+  state.taxProfiles[u.id] = { country: body.country, isBusiness: !!body.isBusiness, taxId, taxIdVerified: !!taxId && /^[A-Z]{2}[0-9A-Z]{8,12}$/.test(taxId), billingAddress: body.billingAddress ?? null };
+  return taxView(state.taxProfiles[u.id]);
+});
+route('GET', '/seller/invoices', ({ me }) => state.invoices.filter((i) => i.seller_id === needSeller(me).id));
+route('GET', '/seller/credit-notes', ({ me }) => state.creditNotes.filter((c) => c.seller_id === needSeller(me).id));
+
+// --- Notifications & push ----------------------------------------------------------------
+const inboxOf = (id: string) => state.inbox.filter((n) => n.user_id === id);
+const unreadOf = (id: string) => inboxOf(id).filter((n) => !n.read_at).length;
+route('GET', '/me/notifications', ({ me, query }) => {
+  const u = need(me);
+  return { items: inboxOf(u.id).slice(0, Number(query.get('limit') ?? 20)), unread: unreadOf(u.id) };
+});
+route('GET', '/me/notifications/unread-count', ({ me }) => ({ unread: unreadOf(need(me).id) }));
+route('POST', '/me/notifications/read-all', ({ me }) => {
+  const u = need(me);
+  for (const n of inboxOf(u.id)) n.read_at ??= now();
+  return { unread: 0 };
+});
+route('POST', '/me/notifications/:id/read', ({ me, params }) => {
+  const u = need(me);
+  const n = inboxOf(u.id).find((x) => x.id === params[0]);
+  if (n) n.read_at ??= now();
+  return { unread: unreadOf(u.id) };
+});
+route('GET', '/push/config', () => ({ enabled: false, vapidPublicKey: null }));
+const PUSH_CATS: Array<[string, string]> = [['orders', 'Orders'], ['selling', 'Sales & payouts'], ['disputes', 'Disputes'], ['security', 'Security'], ['reminders', 'Reminders']];
+route('GET', '/me/push-subscriptions', ({ me }) => (need(me), []));
+route('GET', '/me/push-preferences', ({ me }) => {
+  const u = need(me);
+  return PUSH_CATS.map(([category, label]) => ({ category, label, enabled: state.pushPrefs[u.id]?.[category] !== false }));
+});
+route('PATCH', '/me/push-preferences', ({ me, body }) => {
+  const u = need(me);
+  state.pushPrefs[u.id] = { ...state.pushPrefs[u.id], ...body };
+  return PUSH_CATS.map(([category, label]) => ({ category, label, enabled: state.pushPrefs[u.id]![category] !== false }));
 });
 
 // --- Developers --------------------------------------------------------------------------
@@ -698,6 +784,217 @@ route('POST', '/admin/reconciliation/run', ({ me }) => {
 });
 route('GET', '/admin/audit', ({ me }) => (needStaff(me), state.audit));
 
+// --- Staff permissions, compliance, treasury, tax, staff ------------------------------------
+const ALL_PERMS = [
+  'orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'risk.review', 'users.suspend', 'aml.review', 'aml.sar',
+  'chargebacks.manage', 'orders.refund_after_release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view',
+  'ledger.adjust', 'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'keys.manage', 'retention.manage', 'audit.view', 'staff.manage',
+];
+const ROLE_PERMS: Record<string, string[]> = {
+  arbiter: ['orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'orders.refund_after_release'],
+  support: ['orders.view_any', 'reviews.moderate', 'ledger.view'],
+  finance: ['chargebacks.manage', 'orders.refund_after_release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view', 'ledger.adjust', 'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage'],
+  compliance: ['orders.view_any', 'risk.review', 'users.suspend', 'aml.review', 'aml.sar', 'payout_holds.set', 'ledger.view', 'audit.view', 'retention.manage'],
+  admin: ALL_PERMS,
+};
+const permsOf = (u: DemoUser) => new Set([u.role, ...(u.staff_roles ?? [])].flatMap((r) => ROLE_PERMS[r] ?? []));
+const needPerm = (me: DemoUser | null, p: string) => {
+  const u = need(me);
+  if (!permsOf(u).has(p)) fail(403, 'insufficient_permission', `Needs the ${p} permission`);
+  return u;
+};
+const audit = (u: DemoUser, action: string, target_type: string, target_id: string, details: object) =>
+  state.audit.unshift({ id: rid(), created_at: now(), actor_name: u.display_name, actor_role: u.role, ip: '203.0.113.7', action, target_type, target_id, details });
+route('GET', '/me/permissions', ({ me }) => ({ permissions: [...permsOf(need(me))] }));
+
+const caseView = (c: any) => ({ ...c, display_name: userById(c.user_id)?.display_name ?? 'Unknown user' });
+route('GET', '/admin/aml/cases', ({ me, query }) => {
+  needPerm(me, 'aml.review');
+  const status = query.get('status');
+  return state.amlCases.filter((c) => !status || c.status === status).map(caseView);
+});
+route('GET', '/admin/aml/cases/:id', ({ me, params }) => {
+  needPerm(me, 'aml.review');
+  const c = state.amlCases.find((x) => x.id === params[0]) ?? fail(404, 'not_found', 'Case not found');
+  const u = userById(c.user_id)!;
+  const since = Date.now() - 90 * day;
+  const sum = (xs: any[]) => xs.filter((o) => Date.parse(o.created_at) > since).reduce((s, o) => s + (o.amount_cents ?? 0), 0);
+  return {
+    case: caseView(c),
+    user: { display_name: u.display_name, email: u.email, legal_name: u.legal_name, kyc_tier: u.kyc_tier, wallet_address: null },
+    money: {
+      sales_90d_cents: sum(state.orders.filter((o) => o.seller_id === u.id)) + (state.monthlySales[u.id] ?? 0) * 2,
+      purchases_90d_cents: sum(state.orders.filter((o) => o.buyer_id === u.id)),
+      withdrawn_90d_cents: sum(state.withdrawals.filter((w) => w.user_id === u.id)) + Math.round((state.monthlySales[u.id] ?? 0) * 1.6),
+    },
+  };
+});
+route('POST', '/admin/aml/cases/:id/notes', ({ me, params, body }) => {
+  const u = needPerm(me, 'aml.review');
+  const c = state.amlCases.find((x) => x.id === params[0]) ?? fail(404, 'not_found', 'Case not found');
+  c.notes.push({ note: body.note, at: now(), by: u.display_name });
+  return caseView(c);
+});
+route('POST', '/admin/aml/cases/:id/decide', ({ me, params, body }) => {
+  const u = needPerm(me, body.decision === 'report' ? 'aml.sar' : 'aml.review');
+  const c = state.amlCases.find((x) => x.id === params[0]) ?? fail(404, 'not_found', 'Case not found');
+  if (body.decision === 'report' && !body.sarReference) fail(400, 'validation_error', 'Enter the SAR reference from the FIU');
+  c.status = { clear: 'cleared', escalate: 'escalated', hold: c.status, report: 'reported' }[body.decision as string] ?? c.status;
+  if (body.decision === 'hold') c.holds_payouts = true;
+  if (body.decision === 'clear') c.holds_payouts = false;
+  if (body.decision === 'report') c.sar_reference = body.sarReference;
+  c.notes.push({ decision: body.decision, note: body.note, at: now(), by: u.display_name });
+  audit(u, `aml.${body.decision}`, 'aml_case', c.id, { rule: c.rule });
+  return caseView(c);
+});
+
+route('GET', '/admin/treasury', ({ me }) => {
+  needPerm(me, 'treasury.request');
+  const p = state.platform;
+  return {
+    balance: { currency: 'USD', availableCents: p.treasury, reserveCents: p.reserve, taxPayableCents: p.tax_payable, withdrawnToDateCents: p.withdrawn },
+    withdrawals: state.treasury,
+  };
+});
+route('POST', '/admin/treasury/withdrawals', ({ me, body }) => {
+  const u = needPerm(me, 'treasury.request');
+  const pool = body.source === 'tax_payable' ? state.platform.tax_payable : state.platform.treasury;
+  if (!(body.amountCents > 0) || body.amountCents > pool) fail(400, 'insufficient_funds', 'More than is available in that account');
+  if (!body.note || String(body.note).length < 3) fail(400, 'validation_error', 'Say what the money is for');
+  const w = { id: rid(), amount_cents: body.amountCents, currency: 'USD', note: body.note, source: body.source ?? 'treasury', status: 'pending_approval', requested_by: u.id, requested_by_name: u.display_name, decided_by_name: null, created_at: now() };
+  state.treasury.unshift(w);
+  audit(u, 'treasury.requested', 'treasury_withdrawal', w.id, { amountCents: w.amount_cents });
+  return w;
+});
+route('POST', '/admin/treasury/withdrawals/:id/decide', ({ me, params, body }) => {
+  const u = needPerm(me, 'treasury.approve');
+  const w = state.treasury.find((x) => x.id === params[0]) ?? fail(404, 'not_found', 'Withdrawal not found');
+  if (w.requested_by === u.id) fail(403, 'four_eyes', 'Another admin must approve your own request');
+  if (w.status !== 'pending_approval') fail(409, 'already_decided', 'Already decided');
+  w.status = body.approve ? 'paid' : 'rejected';
+  w.decided_by_name = u.display_name;
+  if (body.approve) {
+    if (w.source === 'tax_payable') state.platform.tax_payable -= w.amount_cents;
+    else state.platform.treasury -= w.amount_cents;
+    state.platform.withdrawn += w.amount_cents;
+  }
+  audit(u, body.approve ? 'treasury.approved' : 'treasury.rejected', 'treasury_withdrawal', w.id, { amountCents: w.amount_cents });
+  return w;
+});
+
+const TAX_ROWS = [
+  ['DE', 'standard', 1900, 214, 3, 2_684_10], ['DE', 'reverse_charge', 0, 61, 0, 912_40], ['FR', 'standard', 2000, 132, 1, 1_540_75],
+  ['GB', 'standard', 2000, 97, 2, 1_102_30], ['US', 'outside_scope', 0, 388, 4, 4_870_55], ['NL', 'reverse_charge', 0, 18, 0, 240_00],
+] as const;
+function taxRows(from: string, to: string) {
+  // Scale the sample to the length of the period so the report reacts to the dates.
+  const k = Math.max(0.05, Math.min(3, (Date.parse(to) - Date.parse(from)) / (30 * day)));
+  return TAX_ROWS.map(([country, treatment, rate_bps, orders, credit_notes, gross]) => {
+    const commission_gross_cents = Math.round(gross * k);
+    return { country, treatment, rate_bps, orders: Math.round(orders * k), credit_notes: Math.round(credit_notes * k), currency: 'USD', commission_gross_cents, tax_cents: Math.round((commission_gross_cents * rate_bps) / (10_000 + rate_bps)) };
+  });
+}
+route('GET', '/admin/tax/report', ({ me, query }) => (needPerm(me, 'tax.manage'), taxRows(query.get('from') ?? '', query.get('to') ?? '')));
+
+route('GET', '/admin/staff', ({ me }) => {
+  needPerm(me, 'staff.manage');
+  const real = state.users.filter((u) => u.role !== 'user' || u.staff_roles?.length).map((u) => ({ id: u.id, email: u.email, display_name: u.display_name, role: u.role, staff_roles: u.staff_roles ?? [], totp_enabled: u.totp_enabled }));
+  return [...real, ...state.staff.filter((s) => s.staff_roles.length)];
+});
+route('PUT', '/admin/staff/:id', ({ me, params, body }) => {
+  const u = needPerm(me, 'staff.manage');
+  if (params[0] === u.id) fail(403, 'self_change', 'You can’t change your own roles');
+  if (!body.reason || String(body.reason).length < 3) fail(400, 'validation_error', 'Give a reason; it goes in the audit log');
+  const roles = (body.roles as string[]).filter((r) => r in ROLE_PERMS);
+  const real = userById(params[0]!);
+  if (real) {
+    real.staff_roles = roles.filter((r) => r !== real.role);
+  } else {
+    const s = state.staff.find((x) => x.id === params[0]);
+    if (s) s.staff_roles = roles;
+    else state.staff.push({ id: params[0], email: `${params[0]!.slice(0, 8)}@example.test`, display_name: `User ${params[0]!.slice(0, 8)}`, role: 'user', staff_roles: roles, totp_enabled: false });
+  }
+  audit(u, 'staff.roles_changed', 'user', params[0]!, { roles, reason: body.reason });
+  return { id: params[0], roles };
+});
+
+// --- Files (CSV exports, PDFs) ---------------------------------------------------------------
+const csv = (rows: Array<Record<string, unknown>>) => {
+  if (!rows.length) return 'no rows in this period\n';
+  const cols = Object.keys(rows[0]!);
+  const cell = (v: unknown) => (/[",\n]/.test(String(v ?? '')) ? `"${String(v).replace(/"/g, '""')}"` : String(v ?? ''));
+  return [cols.join(','), ...rows.map((r) => cols.map((c) => cell(r[c])).join(','))].join('\n') + '\n';
+};
+/** A one-page PDF with a few lines of text, standing in for server-rendered documents. */
+function pdf(lines: string[]) {
+  const esc = (t: string) => t.replace(/[\\()]/g, (m) => `\\${m}`).replace(/[^\x20-\x7e]/g, '-');
+  const text = lines.map((l, i) => `BT /F1 ${i ? 11 : 16} Tf 56 ${780 - i * 22} Td (${esc(l)}) Tj ET`).join('\n');
+  const objs = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    `<< /Length ${text.length} >>\nstream\n${text}\nendstream`,
+  ];
+  let out = '%PDF-1.4\n';
+  const offsets = objs.map((o, i) => {
+    const at = out.length;
+    out += `${i + 1} 0 obj\n${o}\nendobj\n`;
+    return at;
+  });
+  const xref = out.length;
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}`;
+  out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return new Blob([out], { type: 'application/pdf' });
+}
+function blobRoute(me: DemoUser | null, path: string, query: URLSearchParams): Blob {
+  const from = query.get('from') ?? '1970-01-01';
+  const to = query.get('to') ?? '2999-01-01';
+  const inRange = (iso: string) => iso >= from && iso < to;
+  let m = /^\/seller\/invoices\/([^/]+)\/pdf$/.exec(path);
+  if (m) {
+    const u = needSeller(me);
+    const i = state.invoices.find((x) => x.id === m![1] && x.seller_id === u.id) ?? fail(404, 'not_found', 'Invoice not found');
+    return pdf([`Bullizard commission invoice ${i.number}`, `Seller: ${u.display_name}`, `Period from ${i.period_start.slice(0, 10)}`, `Commission: $${(i.gross_cents / 100).toFixed(2)} ${i.currency}`, `Tax: $${(i.tax_cents / 100).toFixed(2)}`, 'Demo document - not a real invoice.']);
+  }
+  m = /^\/seller\/exports\/([a-z_]+)$/.exec(path);
+  if (m) {
+    const u = needSeller(me);
+    const mine = state.orders.filter((o) => o.seller_id === u.id && inRange(o.created_at));
+    const kinds: Record<string, () => Array<Record<string, unknown>>> = {
+      sales: () => mine.map((o) => ({ order_id: o.id, created_at: o.created_at, title: o.offer_title, status: o.status, amount_cents: o.amount_cents, commission_bps: o.commission_bps, commission_cents: o.amount_cents - o.seller_net_cents, credited_cents: o.seller_net_cents, currency: o.currency })),
+      statement: () => mine.filter((o) => o.status === 'completed').map((o) => ({ at: o.completed_at, kind: 'sale_released', reference: o.id, amount_cents: o.seller_net_cents, currency: 'USD' })),
+      payouts: () => state.withdrawals.filter((w) => w.user_id === u.id && inRange(w.created_at)).map((w) => ({ id: w.id, created_at: w.created_at, amount_cents: w.amount_cents, currency: w.currency, status: w.status })),
+      invoices: () => state.invoices.filter((i) => i.seller_id === u.id).map((i) => ({ number: i.number, period_start: i.period_start, gross_cents: i.gross_cents, tax_cents: i.tax_cents, currency: i.currency })),
+      credit_notes: () => state.creditNotes.filter((c) => c.seller_id === u.id).map((c) => ({ number: c.number, issued_at: c.issued_at, gross_cents: c.gross_cents, currency: c.currency, reason: c.reason })),
+    };
+    const rows = (kinds[m[1]!] ?? fail(404, 'not_found', 'Unknown export'))();
+    return new Blob([csv(rows)], { type: 'text/csv' });
+  }
+  if (path === '/admin/tax/report') {
+    needPerm(me, 'tax.manage');
+    return new Blob([csv(taxRows(from, to))], { type: 'text/csv' });
+  }
+  m = /^\/admin\/chargebacks\/([^/]+)\/packet\.pdf$/.exec(path) ?? /^\/admin\/chargebacks\/([^/]+)\/(?:pdf|packet)$/.exec(path);
+  if (m) {
+    needStaff(me);
+    return pdf([`Chargeback representment ${m[1]}`, 'Order record, delivery proof and chat transcript.', 'Demo document.']);
+  }
+  return fail(404, 'not_found', `This preview doesn't include ${path} (no backend).`);
+}
+export async function demoBlob(pathWithQuery: string, token: string | null): Promise<Blob> {
+  await new Promise((r) => setTimeout(r, 150));
+  const [path, qs] = pathWithQuery.split('?') as [string, string | undefined];
+  const me = token?.startsWith('demo:') ? (userById(token.slice(5)) ?? null) : null;
+  try {
+    return blobRoute(me, path, new URLSearchParams(qs ?? ''));
+  } catch (err) {
+    const { ApiError } = await import('../api');
+    if (err instanceof HttpError) throw new ApiError(err.status, err.code, err.message);
+    throw err;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Entry point used by api.ts in demo builds
 // ---------------------------------------------------------------------------
@@ -705,6 +1002,7 @@ export async function demoFetch(method: string, pathWithQuery: string, body: unk
   await new Promise((r) => setTimeout(r, 120 + Math.random() * 180)); // feel like a network
   const [path, qs] = pathWithQuery.split('?') as [string, string | undefined];
   const me = token?.startsWith('demo:') ? (userById(token.slice(5)) ?? null) : null;
+  viewer = me?.id ?? null;
   for (const [m, re, h] of routes) {
     const match = m === method ? re.exec(path) : null;
     if (!match) continue;

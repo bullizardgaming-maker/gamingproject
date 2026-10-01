@@ -1,6 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter, Link, NavLink, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Link, NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { SessionProvider, useSession } from './session';
 import { Home } from './pages/Home';
 import { Market } from './pages/Market';
@@ -12,6 +12,7 @@ import { Developers } from './pages/Developers';
 import { Account, ForgotPassword, Login, ResetPassword } from './pages/Account';
 import { Admin } from './pages/Admin';
 import { DEMO } from './api';
+import { NotificationBell } from './components/NotificationBell';
 import { DemoBanner, DemoCheckout } from './demo/DemoUi';
 import './tailwind.css';
 import './styles.css';
@@ -32,6 +33,7 @@ function TopBar() {
         <div className="who">
           {user ? (
             <>
+              <NotificationBell />
               <Link to="/account" className="small">
                 <span className="email">{user.display_name} · </span>level {user.kyc_tier}
               </Link>
@@ -60,6 +62,8 @@ function App() {
           <Route path="/orders/:id" element={<OrderPage />} />
           <Route path="/chat/:id" element={<InquiryChat />} />
           <Route path="/sell" element={<Sell />} />
+          <Route path="/sell/money" element={<Sell />} />
+          <Route path="/sell/invoices" element={<Navigate to="/sell/money" replace />} />
           <Route path="/developers" element={<Developers />} />
           <Route path="/login" element={<Login />} />
           <Route path="/account" element={<Account />} />

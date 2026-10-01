@@ -15,7 +15,8 @@ export interface DemoUser {
   email: string;
   password: string;
   display_name: string;
-  role: 'user' | 'arbiter' | 'admin';
+  role: 'user' | 'arbiter' | 'support' | 'finance' | 'compliance' | 'admin';
+  staff_roles?: string[];
   kyc_tier: number;
   status: string;
   email_verified_at: string | null;
@@ -152,7 +153,52 @@ export function seed() {
       { id: 'a1', created_at: ago(2 * day), actor_name: 'Arbiter Ada', actor_role: 'admin', ip: '203.0.113.7', action: 'dispute.resolved', target_type: 'dispute', target_id: 'd0000000-1', details: { outcome: 'buyer' } },
       { id: 'a2', created_at: ago(day), actor_name: 'Arbiter Ada', actor_role: 'admin', ip: '203.0.113.7', action: 'reconciliation.run', target_type: 'reconciliation_run', target_id: 'rc100000', details: { status: 'ok' } },
     ] as any[],
-    platform: { escrow: 0, treasury: 18_432_10, reserve: 2_048_00, gateway_clearing: -24_960_00 },
+    inbox: [
+      { id: 'n1', user_id: users[1]!.id, template: 'payout.paid', category: 'selling', title: 'Payout sent', body: '$420.00 is on its way to your bank.', link: '/sell/money', read_at: ago(2 * day), created_at: ago(2 * day) },
+      { id: 'n2', user_id: users[1]!.id, template: 'invoice.issued', category: 'selling', title: 'Your commission invoice is ready', body: `Invoice BZ-${new Date().getFullYear()}-000412 for last month.`, link: '/sell/money', read_at: null, created_at: ago(20 * 3_600_000) },
+      { id: 'n3', user_id: users[0]!.id, template: 'security.new_login', category: 'security', title: 'New sign-in', body: 'Your account was signed in from a new browser.', link: '/account', read_at: null, created_at: ago(3_600_000) },
+      { id: 'n4', user_id: users[2]!.id, template: 'ops.aml_case', category: 'operations', title: 'New compliance case', body: 'Sanctions screening flagged a possible match for review.', link: '/admin', read_at: null, created_at: ago(5 * 3_600_000) },
+    ] as any[],
+    payoutCurrency: {} as Record<string, string>,
+    taxProfiles: {
+      [users[1]!.id]: { country: 'DE', isBusiness: true, taxId: 'DE123456789', taxIdVerified: true, billingAddress: 'NorthWind Keys GmbH\nTorstraße 1\n10119 Berlin' },
+    } as Record<string, any>,
+    invoices: [1, 2, 3].map((m) => {
+      const d = new Date();
+      d.setUTCDate(1);
+      d.setUTCMonth(d.getUTCMonth() - m);
+      return { id: `inv-${m}`, seller_id: users[1]!.id, number: `BZ-${d.getUTCFullYear()}-${String(412 - m * 37).padStart(6, '0')}`, period_start: d.toISOString(), currency: 'USD', gross_cents: [612_40, 588_15, 497_80][m - 1], tax_cents: 0 };
+    }) as any[],
+    creditNotes: [
+      { id: 'cn1', seller_id: users[1]!.id, number: 'BZC-000031', issued_at: ago(11 * day), currency: 'USD', gross_cents: 4_21, reason: 'Refund after release: key already redeemed' },
+    ] as any[],
+    pushPrefs: {} as Record<string, Record<string, boolean>>,
+    amlCases: [
+      {
+        id: 'aml-1', user_id: users[3]!.id, rule: 'sanctions_screening', source: 'sanctions', severity: 'high', status: 'open', holds_payouts: true, sar_reference: null, created_at: ago(5 * 3_600_000),
+        details: { why: 'Legal name screened against consolidated sanctions lists at payout onboarding.', matches: [{ name: 'RIFT TRADING LLC', program: 'Sectoral sanctions', list: 'OFAC SDN', ref: '38211', score: 0.82 }], threshold: 0.8 },
+        notes: [] as any[],
+      },
+      {
+        id: 'aml-2', user_id: users[4]!.id, rule: 'rapid_cash_out', source: 'monitoring', severity: 'medium', status: 'open', holds_payouts: false, sar_reference: null, created_at: ago(day),
+        details: { why: 'More than 90% of released sales withdrawn within 24 hours, six days running.', window_days: 7, withdrawn_share: 0.94 },
+        notes: [{ note: 'Seller is a known boosting shop; checking order mix.', at: ago(20 * 3_600_000) }],
+      },
+      {
+        id: 'aml-3', user_id: users[0]!.id, rule: 'structuring', source: 'monitoring', severity: 'medium', status: 'cleared', holds_payouts: false, sar_reference: null, created_at: ago(9 * day),
+        details: { why: 'Several purchases just under the verification threshold.', orders: 4 },
+        notes: [{ decision: 'clear', note: 'Normal gift-card buying pattern; amounts vary.', at: ago(8 * day) }],
+      },
+    ] as any[],
+    treasury: [
+      { id: 'tw1', amount_cents: 5_000_00, currency: 'USD', note: 'September operating costs', source: 'treasury', status: 'paid', requested_by: 'u-fin-1', requested_by_name: 'Finley (finance)', decided_by_name: 'Arbiter Ada', created_at: ago(14 * day) },
+      { id: 'tw2', amount_cents: 2_400_00, currency: 'USD', note: 'Quarterly VAT payment (OSS)', source: 'tax_payable', status: 'pending_approval', requested_by: 'u-fin-1', requested_by_name: 'Finley (finance)', decided_by_name: null, created_at: ago(3 * 3_600_000) },
+    ] as any[],
+    staff: [
+      { id: 'u-fin-1', email: 'finley@bullizard.test', display_name: 'Finley', role: 'user', staff_roles: ['finance'], totp_enabled: true },
+      { id: 'u-cmp-1', email: 'casey@bullizard.test', display_name: 'Casey', role: 'user', staff_roles: ['compliance', 'support'], totp_enabled: false },
+    ] as any[],
+    platform: { escrow: 0, treasury: 18_432_10, reserve: 2_048_00, tax_payable: 3_118_40, withdrawn: 5_000_00, gateway_clearing: -24_960_00 },
     seq: 1,
   };
 }

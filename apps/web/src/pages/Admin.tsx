@@ -2,24 +2,36 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, apiBlob, money } from '../api';
 import { useSession } from '../session';
+import { AmlPanel, StaffPanel, TaxPanel, TreasuryPanel } from './AdminPanels';
 
-type Tab = 'disputes' | 'risk' | 'proofs' | 'chargebacks' | 'ledger' | 'recon' | 'audit';
+type ListTab = 'disputes' | 'risk' | 'proofs' | 'chargebacks' | 'ledger' | 'recon' | 'audit';
+type PanelTab = 'aml' | 'treasury' | 'tax' | 'staff';
+type Tab = ListTab | PanelTab;
 
-const TABS: Array<{ id: Tab; label: string; adminOnly?: boolean }> = [
-  { id: 'disputes', label: 'Disputes' },
-  { id: 'proofs', label: 'Owner proofs' },
-  { id: 'risk', label: 'Fraud review', adminOnly: true },
-  { id: 'chargebacks', label: 'Chargebacks', adminOnly: true },
-  { id: 'ledger', label: 'Ledger', adminOnly: true },
-  { id: 'recon', label: 'Reconciliation', adminOnly: true },
-  { id: 'audit', label: 'Audit log', adminOnly: true },
+/** Each tab is shown to whoever holds its permission (see the API's domain/permissions.ts). */
+const TABS: Array<{ id: Tab; label: string; perm: string }> = [
+  { id: 'disputes', label: 'Disputes', perm: 'disputes.manage' },
+  { id: 'proofs', label: 'Owner proofs', perm: 'owner_proofs.review' },
+  { id: 'risk', label: 'Fraud review', perm: 'risk.review' },
+  { id: 'aml', label: 'Compliance', perm: 'aml.review' },
+  { id: 'chargebacks', label: 'Chargebacks', perm: 'chargebacks.manage' },
+  { id: 'treasury', label: 'Treasury', perm: 'treasury.request' },
+  { id: 'tax', label: 'Tax', perm: 'tax.manage' },
+  { id: 'ledger', label: 'Ledger', perm: 'ledger.view' },
+  { id: 'recon', label: 'Reconciliation', perm: 'reconciliation.run' },
+  { id: 'audit', label: 'Audit log', perm: 'audit.view' },
+  { id: 'staff', label: 'Staff', perm: 'staff.manage' },
 ];
+const PANELS: Record<PanelTab, () => React.ReactElement> = { aml: AmlPanel, treasury: TreasuryPanel, tax: TaxPanel, staff: StaffPanel };
+const isPanel = (t: Tab): t is PanelTab => t in PANELS;
 
 const fmt = (d: string) => new Date(d).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 export function Admin() {
-  const { user } = useSession();
-  const [tab, setTab] = useState<Tab>('disputes');
+  const { user, can } = useSession();
+  const visible = TABS.filter((t) => can(t.perm));
+  const [picked, setTab] = useState<Tab | null>(null);
+  const tab: Tab = picked && visible.some((t) => t.id === picked) ? picked : (visible[0]?.id ?? 'disputes');
   // Rows are tagged with the tab they were loaded for, so a tab switch never renders
   // one tab's rows with another tab's columns while the new data is loading.
   const [loaded, setLoaded] = useState<{ tab: Tab; rows: any[] } | null>(null);
@@ -27,7 +39,7 @@ export function Admin() {
   const [error, setError] = useState('');
   const [mfaNeeded, setMfaNeeded] = useState(false);
 
-  const path: Record<Tab, string> = {
+  const path: Record<ListTab, string> = {
     disputes: '/admin/disputes',
     risk: '/admin/risk-flags',
     proofs: '/admin/owner-proofs',
@@ -38,6 +50,7 @@ export function Admin() {
   };
 
   const load = useCallback(async () => {
+    if (isPanel(tab)) return;
     setLoaded(null);
     setError('');
     try {
@@ -51,10 +64,11 @@ export function Admin() {
   }, [tab]);
 
   useEffect(() => {
-    if (user && user.role !== 'user') load();
-  }, [user, load]);
+    if (user && visible.length) load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, load, visible.length]);
 
-  if (!user || user.role === 'user') return <div className="card"><h2>Staff only</h2><p className="muted">This area is for arbiters and admins.</p></div>;
+  if (!user || user.role === 'user' || !visible.length) return <div className="card"><h2>Staff only</h2><p className="muted">This area is for the marketplace team.</p></div>;
   if (mfaNeeded) {
     return (
       <div className="notice" style={{ maxWidth: 640 }}>
@@ -83,8 +97,6 @@ export function Admin() {
     }
   };
 
-  const visible = TABS.filter((t) => !t.adminOnly || user.role === 'admin');
-
   return (
     <div className="stack">
       <h1 style={{ fontSize: 40 }}>Operations</h1>
@@ -94,7 +106,12 @@ export function Admin() {
         ))}
       </div>
       {error && <div className="alert">{error}</div>}
-      {rows === null ? (
+      {isPanel(tab) ? (
+        (() => {
+          const Panel = PANELS[tab];
+          return <Panel key={tab} />;
+        })()
+      ) : rows === null ? (
         <p className="muted">Loading…</p>
       ) : rows.length === 0 ? (
         <div className="card"><p className="muted">Nothing waiting here.</p></div>
