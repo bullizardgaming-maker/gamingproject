@@ -39,7 +39,7 @@ Full stack in containers: `docker compose up --build` (web on :8080). Add `--pro
 ## Tests
 
 ```bash
-npm test -w apps/api          # 129 tests, needs Postgres (TEST_DATABASE_URL, default market_test) and Redis for the multi-node test
+npm test -w apps/api          # 148 tests, needs Postgres (TEST_DATABASE_URL, default market_test) and Redis for the multi-node test
 npm test -w contracts         # 10 Hardhat tests
 cd services/fraud-gnn && pip install -r requirements.txt && pytest -q   # 9 tests
 npm run build -w apps/web     # includes the payment-page script inventory check
@@ -53,6 +53,8 @@ Highlights of what the tests prove: exactly one of 25 simultaneous buyers gets a
 - `POST /v1/orders/quote` (currency, promo code, store credit breakdown)
 - `POST /v1/orders/:id/{deliver,confirm,dispute,cancel,cancel-late}`, `PATCH /v1/orders/:id/checklist`
 - `POST /v1/chat/rooms/:id/attachments` (screenshot evidence, malware-scanned)
+- Notifications: `GET /v1/me/notifications`, `GET /v1/push/config`, `POST /v1/me/push-subscriptions`, `PATCH /v1/me/push-preferences`
+- Seller reports: `GET /v1/seller/exports/{sales,statement,payouts,invoices,credit_notes}` (CSV/JSON), `GET /v1/seller/credit-notes`
 - Seller money: `GET /v1/seller/dashboard` (per-currency balances, payout hold), `PUT /v1/seller/payout-currency`, `PUT /v1/seller/tax-profile`, `GET /v1/seller/invoices[/:id/pdf]`
 - `GET /v1/ws` WebSocket chat and notifications (protocol documented in `apps/api/src/ws/gateway.ts`)
 - Merchant API (API-key auth): `GET /v1/merchant/orders`, `POST /v1/merchant/inventory`, `PATCH /v1/merchant/prices`, `POST /v1/merchant/orders/:id/deliver`, `GET /v1/merchant/webhooks/deliveries`, `POST /v1/merchant/webhooks/deliveries/:id/redeliver`
@@ -63,6 +65,8 @@ Seller API reference: `/v1/docs` (OpenAPI JSON at `/v1/openapi.json`). Run a san
 Monitoring: Prometheus metrics at `/metrics` (set `METRICS_TOKEN`), health at `/healthz` and `/readyz`, alert rules in `deploy/monitoring/alerts.yml`, errors to Sentry with `SENTRY_DSN`.
 
 Backups: `deploy/backup/` (WAL-G archiving, daily base backups, `restore-drill.sh` + `npm run verify-restore -w apps/api`); read replica via `DATABASE_READ_URL`.
+
+Failover drill and incident playbooks: `docs/RUNBOOK.md` (`npx tsx apps/api/scripts/failover-drill.ts`).
 
 Load test: `npm run loadtest -w apps/api` (see the header of `apps/api/scripts/loadtest-flash-sale.ts`; run against a throwaway database with raised rate limits).
 

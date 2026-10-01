@@ -79,7 +79,7 @@ export function createContext(cfg: Config, log: Logger, overrides: Partial<Ctx> 
   return {
     cfg,
     db,
-    dbRead: overrides.dbRead ?? new ReadPool(db, cfg.DATABASE_READ_URL ? createPool(cfg.DATABASE_READ_URL) : null, cfg.REPLICA_MAX_LAG_SECONDS),
+    dbRead: overrides.dbRead ?? new ReadPool(db, cfg.DATABASE_READ_URL ? createPool(cfg.DATABASE_READ_URL, undefined, { connectTimeoutMs: 5_000 }) : null, cfg.REPLICA_MAX_LAG_SECONDS),
     keyring,
     pubsub: overrides.pubsub ?? createPubSub(cfg.REDIS_URL),
     payments,

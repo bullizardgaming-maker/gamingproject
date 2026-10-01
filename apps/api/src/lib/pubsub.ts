@@ -39,8 +39,18 @@ export class RedisPubSub implements PubSub {
   private handlers: Array<(channel: string, payload: any) => void> = [];
 
   constructor(url: string) {
-    this.pub = new Redis(url);
+    // Publishing is best-effort: if Redis is down, fail fast instead of queueing, so API requests
+    // never wait on it (callers already treat a failed publish as non-fatal). The subscriber
+    // reconnects on its own and re-subscribes.
+    this.pub = new Redis(url, { enableOfflineQueue: false, maxRetriesPerRequest: 1, connectTimeout: 2_000 });
     this.sub = new Redis(url);
+    let warned = false;
+    const onError = (err: Error) => {
+      if (!warned) console.error(JSON.stringify({ level: 'warn', msg: 'redis unavailable; realtime fan-out paused', err: err.message }));
+      warned = true;
+    };
+    this.pub.on('error', onError).on('ready', () => (warned = false));
+    this.sub.on('error', onError);
     this.sub.psubscribe(`${PREFIX}*`);
     this.sub.on('pmessage', (_pattern: string, channel: string, message: string) => {
       const payload = JSON.parse(message);
@@ -54,7 +64,7 @@ export class RedisPubSub implements PubSub {
     this.handlers.push(handler);
   }
   async ping() {
-    return (await this.pub.ping()) === 'PONG';
+    return (await this.pub.ping().catch(() => null)) === 'PONG';
   }
   async close() {
     this.sub.disconnect();

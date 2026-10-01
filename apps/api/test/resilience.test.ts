@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { ReadPool, createPool } from '../src/db.js';
+import { ReadPool, createPool, isConnectionError, withTx } from '../src/db.js';
 import { checkIntegrity } from '../src/domain/integrity.js';
 import { buyAndPay, client, makeOffer, makeUser, setup, type Harness } from './helpers.js';
 
@@ -73,3 +73,45 @@ describe('read replica routing', () => {
     expect(res.body.replica).toBeUndefined();
   });
 });
+
+describe('database connection loss', () => {
+  it('retries a transaction once when its connection dies before commit, and survives the dropped client', async () => {
+    let attempts = 0;
+    const id = await withTx(h.ctx.db, async (tx) => {
+      attempts++;
+      const { rows } = await tx.query(`INSERT INTO csp_reports (payload) VALUES ('{"drill":true}') RETURNING id`);
+      // First attempt: the server kills this very connection mid-transaction.
+      if (attempts === 1) await tx.query('SELECT pg_terminate_backend(pg_backend_pid())');
+      return rows[0].id;
+    });
+    expect(attempts).toBe(2);
+    const { rows } = await h.ctx.db.query(`SELECT count(*)::int AS n FROM csp_reports WHERE payload->>'drill' = 'true'`);
+    expect(rows[0].n).toBe(1); // the first attempt rolled back; exactly one row committed
+    expect(id).toBeTruthy();
+    expect((await h.ctx.db.query('SELECT 1 AS ok')).rows[0].ok).toBe(1); // pool still healthy
+  });
+
+  it('does not retry ordinary SQL errors', async () => {
+    let attempts = 0;
+    await expect(
+      withTx(h.ctx.db, async (tx) => {
+        attempts++;
+        await tx.query('SELECT * FROM no_such_table');
+      }),
+    ).rejects.toThrow(/no_such_table/);
+    expect(attempts).toBe(1);
+    expect(isConnectionError({ code: '57P01' })).toBe(true);
+    expect(isConnectionError({ code: '23505' })).toBe(false);
+    expect(isConnectionError(new Error('Connection terminated unexpectedly'))).toBe(true);
+  });
+
+  it('stays ready when Redis is down (only the database decides readiness)', async () => {
+    const realPing = h.ctx.pubsub.ping.bind(h.ctx.pubsub);
+    h.ctx.pubsub.ping = async () => false;
+    const res = await client(h.app).get('/readyz');
+    h.ctx.pubsub.ping = realPing;
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, checks: { database: true, pubsub: false } });
+  });
+});
+

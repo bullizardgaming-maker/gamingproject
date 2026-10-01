@@ -183,8 +183,10 @@ export async function buildApp(ctx: Ctx, opts: { logger?: PinoLogger } = {}): Pr
     const checks: Record<string, boolean> = {};
     checks.database = await ctx.db.query('SELECT 1').then(() => true, () => false);
     checks.pubsub = await ctx.pubsub.ping().catch(() => false);
-    const ok = Object.values(checks).every(Boolean);
-    // A lagging or down replica doesn't make this node unready: reads fall back to the primary.
+    // Only the database decides readiness. Redis down degrades live updates and shared rate limits
+    // but every node can still serve; failing readiness on it would take the whole fleet out.
+    // Likewise a lagging or down replica: reads fall back to the primary.
+    const ok = checks.database;
     const replica = ctx.cfg.DATABASE_READ_URL ? { inUse: ctx.dbRead.usingReplica, lagSeconds: ctx.dbRead.lagSeconds } : undefined;
     return reply.status(ok ? 200 : 503).send({ ok, checks, ...(replica ? { replica } : {}) });
   });

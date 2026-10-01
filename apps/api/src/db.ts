@@ -15,22 +15,57 @@ export interface Queryable {
   query<R extends pg.QueryResultRow = any>(text: string, params?: unknown[]): Promise<pg.QueryResult<R>>;
 }
 
-export function createPool(url: string, max = Number(process.env.DB_POOL_MAX ?? 20)): Db {
-  return new pg.Pool({ connectionString: url, max });
+export function createPool(url: string, max = Number(process.env.DB_POOL_MAX ?? 20), opts: { connectTimeoutMs?: number } = {}): Db {
+  // The timeout covers queueing for a free pooled connection, not just connecting, so it must
+  // tolerate load bursts on the primary; replicas use a short one because reads can fall back.
+  const pool = new pg.Pool({ connectionString: url, max, connectionTimeoutMillis: opts.connectTimeoutMs ?? 30_000 });
+  // An idle connection dropped by the server (failover, restart, admin kill) is reported here.
+  // Without a listener Node treats it as an uncaught error and the process dies; the pool
+  // already discards the broken client and opens a new one on demand.
+  pool.on('error', (err) => {
+    if (process.env.NODE_ENV !== 'test') console.error(JSON.stringify({ level: 'warn', msg: 'database connection lost', err: err.message }));
+  });
+  return pool;
 }
 
+/** The connection itself failed (server restart, failover, admin kill, network), as opposed to a SQL error. */
+export function isConnectionError(err: unknown) {
+  const e = err as { code?: string; message?: string };
+  if (e?.code && /^(08|57P0[1-3])/.test(e.code)) return true;
+  return /Connection terminated|ECONNRESET|ECONNREFUSED|EPIPE|connection timeout/i.test(e?.message ?? '');
+}
+
+/**
+ * Run `fn` in a transaction. If the connection dies before COMMIT is sent, the transaction
+ * certainly rolled back, so it is retried once on a fresh connection (fn must keep external
+ * calls idempotent, which ours do; realtime publishes happen after commit). A failure during
+ * COMMIT is never retried: the outcome is unknown and the caller must check.
+ */
 export async function withTx<T>(db: Db, fn: (tx: Tx) => Promise<T>): Promise<T> {
-  const client = await db.connect();
-  try {
-    await client.query('BEGIN');
-    const result = await fn(client);
-    await client.query('COMMIT');
-    return result;
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    throw err;
-  } finally {
-    client.release();
+  for (let attempt = 0; ; attempt++) {
+    const client = await db.connect();
+    // A connection killed mid-transaction also emits 'error' on the checked-out client. The failing
+    // query rejects with it anyway; listening stops it becoming an uncaught exception, and the broken
+    // client is destroyed on release instead of going back into the pool.
+    let broken: Error | undefined;
+    const onClientError = (err: Error) => (broken = err);
+    client.on('error', onClientError);
+    let committing = false;
+    try {
+      await client.query('BEGIN');
+      const result = await fn(client);
+      committing = true;
+      await client.query('COMMIT');
+      return result;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      if (isConnectionError(err)) broken ??= err as Error;
+      if (attempt === 0 && !committing && isConnectionError(err)) continue;
+      throw err;
+    } finally {
+      client.off('error', onClientError);
+      client.release(broken);
+    }
   }
 }
 
@@ -117,9 +152,11 @@ export class ReadPool {
       try {
         return await this.replica!.query<R>(text, params as any[]);
       } catch (err) {
-        // Connection-level failure: mark unhealthy and answer from the primary. SQL errors are rethrown.
-        if (!(err as { code?: string }).code || /^(08|57P)/.test((err as { code: string }).code)) this.healthy = false;
-        else throw err;
+        // Real SQL errors (a 5-character SQLSTATE outside connection classes) are rethrown. Anything else
+        // (refused, reset, timed out, server shutting down) marks the replica unhealthy and the primary answers.
+        const code = (err as { code?: string }).code ?? '';
+        if (/^[0-9A-Z]{5}$/.test(code) && !/^(08|57P)/.test(code)) throw err;
+        this.healthy = false;
       }
     }
     return this.primary.query<R>(text, params as any[]);
