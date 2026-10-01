@@ -57,7 +57,7 @@ export const CATEGORIES = [
   { slug: 'video-games', name: 'Video Games', kind: 'video_game' },
 ];
 
-type Seed = [cat: string, game: string, title: string, price: number, mode: 'auto' | 'manual', stock: number, seller: string, proof?: string, description?: string];
+type Seed = [cat: string, game: string, title: string, price: number, mode: 'auto' | 'manual', stock: number, seller: string, proof?: string, description?: string, hours?: number];
 
 const LISTINGS: Seed[] = [
   ['keys', 'Elden Ring', 'Elden Ring — Steam key (Global)', 32_49, 'auto', 40, 'seller', 'none', 'Global Steam key, activates instantly. Delivered to your order page the second payment clears.'],
@@ -76,7 +76,55 @@ const LISTINGS: Seed[] = [
   ['items', 'Counter-Strike 2', 'AK-47 | Redline (Field-Tested)', 21_75, 'manual', 3, 'seller'],
   ['items', 'Diablo IV', 'Shako (Harlequin Crest), Season 6', 12_50, 'manual', 6, 'seller2'],
   ['video-games', 'Nintendo', 'Zelda: Tears of the Kingdom — eShop code (US)', 52_00, 'auto', 7, 'seller2'],
+  // A wider catalogue so every game page has a real offer table to compare.
+  ['top-ups', 'Genshin Impact', 'Blessing of the Welkin Moon — UID top-up', 4_49, 'manual', 60, 'seller5', 'none', '', 0.25],
+  ['accounts', 'Genshin Impact', 'AR 58 · 9 five-stars incl. Furina C2, Neuvillette', 189_00, 'manual', 1, 'seller4', 'verified'],
+  ['accounts', 'Genshin Impact', 'Starter AR 10 · Raiden + Nahida reroll (Asia)', 24_00, 'manual', 1, 'seller2', 'none', '', 1],
+  ['boosting', 'Genshin Impact', 'Spiral Abyss 36★ clear, any team', 19_00, 'manual', 9, 'seller3', 'none', '', 12],
+  ['top-ups', 'Valorant', '2,050 VP — EU region code', 19_49, 'auto', 22, 'seller5'],
+  ['top-ups', 'Valorant', '5,350 VP — NA region code', 48_99, 'auto', 14, 'seller'],
+  ['boosting', 'Valorant', 'Ascendant 1 → Ascendant 3, solo or duo', 139_00, 'manual', 3, 'seller3', 'none', '', 48],
+  ['accounts', 'Valorant', 'Radiant-ready smurf, level 20, unranked (EU)', 11_90, 'manual', 12, 'seller4', 'none', '', 0.5],
+  ['currency', 'League of Legends', '1,380 RP gift code (EUW)', 10_49, 'auto', 35, 'seller5'],
+  ['accounts', 'League of Legends', 'Level 30 unranked, 40k BE, hand-levelled (NA)', 9_90, 'manual', 25, 'seller4', 'none', '', 0.5],
+  ['boosting', 'League of Legends', 'Placement games (5) with a Master duo', 29_00, 'manual', 8, 'seller3', 'none', '', 24],
+  ['currency', 'Fortnite', '13,500 V-Bucks — gifted to your account', 79_00, 'manual', 10, 'seller2', 'none', '', 2],
+  ['items', 'Fortnite', 'Galaxy Scout skin code', 34_00, 'auto', 4, 'seller'],
+  ['accounts', 'Fortnite', 'Chapter 1 Season 2 account, Black Knight', 249_00, 'manual', 1, 'seller4', 'verified'],
+  ['items', 'Counter-Strike 2', 'Karambit | Doppler Phase 2 (Factory New)', 1_190_00, 'manual', 1, 'seller4', 'none', '', 2],
+  ['items', 'Counter-Strike 2', 'AWP | Asiimov (Field-Tested)', 98_00, 'manual', 2, 'seller2', 'none', '', 1],
+  ['accounts', 'Counter-Strike 2', 'Prime account, 2,000 hours, Faceit level 8', 64_00, 'manual', 1, 'seller3', 'none'],
+  ['currency', 'World of Warcraft', '250k Gold — Silvermoon (Horde, EU)', 41_00, 'manual', 12, 'seller5', 'none', '', 1],
+  ['boosting', 'World of Warcraft', 'Mythic+ 10 key, timed, loot funnel', 22_00, 'manual', 20, 'seller3', 'none', '', 6],
+  ['currency', 'Old School RuneScape', '250M OSRS GP — trade in Grand Exchange', 129_00, 'manual', 4, 'seller5', 'none', '', 0.5],
+  ['accounts', 'Old School RuneScape', 'Maxed main, 2277 total, infernal cape', 860_00, 'manual', 1, 'seller4', 'verified'],
+  ['currency', 'Diablo IV', '1 billion gold, Season 6 softcore', 6_50, 'manual', 40, 'seller5', 'none', '', 1],
+  ['boosting', 'Diablo IV', 'Level 1 → 60 + Torment 4 unlock', 34_00, 'manual', 6, 'seller3', 'none', '', 24],
+  ['currency', 'EA Sports FC 25', '1M FUT coins, comfort trade (PS5)', 39_00, 'manual', 15, 'seller2', 'none', '', 2],
+  ['currency', 'EA Sports FC 25', '500k FUT coins, player auction (PC)', 21_00, 'manual', 22, 'seller5', 'none', '', 1],
+  ['currency', 'Roblox', '10,000 Robux via group payout', 79_99, 'manual', 9, 'seller5', 'none', '', 1],
+  ['items', 'Roblox', 'Blox Fruits — Leopard fruit (permanent)', 18_50, 'manual', 7, 'seller2', 'none', '', 1],
+  ['accounts', 'Minecraft', 'Java + Bedrock, full access, OG name', 39_00, 'manual', 2, 'seller4', 'verified'],
+  ['keys', 'Minecraft', 'Minecraft Java & Bedrock — PC key (Global)', 22_90, 'auto', 30, 'seller'],
+  ['currency', 'Path of Exile 2', '100 Divine Orbs — Standard league', 17_00, 'manual', 18, 'seller5', 'none', '', 0.5],
+  ['items', 'Path of Exile 2', 'Mirror-tier bow, crafted to order', 210_00, 'manual', 1, 'seller4', 'none', '', 24],
+  ['top-ups', 'Honkai: Star Rail', '6480 Oneiric Shards — UID top-up', 89_00, 'manual', 10, 'seller5', 'none', '', 0.5],
+  ['accounts', 'Honkai: Star Rail', 'TL 65 · Acheron E1 + signature cone', 119_00, 'manual', 1, 'seller4', 'verified'],
+  ['accounts', 'Apex Legends', 'Heirloom account, 3 heirlooms, Predator badge', 175_00, 'manual', 1, 'seller4', 'none'],
+  ['boosting', 'Apex Legends', 'Ranked: Platinum → Diamond', 59_00, 'manual', 4, 'seller3', 'none', '', 36],
+  ['items', 'Dota 2', 'Arcana bundle: Terrorblade + Phantom Assassin', 52_00, 'manual', 5, 'seller2', 'none', '', 1],
+  ['boosting', 'Dota 2', '+1,000 MMR, party with an Immortal player', 89_00, 'manual', 3, 'seller3', 'none', '', 72],
+  ['top-ups', 'Mobile Legends', '2,195 Diamonds — direct top-up', 34_00, 'manual', 50, 'seller5', 'none', '', 0.25],
+  ['top-ups', 'PUBG Mobile', '1,800 UC — direct top-up', 24_50, 'manual', 50, 'seller5', 'none', '', 0.25],
+  ['accounts', 'Clash of Clans', 'TH16 max, 60+ hero levels, legend league', 145_00, 'manual', 1, 'seller4', 'none'],
+  ['gift-cards', 'Steam', 'Steam Wallet €20 (EU)', 19_40, 'auto', 40, 'seller5'],
+  ['gift-cards', 'Xbox', 'Xbox Game Pass Ultimate — 3 months', 32_90, 'auto', 18, 'seller2'],
+  ['gift-cards', 'Apple', 'Apple Gift Card $25 (US)', 24_40, 'auto', 20, 'seller'],
+  ['video-games', 'Nintendo', 'Mario Kart 8 Deluxe — eShop code (EU)', 41_00, 'auto', 6, 'seller5'],
+  ['keys', 'Hogwarts Legacy', 'Hogwarts Legacy — Steam key (Global)', 21_90, 'auto', 16, 'seller5'],
+  ['keys', 'Red Dead Redemption 2', 'Red Dead Redemption 2 — Rockstar key', 15_50, 'auto', 20, 'seller2'],
 ];
+const DEFAULT_HOURS: Record<string, number> = { accounts: 2, currency: 1, items: 1, boosting: 24, 'top-ups': 0.5 };
 
 export function seed() {
   const users = [
@@ -86,9 +134,13 @@ export function seed() {
     u('u-sell2-0000-4000-8000-000000000004', 'rift@demo.test', 'RiftTrader', 'user', 2),
     u('u-sell3-0000-4000-8000-000000000005', 'arcane@demo.test', 'ArcaneBoost', 'user', 2),
   ];
-  const sellerId: Record<string, string> = { seller: users[1]!.id, seller2: users[3]!.id, seller3: users[4]!.id };
+  users.push(
+    u('u-sell4-0000-4000-8000-000000000006', 'vault@demo.test', 'VaultHopper', 'user', 2, { created_at: ago(700 * day) }),
+    u('u-sell5-0000-4000-8000-000000000007', 'koi@demo.test', 'KoiCurrency', 'user', 2, { created_at: ago(410 * day) }),
+  );
+  const sellerId: Record<string, string> = { seller: users[1]!.id, seller2: users[3]!.id, seller3: users[4]!.id, seller4: users[5]!.id, seller5: users[6]!.id };
 
-  const offers = LISTINGS.map(([cat, game, title, price, mode, stock, seller, proof, description], i) => {
+  const offers = LISTINGS.map(([cat, game, title, price, mode, stock, seller, proof, description, hours], i) => {
     const kind = CATEGORIES.find((c) => c.slug === cat)!.kind;
     return {
       id: `offer-${i + 1}`,
@@ -101,6 +153,7 @@ export function seed() {
       price_cents: price,
       currency: 'USD',
       delivery_mode: mode,
+      delivery_hours: mode === 'auto' ? 0 : hours ?? DEFAULT_HOURS[cat] ?? 2,
       stock,
       inventory: mode === 'auto' ? Array.from({ length: stock }, (_, k) => `${game.slice(0, 4).toUpperCase().replace(/[^A-Z]/g, 'X')}-${String(k + 1).padStart(4, '0')}-${(i * 7919 + k * 104729).toString(36).toUpperCase().slice(-5).padStart(5, 'Q')}`) : [],
       status: 'active',
@@ -122,9 +175,30 @@ export function seed() {
       { id: 'r3', order_id: 'seed-3', seller_id: users[1]!.id, rating: 4, comment: 'Smooth account handover.', seller_reply: null, created_at: ago(6 * day) },
       { id: 'r4', order_id: 'seed-4', seller_id: users[3]!.id, rating: 5, comment: 'Fast and friendly.', seller_reply: null, created_at: ago(9 * day) },
       { id: 'r5', order_id: 'seed-5', seller_id: users[4]!.id, rating: 4, comment: 'Boost done a day early.', seller_reply: null, created_at: ago(3 * day) },
+      ...[
+        [5, 'Account matched the screenshots exactly. Changeover took ten minutes.', 'Enjoy it!', 'Genshin Impact'],
+        [5, 'Registration email came with it, insurance window gave me peace of mind.', null, 'Old School RuneScape'],
+        [4, 'Good account, took a few hours to respond overnight.', 'Sorry for the wait, we are on CET.', 'Fortnite'],
+        [5, 'Third purchase, always smooth.', null, 'Minecraft'],
+      ].map(([rating, comment, reply, game], k) => ({ id: `r-v${k}`, order_id: `seed-v${k}`, seller_id: users[5]!.id, rating, comment, seller_reply: reply, created_at: ago((k * 4 + 1) * day), game })),
+      ...[
+        [5, 'Top-up landed in under five minutes.', 'Genshin Impact'],
+        [5, 'Gold delivered at the mailbox while I was still in the chat.', 'World of Warcraft'],
+        [5, 'Fast, cheap, no drama.', 'Mobile Legends'],
+        [4, 'Delivery fine, wish they had more stock on EU.', 'Valorant'],
+        [5, 'Coins arrived in two batches as agreed.', 'EA Sports FC 25'],
+      ].map(([rating, comment, game], k) => ({ id: `r-k${k}`, order_id: `seed-k${k}`, seller_id: users[6]!.id, rating, comment, seller_reply: null, created_at: ago((k * 2 + 1) * day), game })),
     ] as any[],
-    completedBefore: { [users[1]!.id]: 212, [users[3]!.id]: 64, [users[4]!.id]: 131 } as Record<string, number>,
-    balances: { [users[1]!.id]: 1_284_50, [users[3]!.id]: 312_00, [users[4]!.id]: 861_40 } as Record<string, number>,
+    completedBefore: { [users[1]!.id]: 212, [users[3]!.id]: 64, [users[4]!.id]: 131, [users[5]!.id]: 1_486, [users[6]!.id]: 3_902 } as Record<string, number>,
+    // Review history from before the demo starts: shown as totals on listings and seller pages.
+    reviewsBefore: {
+      [users[1]!.id]: { count: 187, sum: 187 * 4.9 },
+      [users[3]!.id]: { count: 51, sum: 51 * 4.7 },
+      [users[4]!.id]: { count: 109, sum: 109 * 4.8 },
+      [users[5]!.id]: { count: 1_204, sum: 1_204 * 4.95 },
+      [users[6]!.id]: { count: 3_310, sum: 3_310 * 4.9 },
+    } as Record<string, { count: number; sum: number }>,
+    balances: { [users[1]!.id]: 1_284_50, [users[3]!.id]: 312_00, [users[4]!.id]: 861_40, [users[5]!.id]: 4_210_00, [users[6]!.id]: 9_655_20 } as Record<string, number>,
     monthlySales: { [users[1]!.id]: 6_420_00, [users[3]!.id]: 840_00, [users[4]!.id]: 2_310_00 } as Record<string, number>,
     withdrawals: [] as any[],
     apiKeys: [] as any[],

@@ -93,9 +93,11 @@ const publicUser = (u: DemoUser) => {
 
 function sellerStats(sellerId: string) {
   const reviews = state.reviews.filter((r) => r.seller_id === sellerId);
+  const before = state.reviewsBefore[sellerId] ?? { count: 0, sum: 0 };
   const completed = (state.completedBefore[sellerId] ?? 0) + state.orders.filter((o) => o.seller_id === sellerId && o.status === 'completed').length;
-  const rating = reviews.length ? Math.round((reviews.reduce((s, r) => s + r.rating, 0) / reviews.length) * 10) / 10 : null;
-  return { completed, rating, count: reviews.length };
+  const count = before.count + reviews.length;
+  const rating = count ? Math.round(((before.sum + reviews.reduce((s, r) => s + r.rating, 0)) / count) * 100) / 100 : null;
+  return { completed, rating, count };
 }
 
 function offerView(o: any) {
@@ -384,12 +386,16 @@ route('GET', '/offers', ({ query }) => {
   const q = (query.get('q') ?? '').toLowerCase().trim();
   let items = state.offers.filter((o) => o.status === 'active').map(offerView);
   if (q) items = items.filter((o) => `${o.title} ${o.game} ${o.description}`.toLowerCase().includes(q) || q.split(/\s+/).every((w) => `${o.title} ${o.game}`.toLowerCase().includes(w)));
-  const facets = { categories: CATEGORIES.map((c) => ({ category_slug: c.slug, count: items.filter((o) => o.category_slug === c.slug).length })) };
-  if (query.get('category')) items = items.filter((o) => o.category_slug === query.get('category'));
   if (query.get('delivery') === 'instant') items = items.filter((o) => o.delivery_mode === 'auto');
   if (query.get('ownerVerified') === 'true') items = items.filter((o) => o.category_kind !== 'account' || o.owner_proof_status === 'verified');
   if (query.get('maxPrice')) items = items.filter((o) => o.price_cents <= Number(query.get('maxPrice')));
+  if (query.get('minRating')) items = items.filter((o) => (o.seller_rating ?? 0) >= Number(query.get('minRating')));
   if (query.get('seller')) items = items.filter((o) => o.seller_id === query.get('seller'));
+  if (query.get('game')) items = items.filter((o) => o.game.toLowerCase() === query.get('game')!.toLowerCase());
+  if (query.get('inStock') !== 'false') items = items.filter((o) => o.stock > 0);
+  // Facets ignore the category filter so every category tab can show its count.
+  const facets = { categories: CATEGORIES.map((c) => ({ category_slug: c.slug, count: items.filter((o) => o.category_slug === c.slug).length })).filter((c) => c.count > 0) };
+  if (query.get('category')) items = items.filter((o) => o.category_slug === query.get('category'));
   const sort = query.get('sort') ?? (q ? 'relevance' : 'newest');
   const by: Record<string, (a: any, b: any) => number> = {
     newest: (a, b) => b.created_at.localeCompare(a.created_at),
@@ -402,6 +408,49 @@ route('GET', '/offers', ({ query }) => {
   const page = Math.max(1, Number(query.get('page') ?? 1));
   const pageSize = Number(query.get('pageSize') ?? 12);
   return { items: items.slice((page - 1) * pageSize, page * pageSize), total: items.length, page, pageSize, hasMore: page * pageSize < items.length, facets };
+});
+route('GET', '/catalog/games', () => {
+  const live = state.offers.filter((o) => o.status === 'active').map(offerView).filter((o) => o.stock > 0);
+  const games = new Map<string, any[]>();
+  for (const o of live) games.set(o.game, [...(games.get(o.game) ?? []), o]);
+  return [...games.entries()]
+    .map(([game, xs]) => {
+      const cats = new Map<string, number>();
+      for (const o of xs) cats.set(o.category_slug, (cats.get(o.category_slug) ?? 0) + 1);
+      return {
+        game, offers: xs.length, sellers: new Set(xs.map((o) => o.seller_id)).size, min_price_cents: Math.min(...xs.map((o) => o.price_cents)),
+        instant: xs.filter((o) => o.delivery_mode === 'auto').length,
+        categories: [...cats.entries()].sort((a, b) => b[1] - a[1]).map(([slug, count]) => ({ slug, count })),
+      };
+    })
+    .sort((a, b) => a.game.localeCompare(b.game));
+});
+route('GET', '/games', ({ query }) => {
+  const q = (query.get('q') ?? '').toLowerCase();
+  const counts = new Map<string, number>();
+  for (const o of state.offers) if (o.status === 'active' && o.game.toLowerCase().includes(q)) counts.set(o.game, (counts.get(o.game) ?? 0) + 1);
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([game, offers]) => ({ game, offers }));
+});
+route('GET', '/sellers/:id', ({ params, query }) => {
+  const u = userById(params[0]!) ?? fail(404, 'not_found', 'Seller not found');
+  const s = sellerStats(u.id);
+  const limit = Number(query.get('limit') ?? 20);
+  const offset = Number(query.get('offset') ?? 0);
+  const reviews = state.reviews
+    .filter((r) => r.seller_id === u.id)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .map((r) => {
+      const o = state.orders.find((x) => x.id === r.order_id);
+      return { ...r, buyer_name: o ? userById(o.buyer_id)?.display_name : ['Mira_K', 'zed.plays', 'Hollowfang', 'nyx', 'BaguetteBandit', 'TomTheTank'][r.id.length % 6], offer_title: o?.offer_title ?? r.game ?? null };
+    });
+  const before = state.reviewsBefore[u.id];
+  return {
+    id: u.id, display_name: u.display_name, member_since: u.created_at, identity_verified: u.kyc_tier >= 2, completed_orders: s.completed,
+    active_listings: state.offers.filter((o) => o.seller_id === u.id && o.status === 'active').length,
+    on_time_delivery_pct: before ? Math.min(100, 93 + (before.count % 7)) : null, shop_paused: false, shop_paused_until: null, shop_pause_message: null,
+    rating: { average: s.rating, count: s.count, positive_pct: s.count ? Math.round(((s.rating ?? 0) / 5) * 1000) / 10 : null },
+    reviews: reviews.slice(offset, offset + limit),
+  };
 });
 route('GET', '/offers/:id', ({ params }) => {
   const o = state.offers.find((x) => x.id === params[0]);
@@ -574,7 +623,7 @@ route('POST', '/offers', ({ me, body }) => {
   if (!(body.priceCents > 0)) fail(400, 'validation_error', 'Set a price');
   const o = {
     id: `offer-${rid().slice(0, 8)}`, seller_id: u.id, category_slug: cat.slug, category_kind: cat.kind, game: body.game, title: body.title,
-    description: body.description ?? '', price_cents: body.priceCents, currency: 'USD', delivery_mode: body.deliveryMode,
+    description: body.description ?? '', price_cents: body.priceCents, currency: 'USD', delivery_mode: body.deliveryMode, delivery_hours: body.deliveryMode === 'auto' ? 0 : Number(body.deliveryHours ?? 2),
     stock: body.deliveryMode === 'manual' ? Number(body.stock ?? 1) : 0, inventory: [] as string[], status: 'active', owner_proof_status: 'none', version: 1, created_at: now(),
   };
   state.offers.unshift(o);

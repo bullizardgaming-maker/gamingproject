@@ -115,6 +115,34 @@ export async function searchOffers(q: Queryable, p: SearchParams) {
   };
 }
 
+/**
+ * The game directory: every game with live listings, its listing and seller counts, the cheapest
+ * price (settlement currency) and how many listings it has in each category. Powers the A–Z index
+ * and the per-game category tabs.
+ */
+export async function gameDirectory(q: Queryable) {
+  return many<{ game: string; offers: number; sellers: number; min_price_cents: number; instant: number; categories: Array<{ slug: string; count: number }> }>(
+    q,
+    `WITH live AS (
+       SELECT f.game, f.category_slug, f.seller_id, f.price_settlement_cents, f.delivery_mode
+         FROM offers f JOIN users u ON u.id = f.seller_id
+        WHERE f.status = 'active' AND u.status = 'active' AND u.deleted_at IS NULL
+          AND NOT (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now()))
+          AND (CASE WHEN f.delivery_mode = 'auto'
+                    THEN EXISTS (SELECT 1 FROM inventory_items i WHERE i.offer_id = f.id AND i.status = 'available')
+                    ELSE f.stock > 0 END)
+     ), per_cat AS (
+       SELECT game, category_slug, count(*)::int AS n FROM live GROUP BY game, category_slug
+     )
+     SELECT l.game, count(*)::int AS offers, count(DISTINCT l.seller_id)::int AS sellers,
+            min(l.price_settlement_cents)::bigint AS min_price_cents,
+            count(*) FILTER (WHERE l.delivery_mode = 'auto')::int AS instant,
+            (SELECT json_agg(json_build_object('slug', c.category_slug, 'count', c.n) ORDER BY c.n DESC)
+               FROM per_cat c WHERE c.game = l.game) AS categories
+       FROM live l GROUP BY l.game ORDER BY lower(l.game)`,
+  ).then((rows) => rows.map((r) => ({ ...r, min_price_cents: Number(r.min_price_cents) })));
+}
+
 /** Game-name autocomplete with typo tolerance. */
 export async function suggestGames(q: Queryable, prefix: string, limit = 8) {
   return many<{ game: string; offers: number }>(

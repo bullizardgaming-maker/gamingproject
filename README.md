@@ -52,6 +52,11 @@ To point a deployment at a real API instead, set these Vercel environment variab
 
 …and set the API's `PUBLIC_WEB_URL` to the Vercel domain so CORS and the refresh cookie work.
 
+Site structure: home (search, categories, popular games, instant-delivery and owner-verified rails, A–Z index) →
+`/games` (A–Z directory) → `/games/:game[/:category]` (category tabs and a seller/delivery/stock/price comparison table) →
+`/offers/:id` → order page with escrow and chat. Sellers have public storefronts at `/sellers/:id` (listings by game, reviews).
+Game cover art is generated from each game's name; no publisher artwork is used.
+
 UI components: the web app has Tailwind CSS v4 and a shadcn `components.json` (aliases `@/components`, `@/lib/utils`;
 theme tokens mapped to the Bullizard palette in `src/tailwind.css`), so registry components drop in with
 `npx shadcn add <component>` (e.g. `npx shadcn add @skiper-ui/skiper40`), run from `apps/web`.
@@ -70,6 +75,7 @@ Highlights of what the tests prove: exactly one of 25 simultaneous buyers gets a
 ## Key API surfaces
 
 - `POST /v1/orders` → hosted checkout URL (card) or EIP-712 escrow terms (`GET /v1/orders/:id/crypto-terms`, USDC/USDT)
+- Catalogue: `GET /v1/catalog/games` (game directory with per-category counts), `GET /v1/offers?game=&category=&seller=&sort=`, `GET /v1/sellers/:id`
 - `POST /v1/orders/quote` (currency, promo code, store credit breakdown)
 - `POST /v1/orders/:id/{deliver,confirm,dispute,cancel,cancel-late}`, `PATCH /v1/orders/:id/checklist`
 - `POST /v1/chat/rooms/:id/attachments` (screenshot evidence, malware-scanned)

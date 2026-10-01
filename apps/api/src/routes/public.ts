@@ -4,7 +4,7 @@ import type { Ctx } from '../context.js';
 import { many, one } from '../db.js';
 import { SELLER_TIERS } from '../domain/commission.js';
 import { getOffer } from '../domain/offers.js';
-import { SORTS, searchOffers, suggestGames, withDisplayPrices } from '../domain/search.js';
+import { SORTS, gameDirectory, searchOffers, suggestGames, withDisplayPrices } from '../domain/search.js';
 import { currentRates, getRate } from '../domain/fx.js';
 import { availableCredit, referralSummary } from '../domain/referrals.js';
 import { userCredit } from '../domain/ledger.js';
@@ -302,6 +302,11 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/me/referral', async (req) => referralSummary(ctx, me(req).id));
 
   app.get('/fx/rates', async () => currentRates(ctx));
+
+  app.get('/catalog/games', async (_req, reply) => {
+    reply.header('Cache-Control', 'public, max-age=60');
+    return gameDirectory(ctx.dbRead);
+  });
 
   app.get('/games', async (req) => {
     const { q } = z.object({ q: z.string().trim().min(1).max(60) }).parse(req.query);

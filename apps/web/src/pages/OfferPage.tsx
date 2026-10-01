@@ -3,6 +3,8 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, money } from '../api';
 import { useSession } from '../session';
 import { OfferBadges, type Offer } from './Market';
+import { Avatar, DeliveryTag, GameArt, OfferTable, Rating } from '../components/CatalogUi';
+import { categoryLabel, slugify } from '@/lib/catalog';
 
 export function OfferPage() {
   const { id } = useParams();
@@ -15,10 +17,17 @@ export function OfferPage() {
   const [tos, setTos] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [similar, setSimilar] = useState<Offer[]>([]);
 
   useEffect(() => {
+    setOffer(null);
     api<Offer>(`/offers/${id}`).then(setOffer).catch((e) => setError(e.message));
   }, [id]);
+  useEffect(() => {
+    if (!offer) return;
+    const q = new URLSearchParams({ game: offer.game, category: offer.category_slug, sort: 'price_asc', pageSize: '6' });
+    api<{ items: Offer[] }>(`/offers?${q}`).then((r) => setSimilar(r.items.filter((o) => o.id !== offer.id).slice(0, 5))).catch(() => {});
+  }, [offer]);
 
   if (!offer) return <p className="muted">{error || 'Loading…'}</p>;
   const isAccount = offer.category_kind === 'account';
@@ -46,18 +55,38 @@ export function OfferPage() {
     nav(`/chat/${room.id}`);
   };
 
+  const gameSlug = slugify(offer.game);
   return (
-    <div className="order-layout">
+    <div className="stack">
+    <nav className="crumbs" aria-label="Breadcrumb">
+      <Link to="/games">Games</Link><span>/</span>
+      <Link to={`/games/${gameSlug}`}>{offer.game}</Link><span>/</span>
+      <Link to={`/games/${gameSlug}/${offer.category_slug}`}>{categoryLabel(offer.category_slug)}</Link>
+    </nav>
+    <div className="order-layout" style={{ marginTop: 0 }}>
       <div className="stack">
-        <div className="eyebrow">{offer.game}</div>
+        <div className="flex items-center gap-3">
+          <GameArt game={offer.game} size="sm" className="h-10 w-14 shrink-0 rounded-lg" />
+          <div className="eyebrow" style={{ margin: 0 }}>{offer.game} · {categoryLabel(offer.category_slug)}</div>
+        </div>
         <h1 style={{ fontSize: 40 }}>{offer.title}</h1>
-        <OfferBadges offer={offer} />
+        <div className="row" style={{ gap: 12 }}>
+          <OfferBadges offer={offer} />
+          <DeliveryTag offer={offer} />
+        </div>
         <p style={{ whiteSpace: 'pre-wrap' }}>{offer.description || <span className="muted">The seller has not added a description.</span>}</p>
-        <p className="small muted">
-          Sold by <b>{offer.seller_name}</b> ·{' '}
-          {offer.seller_review_count > 0 ? `★ ${offer.seller_rating} (${offer.seller_review_count} reviews)` : 'no reviews yet'} ·{' '}
-          {offer.seller_completed_orders} completed orders · identity verified
-        </p>
+        <Link to={`/sellers/${offer.seller_id}`} className="card flex items-center gap-3 no-underline hover:border-foreground" style={{ padding: 14 }}>
+          <Avatar name={offer.seller_name} className="size-11" />
+          <div className="min-w-0 flex-1">
+            <div className="font-semibold">{offer.seller_name}</div>
+            <div className="flex flex-wrap items-center gap-x-3 text-xs text-muted-foreground">
+              <Rating value={offer.seller_rating} count={offer.seller_review_count} />
+              <span>{offer.seller_completed_orders.toLocaleString()} completed orders</span>
+              <span>identity verified</span>
+            </div>
+          </div>
+          <span className="small muted">View shop →</span>
+        </Link>
         {offer.high_risk_secondary && (
           <div className="alert">
             This account has no verified Original Owner Proof. It may have changed hands before, which raises the risk that a previous
@@ -110,6 +139,16 @@ export function OfferPage() {
           </div>
         )}
       </div>
+    </div>
+    {similar.length > 0 && (
+      <section className="stack" style={{ marginTop: 32 }}>
+        <div className="row spread">
+          <h3 style={{ margin: 0 }}>Compare other {offer.game} {categoryLabel(offer.category_slug).toLowerCase()}</h3>
+          <Link to={`/games/${gameSlug}/${offer.category_slug}`} className="small">See all</Link>
+        </div>
+        <OfferTable offers={similar} />
+      </section>
+    )}
     </div>
   );
 }
