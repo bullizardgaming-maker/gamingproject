@@ -1,0 +1,19 @@
+{
+  "name": "bullizard",
+  "private": true,
+  "workspaces": [
+    "apps/api",
+    "apps/web",
+    "contracts"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev -w apps/api",
+    "dev:web": "npm run dev -w apps/web",
+    "migrate": "npm run migrate -w apps/api",
+    "test": "npm test -w apps/api && npm test -w contracts",
+    "build": "npm run build -w apps/api && npm run build -w apps/web"
+  },
+  "engines": {
+    "node": ">=20.19"
+  }
+}

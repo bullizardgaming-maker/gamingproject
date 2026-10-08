@@ -1,0 +1,53 @@
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
+import { api, session, signOut, type User } from './api';
+
+interface SessionState {
+  user: User | null;
+  /** Staff permissions (e.g. 'aml.review'); empty for regular users. */
+  permissions: Set<string>;
+  can: (permission: string) => boolean;
+  loading: boolean;
+  refresh: () => Promise<void>;
+  signOut: () => void;
+}
+
+const Ctx = createContext<SessionState>({ user: null, permissions: new Set(), can: () => false, loading: true, refresh: async () => {}, signOut: () => {} });
+
+export function SessionProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [permissions, setPermissions] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
+
+  const refresh = useCallback(async () => {
+    if (!session.token) {
+      setUser(null);
+      setLoading(false);
+      return;
+    }
+    try {
+      const u = (await api<{ user: User }>('/me')).user;
+      setUser(u);
+      setPermissions(
+        u.role === 'user' ? new Set() : new Set((await api<{ permissions: string[] }>('/me/permissions').catch(() => ({ permissions: [] }))).permissions),
+      );
+    } catch {
+      setUser(null);
+      setPermissions(new Set());
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    const onChange = () => refresh();
+    window.addEventListener('session', onChange);
+    return () => window.removeEventListener('session', onChange);
+  }, [refresh]);
+
+  return (
+    <Ctx.Provider value={{ user, permissions, can: (p) => permissions.has(p), loading, refresh, signOut: () => void signOut() }}>{children}</Ctx.Provider>
+  );
+}
+
+export const useSession = () => useContext(Ctx);

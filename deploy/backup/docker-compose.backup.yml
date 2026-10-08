@@ -1,0 +1,35 @@
+# Production-like database setup: WAL-G archiving on the primary plus a streaming read replica.
+#   cp deploy/backup/walg.env.example deploy/backup/walg.env   # fill in the bucket and credentials
+#   docker compose -f docker-compose.yml -f deploy/backup/docker-compose.backup.yml up -d
+services:
+  postgres:
+    build: { context: ../postgres }
+    image: bullizard-postgres
+    env_file: walg.env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backup.sh:/backup/backup.sh:ro
+
+  postgres-replica:
+    image: bullizard-postgres
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      PGPASSWORD: market
+    volumes: [pgreplica:/var/lib/postgresql/data]
+    # First start: clone the primary and follow it (-R writes standby.signal + primary_conninfo).
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ ! -s /var/lib/postgresql/data/PG_VERSION ]; then
+          pg_basebackup -h postgres -U market -D /var/lib/postgresql/data -R -X stream -P
+          chown -R postgres:postgres /var/lib/postgresql/data && chmod 700 /var/lib/postgresql/data
+        fi
+        exec gosu postgres postgres -c archive_mode=off -c hot_standby=on
+
+  api:
+    environment:
+      DATABASE_READ_URL: postgres://market:market@postgres-replica:5432/market
+
+volumes:
+  pgreplica:

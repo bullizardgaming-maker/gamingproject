@@ -1,0 +1,71 @@
+# Local stack: docker compose up --build   (add --profile gnn to run the HGT fraud service)
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: market
+      POSTGRES_PASSWORD: market
+      POSTGRES_DB: market
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U market"]
+      interval: 3s
+      retries: 20
+
+  redis:
+    image: redis:7
+    ports: ["6379:6379"]
+
+  clamav:
+    image: clamav/clamav:stable
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 30s
+      retries: 10
+
+  api:
+    build: { context: ., dockerfile: apps/api/Dockerfile }
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://market:market@postgres:5432/market
+      REDIS_URL: redis://redis:6379
+      RUN_WORKER_IN_PROCESS: "false"
+      PUBLIC_WEB_URL: http://localhost:8080
+      TRUST_PROXY: uniquelocal # the web container's nginx, on the private compose network
+      MALWARE_SCANNER: clamd
+      CLAMD_HOST: clamav
+      STORAGE_DIR: /data/uploads
+    volumes: [uploads:/data/uploads]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_started }
+    ports: ["4000:4000"]
+
+  worker:
+    build: { context: ., dockerfile: apps/api/Dockerfile }
+    command: ["node", "dist/worker.js"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://market:market@postgres:5432/market
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      api: { condition: service_started }
+
+  web:
+    build: { context: ., dockerfile: apps/web/Dockerfile }
+    depends_on: [api]
+    ports: ["8080:80"]
+
+  fraud-gnn:
+    profiles: ["gnn"]
+    build: services/fraud-gnn
+    environment:
+      DATABASE_URL: postgres://market:market@postgres:5432/market
+    depends_on:
+      postgres: { condition: service_healthy }
+    ports: ["8090:8090"]
+
+volumes:
+  pgdata:
+  uploads:

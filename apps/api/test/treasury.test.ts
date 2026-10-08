@@ -1,0 +1,46 @@
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { runReconciliation } from '../src/domain/reconciliation.js';
+import { MockPaymentProvider } from '../src/providers/payments/mock.js';
+import { buyAndPay, makeOffer, makeUser, setup, type Harness } from './helpers.js';
+
+let h: Harness;
+beforeAll(async () => {
+  h = await setup();
+});
+afterAll(async () => h.close());
+
+describe('platform earnings withdrawals', () => {
+  it('needs a second admin, only spends treasury money, and keeps the PSP balance check exact', async () => {
+    const a1 = await makeUser(h, { tier: 2, role: 'admin' });
+    const a2 = await makeUser(h, { tier: 2, role: 'admin' });
+    const seller = await makeUser(h, { tier: 2 });
+    const buyer = await makeUser(h, { tier: 1 });
+    const offer = await makeOffer(seller, { priceCents: 100_00 });
+    await seller.api.post(`/v1/offers/${offer.id}/inventory`, { format: 'txt', content: 'T1' });
+    const order = await buyAndPay(h, buyer, offer.id);
+    await buyer.api.post(`/v1/orders/${order.id}/confirm`);
+
+    const bal = (await a1.api.get('/v1/admin/treasury')).body.balance;
+    // Commission minus the 10% reserve share (rounded down) and the VAT inside it (IE 23%: 9.99 * 23/123 = 1.87).
+    expect(bal.treasuryCents).toBe(9_99 - 99 - 1_87);
+    expect((await a1.api.post('/v1/admin/treasury/withdrawals', { amountCents: bal.treasuryCents + 1, note: 'too much' })).status).toBe(400);
+
+    const w = (await a1.api.post('/v1/admin/treasury/withdrawals', { amountCents: 5_00, note: 'October revenue' })).body;
+    expect(w.status).toBe('pending_approval');
+    expect((await a1.api.post(`/v1/admin/treasury/withdrawals/${w.id}/decide`, { approve: true })).body.error.code).toBe('four_eyes');
+    const paid = (await a2.api.post(`/v1/admin/treasury/withdrawals/${w.id}/decide`, { approve: true })).body;
+    expect(paid.status).toBe('paid');
+    expect(paid.provider_ref).toMatch(/^mock_po_/);
+    expect((await a2.api.post(`/v1/admin/treasury/withdrawals/${w.id}/decide`, { approve: true })).body.error.code).toBe('already_decided');
+    expect((await a1.api.get('/v1/admin/treasury')).body.balance.treasuryCents).toBe(9_99 - 99 - 1_87 - 5_00);
+
+    // PSP now holds: 100.00 captured - 5.00 paid to the company bank (the seller hasn't withdrawn).
+    const mock = h.ctx.payments as MockPaymentProvider;
+    mock.balanceOverride = 95_00;
+    expect((await runReconciliation(h.ctx)).status).toBe('ok');
+    mock.balanceOverride = null;
+
+    const log = (await a1.api.get('/v1/admin/audit?targetType=treasury_withdrawal')).body.map((e: any) => e.action);
+    expect(log).toEqual(expect.arrayContaining(['treasury.withdrawal_requested', 'treasury.withdrawal_approved']));
+  });
+});
