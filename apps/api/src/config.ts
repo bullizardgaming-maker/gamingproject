@@ -131,6 +131,11 @@ const Env = z.object({
   RECON_INTERVAL_HOURS: z.coerce.number().default(24),
   RECON_TOLERANCE_CENTS: z.coerce.number().default(0),
   FRAUD_GNN_URL: z.string().optional(),
+  // shadow: record the graph model's score next to the heuristic but act on the heuristic only.
+  // enforce: act on the higher of the two. Switch to enforce once the model report backs it.
+  FRAUD_GNN_MODE: z.enum(['off', 'shadow', 'enforce']).default('shadow'),
+  // A completed order with no fraud signal this long after payment counts as legitimate (past chargeback windows).
+  FRAUD_LABEL_LEGIT_DAYS: z.coerce.number().int().min(1).default(120),
   FRAUD_FREEZE_THRESHOLD: z.coerce.number().default(0.8),
   FRAUD_REVIEW_THRESHOLD: z.coerce.number().default(0.5),
   OFFPLATFORM_SUSPEND_STRIKES: z.coerce.number().default(3),

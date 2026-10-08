@@ -4,9 +4,9 @@ from fastapi.testclient import TestClient
 
 from fraud_gnn.graph import build
 from fraud_gnn.model import SyndicateHGT, in_dims_of
-from fraud_gnn.service import GraphCache, create_app
+from fraud_gnn.service import GraphCache, create_app, model_version
 from fraud_gnn.synthetic import generate
-from fraud_gnn.train import load, roc_auc, save, train
+from fraud_gnn.train import load, precision_recall, roc_auc, save, split_masks, train
 
 
 def test_graph_shapes():
@@ -25,6 +25,20 @@ def test_roc_auc():
     assert roc_auc(torch.tensor([0.1, 0.9]), torch.tensor([1.0, 0.0])) == 0.0
 
 
+def test_precision_recall():
+    p, r = precision_recall(torch.tensor([0.9, 0.6, 0.4, 0.1]), torch.tensor([1.0, 0.0, 1.0, 0.0]))
+    assert (p, r) == (0.5, 0.5)
+
+
+def test_time_holdout_validates_on_the_newest_accounts():
+    raw = generate(n_legit=40, n_rings=2, seed=2)
+    n = len(raw.users)
+    mask = split_masks(raw, n, 0.25, "time")
+    ages = [u["age_days"] for u in raw.users]
+    assert int(mask.sum()) == int(n * 0.25)
+    assert max(a for a, m in zip(ages, mask) if m) <= min(a for a, m in zip(ages, mask) if not m)
+
+
 def test_learns_to_separate_rings_from_legit_users():
     model, built, metrics = train(generate(seed=0), epochs=120)
     assert metrics["val_auc"] > 0.9, metrics
@@ -40,9 +54,10 @@ def test_service_scores_ring_orders_above_legit_orders(tmp_path):
     ring_order = next(o for o in raw.orders if o[0] in {u["id"] for u in raw.users if u["label"]})
     legit_order = next(o for o in raw.orders if o[0] in {u["id"] for u in raw.users if not u["label"]})
     orders = {"ring": ring_order[:2], "legit": legit_order[:2]}
-    client = TestClient(create_app(cache, lambda oid: orders.get(oid)))
+    client = TestClient(create_app(cache, lambda oid: orders.get(oid), model_version(str(path))))
 
     ring = client.post("/score", json={"order_id": "ring"}).json()
+    assert len(ring["model_version"]) == 12
     legit = client.post("/score", json={"order_id": "legit"}).json()
     assert ring["score"] > 0.8 > legit["score"], (ring, legit)
     assert client.post("/score", json={"order_id": "nope"}).status_code == 404

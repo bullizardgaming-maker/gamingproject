@@ -3,12 +3,15 @@
     uvicorn fraud_gnn.service:app --port 8090
 
 The graph snapshot is rebuilt from Postgres every REFRESH_SECONDS, and on
-demand when an order involves a user that is not in the snapshot yet. The API
-blends this score with its inline heuristic (taking the max) and falls back to
-the heuristic alone if this service is slow or down.
+demand when an order involves a user that is not in the snapshot yet. In shadow
+mode the API only records this score next to its own; in enforce mode it blends
+them (taking the max). It falls back to the heuristic alone if this service is
+slow or down. Every score carries the model version, so the API's comparison
+report can tell models apart.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import threading
 import time
@@ -53,12 +56,20 @@ class GraphCache:
         return self.built, self.probs
 
 
-def create_app(cache: GraphCache, parties: Callable[[str], tuple[str, str] | None]) -> FastAPI:
+def model_version(path: str) -> str:
+    """MODEL_VERSION if set, else the first 12 hex digits of the checkpoint's SHA-256."""
+    if os.environ.get("MODEL_VERSION"):
+        return os.environ["MODEL_VERSION"]
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()[:12]
+
+
+def create_app(cache: GraphCache, parties: Callable[[str], tuple[str, str] | None], version: str = "unknown") -> FastAPI:
     app = FastAPI(title="Syndicate risk (HGT)")
 
     @app.get("/healthz")
     def healthz():
-        return {"ok": True, "snapshot_age_s": time.time() - cache.at if cache.at else None}
+        return {"ok": True, "model_version": version, "snapshot_age_s": time.time() - cache.at if cache.at else None}
 
     @app.post("/score")
     def score(req: ScoreRequest):
@@ -78,6 +89,7 @@ def create_app(cache: GraphCache, parties: Callable[[str], tuple[str, str] | Non
         value = order_score(probs, b, s)
         return {
             "score": round(value, 4),
+            "model_version": version,
             "reasons": [
                 {"code": "gnn_buyer_ring_probability", "weight": round(float(probs[b]), 4)},
                 {"code": "gnn_seller_ring_probability", "weight": round(float(probs[s]), 4)},
@@ -89,9 +101,10 @@ def create_app(cache: GraphCache, parties: Callable[[str], tuple[str, str] | Non
 
 def _default_app() -> FastAPI:
     dsn = os.environ.get("DATABASE_URL", "postgres://market:market@localhost:5432/market")
-    model = load(os.environ.get("MODEL_PATH", "models/hgt.pt"))
+    path = os.environ.get("MODEL_PATH", "models/hgt.pt")
+    model = load(path)
     cache = GraphCache(lambda: load_from_postgres(dsn), model, float(os.environ.get("REFRESH_SECONDS", "300")))
-    return create_app(cache, lambda oid: order_parties(dsn, oid))
+    return create_app(cache, lambda oid: order_parties(dsn, oid), model_version(path))
 
 
 def __getattr__(name: str):

@@ -14,6 +14,7 @@ import { notify } from '../domain/notifications.js';
 import { refundAfterRelease } from '../domain/clawback.js';
 import { addNote, decideCase, getCase, listCases, openCase, refreshLists, rescreenSellers, runMonitoring, screenUser } from '../domain/aml.js';
 import { collectDebts, listDebts } from '../domain/debts.js';
+import { fraudModelReport } from '../domain/fraud.js';
 import { requirePermission } from '../server.js';
 import { audit, listAudit } from '../domain/audit.js';
 import { createPromo, listPromos, setPromoActive } from '../domain/promos.js';
@@ -241,6 +242,13 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     currency: z.string().length(3).toUpperCase().default(ctx.cfg.SETTLEMENT_CURRENCY),
     amountCents: z.number().int(),
   });
+  // --- Fraud model evaluation -------------------------------------------------------------
+  app.get('/admin/fraud/model-report', async (req) => {
+    requirePermission(req, 'risk.review');
+    const { days } = z.object({ days: z.coerce.number().int().min(1).max(730).default(180) }).parse(req.query);
+    return fraudModelReport(ctx, days);
+  });
+
   // --- Seller debts ---------------------------------------------------------------------
   app.get('/admin/debts', async (req) => {
     requirePermission(req, 'ledger.view');

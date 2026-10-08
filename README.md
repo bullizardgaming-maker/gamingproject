@@ -81,6 +81,7 @@ Highlights of what the tests prove: exactly one of 25 simultaneous buyers gets a
 - `POST /v1/chat/rooms/:id/attachments` (screenshot evidence, malware-scanned)
 - Notifications: `GET /v1/me/notifications`, `GET /v1/push/config`, `POST /v1/me/push-subscriptions`, `PATCH /v1/me/push-preferences`
 - Seller reports: `GET /v1/seller/exports/{sales,statement,payouts,invoices,credit_notes}` (CSV/JSON), `GET /v1/seller/credit-notes`
+- Fraud model evaluation: `GET /v1/admin/fraud/model-report` (heuristic vs graph model on labelled orders; `FRAUD_GNN_MODE=shadow|enforce`)
 - Seller debts: `GET /v1/seller/debts`, `POST /v1/seller/debts/:id/pay` (card repayment); staff `GET /v1/admin/debts`
 - Seller money: `GET /v1/seller/dashboard` (per-currency balances, payout hold), `PUT /v1/seller/payout-currency`, `PUT /v1/seller/tax-profile`, `GET /v1/seller/invoices[/:id/pdf]`
 - `GET /v1/ws` WebSocket chat and notifications (protocol documented in `apps/api/src/ws/gateway.ts`)
