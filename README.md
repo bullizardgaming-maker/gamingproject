@@ -91,6 +91,8 @@ Highlights of what the tests prove: exactly one of 25 simultaneous buyers gets a
 - Merchant API (API-key auth): `GET /v1/merchant/orders`, `POST /v1/merchant/inventory`, `PATCH /v1/merchant/prices`, `POST /v1/merchant/orders/:id/deliver`, `GET /v1/merchant/webhooks/deliveries`, `POST /v1/merchant/webhooks/deliveries/:id/redeliver`
 - Webhooks: `order.created` (funded), `order.delivered`, `order.completed`, `order.disputed`, `order.refunded`, `order.cancelled`, `offer.low_stock`, `chat.message`, `chargeback.created`, signed with `X-Hook-Signature` = hex HMAC-SHA256 of the raw body
 
+Seller SDKs: `sdks/typescript` (`@bullizard/sdk`) and `sdks/python` (`bullizard`). Both cover orders (with a polling helper), inventory, prices, chat, invoices, reports and webhook deliveries, and both verify webhook signatures. The TypeScript SDK's tests run against the real API in the API suite, and a test checks every path either SDK calls is in the API reference.
+
 Seller API reference: `/v1/docs` (OpenAPI JSON at `/v1/openapi.json`). Run a sandbox with `SANDBOX_MODE=true` (mock payments and KYC only) to get `/v1/sandbox/*` test helpers.
 
 Monitoring: Prometheus metrics at `/metrics` (set `METRICS_TOKEN`), health at `/healthz` and `/readyz`, alert rules in `deploy/monitoring/alerts.yml`, errors to Sentry with `SENTRY_DSN`.

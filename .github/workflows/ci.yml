@@ -21,6 +21,7 @@ jobs:
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - run: npm run typecheck -w apps/api
+      - run: npx tsc -p sdks/typescript/tsconfig.json --noEmit   # SDK; its tests run in the API suite
       - run: npm test -w apps/api
 
   web:
@@ -49,4 +50,14 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
       - run: pip install torch --index-url https://download.pytorch.org/whl/cpu && pip install -r requirements.txt
+      - run: pytest -q
+
+  sdk-python:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: sdks/python } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.9" }
+      - run: pip install pytest
       - run: pytest -q
