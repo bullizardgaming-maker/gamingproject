@@ -3,10 +3,12 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, money } from '../api';
 import { Chat } from '../components/Chat';
 import { useSession } from '../session';
+import { usePageMeta } from '@/lib/seo';
 
 const CHIP: Record<string, string> = { completed: 'released', delivered: 'held', paid: 'held', disputed: 'disputed', charged_back: 'disputed' };
 
 export function Orders() {
+  usePageMeta({ title: 'Your orders', noindex: true });
   const [params, setParams] = useSearchParams();
   const as = params.get('as') === 'seller' ? 'seller' : 'buyer';
   const [orders, setOrders] = useState<any[] | null>(null);
@@ -50,6 +52,7 @@ export function Orders() {
 
 /** Pre-sale inquiry chat between a buyer and a seller. */
 export function InquiryChat() {
+  usePageMeta({ title: 'Chat', noindex: true });
   const { id } = useParams();
   const { user } = useSession();
   const [room, setRoom] = useState<any>(null);

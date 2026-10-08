@@ -13,10 +13,12 @@ import { Account, ForgotPassword, Login, ResetPassword } from './pages/Account';
 import { Admin } from './pages/Admin';
 import { GamePage, Games } from './pages/Games';
 import { SellerPage } from './pages/SellerPage';
+import { StatusPage } from './pages/StatusPage';
 import { SiteHeader } from './components/SiteHeader';
 import { SiteFooter } from './components/SiteFooter';
 import { DEMO } from './api';
 import { DemoBanner, DemoCheckout } from './demo/DemoUi';
+import { applyTheme } from '@/lib/prefs';
 import './tailwind.css';
 import './styles.css';
 
@@ -44,6 +46,7 @@ function App() {
           <Route path="/games/:slug" element={<GamePage />} />
           <Route path="/games/:slug/:category" element={<GamePage />} />
           <Route path="/sellers/:id" element={<SellerPage />} />
+          <Route path="/status" element={<StatusPage />} />
           <Route path="/offers/:id" element={<OfferPage />} />
           <Route path="/orders" element={<Orders />} />
           <Route path="/orders/:id" element={<OrderPage />} />
@@ -65,6 +68,8 @@ function App() {
     </SessionProvider>
   );
 }
+
+applyTheme();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

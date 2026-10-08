@@ -5,6 +5,7 @@ import { api } from '../api';
 import { CATEGORY_ICON, OfferTable } from '../components/CatalogUi';
 import { CATEGORY_ORDER, categoryLabel, popular, slugify, useGames } from '@/lib/catalog';
 import { cn } from '@/lib/utils';
+import { usePageMeta } from '@/lib/seo';
 
 interface Category {
   slug: string;
@@ -100,6 +101,7 @@ export function Market() {
   const page = Number(get('page') || 1);
   const ordered = [...categories].sort((a, b) => CATEGORY_ORDER.indexOf(a.slug) - CATEGORY_ORDER.indexOf(b.slug));
   const title = q ? `Results for “${q}”` : category ? categoryLabel(category) : 'All offers';
+  usePageMeta({ title, description: `${title} on Bullizard: compare offers by price, delivery time and seller rating. Every order is held in escrow.` });
   // Games that sell in this category, as quick links (the way a category landing page works).
   const gamesHere = games ? popular(games.filter((g) => !category || g.categories.some((c) => c.slug === category)), 14) : [];
 

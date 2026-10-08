@@ -4,6 +4,7 @@ import { api, money } from '../api';
 import { FeeLadder } from '../components/FeeLadder';
 import { useSession } from '../session';
 import { SellerMoney } from './SellerMoney';
+import { usePageMeta } from '@/lib/seo';
 
 interface Dashboard {
   tier: { name: string; accountRateBps: number; otherRateBps: number };
@@ -29,6 +30,7 @@ interface SellerOffer {
 }
 
 export function Sell() {
+  usePageMeta({ title: 'Sell on Bullizard', description: 'Open a shop: fees fall as your sales grow, instant delivery for codes, Chargeback Shield and payouts in USD, EUR or GBP.' });
   const { user, refresh } = useSession();
   const moneyTab = useLocation().pathname.startsWith('/sell/money');
   const [dash, setDash] = useState<Dashboard | null>(null);

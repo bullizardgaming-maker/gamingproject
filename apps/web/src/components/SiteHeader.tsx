@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutGrid, Search, ShieldCheck } from 'lucide-react';
+import { LayoutGrid, Moon, Search, ShieldCheck, Sun } from 'lucide-react';
 import { useSession } from '../session';
 import { NotificationBell } from './NotificationBell';
 import { CATEGORY_ICON, GameArt } from './CatalogUi';
 import { CATEGORY_META, CATEGORY_ORDER, loadGames, popular, slugify, type GameEntry } from '@/lib/catalog';
 import { cn } from '@/lib/utils';
+import { DISPLAY_CURRENCIES, resolvedTheme, setCurrency, setTheme, useDisplayCurrency, useTheme, type DisplayCurrency } from '@/lib/prefs';
 
 /** Search box with game suggestions: Enter searches listings, picking a game opens its page. */
 export function GameSearch({ big = false, autoFocus = false }: { big?: boolean; autoFocus?: boolean }) {
@@ -94,6 +95,35 @@ export function GameSearch({ big = false, autoFocus = false }: { big?: boolean; 
   );
 }
 
+/** Display currency and light/dark theme, remembered in this browser. */
+function ViewPrefs() {
+  useTheme();
+  const cur = useDisplayCurrency();
+  const dark = resolvedTheme() === 'dark';
+  return (
+    <div className="flex items-center gap-1.5">
+      <select
+        aria-label="Show prices in"
+        title="Show prices in"
+        value={cur}
+        onChange={(e) => setCurrency(e.target.value as DisplayCurrency)}
+        className="pref-select"
+      >
+        {DISPLAY_CURRENCIES.map((c) => <option key={c}>{c}</option>)}
+      </select>
+      <button
+        type="button"
+        aria-label={dark ? 'Use light theme' : 'Use dark theme'}
+        title={dark ? 'Light theme' : 'Dark theme'}
+        onClick={() => setTheme(dark ? 'light' : 'dark')}
+        className="grid size-10 cursor-pointer place-items-center rounded-lg border border-border bg-transparent text-foreground transition-colors hover:border-foreground"
+      >
+        {dark ? <Sun className="size-[18px]" strokeWidth={1.8} /> : <Moon className="size-[18px]" strokeWidth={1.8} />}
+      </button>
+    </div>
+  );
+}
+
 export function SiteHeader() {
   const { user, signOut } = useSession();
   const { pathname, search } = useLocation();
@@ -110,6 +140,7 @@ export function SiteHeader() {
           {user && user.role !== 'user' && <NavLink to="/admin">Operations</NavLink>}
         </nav>
         <div className="who">
+          <ViewPrefs />
           {user ? (
             <>
               <NotificationBell />

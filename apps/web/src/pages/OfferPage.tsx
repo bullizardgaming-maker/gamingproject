@@ -5,6 +5,8 @@ import { useSession } from '../session';
 import { OfferBadges, type Offer } from './Market';
 import { Avatar, DeliveryTag, GameArt, OfferTable, Rating } from '../components/CatalogUi';
 import { categoryLabel, slugify } from '@/lib/catalog';
+import { usePrice } from '@/lib/prefs';
+import { usePageMeta } from '@/lib/seo';
 
 export function OfferPage() {
   const { id } = useParams();
@@ -18,6 +20,8 @@ export function OfferPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [similar, setSimilar] = useState<Offer[]>([]);
+  const price = usePrice();
+  usePageMeta({ title: offer?.title, description: offer ? `${offer.title} — ${offer.game}. Paid into escrow, released only after delivery checks out.` : undefined });
 
   useEffect(() => {
     setOffer(null);
@@ -97,7 +101,10 @@ export function OfferPage() {
 
       <div className="card stack">
         <div className="row spread">
-          <span className="mono" style={{ fontSize: 28, fontWeight: 600 }}>{money(total, offer.currency)}</span>
+          <span className="stack" style={{ gap: 0 }}>
+            <span className="mono" style={{ fontSize: 28, fontWeight: 600 }}>{money(total, offer.currency)}</span>
+            {price(total, offer.currency).startsWith('≈') && <span className="small muted">{price(total, offer.currency)} · charged in {offer.currency}</span>}
+          </span>
           <span className="small muted">{offer.stock} available</span>
         </div>
         {!isAccount && (

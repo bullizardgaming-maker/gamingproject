@@ -272,6 +272,34 @@ export function seed() {
       { id: 'u-fin-1', email: 'finley@bullizard.test', display_name: 'Finley', role: 'user', staff_roles: ['finance'], totp_enabled: true },
       { id: 'u-cmp-1', email: 'casey@bullizard.test', display_name: 'Casey', role: 'user', staff_roles: ['compliance', 'support'], totp_enabled: false },
     ] as any[],
+    incidents: [
+      {
+        id: 'inc-2', kind: 'incident', title: 'Slow instant delivery for some Steam keys', impact: 'minor', status: 'resolved', components: ['delivery'],
+        scheduled_start: null, scheduled_end: null, created_at: ago(2 * day + 3 * 3_600_000), resolved_at: ago(2 * day + 3_600_000),
+        updates: [
+          { status: 'resolved', body: 'All delayed keys were delivered. Buyers’ protection windows started at delivery, not at payment.', at: ago(2 * day + 3_600_000) },
+          { status: 'identified', body: 'A queue backlog after a large inventory upload; we added workers.', at: ago(2 * day + 2 * 3_600_000) },
+          { status: 'investigating', body: 'Some instant-delivery orders are taking up to 10 minutes. Money stays in escrow.', at: ago(2 * day + 3 * 3_600_000) },
+        ],
+      },
+      {
+        id: 'inc-1', kind: 'maintenance', title: 'Database upgrade', impact: 'none', status: 'completed', components: ['payouts', 'checkout'],
+        scheduled_start: ago(5 * day), scheduled_end: ago(5 * day - 3_600_000), created_at: ago(8 * day), resolved_at: ago(5 * day - 3_000_000),
+        updates: [
+          { status: 'completed', body: 'Upgrade finished in 18 minutes.', at: ago(5 * day - 3_000_000) },
+          { status: 'scheduled', body: 'Payouts and checkout may pause for up to 30 minutes.', at: ago(8 * day) },
+        ],
+      },
+    ] as any[],
+    subscribers: [] as string[],
+    debts: [
+      { id: 'debt-1', seller_id: users[3]!.id, currency: 'USD', opened_at: ago(16 * day), peak_cents: 112_40, owed_cents: 64_90, reminders_sent: 3, paused_at: ago(2 * day), closed_at: null, closed_reason: null },
+      { id: 'debt-0', seller_id: users[4]!.id, currency: 'USD', opened_at: ago(30 * day), peak_cents: 41_00, owed_cents: 0, reminders_sent: 2, paused_at: null, closed_at: ago(24 * day), closed_reason: 'repaid' },
+    ] as any[],
+    fxTopups: [
+      { id: 'fx-1', from_currency: 'USD', to_currency: 'EUR', to_cents: 2_400_00, est_from_cents: 2_621_00, from_cents: 2_618_44, status: 'completed', requested_by: null, requested_by_name: null, decided_by_name: 'Arbiter Ada', error: null, created_at: ago(9 * day) },
+      { id: 'fx-2', from_currency: 'USD', to_currency: 'GBP', to_cents: 900_00, est_from_cents: 1_140_00, from_cents: null, status: 'proposed', requested_by: null, requested_by_name: null, decided_by_name: null, error: null, created_at: ago(3 * 3_600_000) },
+    ] as any[],
     platform: { escrow: 0, treasury: 18_432_10, reserve: 2_048_00, tax_payable: 3_118_40, withdrawn: 5_000_00, gateway_clearing: -24_960_00 },
     seq: 1,
   };

@@ -138,8 +138,10 @@ export interface ChatMessage {
   room_id: string;
   seq: number;
   sender_id: string | null;
-  kind: 'text' | 'system' | 'delivery' | 'warning';
-  body: string;
+  kind: 'text' | 'system' | 'delivery' | 'warning' | 'attachment';
+  /** null when the author's chat history was erased. */
+  body: string | null;
+  erased?: boolean;
   flags: string[];
   hash: string;
   created_at: string;

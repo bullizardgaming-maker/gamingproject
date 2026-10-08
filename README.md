@@ -56,6 +56,19 @@ Site structure: home (search, categories, popular games, instant-delivery and ow
 `/games` (A–Z directory) → `/games/:game[/:category]` (category tabs and a seller/delivery/stock/price comparison table) →
 `/offers/:id` → order page with escrow and chat. Sellers have public storefronts at `/sellers/:id` (listings by game, reviews).
 Game cover art is generated from each game's name; no publisher artwork is used.
+Also in the web app:
+- A public status page at `/status`, with email subscriptions.
+- Light and dark themes, following the system setting until the viewer picks one.
+- Prices shown in USD, EUR or GBP; conversions are approximate and checkout shows the exact amount.
+- Per-page titles, descriptions and canonical URLs.
+- A `sitemap.xml` and `robots.txt` generated at build. Set `VITE_SITE_URL` to the production domain; private pages are excluded and marked noindex.
+
+Staff screens under Operations:
+- Status-page incidents and maintenance
+- Seller debts
+- Currency top-ups
+- The fraud model report
+- Chat erasure requests
 
 UI components: the web app has Tailwind CSS v4 and a shadcn `components.json` (aliases `@/components`, `@/lib/utils`;
 theme tokens mapped to the Bullizard palette in `src/tailwind.css`), so registry components drop in with

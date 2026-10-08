@@ -1,8 +1,8 @@
 import { Link } from 'react-router-dom';
 import { BadgeCheck, Coins, Gamepad2, Gift, KeyRound, Rocket, ShieldCheck, Smartphone, Star, Swords, UserRound, Zap } from 'lucide-react';
-import { money } from '../api';
 import { categoryLabel, deliveryLabel, hueOf, initials, slugify } from '@/lib/catalog';
 import { cn } from '@/lib/utils';
+import { usePrice } from '@/lib/prefs';
 import type { Offer } from '../pages/Market';
 
 export const CATEGORY_ICON: Record<string, typeof Coins> = {
@@ -99,6 +99,7 @@ export function ProtectionTag({ offer }: { offer: Offer }) {
  * seller, delivery speed, stock and price side by side. Collapses to cards on narrow screens.
  */
 export function OfferTable({ offers, showGame = false, showSeller = true, empty }: { offers: Offer[]; showGame?: boolean; showSeller?: boolean; empty?: React.ReactNode }) {
+  const price = usePrice();
   if (offers.length === 0) return <div className="card text-center text-muted-foreground">{empty ?? 'No listings here yet.'}</div>;
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-card">
@@ -149,7 +150,7 @@ export function OfferTable({ offers, showGame = false, showSeller = true, empty 
               </div>
               <span className="hidden font-mono text-sm text-muted-foreground md:block">{o.stock}</span>
               <div className="order-2 flex items-center justify-end gap-3 md:order-none">
-                <span className="font-mono text-base font-semibold">{money((o as any).display_price_cents ?? o.price_cents, (o as any).display_currency ?? o.currency)}</span>
+                <span className="font-mono text-base font-semibold">{price.offer(o as any)}</span>
               </div>
             </div>
           </li>
@@ -160,6 +161,7 @@ export function OfferTable({ offers, showGame = false, showSeller = true, empty 
 }
 
 export function GameCard({ game, offers, min, categories }: { game: string; offers: number; min: number; categories: Array<{ slug: string; count: number }> }) {
+  const price = usePrice();
   return (
     <Link to={`/games/${slugify(game)}`} className="group block overflow-hidden rounded-xl border border-border bg-card no-underline transition hover:-translate-y-0.5 hover:border-foreground hover:shadow-[0_14px_30px_-18px_rgba(22,32,46,.45)]">
       <GameArt game={game} className="aspect-[16/9]" />
@@ -167,7 +169,7 @@ export function GameCard({ game, offers, min, categories }: { game: string; offe
         <div className="truncate font-display text-[15px] font-semibold tracking-tight">{game}</div>
         <div className="mt-0.5 flex items-center justify-between text-xs text-muted-foreground">
           <span>{offers} offer{offers === 1 ? '' : 's'}</span>
-          <span className="font-mono">from {money(min)}</span>
+          <span className="font-mono">from {price(min)}</span>
         </div>
         <div className="mt-2 flex flex-wrap gap-1">
           {categories.slice(0, 3).map((c) => (

@@ -3,9 +3,11 @@ import { Link } from 'react-router-dom';
 import { api, apiBlob, money } from '../api';
 import { useSession } from '../session';
 import { AmlPanel, StaffPanel, TaxPanel, TreasuryPanel } from './AdminPanels';
+import { CurrencyPanel, DebtsPanel, FraudModelPanel, IncidentsPanel, PrivacyPanel } from './OpsPanels';
+import { usePageMeta } from '@/lib/seo';
 
 type ListTab = 'disputes' | 'risk' | 'proofs' | 'chargebacks' | 'ledger' | 'recon' | 'audit';
-type PanelTab = 'aml' | 'treasury' | 'tax' | 'staff';
+type PanelTab = 'aml' | 'treasury' | 'tax' | 'staff' | 'status' | 'debts' | 'currency' | 'model' | 'privacy';
 type Tab = ListTab | PanelTab;
 
 /** Each tab is shown to whoever holds its permission (see the API's domain/permissions.ts). */
@@ -13,21 +15,30 @@ const TABS: Array<{ id: Tab; label: string; perm: string }> = [
   { id: 'disputes', label: 'Disputes', perm: 'disputes.manage' },
   { id: 'proofs', label: 'Owner proofs', perm: 'owner_proofs.review' },
   { id: 'risk', label: 'Fraud review', perm: 'risk.review' },
+  { id: 'model', label: 'Fraud model', perm: 'risk.review' },
   { id: 'aml', label: 'Compliance', perm: 'aml.review' },
   { id: 'chargebacks', label: 'Chargebacks', perm: 'chargebacks.manage' },
   { id: 'treasury', label: 'Treasury', perm: 'treasury.request' },
+  { id: 'currency', label: 'Currency', perm: 'fx.manage' },
+  { id: 'debts', label: 'Seller debts', perm: 'ledger.view' },
   { id: 'tax', label: 'Tax', perm: 'tax.manage' },
   { id: 'ledger', label: 'Ledger', perm: 'ledger.view' },
   { id: 'recon', label: 'Reconciliation', perm: 'reconciliation.run' },
   { id: 'audit', label: 'Audit log', perm: 'audit.view' },
   { id: 'staff', label: 'Staff', perm: 'staff.manage' },
+  { id: 'status', label: 'Status page', perm: 'status.manage' },
+  { id: 'privacy', label: 'Privacy', perm: 'retention.manage' },
 ];
-const PANELS: Record<PanelTab, () => React.ReactElement> = { aml: AmlPanel, treasury: TreasuryPanel, tax: TaxPanel, staff: StaffPanel };
+const PANELS: Record<PanelTab, () => React.ReactElement> = {
+  aml: AmlPanel, treasury: TreasuryPanel, tax: TaxPanel, staff: StaffPanel,
+  status: IncidentsPanel, debts: DebtsPanel, currency: CurrencyPanel, model: FraudModelPanel, privacy: PrivacyPanel,
+};
 const isPanel = (t: Tab): t is PanelTab => t in PANELS;
 
 const fmt = (d: string) => new Date(d).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 export function Admin() {
+  usePageMeta({ title: 'Operations', noindex: true });
   const { user, can } = useSession();
   const visible = TABS.filter((t) => can(t.perm));
   const [picked, setTab] = useState<Tab | null>(null);

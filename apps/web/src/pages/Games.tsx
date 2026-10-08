@@ -1,17 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, NavLink, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { BadgeCheck, Search, ShieldCheck, Zap } from 'lucide-react';
-import { api, money } from '../api';
+import { api } from '../api';
 import { CATEGORY_ICON, GameArt, OfferTable } from '../components/CatalogUi';
 import { CATEGORY_META, CATEGORY_ORDER, categoryLabel, slugify, useGames, type GameEntry } from '@/lib/catalog';
 import { cn } from '@/lib/utils';
+import { usePrice } from '@/lib/prefs';
 import type { Offer } from './Market';
+import { usePageMeta } from '@/lib/seo';
 
 const LETTERS = ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
 const letterOf = (g: string) => (/^[a-z]/i.test(g) ? g[0]!.toUpperCase() : '#');
 
 /** /games: every game with live offers, A–Z, each with direct links into its categories. */
 export function Games() {
+  usePageMeta({ title: 'All games A–Z', description: 'Every game with live offers on Bullizard: accounts, currency, items, keys, top-ups and boosting, all escrow-protected.' });
   const { games, error } = useGames();
   const [params, setParams] = useSearchParams();
   const filter = params.get('q') ?? '';
@@ -103,6 +106,7 @@ export function GamePage() {
   const { slug = '', category = '' } = useParams();
   const nav = useNavigate();
   const { games, error: gamesError } = useGames();
+  const price = usePrice();
   const [params, setParams] = useSearchParams();
   const [offers, setOffers] = useState<Offer[] | null>(null);
   const [total, setTotal] = useState(0);
@@ -110,6 +114,12 @@ export function GamePage() {
   const [page, setPage] = useState(1);
   const [error, setError] = useState('');
   const entry = games?.find((g) => slugify(g.game) === slug);
+  usePageMeta({
+    title: entry ? `${entry.game} ${category ? categoryLabel(category).toLowerCase() : 'marketplace'}` : undefined,
+    description: entry
+      ? `${entry.offers} ${entry.game} offers from ${entry.sellers} sellers${category ? ` in ${categoryLabel(category).toLowerCase()}` : ''}. Compare price, delivery time and seller rating; every order is held in escrow.`
+      : undefined,
+  });
   const get = (k: string) => params.get(k) ?? '';
   const sort = get('sort') || 'price_asc';
 
@@ -173,7 +183,7 @@ export function GamePage() {
             <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 font-mono text-sm text-white/80">
               <span>{entry.offers} offers</span>
               <span>{entry.sellers} sellers</span>
-              <span>from {money(entry.min_price_cents)}</span>
+              <span>from {price(entry.min_price_cents)}</span>
               {entry.instant > 0 && <span className="inline-flex items-center gap-1"><Zap className="size-3.5" /> {entry.instant} instant</span>}
             </div>
           </div>
@@ -232,7 +242,7 @@ export function GamePage() {
       ) : (
         <>
           <div className="row spread small muted" style={{ marginTop: 8 }}>
-            <span>{total} offer{total === 1 ? '' : 's'}{prices.length > 1 ? ` · ${money(Math.min(...prices))} – ${money(Math.max(...prices))}` : ''}</span>
+            <span>{total} offer{total === 1 ? '' : 's'}{prices.length > 1 ? ` · ${price(Math.min(...prices))} – ${price(Math.max(...prices))}` : ''}</span>
             <Link to="/sell" className="small">Sell {entry.game} {category ? categoryLabel(category).toLowerCase() : 'items'}</Link>
           </div>
           <OfferTable

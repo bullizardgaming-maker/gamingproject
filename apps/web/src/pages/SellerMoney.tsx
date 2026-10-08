@@ -97,6 +97,9 @@ export function SellerMoney() {
   return (
     <div className="stack">
       {msg && <div className={msg.kind}>{msg.text}</div>}
+      {(dash.debts ?? []).map((d: any) => (
+        <DebtCard key={d.id} debt={d} onError={(text) => setMsg({ kind: 'alert', text })} />
+      ))}
 
       <div className="grid gap-4 md:grid-cols-[1.3fr_1fr]">
         {/* Balance & payouts */}
@@ -208,6 +211,40 @@ export function SellerMoney() {
       </div>
 
       <Exports />
+    </div>
+  );
+}
+
+/** A negative balance after a refund or chargeback: what's owed, when the shop pauses, and pay now. */
+function DebtCard({ debt, onError }: { debt: { id: string; currency: string; owedCents: number; pausesAt: string | null; shopPausedAt: string | null }; onError: (m: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const pay = async () => {
+    setBusy(true);
+    try {
+      const r = await api<{ checkoutUrl: string }>(`/seller/debts/${debt.id}/pay`, { body: {} });
+      window.location.assign(r.checkoutUrl);
+    } catch (e: any) {
+      onError(e.message);
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="card stack" style={{ borderColor: 'var(--disputed)' }}>
+      <div className="row spread">
+        <div>
+          <div className="eyebrow" style={{ marginBottom: 4, color: 'var(--disputed)' }}>Balance below zero</div>
+          <div className="font-mono text-2xl font-semibold">−{money(debt.owedCents, debt.currency)}</div>
+        </div>
+        <button className="btn" disabled={busy} onClick={pay}>{busy ? 'Opening checkout…' : `Pay ${money(debt.owedCents, debt.currency)} now`}</button>
+      </div>
+      <p className="small" style={{ margin: 0 }}>
+        A refund or chargeback took more than your balance held. New sales pay it down automatically; withdrawals are paused until it’s settled.{' '}
+        {debt.shopPausedAt
+          ? 'Your shop is paused and reopens as soon as this is paid.'
+          : debt.pausesAt
+            ? `If it’s still unpaid on ${fmtDate(debt.pausesAt)}, your shop will be paused.`
+            : ''}
+      </p>
     </div>
   );
 }

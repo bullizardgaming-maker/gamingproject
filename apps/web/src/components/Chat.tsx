@@ -63,7 +63,7 @@ export function Chat({ roomId, meId, names }: { roomId: string; meId: string; na
           const cls = m.kind === 'text' ? (mine ? 'msg mine' : 'msg') : `msg ${m.kind}`;
           return (
             <div key={m.seq} className={cls}>
-              {m.body}
+              {m.body ?? <i className="muted">Message erased at the author’s request</i>}
               <span className="meta">
                 #{m.seq} · {m.sender_id ? names[m.sender_id] ?? 'User' : 'Marketplace'} ·{' '}
                 {new Date(m.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}

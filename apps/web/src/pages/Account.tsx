@@ -5,8 +5,10 @@ import { DEMO, api, session } from '../api';
 import { DemoSignIn } from '../demo/DemoUi';
 import { PushSettings } from '../components/NotificationSettings';
 import { useSession } from '../session';
+import { usePageMeta } from '@/lib/seo';
 
 export function Login() {
+  usePageMeta({ title: 'Sign in', noindex: true });
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [error, setError] = useState('');
   const [mfaToken, setMfaToken] = useState<string | null>(null);
@@ -215,6 +217,7 @@ function CodeStep({ channel, done, onDone }: { channel: 'email' | 'sms'; done: b
 }
 
 export function Account() {
+  usePageMeta({ title: 'Your account', noindex: true });
   const { user, refresh } = useSession();
   const [kyc, setKyc] = useState<string>('');
   if (!user) return <p className="muted">Sign in to manage your account. <Link to="/login">Sign in</Link></p>;
@@ -363,6 +366,7 @@ function EmailPreferences() {
 }
 
 export function ForgotPassword() {
+  usePageMeta({ title: 'Reset your password', noindex: true });
   const [sent, setSent] = useState(false);
   const submit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -385,6 +389,7 @@ export function ForgotPassword() {
 }
 
 export function ResetPassword() {
+  usePageMeta({ title: 'Choose a new password', noindex: true });
   const [params] = useSearchParams();
   const nav = useNavigate();
   const [error, setError] = useState('');

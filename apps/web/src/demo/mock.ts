@@ -7,7 +7,7 @@
  */
 import { CATEGORIES, DEMO_CODE, seed, type DemoState, type DemoUser } from './seed';
 
-const KEY = 'bz.demo.v3';
+const KEY = 'bz.demo.v4';
 const day = 86_400_000;
 const now = () => new Date().toISOString();
 const rid = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2) + Date.now().toString(16));
@@ -599,6 +599,7 @@ route('GET', '/seller/dashboard', ({ me }) => {
     next: t.next ? { tier: t.next, remainingCents: t.next.minMonthlySalesCents - t.sales } : null,
     tiers: TIERS,
     payoutCurrency: state.payoutCurrency[u.id] ?? 'USD',
+    debts: state.debts.filter((d) => d.seller_id === u.id && !d.closed_at).map((d) => ({ id: d.id, currency: d.currency, owedCents: d.owed_cents, openedAt: d.opened_at, shopPausedAt: d.paused_at, pausesAt: d.paused_at ? null : new Date(Date.parse(d.opened_at) + 14 * day).toISOString() })),
     allBalances: [{ currency: 'USD', cents: state.balances[u.id] ?? 0 }],
     balances: { availableCents: state.balances[u.id] ?? 0, withdrawableCents: holdOf(u.id).withdrawableCents, onHoldCents: holdOf(u.id).heldCents, currency: 'USD', pendingEscrowCents: mine.filter((o) => ['paid', 'delivered', 'disputed'].includes(o.status)).reduce((s, o) => s + o.seller_net_cents, 0) },
     withdrawalsFrozen: u.withdrawals_frozen,
@@ -833,11 +834,136 @@ route('POST', '/admin/reconciliation/run', ({ me }) => {
 });
 route('GET', '/admin/audit', ({ me }) => (needStaff(me), state.audit));
 
+// --- Status page ------------------------------------------------------------------------------
+const COMPONENTS: Array<[string, string]> = [
+  ['website', 'Website and app'], ['api', 'Seller API and webhooks'], ['checkout', 'Card and crypto checkout'], ['delivery', 'Instant delivery and escrow release'],
+  ['chat', 'Order chat and live updates'], ['payouts', 'Seller payouts'], ['notifications', 'Email and push notifications'],
+];
+const RANK: Record<string, number> = { operational: 0, maintenance: 1, degraded: 2, partial_outage: 3, major_outage: 4 };
+const IMPACT: Record<string, string> = { none: 'operational', minor: 'degraded', major: 'partial_outage', critical: 'major_outage' };
+route('GET', '/status', () => {
+  const open = state.incidents.filter((i) => !i.resolved_at);
+  const components = COMPONENTS.map(([id, name]) => {
+    let status = 'operational';
+    for (const i of open.filter((x) => x.components.includes(id))) {
+      const s = i.kind === 'maintenance' ? (i.status === 'in_progress' ? 'maintenance' : 'operational') : IMPACT[i.impact] ?? 'degraded';
+      if (RANK[s]! > RANK[status]!) status = s;
+    }
+    return { id, name, status, measured: 'operational' };
+  });
+  const top = components.reduce((a, c) => (RANK[c.status]! > RANK[a]! ? c.status : a), 'operational');
+  return {
+    status: top,
+    description: top === 'operational' ? 'All systems operational' : top === 'maintenance' ? 'Scheduled maintenance in progress' : top === 'degraded' ? 'Some systems are slower than usual' : 'Some systems are having problems',
+    components,
+    incidents: open.filter((i) => i.kind === 'incident'),
+    maintenance: open.filter((i) => i.kind === 'maintenance'),
+    recent: state.incidents.filter((i) => i.resolved_at && Date.parse(i.resolved_at) > Date.now() - 14 * day),
+    updatedAt: now(),
+  };
+});
+route('GET', '/status/incidents/:id', ({ params }) => state.incidents.find((i) => i.id === params[0]) ?? fail(404, 'not_found', 'Incident not found'));
+route('POST', '/status/subscribe', ({ body }) => {
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(body.email ?? ''))) fail(400, 'invalid_email', 'Enter a valid email address');
+  if (!state.subscribers.includes(body.email)) state.subscribers.push(body.email);
+  return { ok: true };
+});
+route('POST', '/status/confirm', () => ({ confirmed: true }));
+route('POST', '/status/unsubscribe', () => ({ unsubscribed: true }));
+route('GET', '/admin/incidents', ({ me }) => (needStaff(me), { components: COMPONENTS.map(([id, name]) => ({ id, name })), incidents: [...state.incidents].sort((a, b) => b.created_at.localeCompare(a.created_at)) }));
+route('POST', '/admin/incidents', ({ me, body }) => {
+  const u = needStaff(me);
+  if (!body.title || String(body.title).length < 5) fail(400, 'validation_error', 'Give it a title');
+  const maint = body.kind === 'maintenance';
+  if (maint && (!body.scheduledStart || !body.scheduledEnd || body.scheduledEnd <= body.scheduledStart)) fail(400, 'invalid_schedule', 'Maintenance needs a start and a later end');
+  const status = maint ? 'scheduled' : 'investigating';
+  const i = {
+    id: rid(), kind: maint ? 'maintenance' : 'incident', title: body.title, impact: maint ? 'none' : body.impact ?? 'minor', status, components: body.components ?? [],
+    scheduled_start: body.scheduledStart ?? null, scheduled_end: body.scheduledEnd ?? null, created_at: now(), resolved_at: null,
+    updates: [{ status, body: body.body, at: now() }],
+  };
+  state.incidents.unshift(i);
+  state.audit.unshift({ id: rid(), created_at: now(), actor_name: u.display_name, actor_role: u.role, ip: '203.0.113.7', action: 'status.incident_created', target_type: 'incident', target_id: i.id, details: { title: i.title } });
+  return i;
+});
+route('POST', '/admin/incidents/:id/updates', ({ me, params, body }) => {
+  needStaff(me);
+  const i = state.incidents.find((x) => x.id === params[0]) ?? fail(404, 'not_found', 'Incident not found');
+  if (i.resolved_at) fail(400, 'incident_closed', 'This incident is already closed');
+  i.status = body.status;
+  if (body.impact && i.kind === 'incident') i.impact = body.impact;
+  if (['resolved', 'completed'].includes(body.status)) i.resolved_at = now();
+  i.updates.unshift({ status: body.status, body: body.body, at: now() });
+  return i;
+});
+
+// --- Seller debts, currency top-ups, fraud model, privacy --------------------------------------
+route('GET', '/admin/debts', ({ me, query }) => {
+  needStaff(me);
+  const open = (query.get('status') ?? 'open') === 'open';
+  return state.debts.filter((d) => (open ? !d.closed_at : !!d.closed_at)).map((d) => ({ ...d, display_name: userById(d.seller_id)?.display_name, email: userById(d.seller_id)?.email }));
+});
+route('GET', '/seller/debts', ({ me }) => state.debts.filter((d) => d.seller_id === needSeller(me).id && !d.closed_at));
+route('POST', '/seller/debts/:id/pay', ({ me, params }) => {
+  const u = needSeller(me);
+  const d = state.debts.find((x) => x.id === params[0] && x.seller_id === u.id) ?? fail(404, 'not_found', 'Debt not found');
+  // The hosted checkout is simulated: the repayment succeeds straight away.
+  state.balances[u.id] = (state.balances[u.id] ?? 0) + d.owed_cents;
+  Object.assign(d, { owed_cents: 0, closed_at: now(), closed_reason: 'repaid' });
+  return { paymentId: rid(), amountCents: d.peak_cents, currency: d.currency, checkoutUrl: '/sell/money?repaid=1' };
+});
+route('GET', '/fx/rates', () => ({ settlement: 'USD', spreadBps: 100, rates: [{ currency: 'EUR', rate: 0.92, fetched_at: now() }, { currency: 'GBP', rate: 0.79, fetched_at: now() }] }));
+route('GET', '/admin/fx/position', ({ me }) => {
+  needStaff(me);
+  return {
+    positions: [
+      { currency: 'USD', positionCents: 0, sellerBalancesCents: Object.values(state.balances).reduce((s, b) => s + b, 0), pspExpectedCents: Object.values(state.balances).reduce((s, b) => s + b, 0) + state.platform.treasury, shortfallCents: 0 },
+      { currency: 'EUR', positionCents: -2_310_00, sellerBalancesCents: 2_310_00, pspExpectedCents: 2_400_00, shortfallCents: 0 },
+      { currency: 'GBP', positionCents: -860_00, sellerBalancesCents: 860_00, pspExpectedCents: 0, shortfallCents: 860_00 },
+    ],
+    conversions: [],
+  };
+});
+route('GET', '/admin/fx/topups', ({ me }) => (needStaff(me), { provider: 'mock', autoApproveCents: 0, topups: state.fxTopups }));
+route('POST', '/admin/fx/topups/plan', ({ me }) => (needStaff(me), []));
+route('POST', '/admin/fx/topups/:id/decide', ({ me, params, body }) => {
+  const u = needStaff(me);
+  const t = state.fxTopups.find((x) => x.id === params[0]) ?? fail(404, 'not_found', 'Top-up not found');
+  if (t.status !== 'proposed') fail(409, 'already_decided', `This top-up is ${t.status}`);
+  Object.assign(t, body.approve ? { status: 'completed', from_cents: Math.round(t.to_cents / 0.79 / 0.995), decided_by_name: u.display_name } : { status: 'rejected', decided_by_name: u.display_name });
+  return t;
+});
+route('GET', '/admin/fraud/model-report', ({ me, query }) => {
+  needStaff(me);
+  return {
+    windowDays: Number(query.get('days') ?? 180), mode: 'shadow', threshold: 0.5, scored: 1_284, modelScored: 1_262, labelled: 913, unlabelled: 371,
+    heuristicOnly: { orders: 913, fraud: 21, auc: 0.87, flagged: 30, caught: 15, precision: 0.5, recall: 0.7143 },
+    models: [{
+      modelVersion: '3f9a1c0e7b21', orders: 902, fraud: 21,
+      heuristic: { auc: 0.871, flagged: 29, caught: 15, precision: 0.5172, recall: 0.7143 },
+      model: { auc: 0.934, flagged: 24, caught: 18, precision: 0.75, recall: 0.8571 },
+      combined: { auc: 0.941, flagged: 35, caught: 19, precision: 0.5429, recall: 0.9048 },
+      onlyModelFlagged: { fraud: 4, legit: 2 }, onlyHeuristicFlagged: { fraud: 1, legit: 9 },
+    }],
+  };
+});
+route('POST', '/admin/users/:id/erase-chat', ({ me, params, body }) => {
+  const u = needStaff(me);
+  if (!userById(params[0]!)) fail(404, 'not_found', 'User not found');
+  if (!body.reason || String(body.reason).length < 5) fail(400, 'validation_error', 'Give a reason');
+  const open = state.orders.some((o) => (o.buyer_id === params[0] || o.seller_id === params[0]) && o.status === 'disputed');
+  if (open) fail(409, 'legal_hold', 'Can’t erase while there is an open dispute; the messages are evidence');
+  let n = 0;
+  for (const m of state.messages) if (m.sender_id === params[0] && m.body !== null) (m.body = null, (m.erased = true), n++);
+  state.audit.unshift({ id: rid(), created_at: now(), actor_name: u.display_name, actor_role: u.role, ip: '203.0.113.7', action: 'chat.erased', target_type: 'user', target_id: params[0], details: { reason: body.reason } });
+  return { erased: true, alreadyErased: n === 0 };
+});
+
 // --- Staff permissions, compliance, treasury, tax, staff ------------------------------------
 const ALL_PERMS = [
   'orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'risk.review', 'users.suspend', 'aml.review', 'aml.sar',
   'chargebacks.manage', 'orders.refund_after_release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view',
-  'ledger.adjust', 'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'keys.manage', 'retention.manage', 'audit.view', 'staff.manage',
+  'ledger.adjust', 'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'keys.manage', 'retention.manage', 'audit.view', 'staff.manage', 'status.manage',
 ];
 const ROLE_PERMS: Record<string, string[]> = {
   arbiter: ['orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'orders.refund_after_release'],

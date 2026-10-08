@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
 const fmt = (d: string) => new Date(d).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 const label = (s: string) => s.replace(/_/g, ' ');
 
-function useLoad<T>(fn: () => Promise<T>) {
+export function useLoad<T>(fn: () => Promise<T>) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState('');
   const reload = useCallback(async () => {
@@ -346,7 +346,7 @@ export function TaxPanel() {
 const ROLES = ['arbiter', 'support', 'finance', 'compliance', 'admin'] as const;
 const ROLE_HINT: Record<string, string> = {
   arbiter: 'Disputes, owner proofs, reviews, refunds after release',
-  support: 'Read orders and chats; no money movement',
+  support: 'Read orders and chats, post status-page incidents; no money movement',
   finance: 'Treasury, chargebacks, tax, invoices, ledger corrections',
   compliance: 'Fraud and AML review, suspensions, audit log',
   admin: 'Everything, including staff access',

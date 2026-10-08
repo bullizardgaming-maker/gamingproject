@@ -4,6 +4,7 @@ import { api, money, realtime } from '../api';
 import { Chat } from '../components/Chat';
 import { EscrowTrack, formatRemaining, type TrackVariant } from '../components/EscrowTrack';
 import { useSession } from '../session';
+import { usePageMeta } from '@/lib/seo';
 
 interface OrderDetail {
   id: string;
@@ -48,6 +49,7 @@ const STATUS_TEXT: Record<string, string> = {
 };
 
 export function OrderPage() {
+  usePageMeta({ title: 'Order', noindex: true });
   const { id } = useParams();
   const { user } = useSession();
   const [order, setOrder] = useState<OrderDetail | null>(null);

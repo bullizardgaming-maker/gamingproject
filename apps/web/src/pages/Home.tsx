@@ -8,6 +8,7 @@ import { CATEGORY_META, CATEGORY_ORDER, popular, slugify, useGames } from '@/lib
 import type { Offer } from './Market';
 import { EscrowTrack, formatRemaining } from '../components/EscrowTrack';
 import { FeeLadder } from '../components/FeeLadder';
+import { usePageMeta } from '@/lib/seo';
 
 const DEMO_LOG = [
   { seq: 1, who: 'system', text: 'Payment received. $300 locked in escrow.' },
@@ -61,6 +62,7 @@ function LiveEscrow() {
 }
 
 export function Home() {
+  usePageMeta({ description: 'Trade game accounts, keys, currency, items and boosting. Every payment waits in escrow until the goods are really yours.' });
   const { games } = useGames();
   const [instant, setInstant] = useState<Offer[] | null>(null);
   const [fresh, setFresh] = useState<Offer[] | null>(null);

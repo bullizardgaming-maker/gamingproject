@@ -5,6 +5,7 @@ import { api } from '../api';
 import { Avatar, OfferTable } from '../components/CatalogUi';
 import { cn } from '@/lib/utils';
 import type { Offer } from './Market';
+import { usePageMeta } from '@/lib/seo';
 
 interface Profile {
   id: string;
@@ -43,6 +44,10 @@ export function SellerPage() {
     api<{ items: Offer[] }>(`/offers?seller=${id}&pageSize=60&sort=best_selling`).then((r) => setOffers(r.items)).catch(() => setOffers([]));
   }, [id]);
 
+  usePageMeta({
+    title: profile ? `${profile.display_name} — seller` : undefined,
+    description: profile ? `${profile.display_name} on Bullizard: ${profile.completed_orders} completed orders, ${profile.active_listings} live offers.` : undefined,
+  });
   const games = useMemo(() => {
     const m = new Map<string, number>();
     for (const o of offers ?? []) m.set(o.game, (m.get(o.game) ?? 0) + 1);
