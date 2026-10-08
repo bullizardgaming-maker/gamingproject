@@ -47,6 +47,14 @@ export const TEXT_TARGETS: TextTarget[] = [
     aad: `'totp:' || id`,
   },
   {
+    name: 'chat_user_keys',
+    table: 'chat_user_keys',
+    id: 'user_id',
+    column: 'key_ciphertext',
+    write: 'UPDATE chat_user_keys SET key_ciphertext = $2 WHERE user_id = $1 AND key_ciphertext = $3',
+    aad: `'chatkey:' || user_id`,
+  },
+  {
     name: 'owner_proof_evidence',
     table: 'owner_proofs',
     id: 'id',

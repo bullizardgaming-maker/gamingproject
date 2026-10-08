@@ -94,6 +94,8 @@ export async function uploadAttachment(ctx: Ctx, roomId: string, user: { id: str
       user.id,
       'attachment',
       `📎 ${name} (${out.info.width}×${out.info.height}, sha256 ${hash})`,
+      [],
+      ctx.keyring,
     );
     const att = await one(
       s.tx,

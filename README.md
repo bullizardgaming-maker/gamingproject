@@ -78,6 +78,7 @@ Highlights of what the tests prove: exactly one of 25 simultaneous buyers gets a
 - Catalogue: `GET /v1/catalog/games` (game directory with per-category counts), `GET /v1/offers?game=&category=&seller=&sort=`, `GET /v1/sellers/:id`
 - `POST /v1/orders/quote` (currency, promo code, store credit breakdown)
 - `POST /v1/orders/:id/{deliver,confirm,dispute,cancel,cancel-late}`, `PATCH /v1/orders/:id/checklist`
+- Chat erasure (per-user keys): staff `POST /v1/admin/users/:id/erase-chat`
 - `POST /v1/chat/rooms/:id/attachments` (screenshot evidence, malware-scanned)
 - Notifications: `GET /v1/me/notifications`, `GET /v1/push/config`, `POST /v1/me/push-subscriptions`, `PATCH /v1/me/push-preferences`
 - Seller reports: `GET /v1/seller/exports/{sales,statement,payouts,invoices,credit_notes}` (CSV/JSON), `GET /v1/seller/credit-notes`

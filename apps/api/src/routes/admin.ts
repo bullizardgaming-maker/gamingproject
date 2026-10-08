@@ -8,7 +8,7 @@ import { reviewOwnerProof } from '../domain/offers.js';
 import { resolveDispute } from '../domain/orders.js';
 import { setReviewHidden } from '../domain/reviews.js';
 import { runReconciliation } from '../domain/reconciliation.js';
-import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
+import { AppError, badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { ROLE_PERMISSIONS, STAFF_ROLES, permissionsOf, rolesOf } from '../domain/permissions.js';
 import { notify } from '../domain/notifications.js';
 import { refundAfterRelease } from '../domain/clawback.js';
@@ -17,6 +17,7 @@ import { collectDebts, listDebts } from '../domain/debts.js';
 import { fraudModelReport } from '../domain/fraud.js';
 import { COMPONENTS, COMPONENT_IDS, createIncident, listIncidents, updateIncident } from '../domain/status.js';
 import { decideTopUp, listTopUps, planTopUps } from '../domain/fxtopups.js';
+import { chatLegalHold, shredUserChatKey } from '../domain/chatkeys.js';
 import { requirePermission } from '../server.js';
 import { audit, listAudit } from '../domain/audit.js';
 import { createPromo, listPromos, setPromoActive } from '../domain/promos.js';
@@ -422,6 +423,19 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     requirePermission(req, 'retention.manage');
     return { policy: retentionPolicy(ctx), runs: await many(ctx.db, 'SELECT * FROM retention_runs ORDER BY started_at DESC LIMIT 30') };
   });
+  /** Erasure request: destroy the user's chat key so everything they wrote becomes unreadable. */
+  app.post('/admin/users/:id/erase-chat', async (req) => {
+    requirePermission(req, 'retention.manage');
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const { reason } = z.object({ reason: z.string().trim().min(5).max(500) }).parse(req.body);
+    if (!(await maybeOne(ctx.db, 'SELECT 1 FROM users WHERE id = $1', [id]))) throw notFound('User');
+    const hold = await chatLegalHold(ctx.db, id);
+    if (hold) throw new AppError(409, 'legal_hold', `Can't erase while there is ${hold}; the messages are evidence`);
+    const shredded = await shredUserChatKey(ctx.db, id, reason);
+    await audit(ctx.db, req, 'chat.erased', { type: 'user', id }, { reason });
+    return { erased: true, alreadyErased: !shredded };
+  });
+
   app.post('/admin/retention/run', async (req) => {
     requirePermission(req, 'retention.manage');
     const res = await runRetention(ctx);

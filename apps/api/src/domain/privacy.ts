@@ -1,6 +1,7 @@
 import type { Ctx } from '../context.js';
 import { many, maybeOne, one } from '../db.js';
 import { sellerBalances } from './sellerfx.js';
+import { openMessages } from './chat.js';
 import { hashPassword, randomToken, verifyPassword } from '../lib/crypto.js';
 import { AppError, unauthorized } from '../lib/errors.js';
 import { withScope } from './events.js';
@@ -35,7 +36,9 @@ export async function exportData(ctx: Ctx, userId: string) {
     many(q, `SELECT o.id, f.title, o.quantity, o.amount_cents, o.currency, o.status, o.rail, o.created_at, o.completed_at FROM orders o JOIN offers f ON f.id = o.offer_id WHERE o.buyer_id = $1 ORDER BY o.created_at`, [userId]),
     many(q, `SELECT o.id, f.title, o.quantity, o.amount_cents, o.commission_cents, o.seller_net_cents, o.currency, o.status, o.created_at, o.completed_at FROM orders o JOIN offers f ON f.id = o.offer_id WHERE o.seller_id = $1 ORDER BY o.created_at`, [userId]),
     many(q, `SELECT id, title, game, category_slug, price_cents, status, created_at FROM offers WHERE seller_id = $1 ORDER BY created_at`, [userId]),
-    many(q, `SELECT room_id, seq, body, created_at FROM chat_messages WHERE sender_id = $1 ORDER BY created_at`, [userId]),
+    many<any>(q, `SELECT * FROM chat_messages WHERE sender_id = $1 ORDER BY created_at`, [userId]).then(async (rows) =>
+      (await openMessages(ctx.keyring, q, rows)).map((m) => ({ room_id: m.room_id, seq: m.seq, body: m.body, erased: !!m.erased, created_at: m.created_at })),
+    ),
     many(q, `SELECT order_id, rating, comment, created_at FROM reviews WHERE buyer_id = $1`, [userId]),
     many(q, `SELECT order_id, rating, comment, seller_reply, created_at FROM reviews WHERE seller_id = $1 AND NOT hidden`, [userId]),
     many(q, `SELECT id, amount_cents, currency, status, created_at FROM withdrawals WHERE user_id = $1`, [userId]),

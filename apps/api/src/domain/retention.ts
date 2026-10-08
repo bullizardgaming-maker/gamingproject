@@ -1,4 +1,5 @@
 import type { Ctx } from '../context.js';
+import { chatLegalHold, shredUserChatKey } from './chatkeys.js';
 import { many, maybeOne, one, withTx } from '../db.js';
 
 /**
@@ -79,6 +80,17 @@ export async function runRetention(ctx: Ctx, existingRunId?: string) {
       [c.RETENTION_DELIVERED_ITEMS_DAYS],
     );
     counts.fraudSignals = await count(ctx, `DELETE FROM risk_signals WHERE last_seen < now() - make_interval(days => $1)`, [c.RETENTION_FRAUD_SIGNALS_DAYS]);
+    // Deleted accounts: chat kept as evidence through the chargeback window, then erased by destroying the author's key.
+    const toShred = await many<{ id: string }>(
+      ctx.db,
+      `SELECT u.id FROM users u JOIN chat_user_keys k ON k.user_id = u.id
+        WHERE u.deleted_at < now() - make_interval(days => $1) AND k.key_ciphertext IS NOT NULL LIMIT 500`,
+      [c.RETENTION_ORDER_IP_DAYS],
+    );
+    counts.chatKeysDestroyed = 0;
+    for (const u of toShred) {
+      if (!(await chatLegalHold(ctx.db, u.id)) && (await shredUserChatKey(ctx.db, u.id, 'account deleted; retention period over'))) counts.chatKeysDestroyed++;
+    }
     counts.orderIps = await count(ctx, `UPDATE orders SET buyer_ip = NULL WHERE buyer_ip IS NOT NULL AND created_at < now() - make_interval(days => $1)`, [c.RETENTION_ORDER_IP_DAYS]);
     counts.sessions = await count(
       ctx,

@@ -66,13 +66,27 @@ describe('chat ledger', () => {
   it('is tamper-evident and append-only', async () => {
     const { buyer, roomId } = await orderRoom();
     await buyer.api.post(`/v1/chat/rooms/${roomId}/messages`, { body: 'the code did not work' });
-    await expect(h.ctx.db.query(`UPDATE chat_messages SET body = 'the code worked' WHERE room_id = $1`, [roomId])).rejects.toThrow(/append-only/);
-    // Even a superuser bypassing the trigger is caught by the hash chain.
+    await buyer.api.post(`/v1/chat/rooms/${roomId}/messages`, { body: 'the code worked' });
+    // The text is stored sealed with the author's key, never in the clear.
+    const stored = (await h.ctx.db.query(`SELECT seq, body, body_sealed, body_mac FROM chat_messages WHERE room_id = $1 AND sender_id = $2 ORDER BY seq`, [roomId, buyer.id])).rows;
+    expect(stored.map((m: any) => m.body)).toEqual(['', '']);
+    expect(JSON.stringify(stored)).not.toContain('did not work');
+    expect((await buyer.api.get(`/v1/chat/rooms/${roomId}/verify`)).body).toMatchObject({ valid: true, erasedMessages: 0 });
+    await expect(h.ctx.db.query(`UPDATE chat_messages SET body_sealed = NULL WHERE room_id = $1`, [roomId])).rejects.toThrow(/append-only/);
+
+    // Even a superuser bypassing the trigger is caught: swapping one message's sealed text for another's...
+    const [first, second] = stored;
     await h.ctx.db.query('ALTER TABLE chat_messages DISABLE TRIGGER chat_messages_append_only');
-    await h.ctx.db.query(`UPDATE chat_messages SET body = 'the code worked' WHERE room_id = $1 AND body = 'the code did not work'`, [roomId]);
+    await h.ctx.db.query(`UPDATE chat_messages SET body_sealed = $3 WHERE room_id = $1 AND seq = $2`, [roomId, first.seq, second.body_sealed]);
     await h.ctx.db.query('ALTER TABLE chat_messages ENABLE TRIGGER chat_messages_append_only');
-    const v = (await buyer.api.get(`/v1/chat/rooms/${roomId}/verify`)).body;
-    expect(v.valid).toBe(false);
+    expect((await buyer.api.get(`/v1/chat/rooms/${roomId}/verify`)).body).toMatchObject({ valid: false, brokenAtSeq: first.seq });
+
+    // ...or rewriting the digest the chain covers.
+    await h.ctx.db.query('ALTER TABLE chat_messages DISABLE TRIGGER chat_messages_append_only');
+    await h.ctx.db.query(`UPDATE chat_messages SET body_sealed = $3 WHERE room_id = $1 AND seq = $2`, [roomId, first.seq, first.body_sealed]);
+    await h.ctx.db.query(`UPDATE chat_messages SET body_mac = repeat('0', 64) WHERE room_id = $1 AND seq = $2`, [roomId, second.seq]);
+    await h.ctx.db.query('ALTER TABLE chat_messages ENABLE TRIGGER chat_messages_append_only');
+    expect((await buyer.api.get(`/v1/chat/rooms/${roomId}/verify`)).body).toMatchObject({ valid: false, brokenAtSeq: second.seq });
   });
 
   it('hides rooms from non-participants', async () => {

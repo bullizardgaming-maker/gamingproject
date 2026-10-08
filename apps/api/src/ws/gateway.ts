@@ -93,12 +93,12 @@ export function registerGateway(app: FastifyInstance, ctx: Ctx) {
             await roomForParticipant(ctx.db, frame.roomId, user);
             joined.add(frame.roomId);
             add(rooms, frame.roomId, ws);
-            const messages = await listMessages(ctx.db, frame.roomId, frame.afterSeq ?? 0, 500);
+            const messages = await listMessages(ctx.keyring, ctx.db, frame.roomId, frame.afterSeq ?? 0, 500);
             return send(ws, { type: 'history', roomId: frame.roomId, messages });
           }
           case 'sync': {
             if (!joined.has(frame.roomId)) throw new AppError(403, 'not_subscribed', 'Subscribe to the room first');
-            const messages = await listMessages(ctx.db, frame.roomId, frame.afterSeq, 500);
+            const messages = await listMessages(ctx.keyring, ctx.db, frame.roomId, frame.afterSeq, 500);
             return send(ws, { type: 'history', roomId: frame.roomId, messages });
           }
           case 'unsubscribe':
