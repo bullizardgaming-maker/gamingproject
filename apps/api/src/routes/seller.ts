@@ -18,8 +18,9 @@ import { payoutCurrency, sellerBalances, setPayoutCurrency } from '../domain/sel
 import { getTaxProfile, setTaxProfile } from '../domain/tax.js';
 import { getInvoice, invoicePdf, listInvoices } from '../domain/invoices.js';
 import { listCreditNotes } from '../domain/clawback.js';
+import { sellerDebts, shopHeldForDebt, startDebtPayment } from '../domain/debts.js';
 import { DELIVERY_FILTERS, WEBHOOK_EVENTS, createEndpoint, listDeliveries, redeliver, replayDead, rotateSecret, setEndpointActive } from '../domain/webhooks.js';
-import { badRequest, notFound } from '../lib/errors.js';
+import { AppError, badRequest, notFound } from '../lib/errors.js';
 import { me } from '../server.js';
 
 const Id = z.object({ id: z.string().uuid() });
@@ -69,6 +70,7 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
       payoutCurrency: currency,
       balances: { currency, availableCents: available, pendingEscrowCents: escrow.pending, withdrawableCents: hold.withdrawableCents, onHoldCents: hold.heldCents },
       allBalances: await sellerBalances(ctx.db, user.id),
+      debts: await sellerDebts(ctx, user.id),
       payoutHold: { level: hold.level, days: hold.holdDays, upcoming: hold.upcoming },
       withdrawalsFrozen: user.withdrawals_frozen,
       shop: await one(
@@ -146,6 +148,9 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
       .object({ paused: z.boolean(), until: z.string().datetime().optional(), message: z.string().trim().max(200).optional() })
       .parse(req.body);
     if (body.until && new Date(body.until) <= new Date()) throw badRequest('invalid_until', 'Pick a time in the future');
+    if (!body.paused && (await shopHeldForDebt(ctx.db, user.id))) {
+      throw new AppError(409, 'debt_outstanding', 'Your shop reopens as soon as your balance is settled');
+    }
     const row = await one(
       ctx.db,
       `UPDATE users SET shop_paused = $2, shop_paused_until = $3, shop_pause_message = $4 WHERE id = $1
@@ -199,6 +204,13 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     const { currency } = z.object({ currency: z.string().length(3).toUpperCase().optional() }).parse(req.query);
     const id = me(req).id;
     return withdrawable(ctx, ctx.db, id, currency ?? (await payoutCurrency(ctx, ctx.db, id)));
+  });
+  app.get('/seller/debts', async (req) => sellerDebts(ctx, me(req).id));
+  app.post('/seller/debts/:id/pay', async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const { amountCents } = z.object({ amountCents: z.number().int().positive().optional() }).parse(req.body ?? {});
+    const user = me(req);
+    return reply.status(201).send(await startDebtPayment(ctx, user, id, amountCents));
   });
   app.get('/seller/withdrawals', async (req) => many(ctx.db, 'SELECT * FROM withdrawals WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100', [me(req).id]));
 

@@ -183,6 +183,30 @@ export const TEMPLATES = {
     subject: () => 'Your staff access changed',
     body: (d, link) => `Your Bullizard staff roles are now: ${d.roles.length ? d.roles.join(', ') : 'none'} (changed by ${d.by}). If this is unexpected, contact security immediately. ${link('/account')}`,
   },
+  debt_reminder: {
+    category: 'account',
+    subject: (d) => (d.first ? `Your balance is ${money(-d.amount_cents, d.currency)}` : `Reminder: you owe ${money(d.amount_cents, d.currency)}`),
+    body: (d, link) =>
+      `Your Bullizard balance is below zero by ${money(d.amount_cents, d.currency)} after a refund or chargeback. New sales pay it down automatically, or you can pay it now by card. ` +
+      `Withdrawals are paused until it's settled, and if it's still unpaid on ${when(d.pause_at)} your shop will be paused.\n\n${link('/sell/money')}`,
+  },
+  debt_shop_paused: {
+    category: 'account',
+    subject: () => 'Your shop is paused until your balance is settled',
+    body: (d, link) =>
+      `Your balance is still below zero by ${money(d.amount_cents, d.currency)}, so your listings are hidden and can't be bought. ` +
+      `Orders already paid still need to be delivered. Pay the balance to reopen your shop straight away.\n\n${link('/sell/money')}`,
+  },
+  debt_cleared: {
+    category: 'selling',
+    subject: () => 'Your balance is settled',
+    body: (d, link) => `Your ${d.currency} balance is back above zero${d.reason === 'written_off' ? ' (we wrote off the remainder)' : ''}. ${d.resumed ? 'Your shop is open again. ' : ''}Withdrawals are available as usual.\n\n${link('/sell/money')}`,
+  },
+  debt_escalated: {
+    category: 'operations',
+    subject: (d) => `Seller debt unpaid: ${money(d.amount_cents, d.currency)}`,
+    body: (d, link) => `A seller has owed ${money(d.amount_cents, d.currency)} past the reminder period; their shop is now paused. Review it, or write it off with a ledger adjustment: ${link('/admin')}`,
+  },
   account_locked: {
     category: 'security',
     subject: () => 'Sign-in paused after failed attempts',

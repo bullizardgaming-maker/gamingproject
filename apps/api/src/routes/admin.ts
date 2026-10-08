@@ -13,6 +13,7 @@ import { ROLE_PERMISSIONS, STAFF_ROLES, permissionsOf, rolesOf } from '../domain
 import { notify } from '../domain/notifications.js';
 import { refundAfterRelease } from '../domain/clawback.js';
 import { addNote, decideCase, getCase, listCases, openCase, refreshLists, rescreenSellers, runMonitoring, screenUser } from '../domain/aml.js';
+import { collectDebts, listDebts } from '../domain/debts.js';
 import { requirePermission } from '../server.js';
 import { audit, listAudit } from '../domain/audit.js';
 import { createPromo, listPromos, setPromoActive } from '../domain/promos.js';
@@ -240,6 +241,19 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     currency: z.string().length(3).toUpperCase().default(ctx.cfg.SETTLEMENT_CURRENCY),
     amountCents: z.number().int(),
   });
+  // --- Seller debts ---------------------------------------------------------------------
+  app.get('/admin/debts', async (req) => {
+    requirePermission(req, 'ledger.view');
+    const { status } = z.object({ status: z.enum(['open', 'closed']).default('open') }).parse(req.query);
+    return listDebts(ctx, status);
+  });
+  app.post('/admin/debts/run', async (req) => {
+    requirePermission(req, 'ledger.adjust');
+    const r = await collectDebts(ctx);
+    await audit(ctx.db, req, 'debts.collection_run', { type: 'seller_debts', id: 'all' }, r);
+    return r;
+  });
+
   app.get('/admin/ledger/adjustments', async (req) => {
     requirePermission(req, 'ledger.adjust');
     return listAdjustments(ctx);

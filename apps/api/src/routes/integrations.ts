@@ -6,6 +6,7 @@ import { closeChargeback, receiveChargeback } from '../domain/chargebacks.js';
 import { handleChainEvent, handlePaymentCaptured, type ChainEvent } from '../domain/orders.js';
 import { applyKycResult } from '../domain/users.js';
 import { applyPayoutAccountUpdate } from '../domain/payouts.js';
+import { debtPaymentByRef, handleDebtPaymentCaptured } from '../domain/debts.js';
 import { hmacSha256, safeEqual } from '../lib/crypto.js';
 import { badRequest, notFound, unauthorized } from '../lib/errors.js';
 import { MockPaymentProvider } from '../providers/payments/mock.js';
@@ -14,6 +15,8 @@ import type { PaymentEvent } from '../providers/payments/types.js';
 export async function processPaymentEvent(ctx: Ctx, ev: PaymentEvent) {
   switch (ev.type) {
     case 'payment.captured':
+      // The same PSP checkout also takes sellers' debt repayments.
+      if (await debtPaymentByRef(ctx.db, ev.ref)) return handleDebtPaymentCaptured(ctx, ev);
       return handlePaymentCaptured(ctx, ev);
     case 'chargeback.created':
       return receiveChargeback(ctx, { paymentRef: ev.paymentRef, disputeRef: ev.disputeRef, network: ev.network, reasonCode: ev.reasonCode, amountCents: ev.amountCents });
@@ -47,8 +50,16 @@ export async function integrationRoutes(app: FastifyInstance, ctx: Ctx) {
   // --- Mock hosted checkout (development only) ---------------------------------------
   if (ctx.payments instanceof MockPaymentProvider) {
     const mock = ctx.payments;
-    const orderByRef = (ref: string) =>
-      maybeOne(ctx.db, `SELECT o.*, f.title FROM orders o JOIN offers f ON f.id = o.offer_id WHERE o.payment_provider = 'mock' AND o.payment_ref = $1`, [ref]);
+    // A checkout is for an order or for a seller repaying a negative balance; both look alike here.
+    const orderByRef = async (ref: string) =>
+      (await maybeOne(ctx.db, `SELECT o.*, f.title FROM orders o JOIN offers f ON f.id = o.offer_id WHERE o.payment_provider = 'mock' AND o.payment_ref = $1`, [ref])) ??
+      (await maybeOne(
+        ctx.db,
+        `SELECT id, seller_id AS buyer_id, amount_cents AS presentment_amount_cents, currency AS presentment_currency, 1 AS quantity,
+                'Balance repayment' AS title, NULL AS buyer_ip_country, true AS is_debt
+           FROM debt_payments WHERE payment_provider = 'mock' AND payment_ref = $1`,
+        [ref],
+      ));
 
     app.get('/payments/mock/checkout/:ref', async (req, reply) => {
       const { ref } = z.object({ ref: z.string().max(100) }).parse(req.params);
@@ -107,7 +118,7 @@ small{color:#8b93a7}</style></head><body><form method="post" action="/v1/payment
       const parsed = await mock.parseWebhook(Buffer.from(raw), { 'x-mock-signature': mock.sign(raw) });
       await processPaymentEvent(ctx, parsed);
       if ((req.headers.accept ?? '').includes('application/json')) return { paid: true, orderId: order.id };
-      return reply.redirect(`${ctx.cfg.PUBLIC_WEB_URL}/orders/${order.id}?checkout=success`, 303);
+      return reply.redirect(order.is_debt ? `${ctx.cfg.PUBLIC_WEB_URL}/sell/money?repaid=1` : `${ctx.cfg.PUBLIC_WEB_URL}/orders/${order.id}?checkout=success`, 303);
     });
   }
 

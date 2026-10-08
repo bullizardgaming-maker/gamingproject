@@ -356,6 +356,14 @@ export async function requestWithdrawal(ctx: Ctx, userId: string, amountCents: n
     const { aml_hold } = await one<{ aml_hold: boolean }>(s.tx, 'SELECT aml_hold FROM users WHERE id = $1', [userId]);
     if (aml_hold) throw new AppError(423, 'withdrawals_frozen', 'Withdrawals are paused while we complete a routine review');
     if (!user.stripe_account_id || !user.payouts_enabled) throw badRequest('no_payout_account', 'Set up your payout account first');
+    // A balance below zero in any currency must be settled first (see domain/debts.ts).
+    const owing = await maybeOne<{ currency: string }>(
+      s.tx,
+      `SELECT a.currency FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id
+        WHERE a.kind = 'seller_available' AND a.owner_id = $1 GROUP BY a.currency HAVING SUM(e.amount_cents) < 0 LIMIT 1`,
+      [userId],
+    );
+    if (owing) throw new AppError(409, 'debt_outstanding', `Your ${owing.currency} balance is below zero; settle it before withdrawing`);
     const bal = await withdrawable(ctx, s.tx, userId, currency);
     if (amountCents > bal.withdrawableCents) {
       throw badRequest(
