@@ -18,6 +18,7 @@ import { isStaff as isStaffUser, permissionsOf } from '../domain/permissions.js'
 import {
   getPushPreferences, listInbox, listPushSubscriptions, markAllRead, markRead, removePushSubscription, setPushPreferences, subscribePush, unreadCount, unsubscribePush,
 } from '../domain/inbox.js';
+import { confirmSubscription, getIncident, statusSummary, subscribe, unsubscribe } from '../domain/status.js';
 import { me, requestMeta } from '../server.js';
 
 const Credentials = z.object({ email: z.string().email().max(254), password: z.string().min(10).max(200), captchaToken: z.string().max(4096).optional() });
@@ -307,6 +308,19 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     reply.header('Cache-Control', 'public, max-age=60');
     return gameDirectory(ctx.dbRead);
   });
+
+  // --- Public status page -----------------------------------------------------------------
+  app.get('/status', async (_req, reply) => {
+    reply.header('Cache-Control', 'public, max-age=15');
+    return statusSummary(ctx);
+  });
+  app.get('/status/incidents/:id', async (req) => getIncident(ctx, z.object({ id: z.string().uuid() }).parse(req.params).id));
+  app.post('/status/subscribe', strict, async (req, reply) => {
+    const { email } = z.object({ email: z.string().max(254) }).parse(req.body);
+    return reply.status(202).send(await subscribe(ctx, email));
+  });
+  app.post('/status/confirm', strict, async (req) => confirmSubscription(ctx, z.object({ token: z.string().min(10).max(100) }).parse(req.body).token));
+  app.post('/status/unsubscribe', strict, async (req) => unsubscribe(ctx, z.object({ token: z.string().min(10).max(120) }).parse(req.body).token));
 
   app.get('/games', async (req) => {
     const { q } = z.object({ q: z.string().trim().min(1).max(60) }).parse(req.query);

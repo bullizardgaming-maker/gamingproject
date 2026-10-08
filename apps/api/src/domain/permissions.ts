@@ -28,6 +28,7 @@ export const PERMISSIONS = [
   'retention.manage',
   'audit.view',
   'staff.manage',
+  'status.manage', // incidents and maintenance on the public status page
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -36,7 +37,7 @@ export type StaffRole = (typeof STAFF_ROLES)[number];
 
 export const ROLE_PERMISSIONS: Record<StaffRole, readonly Permission[]> = {
   arbiter: ['orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'orders.refund_after_release'],
-  support: ['orders.view_any', 'reviews.moderate', 'ledger.view'],
+  support: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage'],
   finance: [
     'chargebacks.manage', 'orders.refund_after_release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view', 'ledger.adjust',
     'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage',

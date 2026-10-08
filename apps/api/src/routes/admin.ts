@@ -15,6 +15,7 @@ import { refundAfterRelease } from '../domain/clawback.js';
 import { addNote, decideCase, getCase, listCases, openCase, refreshLists, rescreenSellers, runMonitoring, screenUser } from '../domain/aml.js';
 import { collectDebts, listDebts } from '../domain/debts.js';
 import { fraudModelReport } from '../domain/fraud.js';
+import { COMPONENTS, COMPONENT_IDS, createIncident, listIncidents, updateIncident } from '../domain/status.js';
 import { requirePermission } from '../server.js';
 import { audit, listAudit } from '../domain/audit.js';
 import { createPromo, listPromos, setPromoActive } from '../domain/promos.js';
@@ -242,6 +243,40 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     currency: z.string().length(3).toUpperCase().default(ctx.cfg.SETTLEMENT_CURRENCY),
     amountCents: z.number().int(),
   });
+  // --- Status page incidents ------------------------------------------------------------
+  app.get('/admin/incidents', async (req) => {
+    requirePermission(req, 'status.manage');
+    return { components: COMPONENT_IDS.map((id) => ({ id, name: COMPONENTS[id].name })), incidents: await listIncidents(ctx) };
+  });
+  app.post('/admin/incidents', async (req, reply) => {
+    const staff = requirePermission(req, 'status.manage');
+    const body = z
+      .object({
+        kind: z.enum(['incident', 'maintenance']).default('incident'),
+        title: z.string().trim().min(5).max(140),
+        impact: z.enum(['minor', 'major', 'critical']).default('minor'),
+        components: z.array(z.string()).max(20).default([]),
+        body: z.string().trim().min(5).max(4_000),
+        scheduledStart: z.string().datetime().optional(),
+        scheduledEnd: z.string().datetime().optional(),
+        notify: z.boolean().default(true),
+      })
+      .parse(req.body);
+    const incident: any = await createIncident(ctx, staff.id, body);
+    await audit(ctx.db, req, 'status.incident_created', { type: 'incident', id: incident.id }, { title: body.title, kind: body.kind });
+    return reply.status(201).send(incident);
+  });
+  app.post('/admin/incidents/:id/updates', async (req) => {
+    const staff = requirePermission(req, 'status.manage');
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z
+      .object({ status: z.string(), body: z.string().trim().min(3).max(4_000), impact: z.enum(['none', 'minor', 'major', 'critical']).optional(), notify: z.boolean().default(true) })
+      .parse(req.body);
+    const incident = await updateIncident(ctx, staff.id, id, body);
+    await audit(ctx.db, req, 'status.incident_updated', { type: 'incident', id }, { status: body.status });
+    return incident;
+  });
+
   // --- Fraud model evaluation -------------------------------------------------------------
   app.get('/admin/fraud/model-report', async (req) => {
     requirePermission(req, 'risk.review');
