@@ -79,6 +79,15 @@ const Env = z.object({
   FX_STATIC_RATES: z.string().default('{"EUR":0.92,"GBP":0.79}'),
   FX_SPREAD_BPS: z.coerce.number().int().min(0).max(1000).default(100),
   FX_MAX_AGE_HOURS: z.coerce.number().default(48),
+  // Buying EUR/GBP ahead of seller payouts (domain/fxtopups.ts). none = planning only, record conversions by hand.
+  FX_EXCHANGE_PROVIDER: z.enum(['none', 'mock', 'wise']).default('none'),
+  WISE_API_URL: z.string().default('https://api.transferwise.com'),
+  WISE_API_TOKEN: z.string().optional(),
+  WISE_PROFILE_ID: z.string().optional(),
+  FX_TOPUP_BUFFER_BPS: z.coerce.number().int().min(0).max(10_000).default(500),
+  FX_TOPUP_MIN_CENTS: z.coerce.number().int().min(1).default(10_000),
+  // Proposals costing up to this much (settlement currency) execute without a person approving. 0 = always ask.
+  FX_TOPUP_AUTO_APPROVE_CENTS: z.coerce.number().int().min(0).default(0),
   // Tax on commission and invoices. The platform's legal entity:
   PLATFORM_LEGAL_NAME: z.string().default('Bullizard Ltd'),
   PLATFORM_TAX_COUNTRY: z.string().length(2).toUpperCase().default('IE'),

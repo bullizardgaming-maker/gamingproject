@@ -81,6 +81,7 @@ Highlights of what the tests prove: exactly one of 25 simultaneous buyers gets a
 - `POST /v1/chat/rooms/:id/attachments` (screenshot evidence, malware-scanned)
 - Notifications: `GET /v1/me/notifications`, `GET /v1/push/config`, `POST /v1/me/push-subscriptions`, `PATCH /v1/me/push-preferences`
 - Seller reports: `GET /v1/seller/exports/{sales,statement,payouts,invoices,credit_notes}` (CSV/JSON), `GET /v1/seller/credit-notes`
+- FX top-ups: `GET /v1/admin/fx/topups`, `POST /v1/admin/fx/topups/plan`, `POST /v1/admin/fx/topups/:id/decide` (Wise or mock exchange)
 - Status page: `GET /v1/status` (public), `POST /v1/status/subscribe`; staff `POST /v1/admin/incidents`, `POST /v1/admin/incidents/:id/updates`
 - Fraud model evaluation: `GET /v1/admin/fraud/model-report` (heuristic vs graph model on labelled orders; `FRAUD_GNN_MODE=shadow|enforce`)
 - Seller debts: `GET /v1/seller/debts`, `POST /v1/seller/debts/:id/pay` (card repayment); staff `GET /v1/admin/debts`

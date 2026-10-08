@@ -202,6 +202,11 @@ export const TEMPLATES = {
     subject: () => 'Your balance is settled',
     body: (d, link) => `Your ${d.currency} balance is back above zero${d.reason === 'written_off' ? ' (we wrote off the remainder)' : ''}. ${d.resumed ? 'Your shop is open again. ' : ''}Withdrawals are available as usual.\n\n${link('/sell/money')}`,
   },
+  fx_topup_proposed: {
+    category: 'operations',
+    subject: (d) => `Approve buying ${money(d.to_cents, d.currency)}`,
+    body: (d, link) => `Sellers are owed more ${d.currency} than the platform holds. Proposed: buy ${money(d.to_cents, d.currency)} for about ${money(d.est_from_cents, d.from_currency)}. Approve or reject it: ${link('/admin')}`,
+  },
   debt_escalated: {
     category: 'operations',
     subject: (d) => `Seller debt unpaid: ${money(d.amount_cents, d.currency)}`,

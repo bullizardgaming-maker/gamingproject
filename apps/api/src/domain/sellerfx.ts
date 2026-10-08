@@ -118,22 +118,27 @@ export async function recordConversion(ctx: Ctx, adminId: string, c: { fromCurre
   assertSupported(ctx, from);
   assertSupported(ctx, to);
   if (from === to) throw badRequest('same_currency', 'Pick two different currencies');
-  return withTx(ctx.db, async (tx) => {
-    const row = await one(
-      tx,
-      `INSERT INTO fx_conversions (from_currency, from_cents, to_currency, to_cents, reference, recorded_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [from, c.fromCents, to, c.toCents, c.reference, adminId],
-    );
-    const memo = `fx_conversion:${row.id}`;
-    // Money leaves the `from` balance and arrives in the `to` balance; the position moves with it.
-    await post(tx, [
-      { account: await accountId(tx, 'fx_position', from), amountCents: -c.fromCents },
-      { account: await accountId(tx, 'fx_conversion', from), amountCents: c.fromCents },
-    ], memo);
-    await post(tx, [
-      { account: await accountId(tx, 'fx_conversion', to), amountCents: -c.toCents },
-      { account: await accountId(tx, 'fx_position', to), amountCents: c.toCents },
-    ], memo);
-    return row;
-  });
+  return withTx(ctx.db, (tx) => bookConversion(tx, adminId, { ...c, fromCurrency: from, toCurrency: to }));
+}
+
+/** Book a conversion in the ledger (inside the caller's transaction). `recordedBy` null: executed automatically. */
+export async function bookConversion(tx: Tx, recordedBy: string | null, c: { fromCurrency: string; fromCents: number; toCurrency: string; toCents: number; reference: string }) {
+  const from = c.fromCurrency;
+  const to = c.toCurrency;
+  const row = await one(
+    tx,
+    `INSERT INTO fx_conversions (from_currency, from_cents, to_currency, to_cents, reference, recorded_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+    [from, c.fromCents, to, c.toCents, c.reference, recordedBy],
+  );
+  const memo = `fx_conversion:${row.id}`;
+  // Money leaves the `from` balance and arrives in the `to` balance; the position moves with it.
+  await post(tx, [
+    { account: await accountId(tx, 'fx_position', from), amountCents: -c.fromCents },
+    { account: await accountId(tx, 'fx_conversion', from), amountCents: c.fromCents },
+  ], memo);
+  await post(tx, [
+    { account: await accountId(tx, 'fx_conversion', to), amountCents: -c.toCents },
+    { account: await accountId(tx, 'fx_position', to), amountCents: c.toCents },
+  ], memo);
+  return row;
 }

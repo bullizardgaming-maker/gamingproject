@@ -16,6 +16,7 @@ import { addNote, decideCase, getCase, listCases, openCase, refreshLists, rescre
 import { collectDebts, listDebts } from '../domain/debts.js';
 import { fraudModelReport } from '../domain/fraud.js';
 import { COMPONENTS, COMPONENT_IDS, createIncident, listIncidents, updateIncident } from '../domain/status.js';
+import { decideTopUp, listTopUps, planTopUps } from '../domain/fxtopups.js';
 import { requirePermission } from '../server.js';
 import { audit, listAudit } from '../domain/audit.js';
 import { createPromo, listPromos, setPromoActive } from '../domain/promos.js';
@@ -351,6 +352,24 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/admin/fx/position', async (req) => {
     requirePermission(req, 'fx.manage');
     return { positions: await fxPosition(ctx), conversions: await many(ctx.db, 'SELECT * FROM fx_conversions ORDER BY created_at DESC LIMIT 50') };
+  });
+  app.get('/admin/fx/topups', async (req) => {
+    requirePermission(req, 'fx.manage');
+    return { provider: ctx.fxExchange?.name ?? null, autoApproveCents: ctx.cfg.FX_TOPUP_AUTO_APPROVE_CENTS, topups: await listTopUps(ctx) };
+  });
+  app.post('/admin/fx/topups/plan', async (req) => {
+    const admin = requirePermission(req, 'fx.manage');
+    const created = await planTopUps(ctx, admin.id);
+    await audit(ctx.db, req, 'fx.topups_planned', { type: 'fx_topup', id: null }, { created: created.map((t: any) => t.id) });
+    return created;
+  });
+  app.post('/admin/fx/topups/:id/decide', async (req) => {
+    const admin = requirePermission(req, 'fx.manage');
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const { approve } = z.object({ approve: z.boolean() }).parse(req.body);
+    const t = await decideTopUp(ctx, admin.id, id, approve);
+    await audit(ctx.db, req, approve ? 'fx.topup_approved' : 'fx.topup_rejected', { type: 'fx_topup', id }, { status: t.status });
+    return t;
   });
   app.post('/admin/fx/conversions', async (req, reply) => {
     const admin = requirePermission(req, 'fx.manage');

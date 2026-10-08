@@ -13,6 +13,7 @@ import { maybeRunAml } from './domain/aml.js';
 import { maybeCollectDebts } from './domain/debts.js';
 import { maybeLabelFraudOutcomes } from './domain/fraud.js';
 import { dispatchStatusEmails } from './domain/status.js';
+import { maybePlanTopUps } from './domain/fxtopups.js';
 
 /**
  * Background jobs. Every job is safe to run on several worker processes at
@@ -47,6 +48,7 @@ export async function runJobsOnce(ctx: Ctx) {
   await job(ctx, 'invoices', () => maybeIssueInvoices(ctx), null);
   await job(ctx, 'debt_collection', () => maybeCollectDebts(ctx), null);
   await job(ctx, 'fraud_labels', () => maybeLabelFraudOutcomes(ctx), null);
+  await job(ctx, 'fx_topups', () => maybePlanTopUps(ctx), null);
   // Send after the jobs above so emails they queued go out in the same tick.
   const emails = await job(ctx, 'emails', () => dispatchEmails(ctx), 0);
   await job(ctx, 'inbox', () => dispatchInbox(ctx), 0);

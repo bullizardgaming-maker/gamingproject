@@ -10,7 +10,8 @@ import type { PaymentProvider } from './providers/payments/types.js';
 import { MockKycProvider } from './providers/kyc/mock.js';
 import { SumsubKycProvider } from './providers/kyc/sumsub.js';
 import type { KycProvider } from './providers/kyc/types.js';
-import { EcbFxProvider, StaticFxProvider, type FxProvider } from './domain/fx.js';
+import { EcbFxProvider, StaticFxProvider, getRate, type FxProvider } from './domain/fx.js';
+import { MockFxExchange, WiseFxExchange, type FxExchange } from './providers/fxexchange.js';
 import { ClamdScanner, EicarOnlyScanner, LocalEncryptedStorage, S3Storage, type FileStorage, type MalwareScanner } from './providers/files.js';
 import { AwsKmsSigner, LocalKeySigner, type EscrowSigner } from './providers/signer.js';
 import { NoPush, WebPushSender, type PushSender } from './providers/push.js';
@@ -46,6 +47,8 @@ export interface Ctx {
   messenger: Messenger;
   phoneChecker: PhoneChecker;
   fx: FxProvider;
+  /** Executes currency purchases for FX top-ups; null when they are recorded by hand. */
+  fxExchange: FxExchange | null;
   storage: FileStorage;
   scanner: MalwareScanner;
   captcha: CaptchaVerifier;
@@ -76,7 +79,7 @@ export function createContext(cfg: Config, log: Logger, overrides: Partial<Ctx> 
         )
       : new MockKycProvider(cfg.JWT_SECRET));
   const db = overrides.db ?? createPool(cfg.DATABASE_URL);
-  return {
+  const ctx: Ctx = {
     cfg,
     db,
     dbRead: overrides.dbRead ?? new ReadPool(db, cfg.DATABASE_READ_URL ? createPool(cfg.DATABASE_READ_URL, undefined, { connectTimeoutMs: 5_000 }) : null, cfg.REPLICA_MAX_LAG_SECONDS),
@@ -112,7 +115,22 @@ export function createContext(cfg: Config, log: Logger, overrides: Partial<Ctx> 
         : new MockPhoneChecker()),
     log,
     apiBaseUrl: overrides.apiBaseUrl ?? apiBaseUrl,
+    fxExchange: null,
   };
+  ctx.fxExchange = overrides.fxExchange !== undefined ? overrides.fxExchange : buildFxExchange(cfg, ctx);
+  return ctx;
+}
+
+function buildFxExchange(cfg: Config, ctx: Ctx): FxExchange | null {
+  if (cfg.FX_EXCHANGE_PROVIDER === 'wise') {
+    return new WiseFxExchange({ baseUrl: cfg.WISE_API_URL, token: required(cfg.WISE_API_TOKEN, 'WISE_API_TOKEN'), profileId: required(cfg.WISE_PROFILE_ID, 'WISE_PROFILE_ID') });
+  }
+  if (cfg.FX_EXCHANGE_PROVIDER === 'mock') {
+    if (cfg.NODE_ENV === 'production') throw new Error('FX_EXCHANGE_PROVIDER=mock is not allowed in production');
+    // Rates are per 1 unit of the settlement currency, so from -> to is rate(to) / rate(from).
+    return new MockFxExchange(async (from, to) => (await getRate(ctx, ctx.db, to)) / (await getRate(ctx, ctx.db, from)));
+  }
+  return null;
 }
 
 function buildStorage(cfg: Config, keyring: Keyring): FileStorage {
