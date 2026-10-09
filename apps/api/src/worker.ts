@@ -17,6 +17,7 @@ import { maybePlanTopUps } from './domain/fxtopups.js';
 import { maybeCheckWatches } from './domain/watches.js';
 import { autoResolveTickets } from './domain/support.js';
 import { expireRequests } from './domain/requests.js';
+import { syncSales } from './domain/discounts.js';
 import { maybeRefreshResponseTimes } from './domain/presence.js';
 
 /**
@@ -47,6 +48,7 @@ export async function runJobsOnce(ctx: Ctx) {
     job(ctx, 'fx_rates', () => maybeRefreshRates(ctx), 0),
     job(ctx, 'support_auto_resolve', () => autoResolveTickets(ctx), 0),
     job(ctx, 'requests_expire', () => expireRequests(ctx), 0),
+    job(ctx, 'sales', () => syncSales(ctx), 0),
     job(ctx, 'response_times', () => maybeRefreshResponseTimes(ctx), null),
   ]);
   const reconciled = await job(ctx, 'reconciliation_scheduler', () => maybeRunScheduledReconciliation(ctx), false);

@@ -171,6 +171,9 @@ export function OfferTable({ offers, showGame = false, showSeller = true, empty 
               </div>
               <span className="hidden font-mono text-sm text-muted-foreground md:block">{o.stock}</span>
               <div className="order-2 flex flex-col items-end justify-center md:order-none">
+                {o.regular_price_cents != null && o.regular_price_cents > o.price_cents && (
+                  <span className="font-mono text-xs text-muted-foreground line-through">{money(o.regular_price_cents, o.currency)}</span>
+                )}
                 <span className="font-mono text-base font-semibold">{price.offer(o as any)}</span>
                 {!!o.price_tiers?.length && (
                   <span className="text-xs text-released">{t('tier.bulkFrom', { price: money(o.price_tiers.at(-1)!.priceCents, o.currency), qty: o.price_tiers.at(-1)!.minQty })}</span>

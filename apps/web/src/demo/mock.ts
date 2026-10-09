@@ -7,10 +7,10 @@
  */
 import { CATEGORIES, DEMO_CODE, seed, type DemoState, type DemoUser } from './seed';
 import { CATEGORY_DEFAULTS, GAME_SETS, attributesFor, cleanAttributes } from '../../../api/src/domain/attributeSets';
-import { checkTiers, unitPriceFor } from '../../../api/src/domain/priceTiers';
+import { checkTiers, effectivePrice, unitPriceFor } from '../../../api/src/domain/priceTiers';
 import { detectOffPlatform, matchTerms } from '../../../api/src/domain/safety';
 
-const KEY = 'bz.demo.v10';
+const KEY = 'bz.demo.v11';
 const day = 86_400_000;
 const now = () => new Date().toISOString();
 const rid = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2) + Date.now().toString(16));
@@ -112,8 +112,12 @@ function presenceOf(id: string) {
 function offerView(o: any) {
   const s = sellerStats(o.seller_id);
   const pr = presenceOf(o.seller_id);
+  const price = effectivePrice(o);
   return {
     ...o,
+    price_cents: price,
+    regular_price_cents: o.price_cents,
+    sale_ends_at: price < o.price_cents ? o.sale_ends_at : null,
     seller_online: pr.online,
     seller_response_minutes: pr.response_minutes,
     inventory: undefined,
@@ -249,8 +253,8 @@ function seedOrdersFor(buyer: DemoUser) {
   save();
 }
 
-function createOrderRecord(buyer: DemoUser, offer: any, quantity: number, rail: 'fiat' | 'crypto') {
-  const amount = unitPriceFor(offer, quantity) * quantity;
+function createOrderRecord(buyer: DemoUser, offer: any, quantity: number, rail: 'fiat' | 'crypto', sellerDiscount = 0) {
+  const amount = unitPriceFor({ price_cents: effectivePrice(offer), price_tiers: offer.price_tiers }, quantity) * quantity - sellerDiscount;
   // (a cart sets checkout_id on the orders it creates)
   const bps = rateFor(offer);
   const commission = Math.round((amount * bps) / 10_000);
@@ -515,8 +519,70 @@ route('POST', '/orders', ({ me, body }) => {
   const qty = Number(body.quantity ?? 1);
   const available = offer.delivery_mode === 'auto' ? offer.inventory.length : offer.stock;
   if (available < qty) fail(409, 'out_of_stock', 'Not enough stock for this order');
-  const o = createOrderRecord(u, offer, qty, body.rail ?? 'fiat');
+  const code = body.sellerCode ? sellerCodeQuote(offer, u, qty, body.sellerCode) : null;
+  const o = createOrderRecord(u, offer, qty, body.rail ?? 'fiat', code?.discount ?? 0);
+  if (code) Object.assign(o, { seller_code_id: code.c.id, seller_discount_cents: code.discount });
   return { order: orderDetail(o), checkoutUrl: o.rail === 'fiat' ? `/demo-checkout/${o.id}` : null };
+});
+// --- Seller-funded discounts: sales and codes ---------------------------------------------
+function sellerCodeQuote(offer: any, buyer: DemoUser, qty: number, text: string) {
+  const c = state.sellerCodes.find((x) => x.seller_id === offer.seller_id && x.code.toLowerCase() === String(text).trim().toLowerCase());
+  if (!c || !c.active) fail(400, 'code_invalid', 'That code isn’t valid for this seller');
+  if (c!.ends_at && c!.ends_at <= now()) fail(400, 'code_expired', 'That code has expired');
+  const subtotal = unitPriceFor({ price_cents: effectivePrice(offer), price_tiers: offer.price_tiers }, qty) * qty;
+  if (subtotal < c!.min_order_cents) fail(400, 'code_min_order', `This code needs an order of at least ${(c!.min_order_cents / 100).toFixed(2)}`);
+  const used = state.orders.filter((o) => o.seller_code_id === c!.id && o.status !== 'cancelled');
+  if (c!.max_uses != null && used.length >= c!.max_uses) fail(400, 'code_exhausted', 'This code has been fully used');
+  if (used.filter((o) => o.buyer_id === buyer.id).length >= c!.per_buyer_limit) fail(400, 'code_used', 'You’ve already used this code');
+  return { c: c!, discount: Math.floor((subtotal * c!.percent_off) / 100), subtotal };
+}
+route('POST', '/orders/quote', ({ me, body }) => {
+  const u = need(me);
+  const offer = state.offers.find((x) => x.id === body.offerId) ?? fail(404, 'not_found', 'Listing not found');
+  const qty = Number(body.quantity ?? 1);
+  const code = body.sellerCode ? sellerCodeQuote(offer, u, qty, body.sellerCode) : null;
+  const subtotal = unitPriceFor({ price_cents: effectivePrice(offer), price_tiers: offer.price_tiers }, qty) * qty;
+  const amount = subtotal - (code?.discount ?? 0);
+  return { listingCurrency: offer.currency, amountCents: amount, chargedCents: amount, sellerDiscountCents: code?.discount ?? 0, discountCents: 0, creditCents: 0, presentmentCurrency: offer.currency, presentmentAmountCents: amount };
+});
+const ownOffer = (me: DemoUser | null, id: string) => {
+  const u = needSeller(me);
+  return state.offers.find((x) => x.id === id && x.seller_id === u.id) ?? fail(404, 'not_found', 'Offer not found');
+};
+route('PUT', '/offers/:id/sale', ({ me, params, body }) => {
+  const o = ownOffer(me, params[0]!);
+  const starts = body.startsAt ?? now();
+  if (!(body.salePriceCents < o.price_cents)) fail(400, 'invalid_sale', 'The sale price must be lower than the listing price');
+  if (!body.endsAt || body.endsAt <= now() || body.endsAt <= starts) fail(400, 'invalid_sale', 'The sale must end in the future, after it starts');
+  if (Date.parse(body.endsAt) - Date.parse(starts) > 30 * day) fail(400, 'invalid_sale', 'A sale can run for up to 30 days');
+  Object.assign(o, { sale_price_cents: body.salePriceCents, sale_starts_at: starts, sale_ends_at: body.endsAt });
+  return offerView(o);
+});
+route('DELETE', '/offers/:id/sale', ({ me, params }) => {
+  const o = ownOffer(me, params[0]!);
+  Object.assign(o, { sale_price_cents: null, sale_starts_at: null, sale_ends_at: null });
+  return offerView(o);
+});
+const codeView = (c: any) => {
+  const used = state.orders.filter((o) => o.seller_code_id === c.id && !['cancelled', 'awaiting_payment'].includes(o.status));
+  return { ...c, uses: used.length + (c.uses_before ?? 0), discount_cents: used.reduce((s, o) => s + (o.seller_discount_cents ?? 0), 0) };
+};
+route('GET', '/seller/codes', ({ me }) => state.sellerCodes.filter((c) => c.seller_id === needSeller(me).id).map(codeView));
+route('POST', '/seller/codes', ({ me, body }) => {
+  const u = needSeller(me);
+  const code = String(body.code ?? '').trim();
+  if (!/^[A-Za-z0-9_-]{3,30}$/.test(code)) fail(400, 'validation_error', 'Codes are 3–30 letters, digits, - or _');
+  if (!(body.percentOff >= 1 && body.percentOff <= 90)) fail(400, 'validation_error', 'Choose 1–90% off');
+  if (state.sellerCodes.some((c) => c.seller_id === u.id && c.code.toLowerCase() === code.toLowerCase())) fail(409, 'code_taken', 'You already have a code with that name');
+  const c = { id: rid(), seller_id: u.id, code, percent_off: body.percentOff, min_order_cents: body.minOrderCents ?? 0, max_uses: body.maxUses ?? null, per_buyer_limit: 1, starts_at: now(), ends_at: body.endsAt ?? null, active: true, created_at: now() };
+  state.sellerCodes.unshift(c);
+  return codeView(c);
+});
+route('PATCH', '/seller/codes/:id', ({ me, params, body }) => {
+  const u = needSeller(me);
+  const c = state.sellerCodes.find((x) => x.id === params[0] && x.seller_id === u.id) ?? fail(404, 'not_found', 'Code not found');
+  c.active = !!body.active;
+  return codeView(c);
 });
 // Cart: one demo payment for several orders (one per listing, each in its own escrow).
 route('POST', '/orders/cart', ({ me, body }) => {
@@ -722,7 +788,7 @@ route('POST', '/offers', ({ me, body }) => {
     id: `offer-${rid().slice(0, 8)}`, seller_id: u.id, category_slug: cat.slug, category_kind: cat.kind, game: body.game, title: body.title,
     description: body.description ?? '', price_cents: body.priceCents, currency: 'USD', delivery_mode: body.deliveryMode, delivery_hours: body.deliveryMode === 'auto' ? 0 : Number(body.deliveryHours ?? 2),
     stock: body.deliveryMode === 'manual' ? Number(body.stock ?? 1) : 0, inventory: [] as string[], status: reviewReasons.length ? 'review' : 'active', review_reasons: reviewReasons, owner_proof_status: 'none', version: 1, created_at: now(),
-    attributes: attrs.ok ? attrs.value : {}, reserved_for: null, request_id: null, price_tiers: tiers.ok ? tiers.value : [],
+    attributes: attrs.ok ? attrs.value : {}, reserved_for: null, request_id: null, price_tiers: tiers.ok ? tiers.value : [], sale_price_cents: null, sale_starts_at: null, sale_ends_at: null,
   };
   state.offers.unshift(o);
   if (reviewReasons.length) notify(u.id, 'selling', 'listing_review', 'Your listing is being reviewed', 'It mentions something our rules ask us to check, so it’s hidden until a moderator looks at it.', '/sell');
@@ -1004,7 +1070,7 @@ route('POST', '/requests/:id/proposals/:pid/accept', ({ me, params }) => {
   const offer = {
     id: `offer-r-${rid().slice(0, 8)}`, seller_id: p.seller_id, category_slug: r.category_slug, category_kind: CATEGORIES.find((c) => c.slug === r.category_slug)!.kind, game: r.game,
     title: r.title, description: [r.description, p.message].filter(Boolean).join('\n\n'), price_cents: p.price_cents, currency: r.currency, delivery_mode: 'manual' as const,
-    delivery_hours: p.delivery_hours, stock: 1, inventory: [] as string[], price_tiers: [], review_reasons: [] as string[], status: 'active', owner_proof_status: 'none', attributes: r.attributes ?? {}, version: 1, created_at: now(),
+    delivery_hours: p.delivery_hours, stock: 1, inventory: [] as string[], price_tiers: [], review_reasons: [] as string[], sale_price_cents: null, sale_starts_at: null, sale_ends_at: null, status: 'active', owner_proof_status: 'none', attributes: r.attributes ?? {}, version: 1, created_at: now(),
     reserved_for: u.id, request_id: r.id,
   };
   state.offers.push(offer);

@@ -7,7 +7,8 @@ import { createApiKey, listApiKeys, revokeApiKey } from '../domain/apikeys.js';
 import { SELLER_TIERS, sellerTier } from '../domain/commission.js';
 import { recordSignals } from '../domain/fraud.js';
 import { sellerAvailable } from '../domain/ledger.js';
-import { createOffer, requireSeller, submitOwnerProof, updateOffer, uploadInventory } from '../domain/offers.js';
+import { createOffer, getOffer, requireSeller, submitOwnerProof, updateOffer, uploadInventory } from '../domain/offers.js';
+import { createSellerCode, endSale, listSellerCodes, setSale, setSellerCodeActive } from '../domain/discounts.js';
 import { requestWithdrawal } from '../domain/users.js';
 import { payoutStatus, startPayoutOnboarding } from '../domain/payouts.js';
 import { withdrawable } from '../domain/payoutholds.js';
@@ -174,6 +175,41 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     );
     const open = await one<{ n: number }>(ctx.db, `SELECT count(*)::int AS n FROM orders WHERE seller_id = $1 AND status = 'paid'`, [user.id]);
     return { ...row, ordersStillToDeliver: open.n };
+  });
+
+  // ---- Seller-funded discounts: timed sales and discount codes ----
+  app.put('/offers/:id/sale', async (req) => {
+    const user = me(req);
+    requireSeller(user);
+    const body = z.object({ salePriceCents: z.number().int().positive().max(100_000_00), startsAt: z.string().datetime().optional(), endsAt: z.string().datetime() }).parse(req.body);
+    await setSale(ctx, user.id, Id.parse(req.params).id, body);
+    return getOffer(ctx.db, Id.parse(req.params).id);
+  });
+  app.delete('/offers/:id/sale', async (req) => {
+    const user = me(req);
+    await endSale(ctx, user.id, Id.parse(req.params).id);
+    return getOffer(ctx.db, Id.parse(req.params).id);
+  });
+  app.get('/seller/codes', async (req) => listSellerCodes(ctx.db, me(req).id));
+  app.post('/seller/codes', async (req, reply) => {
+    const user = me(req);
+    requireSeller(user);
+    const body = z
+      .object({
+        code: z.string().trim().min(3).max(30).regex(/^[A-Za-z0-9_-]+$/, 'Letters, digits, - and _ only'),
+        percentOff: z.number().int().min(1).max(90),
+        minOrderCents: z.number().int().min(0).max(100_000_00).optional(),
+        maxUses: z.number().int().positive().max(1_000_000).optional(),
+        perBuyerLimit: z.number().int().positive().max(100).optional(),
+        startsAt: z.string().datetime().optional(),
+        endsAt: z.string().datetime().optional(),
+      })
+      .parse(req.body);
+    return reply.status(201).send(await createSellerCode(ctx.db, user.id, body));
+  });
+  app.patch('/seller/codes/:id', async (req) => {
+    const { active } = z.object({ active: z.boolean() }).parse(req.body);
+    return setSellerCodeActive(ctx.db, me(req).id, Id.parse(req.params).id, active);
   });
 
   /** Whether buyers see "Online now" for this seller. */

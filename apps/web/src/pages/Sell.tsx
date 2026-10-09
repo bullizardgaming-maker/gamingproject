@@ -6,7 +6,7 @@ import { useSession } from '../session';
 import { SellerMoney } from './SellerMoney';
 import { SellerAnalytics } from './SellerAnalytics';
 import { usePageMeta } from '@/lib/seo';
-import { t } from '../i18n';
+import { intlLocale, t } from '../i18n';
 import { attrLabel, attributesFor } from '@/lib/attributes';
 import { categoryLabel, useGames } from '@/lib/catalog';
 import { replyLabel } from '@/lib/presence';
@@ -33,6 +33,10 @@ interface SellerOffer {
   status: string;
   owner_proof_status: string;
   version: number;
+  sale_price_cents?: number | null;
+  sale_starts_at?: string | null;
+  sale_ends_at?: string | null;
+  reserved_for?: string | null;
 }
 
 const TIER_ROWS = [0, 1, 2];
@@ -202,7 +206,103 @@ export function Sell() {
         )}
       </div>
 
+      <DiscountCodes />
       <NewOffer onCreated={load} />
+    </div>
+  );
+}
+
+/** A timed sale on one listing: a lower price until a date (seller-funded). */
+function SaleForm({ offer, onDone }: { offer: SellerOffer; onDone: () => void }) {
+  const [error, setError] = useState('');
+  const running = offer.sale_price_cents != null;
+  const submit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>;
+    try {
+      await api(`/offers/${offer.id}/sale`, { method: 'PUT', body: { salePriceCents: Math.round(Number(f.price) * 100), endsAt: new Date(`${f.ends}T23:59:00`).toISOString() } });
+      onDone();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+  const defaultEnd = new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10);
+  return (
+    <form className="row" onSubmit={submit} style={{ alignItems: 'end' }}>
+      <label className="field">{t('sale.price')}<input name="price" type="number" step="0.01" min="0.01" max={(offer.price_cents - 1) / 100} required defaultValue={offer.sale_price_cents ? offer.sale_price_cents / 100 : undefined} /></label>
+      <label className="field">{t('sale.ends')}<input name="ends" type="date" required defaultValue={offer.sale_ends_at?.slice(0, 10) ?? defaultEnd} /></label>
+      <button className="btn">{running ? t('sale.update') : t('sale.start')}</button>
+      {running && <button type="button" className="btn ghost" onClick={async () => (await api(`/offers/${offer.id}/sale`, { method: 'DELETE' }), onDone())}>{t('sale.endNow')}</button>}
+      <span className="small muted" style={{ flex: '1 1 220px' }}>{t('sale.hint')}</span>
+      {error && <div className="alert" style={{ width: '100%' }}>{error}</div>}
+    </form>
+  );
+}
+
+interface SellerCode { id: string; code: string; percent_off: number; min_order_cents: number; max_uses: number | null; ends_at: string | null; active: boolean; uses: number }
+
+/** Discount codes for the seller's shop (seller-funded, % off). */
+function DiscountCodes() {
+  const [codes, setCodes] = useState<SellerCode[] | null>(null);
+  const [error, setError] = useState('');
+  const load = () => void api<SellerCode[]>('/seller/codes').then(setCodes).catch(() => setCodes([]));
+  useEffect(load, []);
+  const create = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const f = Object.fromEntries(new FormData(form)) as Record<string, string>;
+    try {
+      await api('/seller/codes', {
+        body: {
+          code: f.code, percentOff: Number(f.percent),
+          minOrderCents: f.min ? Math.round(Number(f.min) * 100) : undefined, maxUses: f.max ? Number(f.max) : undefined,
+          endsAt: f.ends ? new Date(`${f.ends}T23:59:00`).toISOString() : undefined,
+        },
+      });
+      form.reset();
+      setError('');
+      load();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+  return (
+    <div className="card stack">
+      <div>
+        <h3 style={{ margin: 0 }}>{t('code.title')}</h3>
+        <p className="small muted" style={{ margin: '4px 0 0' }}>{t('code.lede')}</p>
+      </div>
+      {codes && codes.length > 0 && (
+        <div className="table-wrap">
+          <table className="data">
+            <thead><tr><th>{t('code.code')}</th><th>{t('code.off')}</th><th>{t('code.uses')}</th><th>{t('code.endsCol')}</th><th /></tr></thead>
+            <tbody>
+              {codes.map((c) => (
+                <tr key={c.id}>
+                  <td className="mono">{c.code}</td>
+                  <td>{c.percent_off}%{Number(c.min_order_cents) ? ` · ${t('code.minShort', { price: money(Number(c.min_order_cents)) })}` : ''}</td>
+                  <td className="mono">{c.uses}{c.max_uses ? ` / ${c.max_uses}` : ''}</td>
+                  <td className="small">{c.ends_at ? new Date(c.ends_at).toLocaleDateString(intlLocale()) : '—'}</td>
+                  <td>
+                    <button className="btn ghost" onClick={async () => (await api(`/seller/codes/${c.id}`, { method: 'PATCH', body: { active: !c.active } }), load())}>
+                      {c.active ? t('code.pause') : t('code.resume')}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <form className="row" onSubmit={create} style={{ alignItems: 'end' }}>
+        <label className="field">{t('code.code')}<input name="code" required minLength={3} maxLength={30} pattern="[A-Za-z0-9_\-]+" placeholder="SPRING10" /></label>
+        <label className="field" style={{ width: 110 }}>{t('code.off')}<input name="percent" type="number" min={1} max={90} required defaultValue={10} /></label>
+        <label className="field" style={{ width: 140 }}>{t('code.min')}<input name="min" type="number" step="0.01" min="0" /></label>
+        <label className="field" style={{ width: 120 }}>{t('code.max')}<input name="max" type="number" min={1} /></label>
+        <label className="field">{t('code.ends')}<input name="ends" type="date" /></label>
+        <button className="btn">{t('code.create')}</button>
+      </form>
+      {error && <div className="alert">{error}</div>}
     </div>
   );
 }
@@ -213,6 +313,7 @@ function OfferRow({ offer, onChange }: { offer: SellerOffer; onChange: () => voi
   const [content, setContent] = useState('');
   const [result, setResult] = useState('');
   const [proofOpen, setProofOpen] = useState(false);
+  const [saleOpen, setSaleOpen] = useState(false);
   const needsProof = offer.category_slug === 'accounts' && ['none', 'rejected'].includes(offer.owner_proof_status);
 
   const submitProof = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -258,14 +359,27 @@ function OfferRow({ offer, onChange }: { offer: SellerOffer; onChange: () => voi
             <div className="small" style={{ color: 'var(--disputed)' }}>{t('sell.ownerProof', { status: offer.owner_proof_status })}</div>
           )}
         </td>
-        <td className="mono">{money(offer.price_cents)}</td>
+        <td className="mono">
+          {money(offer.price_cents)}
+          {offer.sale_price_cents != null && offer.sale_ends_at && new Date(offer.sale_ends_at) > new Date() && (
+            <div className="small text-released">{t('sale.until', { price: money(offer.sale_price_cents), when: new Date(offer.sale_ends_at).toLocaleDateString(intlLocale(), { month: 'short', day: 'numeric' }) })}</div>
+          )}
+        </td>
         <td className="mono">{offer.available}</td>
         <td>{offer.delivery_mode === 'auto' ? t('delivery.instant') : t('sell.manual')}</td>
         <td>
           {offer.delivery_mode === 'auto' && <button className="btn ghost" onClick={() => setOpen(!open)}>{t('sell.addStock')}</button>}
           {needsProof && <button className="btn ghost" onClick={() => setProofOpen(!proofOpen)}>{t('sell.addProof')}</button>}
+          {!offer.reserved_for && <button className="btn ghost" onClick={() => setSaleOpen(!saleOpen)}>{t('sale.button')}</button>}
         </td>
       </tr>
+      {saleOpen && (
+        <tr>
+          <td colSpan={5}>
+            <SaleForm offer={offer} onDone={() => (setSaleOpen(false), onChange())} />
+          </td>
+        </tr>
+      )}
       {proofOpen && (
         <tr>
           <td colSpan={5}>

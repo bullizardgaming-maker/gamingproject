@@ -22,6 +22,7 @@ import { assertSupported, getRate } from './fx.js';
 import { quotePromo, reserveRedemption, setRedemptionStatus } from './promos.js';
 import { availableCredit, maybeGrantReferral } from './referrals.js';
 import { unitPriceFor, type PriceTier } from './offers.js';
+import { effectivePrice, quoteSellerCode, type SaleFields } from './discounts.js';
 
 export type OrderStatus = 'awaiting_payment' | 'paid' | 'delivered' | 'completed' | 'disputed' | 'refunded' | 'cancelled' | 'charged_back';
 
@@ -170,6 +171,8 @@ export interface CreateOrderInput {
   useCredit?: boolean;
   /** Currency the buyer pays in. Defaults to the listing's currency. */
   currency?: string;
+  /** A seller's discount code (seller-funded: lowers the order price itself). */
+  sellerCode?: string;
   /** Part of a cart checkout (domain/cart.ts): the cart creates one payment for all its orders. */
   checkoutId?: string;
 }
@@ -180,8 +183,11 @@ export const MIN_CARD_CHARGE_CENTS = 50;
 export interface PriceBreakdown {
   listingCurrency: string;
   listingTotalCents: number;
-  /** Unit price in the listing currency after any quantity tier. */
+  /** Unit price in the listing currency after any sale and quantity tier. */
   listingUnitPriceCents: number;
+  /** Seller-code discount in the listing currency, already taken off listingTotalCents. */
+  sellerDiscountCents: number;
+  sellerCodeId: string | null;
   amountCents: number;
   unitPriceCents: number;
   discountCents: number;
@@ -201,14 +207,23 @@ export interface PriceBreakdown {
 export async function priceOrder(
   ctx: Ctx,
   tx: Tx,
-  offer: { price_cents: number; currency: string; category_slug: string; price_tiers?: PriceTier[] | null },
+  offer: { price_cents: number; currency: string; category_slug: string; seller_id: string; price_tiers?: PriceTier[] | null } & SaleFields,
   buyerId: string,
-  input: Pick<CreateOrderInput, 'quantity' | 'rail' | 'promoCode' | 'useCredit' | 'currency'>,
+  input: Pick<CreateOrderInput, 'quantity' | 'rail' | 'promoCode' | 'useCredit' | 'currency' | 'sellerCode'>,
 ): Promise<PriceBreakdown> {
   const settlement = ctx.cfg.SETTLEMENT_CURRENCY;
   const listingRate = await getRate(ctx, tx, offer.currency);
-  const listingUnit = unitPriceFor(offer, input.quantity);
-  const listingTotal = listingUnit * input.quantity;
+  // Sale price (if one is running), then quantity tiers, then the seller's code: all seller-funded.
+  const listingUnit = unitPriceFor({ price_cents: effectivePrice(offer), price_tiers: offer.price_tiers }, input.quantity);
+  let listingTotal = listingUnit * input.quantity;
+  let sellerDiscount = 0;
+  let sellerCodeId: string | null = null;
+  if (input.sellerCode) {
+    const c = await quoteSellerCode(tx, input.sellerCode, offer.seller_id, buyerId, listingTotal);
+    sellerDiscount = c.discountCents;
+    sellerCodeId = c.codeId;
+    listingTotal -= sellerDiscount;
+  }
   const amount = Math.round(listingTotal / listingRate);
   if (amount < MIN_CARD_CHARGE_CENTS) throw badRequest('amount_too_small', 'Order total is below the minimum');
 
@@ -247,6 +262,8 @@ export async function priceOrder(
     listingCurrency: offer.currency,
     listingTotalCents: listingTotal,
     listingUnitPriceCents: listingUnit,
+    sellerDiscountCents: sellerDiscount,
+    sellerCodeId,
     amountCents: amount,
     unitPriceCents: Math.round(amount / input.quantity),
     discountCents: discount,
@@ -260,9 +277,9 @@ export async function priceOrder(
   };
 }
 
-export async function quoteOrder(ctx: Ctx, buyerId: string, input: Pick<CreateOrderInput, 'offerId' | 'quantity' | 'rail' | 'promoCode' | 'useCredit' | 'currency'>) {
+export async function quoteOrder(ctx: Ctx, buyerId: string, input: Pick<CreateOrderInput, 'offerId' | 'quantity' | 'rail' | 'promoCode' | 'useCredit' | 'currency' | 'sellerCode'>) {
   return withTx(ctx.db, async (tx) => {
-    const offer = await maybeOne(tx, `SELECT price_cents, currency, category_slug, price_tiers, reserved_for FROM offers WHERE id = $1 AND status = 'active'`, [input.offerId]);
+    const offer = await maybeOne(tx, `SELECT price_cents, currency, category_slug, seller_id, price_tiers, reserved_for, sale_price_cents, sale_starts_at, sale_ends_at FROM offers WHERE id = $1 AND status = 'active'`, [input.offerId]);
     if (!offer || (offer.reserved_for && offer.reserved_for !== buyerId)) throw notFound('Offer');
     return priceOrder(ctx, tx, offer, buyerId, input);
   });
@@ -346,6 +363,10 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
     if (input.checkoutId) {
       await s.tx.query('UPDATE orders SET checkout_id = $2 WHERE id = $1', [order.id, input.checkoutId]);
       order.checkout_id = input.checkoutId;
+    }
+    if (price.sellerCodeId) {
+      await s.tx.query('UPDATE orders SET seller_code_id = $2, seller_discount_cents = $3 WHERE id = $1', [order.id, price.sellerCodeId, price.sellerDiscountCents]);
+      Object.assign(order, { seller_code_id: price.sellerCodeId, seller_discount_cents: price.sellerDiscountCents });
     }
 
     if (offer.delivery_mode === 'auto') await reserveInventory(s.tx, offer.id, order.id, input.quantity);

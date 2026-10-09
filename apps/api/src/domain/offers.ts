@@ -9,6 +9,7 @@ import { checkTiers, type PriceTier } from './priceTiers.js';
 import { listingStatusFor } from './moderation.js';
 import { notify } from './notifications.js';
 import { ONLINE_SQL } from './presence.js';
+import { EFFECTIVE_PRICE_SQL } from './discounts.js';
 export { unitPriceFor, type PriceTier } from './priceTiers.js';
 
 export interface OfferInput {
@@ -36,7 +37,8 @@ export function cleanTiers(basePriceCents: number, tiers: PriceTier[] | undefine
 }
 
 export const OFFER_LIST_SQL = `
-  SELECT f.id, f.seller_id, f.category_slug, f.game, f.title, f.description, f.price_cents, f.currency, f.price_settlement_cents, f.delivery_mode,
+  SELECT f.id, f.seller_id, f.category_slug, f.game, f.title, f.description, ${EFFECTIVE_PRICE_SQL} AS price_cents, f.price_cents AS regular_price_cents,
+         CASE WHEN ${EFFECTIVE_PRICE_SQL} < f.price_cents THEN f.sale_ends_at END AS sale_ends_at, f.currency, f.price_settlement_cents, f.delivery_mode,
          f.status, f.owner_proof_status, f.version, f.attributes, f.price_tiers, f.reserved_for, f.request_id, f.review_reasons, f.review_note, f.created_at, f.updated_at, f.low_stock_threshold,
          c.kind AS category_kind, c.risk_class, u.display_name AS seller_name, f.delivery_hours,
          (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now())) AS shop_paused,

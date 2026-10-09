@@ -13,7 +13,7 @@ import { unitPriceFor } from '@/lib/tiers';
 import { OnlineDot, replyLabel } from '@/lib/presence';
 import { addToCart } from '@/lib/cart';
 import { ShoppingCart } from 'lucide-react';
-import { t } from '../i18n';
+import { intlLocale, t } from '../i18n';
 
 export function OfferPage() {
   const { id } = useParams();
@@ -28,6 +28,9 @@ export function OfferPage() {
   const [error, setError] = useState('');
   const [similar, setSimilar] = useState<Offer[]>([]);
   const [added, setAdded] = useState<'' | 'ok' | 'full'>('');
+  const [codeText, setCodeText] = useState('');
+  const [code, setCode] = useState<{ code: string; discount: number; qty: number } | null>(null);
+  const [codeError, setCodeError] = useState('');
   const price = usePrice();
   usePageMeta({ title: offer?.title, description: offer ? `${offer.title} — ${offer.game}. Paid into escrow, released only after delivery checks out.` : undefined });
 
@@ -45,7 +48,8 @@ export function OfferPage() {
   const isAccount = offer.category_kind === 'account';
   const tiers = isAccount ? [] : offer.price_tiers ?? [];
   const unit = unitPriceFor(offer, qty);
-  const total = unit * qty;
+  const total = unit * qty - (code && code.qty === qty ? code.discount : 0);
+  const onSale = offer.regular_price_cents != null && offer.regular_price_cents > offer.price_cents;
   const own = user?.id === offer.seller_id;
 
   const buy = async () => {
@@ -53,7 +57,7 @@ export function OfferPage() {
     setError('');
     try {
       const res = await api<{ order: { id: string }; checkoutUrl: string | null }>('/orders', {
-        body: { offerId: offer.id, quantity: qty, rail, acceptTos: true, ...(rail === 'crypto' ? { walletAddress: wallet } : {}) },
+        body: { offerId: offer.id, quantity: qty, rail, acceptTos: true, ...(rail === 'crypto' ? { walletAddress: wallet } : {}), ...(code ? { sellerCode: code.code } : {}) },
         headers: { 'Idempotency-Key': `${offer.id}:${qty}:${rail}:${Math.floor(Date.now() / 60_000)}` },
       });
       if (res.checkoutUrl) window.location.assign(res.checkoutUrl);
@@ -132,7 +136,9 @@ export function OfferPage() {
       <div className="card stack">
         <div className="row spread">
           <span className="stack" style={{ gap: 0 }}>
+            {onSale && <span className="mono small muted line-through">{money(offer.regular_price_cents! * qty, offer.currency)}</span>}
             <span className="mono" style={{ fontSize: 28, fontWeight: 600 }}>{money(total, offer.currency)}</span>
+            {onSale && offer.sale_ends_at && <span className="small text-released">{t('sale.endsOn', { when: new Date(offer.sale_ends_at).toLocaleString(intlLocale(), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) })}</span>}
             {price(total, offer.currency).startsWith('≈') && <span className="small muted">{price(total, offer.currency)} · {t('offer.chargedIn', { currency: offer.currency })}</span>}
           </span>
           <span className="small muted">{t('offer.available', { n: offer.stock })}</span>
@@ -159,6 +165,33 @@ export function OfferPage() {
               ))}
             </div>
             {unit < offer.price_cents && <div className="small text-released">{t('tier.saving', { amount: money((offer.price_cents - unit) * qty, offer.currency), each: money(unit, offer.currency) })}</div>}
+          </div>
+        )}
+        {user && !own && rail === 'fiat' && (
+          <div className="stack" style={{ gap: 6 }}>
+            <div className="row" style={{ gap: 8, flexWrap: 'nowrap' }}>
+              <input aria-label={t('code.enter')} placeholder={t('code.enter')} value={codeText} onChange={(e) => setCodeText(e.target.value)} style={{ flex: 1 }} />
+              <button
+                type="button"
+                className="btn ghost"
+                disabled={!codeText.trim()}
+                onClick={async () => {
+                  setCodeError('');
+                  try {
+                    const q = await api<{ sellerDiscountCents: number }>('/orders/quote', { body: { offerId: offer.id, quantity: qty, sellerCode: codeText.trim() } });
+                    setCode({ code: codeText.trim(), discount: q.sellerDiscountCents, qty });
+                  } catch (e: any) {
+                    setCode(null);
+                    setCodeError(e.message);
+                  }
+                }}
+              >
+                {t('code.apply')}
+              </button>
+            </div>
+            {code && code.qty === qty && <div className="small text-released">{t('code.applied', { code: code.code.toUpperCase(), amount: money(code.discount, offer.currency) })}</div>}
+            {code && code.qty !== qty && <div className="small muted">{t('code.reapply')}</div>}
+            {codeError && <div className="small" style={{ color: 'var(--disputed)' }}>{codeError}</div>}
           </div>
         )}
         <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0 }}>

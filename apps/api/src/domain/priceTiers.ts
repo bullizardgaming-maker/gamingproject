@@ -1,6 +1,6 @@
 /**
- * Quantity price tiers: cheaper unit prices for larger orders. No dependencies, so the web app
- * bundles this module too and shows the same prices the API charges.
+ * Listing pricing rules shared with the web app: quantity tiers (cheaper unit prices for larger
+ * orders) and sale prices. No dependencies, so the web app shows the same prices the API charges.
  */
 export interface PriceTier {
   /** Orders of at least this many units… */
@@ -32,4 +32,18 @@ export function unitPriceFor(offer: { price_cents: number; price_tiers?: PriceTi
   let unit = offer.price_cents;
   for (const t of offer.price_tiers ?? []) if (quantity >= t.minQty && t.priceCents < unit) unit = t.priceCents;
   return unit;
+}
+
+/** A listing's sale fields (domain/discounts.ts). */
+export interface SaleFields {
+  price_cents: number;
+  sale_price_cents?: number | null;
+  sale_starts_at?: string | Date | null;
+  sale_ends_at?: string | Date | null;
+}
+
+/** The price a listing sells at right now: its sale price inside the sale window, else its price. */
+export function effectivePrice(o: SaleFields, at = new Date()) {
+  if (o.sale_price_cents == null || !o.sale_starts_at || !o.sale_ends_at) return o.price_cents;
+  return new Date(o.sale_starts_at) <= at && new Date(o.sale_ends_at) > at ? Number(o.sale_price_cents) : o.price_cents;
 }

@@ -62,7 +62,10 @@ export async function refreshRates(ctx: Ctx): Promise<number> {
          ON CONFLICT (currency) DO UPDATE SET rate = EXCLUDED.rate, source = EXCLUDED.source, fetched_at = now()`,
       [c, rate, ctx.fx.name],
     );
-    await ctx.db.query(`UPDATE offers SET price_settlement_cents = round(price_cents / $2::numeric) WHERE currency = $1`, [c, rate]);
+    await ctx.db.query(
+      `UPDATE offers SET price_settlement_cents = round(CASE WHEN sale_active AND sale_price_cents IS NOT NULL THEN sale_price_cents ELSE price_cents END / $2::numeric) WHERE currency = $1`,
+      [c, rate],
+    );
     n++;
   }
   return n;

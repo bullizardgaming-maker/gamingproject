@@ -19,6 +19,9 @@ export interface Offer {
   /** Set on a listing agreed on a buyer request: only that buyer can see and buy it. */
   reserved_for?: string | null;
   status?: string;
+  /** Set while a sale runs: the price before the sale (price_cents is the sale price). */
+  regular_price_cents?: number;
+  sale_ends_at?: string | null;
   shop_paused?: boolean;
   request_id?: string | null;
   /** Cheaper unit prices for larger orders, ascending by quantity. */

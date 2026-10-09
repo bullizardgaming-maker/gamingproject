@@ -27,6 +27,7 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
         acceptTos: z.literal(true),
         walletAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional(),
         promoCode: z.string().trim().min(1).max(40).optional(),
+        sellerCode: z.string().trim().min(1).max(40).optional(),
         useCredit: z.boolean().optional(),
         currency: z.string().length(3).toUpperCase().optional(),
       })
@@ -77,6 +78,7 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
         quantity: z.number().int().positive().max(1000).default(1),
         rail: z.enum(['fiat', 'crypto']).default('fiat'),
         promoCode: z.string().trim().min(1).max(40).optional(),
+        sellerCode: z.string().trim().min(1).max(40).optional(),
         useCredit: z.boolean().optional(),
         currency: z.string().length(3).toUpperCase().optional(),
       })

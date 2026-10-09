@@ -128,6 +128,12 @@ const LISTINGS: Seed[] = [
   ['keys', 'Red Dead Redemption 2', 'Red Dead Redemption 2 — Rockstar key', 15_50, 'auto', 20, 'seller2'],
 ];
 /** Game-specific fields per listing title (see apps/api/src/domain/attributeSets.ts). */
+/** Running sales: [sale price, days left]. */
+const SALES: Record<string, [number, number]> = {
+  'Cyberpunk 2077 + Phantom Liberty — GOG key': [29_90, 3],
+  'AWP | Asiimov (Field-Tested)': [86_00, 1],
+};
+
 /** Quantity prices on bulk listings (gold, top-ups). */
 const TIERS: Record<string, Array<{ minQty: number; priceCents: number }>> = {
   '100k Gold — Stormrage (Alliance)': [{ minQty: 5, priceCents: 16_50 }, { minQty: 10, priceCents: 15_00 }],
@@ -233,6 +239,9 @@ export function seed() {
       attributes: ATTRS[title] ?? {},
       price_tiers: TIERS[title] ?? [],
       review_reasons: [] as string[],
+      sale_price_cents: (SALES[title]?.[0] ?? null) as number | null,
+      sale_starts_at: (SALES[title] ? ago(day) : null) as string | null,
+      sale_ends_at: (SALES[title] ? ago(-SALES[title]![1] * day) : null) as string | null,
       // Set on listings made from an accepted buyer request.
       reserved_for: null as string | null,
       request_id: null as string | null,
@@ -298,6 +307,9 @@ export function seed() {
     apiKeys: [] as any[],
     watches: [] as any[],
     tickets: [] as any[],
+    sellerCodes: [
+      { id: 'code-1', seller_id: users[1]!.id, code: 'NORTHWIND10', percent_off: 10, min_order_cents: 20_00, max_uses: 500, per_buyer_limit: 1, starts_at: ago(10 * day), ends_at: ago(-20 * day), active: true, created_at: ago(10 * day), uses_before: 37 },
+    ] as any[],
     checkouts: [] as Array<{ id: string; buyer_id: string; order_ids: string[]; created_at: string }>,
     // "Online now" and typical reply time per seller (minutes).
     presence: {
