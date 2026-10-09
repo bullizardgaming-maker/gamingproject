@@ -19,6 +19,7 @@ import { isStaff as isStaffUser, permissionsOf } from '../domain/permissions.js'
 import {
   getPushPreferences, listInbox, listPushSubscriptions, markAllRead, markRead, removePushSubscription, setPushPreferences, subscribePush, unreadCount, unsubscribePush,
 } from '../domain/inbox.js';
+import { createWatch, deleteWatch, listWatches, updateWatch } from '../domain/watches.js';
 import { confirmSubscription, getIncident, statusSummary, subscribe, unsubscribe } from '../domain/status.js';
 import { me, requestMeta } from '../server.js';
 
@@ -313,6 +314,32 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.get('/me/referral', async (req) => referralSummary(ctx, me(req).id));
 
+  // --- Watchlist & price alerts -------------------------------------------------------------
+  const WatchTarget = z.number().int().positive().max(100_000_00).nullable();
+  app.get('/me/watches', async (req) => listWatches(ctx, me(req).id));
+  app.post('/me/watches', async (req, reply) => {
+    const body = z
+      .object({
+        offerId: z.string().uuid().optional(),
+        game: z.string().trim().min(1).max(80).optional(),
+        category: z.string().max(40).optional(),
+        attributes: z.record(z.string().max(30), z.string().max(60)).optional(),
+        targetCents: WatchTarget.optional(),
+        currency: z.string().length(3).optional(),
+      })
+      .refine((b) => !!b.offerId !== !!b.game, 'Give either offerId or game')
+      .parse(req.body);
+    return reply.status(201).send(await createWatch(ctx, me(req).id, body));
+  });
+  app.patch('/me/watches/:id', async (req) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ targetCents: WatchTarget, currency: z.string().length(3).optional() }).parse(req.body);
+    return updateWatch(ctx, me(req).id, id, body);
+  });
+  app.delete('/me/watches/:id', async (req, reply) => {
+    await deleteWatch(ctx, me(req).id, z.object({ id: z.string().uuid() }).parse(req.params).id);
+    return reply.status(204).send();
+  });
 
   app.get('/fx/rates', async () => currentRates(ctx));
 

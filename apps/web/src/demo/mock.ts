@@ -350,6 +350,7 @@ const PREF_CATS = [
   ['selling', 'Sales: new orders to deliver, payouts', false],
   ['disputes', 'Disputes and chargebacks', true],
   ['reminders', 'Reminders before your protection window ends', false],
+  ['alerts', 'Price alerts and watchlist updates', false],
   ['account', 'Verification and payout account updates', true],
   ['security', 'Security alerts', true],
 ] as const;
@@ -761,8 +762,90 @@ route('POST', '/me/notifications/:id/read', ({ me, params }) => {
   if (n) n.read_at ??= now();
   return { unread: unreadOf(u.id) };
 });
+// --- Watchlist & price alerts ------------------------------------------------------------
+const RATES: Record<string, number> = { USD: 1, EUR: 0.92, GBP: 0.79 };
+const onSale = (o: any) => o.status === 'active' && (o.delivery_mode === 'auto' ? o.inventory.length : o.stock) > 0;
+const cheapestFor = (w: any) =>
+  state.offers
+    .filter((o) => onSale(o) && o.game.toLowerCase() === w.game.toLowerCase() && (!w.category || o.category_slug === w.category))
+    .filter((o) => Object.entries(w.attributes ?? {}).every(([k, v]) => String(o.attributes?.[k] ?? '').toLowerCase() === String(v).toLowerCase()))
+    .sort((a, b) => a.price_cents - b.price_cents)[0];
+function watchView(w: any) {
+  const conv = (c: number | null | undefined) => (c == null ? null : Math.round(c * (RATES[w.currency] ?? 1)));
+  if (w.kind === 'offer') {
+    const o = state.offers.find((x) => x.id === w.offer_id);
+    const ok = !!o && onSale(o);
+    return {
+      id: w.id, kind: 'offer', currency: w.currency, targetCents: w.targetCents, createdAt: w.createdAt,
+      offer: o ? { id: o.id, title: o.title, game: o.game, category_slug: o.category_slug, seller_name: userById(o.seller_id)?.display_name ?? 'Seller', attributes: o.attributes } : null,
+      currentCents: o ? conv(o.price_cents) : null, startCents: conv(w.start), available: ok, reached: ok && w.targetCents != null && conv(o!.price_cents)! <= w.targetCents,
+    };
+  }
+  const low = cheapestFor(w);
+  return {
+    id: w.id, kind: 'game', currency: w.currency, targetCents: w.targetCents, createdAt: w.createdAt, game: w.game, category: w.category, attributes: w.attributes,
+    cheapest: low ? { id: low.id, title: low.title, seller_name: userById(low.seller_id)?.display_name ?? 'Seller' } : null,
+    currentCents: low ? conv(low.price_cents) : null, startCents: conv(w.start), available: !!low, reached: !!low && w.targetCents != null && conv(low.price_cents)! <= w.targetCents,
+  };
+}
+const fmt = (c: number, cur: string) => new Intl.NumberFormat('en-US', { style: 'currency', currency: cur }).format(c / 100);
+/**
+ * Stand-in for the worker's price check. So the demo shows an alert, a target below the current
+ * price is met a few seconds later by a seller dropping the price to it.
+ */
+function simulateAlert(w: any) {
+  setTimeout(() => {
+    const v = watchView(w);
+    if (w.targetCents == null || !v.available) return;
+    if (!v.reached && w.kind === 'offer') {
+      const o = state.offers.find((x) => x.id === w.offer_id)!;
+      o.price_cents = Math.max(1, Math.floor(w.targetCents / (RATES[w.currency] ?? 1)));
+      o.version++;
+    }
+    const after = watchView(w);
+    if (!after.reached) return;
+    const title = w.kind === 'offer' ? after.offer!.title : `${w.game}${w.category ? ` ${w.category}` : ''}`;
+    const link = `/offers/${w.kind === 'offer' ? w.offer_id : after.cheapest!.id}`;
+    notify(w.user_id, 'alerts', 'watch_price_drop', `Price drop: ${title} is now ${fmt(after.currentCents!, w.currency)}`, `At or below your target of ${fmt(w.targetCents, w.currency)}. (Demo: a seller just lowered the price.)`, link);
+    save();
+  }, 5000);
+}
+route('GET', '/me/watches', ({ me }) => state.watches.filter((w) => w.user_id === need(me).id).map(watchView));
+route('POST', '/me/watches', ({ me, body }) => {
+  const u = need(me);
+  const currency = String(body.currency ?? 'USD').toUpperCase();
+  if (!RATES[currency]) fail(400, 'unknown_currency', 'Unsupported currency');
+  let w: any;
+  if (body.offerId) {
+    const o = state.offers.find((x) => x.id === body.offerId) ?? fail(404, 'not_found', 'Listing not found');
+    if (o.seller_id === u.id) fail(400, 'own_offer', 'You can’t watch your own listing');
+    if (state.watches.some((x) => x.user_id === u.id && x.offer_id === o.id)) fail(409, 'already_watching', 'You’re already watching this listing');
+    w = { id: rid(), user_id: u.id, kind: 'offer', offer_id: o.id, targetCents: body.targetCents ?? null, currency, start: o.price_cents, createdAt: now() };
+  } else {
+    if (!body.game) fail(400, 'invalid_watch', 'Give an offer or a game to watch');
+    if (body.attributes && Object.keys(body.attributes).length && !body.category) fail(400, 'invalid_watch', 'Pick a category to watch specific fields');
+    w = { id: rid(), user_id: u.id, kind: 'game', game: body.game, category: body.category ?? null, attributes: body.attributes ?? {}, targetCents: body.targetCents ?? null, currency, createdAt: now() };
+    w.start = cheapestFor(w)?.price_cents ?? null;
+  }
+  state.watches.unshift(w);
+  simulateAlert(w);
+  return watchView(w);
+});
+route('PATCH', '/me/watches/:id', ({ me, params, body }) => {
+  const w = state.watches.find((x) => x.id === params[0] && x.user_id === need(me).id) ?? fail(404, 'not_found', 'Watch not found');
+  w.targetCents = body.targetCents ?? null;
+  if (body.currency && RATES[String(body.currency).toUpperCase()]) w.currency = String(body.currency).toUpperCase();
+  simulateAlert(w);
+  return watchView(w);
+});
+route('DELETE', '/me/watches/:id', ({ me, params }) => {
+  const u = need(me);
+  if (!state.watches.some((x) => x.id === params[0] && x.user_id === u.id)) fail(404, 'not_found', 'Watch not found');
+  state.watches = state.watches.filter((x) => x.id !== params[0]);
+});
+
 route('GET', '/push/config', () => ({ enabled: false, vapidPublicKey: null }));
-const PUSH_CATS: Array<[string, string]> = [['orders', 'Orders'], ['selling', 'Sales & payouts'], ['disputes', 'Disputes'], ['security', 'Security'], ['reminders', 'Reminders']];
+const PUSH_CATS: Array<[string, string]> = [['orders', 'Orders'], ['selling', 'Sales & payouts'], ['disputes', 'Disputes'], ['security', 'Security'], ['reminders', 'Reminders'], ['alerts', 'Price alerts']];
 route('GET', '/me/push-subscriptions', ({ me }) => (need(me), []));
 route('GET', '/me/push-preferences', ({ me }) => {
   const u = need(me);

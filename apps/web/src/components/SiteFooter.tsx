@@ -5,7 +5,7 @@ const COLUMNS: Array<[string, Array<[string, string]>]> = [
   ['Buy', CATEGORY_ORDER.slice(0, 6).map((slug) => [CATEGORY_META[slug]!.label, `/market?category=${slug}`])],
   ['Sell', [['Open a shop', '/sell'], ['Money & tax', '/sell/money'], ['Seller fees', '/#fees'], ['API & webhooks', '/developers']]],
   ['Protection', [['How escrow works', '/#how'], ['72-hour inspection', '/#how'], ['14-day account insurance', '/#how'], ['Your orders', '/orders']]],
-  ['Account', [['Sign in', '/login'], ['Settings & security', '/account'], ['Notifications', '/account#notifications'], ['All games A–Z', '/games'], ['System status', '/status']]],
+  ['Account', [['Sign in', '/login'], ['Settings & security', '/account'], ['Notifications', '/account#notifications'], ['Watchlist & price alerts', '/watchlist'], ['All games A–Z', '/games'], ['System status', '/status']]],
 ];
 
 export function SiteFooter() {

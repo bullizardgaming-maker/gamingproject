@@ -72,6 +72,7 @@ const Env = z.object({
   DEBT_REMINDER_DAYS: z.string().default('0,3,7').transform((v) => v.split(',').map(Number).filter((n) => Number.isFinite(n) && n >= 0).sort((a, b) => a - b)),
   DEBT_PAUSE_AFTER_DAYS: z.coerce.number().min(0).default(14),
   DEBT_CHECK_MINUTES: z.coerce.number().min(1).default(60),
+  WATCH_CHECK_MINUTES: z.coerce.number().min(1).default(15).describe('How often price alerts are checked'),
   // Currencies & FX. Everything internal (escrow, ledger, balances) is in SETTLEMENT_CURRENCY.
   SETTLEMENT_CURRENCY: z.string().length(3).default('USD'),
   SUPPORTED_CURRENCIES: z.string().default('USD,EUR,GBP'),

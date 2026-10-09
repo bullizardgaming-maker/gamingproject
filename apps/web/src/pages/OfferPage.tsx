@@ -8,6 +8,7 @@ import { categoryLabel, slugify } from '@/lib/catalog';
 import { usePrice } from '@/lib/prefs';
 import { usePageMeta } from '@/lib/seo';
 import { attributePairs } from '@/lib/attributes';
+import { WatchButton } from '../components/WatchButton';
 
 export function OfferPage() {
   const { id } = useParams();
@@ -78,6 +79,7 @@ export function OfferPage() {
         <div className="row" style={{ gap: 12 }}>
           <OfferBadges offer={offer} />
           <DeliveryTag offer={offer} />
+          {user?.id !== offer.seller_id && <WatchButton target={{ offerId: offer.id }} className="ml-auto" />}
         </div>
         {attributePairs(offer.game, offer.category_slug, offer.attributes).length > 0 && (
           <dl className="m-0 grid grid-cols-2 gap-x-6 gap-y-2 rounded-xl border border-border bg-card p-4 sm:grid-cols-3">

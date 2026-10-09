@@ -9,13 +9,14 @@ import { badRequest } from '../lib/errors.js';
  * Each one lands in the user's in-app inbox, and the worker delivers it by email and Web Push
  * according to the user's per-category preferences for each channel, and live to open tabs.
  */
-export type EmailCategory = 'orders' | 'selling' | 'disputes' | 'reminders' | 'account' | 'security' | 'operations';
+export type EmailCategory = 'orders' | 'selling' | 'disputes' | 'reminders' | 'alerts' | 'account' | 'security' | 'operations';
 
 export const EMAIL_CATEGORIES: Record<EmailCategory, { label: string; mandatory?: boolean; staffOnly?: boolean }> = {
   orders: { label: 'Purchases: payment received, delivery, refunds' },
   selling: { label: 'Sales: new orders to deliver, payouts' },
   disputes: { label: 'Disputes and chargebacks', mandatory: true },
   reminders: { label: 'Reminders before your protection window ends' },
+  alerts: { label: 'Price alerts and watchlist updates' },
   account: { label: 'Verification and payout account updates', mandatory: true },
   security: { label: 'Security alerts', mandatory: true },
   operations: { label: 'Staff alerts (reconciliation, operations)', mandatory: true, staffOnly: true },
@@ -211,6 +212,23 @@ export const TEMPLATES = {
     category: 'operations',
     subject: (d) => `Seller debt unpaid: ${money(d.amount_cents, d.currency)}`,
     body: (d, link) => `A seller has owed ${money(d.amount_cents, d.currency)} past the reminder period; their shop is now paused. Review it, or write it off with a ledger adjustment: ${link('/admin')}`,
+  },
+  watch_price_drop: {
+    category: 'alerts',
+    subject: (d) => `Price drop: ${d.title} is now ${money(d.price_cents, d.currency)}`,
+    body: (d, link) =>
+      `${d.title} is now ${money(d.price_cents, d.currency)}${d.target_cents ? `, at or below your target of ${money(d.target_cents, d.currency)}` : ', lower than when you started watching it'}.\n\n${link(`/offers/${d.offer_id}`)}`,
+  },
+  watch_back_in_stock: {
+    category: 'alerts',
+    subject: (d) => `Back in stock: ${d.title}`,
+    body: (d, link) => `${d.title} is available again at ${money(d.price_cents, d.currency)}.\n\n${link(`/offers/${d.offer_id}`)}`,
+  },
+  watch_game_low: {
+    category: 'alerts',
+    subject: (d) => `${d.game}${d.attributes && Object.keys(d.attributes).length ? ` (${Object.values(d.attributes).join(', ')})` : ''}: from ${money(d.price_cents, d.currency)}`,
+    body: (d, link) =>
+      `A ${d.game} listing you're watching for is ${d.target_cents ? `at or below your ${money(d.target_cents, d.currency)} target` : 'at a new low'}: "${d.title}" for ${money(d.price_cents, d.currency)}.\n\n${link(`/offers/${d.offer_id}`)}`,
   },
   account_locked: {
     category: 'security',

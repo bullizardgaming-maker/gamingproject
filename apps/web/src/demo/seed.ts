@@ -264,6 +264,7 @@ export function seed() {
     monthlySales: { [users[1]!.id]: 6_420_00, [users[3]!.id]: 840_00, [users[4]!.id]: 2_310_00 } as Record<string, number>,
     withdrawals: [] as any[],
     apiKeys: [] as any[],
+    watches: [] as any[],
     webhooks: [] as any[],
     emailPrefs: {} as Record<string, Record<string, boolean>>,
     ownerProofs: [

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutGrid, Moon, Search, ShieldCheck, Sun } from 'lucide-react';
+import { Heart, LayoutGrid, Moon, Search, ShieldCheck, Sun } from 'lucide-react';
 import { useSession } from '../session';
 import { NotificationBell } from './NotificationBell';
 import { CATEGORY_ICON, GameArt } from './CatalogUi';
@@ -143,6 +143,9 @@ export function SiteHeader() {
           <ViewPrefs />
           {user ? (
             <>
+              <Link to="/watchlist" aria-label="Watchlist" title="Watchlist" className="grid size-10 place-items-center rounded-lg border border-border text-foreground no-underline transition-colors hover:border-foreground">
+                <Heart className="size-[18px]" strokeWidth={1.8} />
+              </Link>
               <NotificationBell />
               <Link to="/account" className="small header-account">
                 <span className="email">{user.display_name} · </span>level {user.kyc_tier}

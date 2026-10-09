@@ -9,6 +9,7 @@ import { usePrice } from '@/lib/prefs';
 import type { Offer } from './Market';
 import { usePageMeta } from '@/lib/seo';
 import { attributesFor } from '@/lib/attributes';
+import { WatchButton } from '../components/WatchButton';
 
 type AttrFacet = { key: string; value: string; count: number };
 
@@ -251,7 +252,17 @@ export function GamePage() {
         <>
           <div className="row spread small muted" style={{ marginTop: 8 }}>
             <span>{total} offer{total === 1 ? '' : 's'}{prices.length > 1 ? ` · ${price(Math.min(...prices))} – ${price(Math.max(...prices))}` : ''}</span>
-            <Link to="/sell" className="small">Sell {entry.game} {category ? categoryLabel(category).toLowerCase() : 'items'}</Link>
+            <span className="flex items-center gap-3">
+              <Link to="/sell" className="small">Sell {entry.game} {category ? categoryLabel(category).toLowerCase() : 'items'}</Link>
+              <WatchButton
+                label={category ? 'Alert me on new lows' : `Watch ${entry.game}`}
+                target={{
+                  game: entry.game,
+                  category: category || undefined,
+                  attributes: category ? Object.fromEntries([...params].filter(([k, v]) => k.startsWith('attr.') && v).map(([k, v]) => [k.slice(5), v])) : undefined,
+                }}
+              />
+            </span>
           </div>
           <OfferTable
             offers={offers}
