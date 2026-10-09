@@ -113,7 +113,7 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/seller/offers', async (req) =>
     many(
       ctx.db,
-      `SELECT f.*, offer_available(f.id) AS available
+      `SELECT f.*
          FROM offers f WHERE seller_id = $1 AND status <> 'removed' ORDER BY created_at DESC`,
       [me(req).id],
     ),

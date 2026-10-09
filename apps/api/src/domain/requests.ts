@@ -40,9 +40,7 @@ const REQUEST_COLS = `r.id, r.buyer_id, r.game, r.category_slug, r.title, r.desc
 const REQUEST_FROM = `buyer_requests r JOIN users b ON b.id = r.buyer_id JOIN categories c ON c.slug = r.category_slug`;
 
 const PROPOSAL_COLS = `p.id, p.request_id, p.seller_id, p.price_cents, p.delivery_hours, p.message, p.status, p.offer_id, p.listing_offer_id, p.created_at, p.updated_at,
-  s.display_name AS seller_name,
-  (SELECT count(*)::int FROM orders o WHERE o.seller_id = p.seller_id AND o.status = 'completed') AS seller_completed_orders,
-  (SELECT round(avg(rating)::numeric, 2) FROM reviews v WHERE v.seller_id = p.seller_id AND NOT v.hidden) AS seller_rating`;
+  s.display_name AS seller_name, s.completed_orders AS seller_completed_orders, s.rating_avg AS seller_rating`;
 
 export async function createRequest(ctx: Ctx, buyer: { id: string; kyc_tier: number; status: string }, input: RequestInput) {
   if (buyer.status !== 'active') throw forbidden('suspended', 'Account suspended');
@@ -114,9 +112,9 @@ export async function getRequest(q: Queryable, id: string, viewerId?: string) {
     viewerId && !isBuyer && r.status === 'open'
       ? await many(
           q,
-          `SELECT f.id, f.title, ${EFFECTIVE_PRICE_SQL} AS price_cents, f.currency, f.delivery_mode, f.delivery_hours, offer_available(f.id) AS stock
+          `SELECT f.id, f.title, ${EFFECTIVE_PRICE_SQL} AS price_cents, f.currency, f.delivery_mode, f.delivery_hours, f.available AS stock
              FROM offers f WHERE f.seller_id = $1 AND lower(f.game) = lower($2) AND f.category_slug = $3 AND f.status = 'active' AND f.reserved_for IS NULL
-              AND offer_available(f.id) > 0 ORDER BY ${EFFECTIVE_PRICE_SQL} LIMIT 10`,
+              AND f.available > 0 ORDER BY ${EFFECTIVE_PRICE_SQL} LIMIT 10`,
           [viewerId, r.game, r.category_slug],
         )
       : [];

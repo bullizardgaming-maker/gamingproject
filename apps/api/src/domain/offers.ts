@@ -73,11 +73,9 @@ export const OFFER_LIST_SQL = `
          c.kind AS category_kind, c.risk_class, u.display_name AS seller_name, f.delivery_hours,
          (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now())) AS shop_paused,
          u.shop_paused_until, u.shop_pause_message, ${ONLINE_SQL} AS seller_online, u.response_minutes AS seller_response_minutes, u.trust_level AS seller_trust_level,
-         offer_available(f.id) AS stock, f.is_bundle,
+         f.available AS stock, f.is_bundle,
          (c.kind = 'account' AND f.owner_proof_status <> 'verified') AS high_risk_secondary,
-         (SELECT count(*)::int FROM orders o WHERE o.seller_id = f.seller_id AND o.status = 'completed') AS seller_completed_orders,
-         (SELECT round(avg(rating)::numeric, 2) FROM reviews r WHERE r.seller_id = f.seller_id AND NOT r.hidden) AS seller_rating,
-         (SELECT count(*)::int FROM reviews r WHERE r.seller_id = f.seller_id AND NOT r.hidden) AS seller_review_count
+         u.completed_orders AS seller_completed_orders, u.rating_avg AS seller_rating, u.review_count AS seller_review_count
     FROM offers f JOIN categories c ON c.slug = f.category_slug JOIN users u ON u.id = f.seller_id`;
 
 export function requireSeller(user: { kyc_tier: number; status: string }) {

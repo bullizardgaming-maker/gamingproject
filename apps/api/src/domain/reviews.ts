@@ -90,7 +90,7 @@ export async function sellerProfile(q: Queryable, sellerId: string, limit = 20, 
   const seller = await maybeOne(
     q,
     `SELECT u.id, u.display_name, u.created_at AS member_since, u.kyc_tier >= 2 AS identity_verified,
-            (SELECT count(*)::int FROM orders o WHERE o.seller_id = u.id AND o.status = 'completed') AS completed_orders,
+            u.completed_orders,
             (SELECT count(*)::int FROM offers f WHERE f.seller_id = u.id AND f.status = 'active' AND f.reserved_for IS NULL) AS active_listings,
             (SELECT round(100.0 * count(*) FILTER (WHERE o.delivered_at <= o.delivery_due_at) / NULLIF(count(*), 0), 0)
                FROM orders o WHERE o.seller_id = u.id AND o.delivery_due_at IS NOT NULL AND o.delivery_due_at < now()

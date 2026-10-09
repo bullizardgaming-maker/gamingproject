@@ -49,7 +49,7 @@ export async function reviewQueue(q: Queryable) {
     q,
     `SELECT f.id, f.title, f.description, f.game, f.category_slug, f.price_cents, f.currency, f.review_reasons, f.created_at, f.updated_at,
             f.seller_id, u.display_name AS seller_name, u.email AS seller_email,
-            (SELECT count(*)::int FROM orders o WHERE o.seller_id = f.seller_id AND o.status = 'completed') AS seller_completed_orders
+            u.completed_orders AS seller_completed_orders
        FROM offers f JOIN users u ON u.id = f.seller_id
       WHERE f.status = 'review' ORDER BY f.updated_at LIMIT 200`,
   );

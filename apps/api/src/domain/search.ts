@@ -36,8 +36,8 @@ export interface SearchParams {
  *    game is chosen. Each field's counts ignore that field's own filter so a picker can show
  *    what switching to another value would give.
  *  - Page-based pagination with a total and per-category facet counts.
- * Stock and rating are computed per row; if listings grow past ~100k, move them
- * into counters maintained on write.
+ * Stock, rating and completed orders are stored counters kept by triggers (migration 044),
+ * so their filters run in the base query and can use indexes.
  */
 export async function searchOffers(q: Queryable, p: SearchParams) {
   const params: unknown[] = [];
@@ -67,12 +67,11 @@ export async function searchOffers(q: Queryable, p: SearchParams) {
   if (p.ownerVerified) where.push(`f.owner_proof_status = 'verified'`);
   if (p.sellerId) where.push(`f.seller_id = ${arg(p.sellerId)}`);
   if (p.createdAfter) where.push(`f.created_at > ${arg(p.createdAfter)}`);
+  if (p.inStock !== false) where.push('f.available > 0');
+  if (p.minRating) where.push(`u.rating_avg >= ${arg(p.minRating)}`);
   const attrs = Object.entries(p.attributes ?? {});
 
-  // Filters on computed columns apply to the wrapped query.
   const outer: string[] = [];
-  if (p.inStock !== false) outer.push('stock > 0');
-  if (p.minRating) outer.push(`seller_rating >= ${arg(p.minRating)}`);
 
   const select = OFFER_LIST_SQL.replace('SELECT f.id,', `SELECT ${rank} AS rank, f.id,`);
   // Attribute filters are kept apart so the facet queries can relax them one field at a time.
@@ -170,7 +169,7 @@ export async function gameDirectory(q: Queryable) {
          FROM offers f JOIN users u ON u.id = f.seller_id
         WHERE f.status = 'active' AND f.reserved_for IS NULL AND u.status = 'active' AND u.deleted_at IS NULL
           AND NOT (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now()))
-          AND offer_available(f.id) > 0
+          AND f.available > 0
      ), per_cat AS (
        SELECT game, category_slug, count(*)::int AS n FROM live GROUP BY game, category_slug
      )
