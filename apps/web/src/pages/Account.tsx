@@ -301,7 +301,7 @@ function Devices() {
         <div key={d.id} className="row spread small" style={{ borderTop: '1px solid var(--rule)', paddingTop: 10 }}>
           <span>
             <b>{d.device}</b>
-            {d.current && <span className="chip released" style={{ marginLeft: 8 }}>this device</span>}
+            {d.current && <span className="chip released" style={{ marginInlineStart: 8 }}>this device</span>}
             <div className="muted">
               {d.ip ?? 'unknown IP'} · last active {new Date(d.lastActiveAt).toLocaleString()}
             </div>

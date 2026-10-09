@@ -22,6 +22,7 @@ import { DEMO } from './api';
 import { DemoBanner, DemoCheckout } from './demo/DemoUi';
 import { applyTheme } from '@/lib/prefs';
 import { setUpPwa } from '@/lib/pwa';
+import { initI18n, t, useLocale } from './i18n';
 import './tailwind.css';
 import './styles.css';
 
@@ -36,8 +37,10 @@ function ScrollToTop() {
 }
 
 function App() {
+  // A language switch remounts the app so every string, date and number re-renders in it.
+  const locale = useLocale();
   return (
-    <SessionProvider>
+    <SessionProvider key={locale}>
       {DEMO && <DemoBanner />}
       <SiteHeader />
       <ScrollToTop />
@@ -71,7 +74,7 @@ function App() {
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/admin" element={<Admin />} />
           {DEMO && <Route path="/demo-checkout/:id" element={<DemoCheckout />} />}
-          <Route path="*" element={<div className="card"><h2>Page not found</h2><Link to="/games">Browse all games</Link></div>} />
+          <Route path="*" element={<div className="card"><h2>{t('common.notFound')}</h2><Link to="/games">{t('game.browseAll')}</Link></div>} />
         </Routes>
       </main>
       <SiteFooter />
@@ -82,10 +85,12 @@ function App() {
 applyTheme();
 
 setUpPwa();
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <BrowserRouter>
-      <App />
-    </BrowserRouter>
-  </StrictMode>,
+initI18n().then(() =>
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
+    </StrictMode>,
+  ),
 );

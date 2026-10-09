@@ -10,10 +10,11 @@ import { attributePairs } from '@/lib/attributes';
 import { categoryLabel, slugify } from '@/lib/catalog';
 import { usePageMeta } from '@/lib/seo';
 import { cn } from '@/lib/utils';
+import { t } from '../i18n';
 
 function where(w: Watch) {
   const pairs = w.category && w.game ? attributePairs(w.game, w.category, w.attributes).map(([, v]) => v) : [];
-  return [w.category ? categoryLabel(w.category) : 'Everything', ...pairs].join(' · ');
+  return [w.category ? categoryLabel(w.category) : t('watch.everything'), ...pairs].join(' · ');
 }
 function marketLink(w: Watch) {
   const q = new URLSearchParams(Object.entries(w.attributes ?? {}).map(([k, v]) => [`attr.${k}`, v]));
@@ -22,31 +23,31 @@ function marketLink(w: Watch) {
 
 /** /watchlist: every listing and market the buyer follows, with current price against target. */
 export function Watchlist() {
-  usePageMeta({ title: 'Watchlist' });
+  usePageMeta({ title: t('watch.page.title') });
   const { user } = useSession();
   const list = useWatches(user?.id);
   useEffect(() => {
     if (user) reloadWatches(); // prices move: refresh on every visit
   }, [user]);
 
-  if (!user) return <p className="muted"><Link to="/login?next=/watchlist">Sign in</Link> to see your watchlist.</p>;
+  if (!user) return <p className="muted"><Link to="/login?next=/watchlist">{t('watch.page.signIn')}</Link></p>;
   return (
     <div className="stack" style={{ maxWidth: 960 }}>
       <div>
-        <div className="eyebrow">Price alerts</div>
-        <h1 style={{ fontSize: 40, margin: 0 }}>Watchlist</h1>
+        <div className="eyebrow">{t('watch.page.eyebrow')}</div>
+        <h1 style={{ fontSize: 40, margin: 0 }}>{t('watch.page.title')}</h1>
         <p className="muted" style={{ margin: '6px 0 0' }}>
-          We check prices every few minutes and notify you once for each new low, or when a listing is back in stock.
+          {t('watch.page.lede')}
         </p>
       </div>
       {list === null ? (
-        <p className="muted">Loading…</p>
+        <p className="muted">{t('common.loading')}</p>
       ) : list.length === 0 ? (
         <div className="card stack" style={{ alignItems: 'start' }}>
           <BellRing className="size-6 text-muted-foreground" />
-          <b>Nothing watched yet</b>
-          <p className="muted" style={{ margin: 0 }}>Use “Price alert” on any listing, or on a game page to follow a whole market such as League of Legends boosting on EUW.</p>
-          <Link className="btn" to="/games">Browse games</Link>
+          <b>{t('watch.page.empty')}</b>
+          <p className="muted" style={{ margin: 0 }}>{t('watch.page.empty.text')}</p>
+          <Link className="btn" to="/games">{t('watch.page.browse')}</Link>
         </div>
       ) : (
         <ul className="m-0 list-none overflow-hidden rounded-xl border border-border bg-card p-0">
@@ -63,21 +64,21 @@ export function Watchlist() {
                         <div className="truncate text-xs text-muted-foreground">{w.offer.game} · {w.offer.seller_name}</div>
                       </>
                     ) : (
-                      <span className="muted">This listing was removed</span>
+                      <span className="muted">{t('watch.removed')}</span>
                     )
                   ) : (
                     <>
                       <Link to={marketLink(w)} className="block truncate font-medium no-underline hover:underline">{w.game}</Link>
-                      <div className="truncate text-xs text-muted-foreground">{where(w)}{w.cheapest ? ` · cheapest from ${w.cheapest.seller_name}` : ''}</div>
+                      <div className="truncate text-xs text-muted-foreground">{where(w)}{w.cheapest ? ` · ${t('watch.cheapestFrom', { seller: w.cheapest.seller_name })}` : ''}</div>
                     </>
                   )}
                 </div>
-                <div className="col-start-2 text-sm sm:col-start-auto sm:text-right">
+                <div className="col-start-2 text-sm sm:col-start-auto sm:text-end">
                   <div className={cn('font-mono font-semibold', w.reached && 'text-released')}>
-                    {w.currentCents != null && w.available ? money(w.currentCents, w.currency) : <span className="muted font-sans font-normal">{w.kind === 'offer' ? 'Out of stock' : 'No offers yet'}</span>}
+                    {w.currentCents != null && w.available ? money(w.currentCents, w.currency) : <span className="muted font-sans font-normal">{w.kind === 'offer' ? t('watch.outOfStock') : t('watch.noOffers')}</span>}
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    {w.reached ? 'At or below your target' : w.targetCents != null ? `Target ${money(w.targetCents, w.currency)}` : w.startCents != null ? `Was ${money(w.startCents, w.currency)}` : 'Any new offer'}
+                    {w.reached ? t('watch.reached') : w.targetCents != null ? t('watch.targetIs', { price: money(w.targetCents, w.currency) }) : w.startCents != null ? t('watch.was', { price: money(w.startCents, w.currency) }) : t('watch.anyNew')}
                   </div>
                 </div>
                 <div className="col-start-2 flex items-center gap-2 sm:col-start-auto">

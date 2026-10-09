@@ -1,3 +1,4 @@
+import { moneyLocale } from './i18n';
 const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? '';
 
 /**
@@ -128,7 +129,7 @@ export async function signOut() {
 }
 
 export const money = (cents: number, currency = 'USD') =>
-  new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(cents / 100);
+  new Intl.NumberFormat(moneyLocale(), { style: 'currency', currency }).format(cents / 100);
 
 // ---------------------------------------------------------------------------
 // Realtime: one shared socket, auto-reconnect, per-room resync by last seq.

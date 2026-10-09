@@ -6,6 +6,7 @@ import { useSession } from '../session';
 import { addWatch, findWatch, removeWatch, setTarget, useWatches } from '@/lib/watches';
 import { useDisplayCurrency } from '@/lib/prefs';
 import { cn } from '@/lib/utils';
+import { t } from '../i18n';
 
 type Target = { offerId: string } | { game: string; category?: string; attributes?: Record<string, string> };
 
@@ -13,7 +14,7 @@ type Target = { offerId: string } | { game: string; category?: string; attribute
  * "Price alert" button for a listing or a slice of a game's market. Opens a small panel to set
  * an optional target price in the viewer's display currency.
  */
-export function WatchButton({ target, label = 'Price alert', className }: { target: Target; label?: string; className?: string }) {
+export function WatchButton({ target, label = t('watch.alert'), className }: { target: Target; label?: string; className?: string }) {
   const { user } = useSession();
   const nav = useNavigate();
   const loc = useLocation();
@@ -42,7 +43,7 @@ export function WatchButton({ target, label = 'Price alert', className }: { targ
   const cents = value.trim() ? Math.round(Number(value) * 100) : null;
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (cents != null && !(cents > 0)) return setError('Enter a price above zero, or leave it empty');
+    if (cents != null && !(cents > 0)) return setError(t('watch.positive'));
     setBusy(true);
     setError('');
     try {
@@ -79,28 +80,25 @@ export function WatchButton({ target, label = 'Price alert', className }: { targ
         style={{ fontSize: 14 }}
       >
         {watch ? <BellRing className="size-4" /> : <BellPlus className="size-4" />}
-        {watch ? (watch.targetCents != null ? `Alert at ${money(watch.targetCents, watch.currency)}` : 'Watching') : label}
+        {watch ? (watch.targetCents != null ? t('watch.alertAt', { price: money(watch.targetCents, watch.currency) }) : t('watch.watching')) : label}
       </button>
       {open && (
         <form
           onSubmit={save}
-          className="absolute right-0 top-[calc(100%+6px)] z-40 grid w-[min(300px,calc(100vw-32px))] gap-2.5 rounded-xl border border-border bg-card p-3.5 text-left shadow-[0_18px_50px_-12px_rgba(22,32,46,0.28)]"
+          className="absolute end-0 top-[calc(100%+6px)] z-40 grid w-[min(300px,calc(100vw-32px))] gap-2.5 rounded-xl border border-border bg-card p-3.5 text-start shadow-[0_18px_50px_-12px_rgba(22,32,46,0.28)]"
         >
-          <b className="text-sm">{watch ? 'Edit price alert' : isOffer ? 'Watch this listing' : 'Watch this market'}</b>
+          <b className="text-sm">{watch ? t('watch.edit') : isOffer ? t('watch.thisListing') : t('watch.thisMarket')}</b>
           <label className="grid gap-1 text-xs text-muted-foreground">
-            Alert me at or below ({currency})
-            <input type="number" min="0.01" step="0.01" inputMode="decimal" placeholder="Any price drop" value={value} onChange={(e) => setValue(e.target.value)} style={{ height: 38 }} autoFocus />
+            {t('watch.target', { currency })}
+            <input type="number" min="0.01" step="0.01" inputMode="decimal" placeholder={t('watch.anyDrop')} value={value} onChange={(e) => setValue(e.target.value)} style={{ height: 38 }} autoFocus />
           </label>
           <p className="m-0 text-xs text-muted-foreground">
-            {isOffer
-              ? 'Leave it empty to hear about any drop below today’s price. We also tell you when it’s back in stock.'
-              : 'Leave it empty to hear whenever a cheaper offer is listed.'}{' '}
-            Alerts arrive in your notifications and by email.
+            {isOffer ? t('watch.hintOffer') : t('watch.hintMarket')} {t('watch.delivery')}
           </p>
           {error && <div className="alert" style={{ padding: '8px 10px', fontSize: 13 }}>{error}</div>}
           <div className="flex gap-2">
-            <button className="btn" disabled={busy} style={{ flex: 1 }}>{watch ? 'Save' : 'Start watching'}</button>
-            {watch && <button type="button" className="btn ghost" disabled={busy} onClick={stop}>Stop</button>}
+            <button className="btn" disabled={busy} style={{ flex: 1 }}>{watch ? t('watch.save') : t('watch.start')}</button>
+            {watch && <button type="button" className="btn ghost" disabled={busy} onClick={stop}>{t('watch.stop')}</button>}
           </div>
         </form>
       )}

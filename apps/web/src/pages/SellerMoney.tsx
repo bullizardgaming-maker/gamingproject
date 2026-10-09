@@ -351,7 +351,7 @@ function Exports() {
           <button
             key={kind}
             type="button"
-            className="card demo-account cursor-pointer text-left"
+            className="card demo-account cursor-pointer text-start"
             onClick={async () => {
               setError('');
               try {

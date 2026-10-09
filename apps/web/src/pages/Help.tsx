@@ -6,6 +6,7 @@ import { useSession } from '../session';
 import { HELP_ARTICLES, HELP_TOPICS, TICKET_CATEGORY_LABEL, articleBySlug, searchHelp, type HelpArticle, type HelpTopic } from '@/lib/help';
 import { usePageMeta } from '@/lib/seo';
 import { cn } from '@/lib/utils';
+import { currentLocale, t } from '../i18n';
 
 function ArticleLink({ a }: { a: HelpArticle }) {
   return (
@@ -27,31 +28,32 @@ function ContactCard({ category, orderId }: { category?: string; orderId?: strin
     <div className="card row" style={{ gap: 14 }}>
       <LifeBuoy className="size-7 shrink-0 text-released" />
       <div style={{ flex: '1 1 240px' }}>
-        <b>Still need help?</b>
-        <div className="small muted">Send us a request and our support team will reply by email and in your notifications.</div>
+        <b>{t('help.still')}</b>
+        <div className="small muted">{t('help.still.text')}</div>
       </div>
-      <Link className="btn" to={`/support/new${q.size ? `?${q}` : ''}`}>Contact support</Link>
+      <Link className="btn" to={`/support/new${q.size ? `?${q}` : ''}`}>{t('help.contact')}</Link>
     </div>
   );
 }
 
 /** /help: search plus articles grouped by topic. */
 export function HelpCentre() {
-  usePageMeta({ title: 'Help centre', description: 'Answers about escrow, disputes, payments, selling and account security on Bullizard, and how to contact support.' });
+  usePageMeta({ title: t('help.eyebrow'), description: 'Answers about escrow, disputes, payments, selling and account security on Bullizard, and how to contact support.' });
   const [params, setParams] = useSearchParams();
   const q = params.get('q') ?? '';
   const results = useMemo(() => searchHelp(q), [q]);
   return (
     <div className="stack" style={{ maxWidth: 920, margin: '0 auto', width: '100%' }}>
       <div className="stack" style={{ gap: 10 }}>
-        <div className="eyebrow">Help centre</div>
-        <h1 style={{ fontSize: 40, margin: 0 }}>How can we help?</h1>
+        <div className="eyebrow">{t('help.eyebrow')}</div>
+        <h1 style={{ fontSize: 40, margin: 0 }}>{t('help.title')}</h1>
+        {currentLocale() !== 'en' && <p className="small muted" style={{ margin: 0 }}>{t('help.englishOnly')}</p>}
         <label className="relative block">
           <Search className="pointer-events-none absolute start-4 top-1/2 size-5 -translate-y-1/2 text-muted-foreground" />
           <input
             type="search"
-            aria-label="Search help articles"
-            placeholder="Search: refund, dispute, payout, verify…"
+            aria-label={t('help.searchLabel')}
+            placeholder={t('help.search')}
             value={q}
             onChange={(e) => setParams(e.target.value ? { q: e.target.value } : {}, { replace: true })}
             style={{ height: 52, paddingInlineStart: 46, fontSize: 16 }}
@@ -62,7 +64,7 @@ export function HelpCentre() {
         results.length ? (
           <div className="overflow-hidden rounded-xl border border-border bg-card">{results.map((a) => <ArticleLink key={a.slug} a={a} />)}</div>
         ) : (
-          <div className="card muted">No articles match “{q}”. Try other words, or contact support below.</div>
+          <div className="card muted">{t('help.noMatch', { q })}</div>
         )
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
@@ -78,7 +80,13 @@ export function HelpCentre() {
         </div>
       )}
       <ContactCard />
-      <p className="small muted">Looking for an outage update? See <Link to="/status">system status</Link>. Your requests are under <Link to="/support">My requests</Link>.</p>
+      <p className="small muted">
+        {t('help.outage', { status: '\u0000', requests: '\u0001' }).split(/[\u0000\u0001]/)[0]}
+        <Link to="/status">{t('help.statusLink')}</Link>
+        {t('help.outage', { status: '\u0000', requests: '\u0001' }).split(/[\u0000\u0001]/)[1]}
+        <Link to="/support">{t('help.requestsLink')}</Link>
+        {t('help.outage', { status: '\u0000', requests: '\u0001' }).split(/[\u0000\u0001]/)[2]}
+      </p>
     </div>
   );
 }
@@ -88,11 +96,11 @@ export function HelpArticlePage() {
   const { slug = '' } = useParams();
   const a = articleBySlug(slug);
   usePageMeta({ title: a?.title ?? 'Help', description: a?.summary });
-  if (!a) return <div className="card stack"><h2>Article not found</h2><Link to="/help">Back to the help centre</Link></div>;
+  if (!a) return <div className="card stack"><h2>{t('help.notFound')}</h2><Link to="/help">{t('help.back')}</Link></div>;
   const related = HELP_ARTICLES.filter((x) => x.topic === a.topic && x.slug !== a.slug);
   return (
     <div className="stack" style={{ maxWidth: 760, margin: '0 auto', width: '100%' }}>
-      <nav className="crumbs" aria-label="Breadcrumb"><Link to="/help">Help centre</Link><span>/</span><span>{HELP_TOPICS[a.topic].title}</span></nav>
+      <nav className="crumbs" aria-label="Breadcrumb"><Link to="/help">{t('help.eyebrow')}</Link><span>/</span><span>{HELP_TOPICS[a.topic].title}</span></nav>
       <article className="stack" style={{ gap: 12 }}>
         <h1 style={{ fontSize: 36, margin: 0 }}>{a.title}</h1>
         <p className="lede" style={{ margin: 0 }}>{a.summary}</p>
@@ -107,7 +115,7 @@ export function HelpArticlePage() {
       <ContactCard category={a.ticket} />
       {related.length > 0 && (
         <section>
-          <h2 style={{ fontSize: 18 }}>More in {HELP_TOPICS[a.topic].title}</h2>
+          <h2 style={{ fontSize: 18 }}>{t('help.more', { topic: HELP_TOPICS[a.topic].title })}</h2>
           <div className="overflow-hidden rounded-xl border border-border bg-card">{related.map((x) => <ArticleLink key={x.slug} a={x} />)}</div>
         </section>
       )}

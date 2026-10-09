@@ -6,6 +6,7 @@ import { useSession } from '../session';
 import { SellerMoney } from './SellerMoney';
 import { SellerAnalytics } from './SellerAnalytics';
 import { usePageMeta } from '@/lib/seo';
+import { currentLocale, t } from '../i18n';
 import { attributesFor } from '@/lib/attributes';
 import { useGames } from '@/lib/catalog';
 
@@ -81,6 +82,7 @@ export function Sell() {
     return (
       <div className="stack">
         <h1 style={{ fontSize: 40 }}>Your shop</h1>
+      {currentLocale() !== 'en' && <p className="small muted" style={{ margin: 0 }} lang={currentLocale()}>{t('common.englishOnly')}</p>}
         {tabs}
         {moneyTab ? <SellerMoney /> : <SellerAnalytics />}
       </div>
@@ -114,6 +116,7 @@ export function Sell() {
   return (
     <div className="stack">
       <h1 style={{ fontSize: 40 }}>Your shop</h1>
+      {currentLocale() !== 'en' && <p className="small muted" style={{ margin: 0 }} lang={currentLocale()}>{t('common.englishOnly')}</p>}
       {tabs}
       <div className="grid three">
         <div className="card stack">

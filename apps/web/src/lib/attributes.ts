@@ -4,6 +4,10 @@
  */
 export { attributesFor, type AttributeDef } from '../../../api/src/domain/attributeSets';
 import { attributesFor } from '../../../api/src/domain/attributeSets';
+import { t, type MessageKey } from '../i18n';
+
+/** A field's label in the interface language (definitions are written in English). */
+export const attrLabel = (label: string) => t(`attrLabel.${label}` as MessageKey);
 
 /** Short display pairs for a listing, in definition order: [["Server", "EUW"], ["Rank", "Gold → Platinum"]]. */
 export function attributePairs(game: string, category: string, values: Record<string, string> | undefined): Array<[string, string]> {
@@ -14,9 +18,9 @@ export function attributePairs(game: string, category: string, values: Record<st
     const v = values[d.key];
     if (!v) continue;
     // Boosting ranges read as one pair.
-    if (d.key === 'rank_from' && values.rank_to) out.push(['Rank', `${v} → ${values.rank_to}`]);
+    if (d.key === 'rank_from' && values.rank_to) out.push([attrLabel('Rank'), `${v} → ${values.rank_to}`]);
     else if (d.key === 'rank_to' && values.rank_from) continue;
-    else out.push([d.label, v]);
+    else out.push([attrLabel(d.label), v]);
   }
   return out;
 }

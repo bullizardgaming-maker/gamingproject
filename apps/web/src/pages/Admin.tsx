@@ -5,6 +5,7 @@ import { useSession } from '../session';
 import { AmlPanel, StaffPanel, TaxPanel, TreasuryPanel } from './AdminPanels';
 import { CurrencyPanel, DebtsPanel, FraudModelPanel, IncidentsPanel, PrivacyPanel } from './OpsPanels';
 import { usePageMeta } from '@/lib/seo';
+import { currentLocale, t } from '../i18n';
 import { BusinessPanel } from './BusinessPanel';
 import { SupportPanel } from './SupportPanel';
 
@@ -115,6 +116,7 @@ export function Admin() {
   return (
     <div className="stack">
       <h1 style={{ fontSize: 40 }}>Operations</h1>
+      {currentLocale() !== 'en' && <p className="small muted" style={{ margin: 0 }} lang={currentLocale()}>{t('common.englishOnly')}</p>}
       <div className="filters" role="tablist">
         {visible.map((t) => (
           <button key={t.id} role="tab" aria-pressed={tab === t.id} onClick={() => setTab(t.id)}>{t.label}</button>

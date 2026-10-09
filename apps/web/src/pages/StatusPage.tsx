@@ -73,10 +73,10 @@ export function IncidentCard({ i }: { i: Incident }) {
           Scheduled {when(i.scheduled_start)} – {when(i.scheduled_end!)}
         </p>
       )}
-      <ol className="m-0 mt-3 list-none space-y-3 border-l border-border p-0 pl-4">
+      <ol className="m-0 mt-3 list-none space-y-3 border-s border-border p-0 ps-4">
         {i.updates.map((u, k) => (
           <li key={k} className="relative">
-            <span className="absolute -left-[21px] top-1.5 size-2 rounded-full bg-border" aria-hidden />
+            <span className="absolute -start-[21px] top-1.5 size-2 rounded-full bg-border" aria-hidden />
             <div className="text-sm">
               <b>{UPDATE_LABEL[u.status] ?? u.status}</b> <span className="muted">· {when(u.at)}</span>
             </div>

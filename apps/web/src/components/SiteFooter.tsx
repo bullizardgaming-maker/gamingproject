@@ -2,14 +2,16 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Download, Share } from 'lucide-react';
 import { useInstall } from '@/lib/pwa';
+import { LOCALES, setLocale, t, useLocale, type Locale } from '../i18n';
+import { DISPLAY_CURRENCIES, setCurrency, useDisplayCurrency, type DisplayCurrency } from '@/lib/prefs';
 import { CATEGORY_META, CATEGORY_ORDER } from '@/lib/catalog';
 
-const COLUMNS: Array<[string, Array<[string, string]>]> = [
-  ['Buy', CATEGORY_ORDER.slice(0, 6).map((slug) => [CATEGORY_META[slug]!.label, `/market?category=${slug}`])],
-  ['Sell', [['Open a shop', '/sell'], ['Money & tax', '/sell/money'], ['Seller fees', '/#fees'], ['API & webhooks', '/developers']]],
-  ['Protection', [['How escrow works', '/help/how-escrow-works'], ['Opening a dispute', '/help/open-a-dispute'], ['14-day account insurance', '/help/account-insurance'], ['Your orders', '/orders']]],
-  ['Account', [['Sign in', '/login'], ['Settings & security', '/account'], ['Notifications', '/account#notifications'], ['Watchlist & price alerts', '/watchlist'], ['All games A–Z', '/games']]],
-  ['Help', [['Help centre', '/help'], ['Contact support', '/support/new'], ['My requests', '/support'], ['System status', '/status']]],
+const columns = (): Array<[string, Array<[string, string]>]> => [
+  [t('footer.buy'), CATEGORY_ORDER.slice(0, 6).map((slug) => [CATEGORY_META[slug]!.label, `/market?category=${slug}`])],
+  [t('footer.sell'), [[t('footer.openShop'), '/sell'], [t('footer.money'), '/sell/money'], [t('footer.fees'), '/#fees'], [t('footer.api'), '/developers']]],
+  [t('footer.protection'), [[t('footer.escrow'), '/help/how-escrow-works'], [t('footer.dispute'), '/help/open-a-dispute'], [t('footer.insurance'), '/help/account-insurance'], [t('footer.orders'), '/orders']]],
+  [t('footer.account'), [[t('nav.signIn'), '/login'], [t('footer.settings'), '/account'], [t('footer.notifications'), '/account#notifications'], [t('footer.watchlist'), '/watchlist'], [t('footer.games'), '/games']]],
+  [t('footer.help'), [[t('footer.helpCentre'), '/help'], [t('footer.contact'), '/support/new'], [t('footer.requests'), '/support'], [t('footer.status'), '/status']]],
 ];
 
 /** "Install the app": the browser's own prompt, or the iOS Add to Home Screen steps. */
@@ -20,13 +22,31 @@ function InstallApp() {
   return (
     <div className="mt-4">
       <button type="button" className="btn ghost inline-flex items-center gap-2" style={{ fontSize: 14 }} onClick={() => (state === 'prompt' ? install() : setIosHelp((v) => !v))}>
-        <Download className="size-4" /> Install the app
+        <Download className="size-4" /> {t('footer.install')}
       </button>
       {iosHelp && (
         <p className="small muted" style={{ margin: '8px 0 0' }}>
-          In Safari, tap <Share className="inline size-4 align-text-bottom" aria-label="Share" /> then “Add to Home Screen”.
+          {t('footer.iosInstall', { share: '\u0000' }).split('\u0000')[0]}
+          <Share className="inline size-4 align-text-bottom" aria-label="Share" />
+          {t('footer.iosInstall', { share: '\u0000' }).split('\u0000')[1]}
         </p>
       )}
+    </div>
+  );
+}
+
+/** Language and currency, here as well as in the header, which hides them on phones. */
+function FooterPrefs() {
+  const lang = useLocale();
+  const cur = useDisplayCurrency();
+  return (
+    <div className="mt-4 flex flex-wrap gap-2">
+      <select aria-label={t('prefs.language')} value={lang} onChange={(e) => setLocale(e.target.value as Locale)} style={{ width: 'auto', height: 38, padding: '6px 10px', fontSize: 14 }}>
+        {(Object.keys(LOCALES) as Locale[]).map((l) => <option key={l} value={l} lang={l}>{LOCALES[l].name}</option>)}
+      </select>
+      <select aria-label={t('prefs.currency')} value={cur} onChange={(e) => setCurrency(e.target.value as DisplayCurrency)} style={{ width: 'auto', height: 38, padding: '6px 10px', fontSize: 14 }}>
+        {DISPLAY_CURRENCIES.map((c) => <option key={c}>{c}</option>)}
+      </select>
     </div>
   );
 }
@@ -39,11 +59,12 @@ export function SiteFooter() {
           <div className="stack" style={{ maxWidth: 320 }}>
             <Link to="/" className="brand"><span className="brand-mark" aria-hidden />Bullizard</Link>
             <p className="small muted" style={{ margin: '12px 0 0' }}>
-              The gaming marketplace where your money waits in escrow until the account, key or gold is really yours.
+              {t('footer.tagline')}
             </p>
+            <FooterPrefs />
             <InstallApp />
           </div>
-          {COLUMNS.map(([title, links]) => (
+          {columns().map(([title, links]) => (
             <div key={title}>
               <div className="eyebrow">{title}</div>
               <ul className="m-0 list-none space-y-2 p-0">
@@ -55,8 +76,8 @@ export function SiteFooter() {
           ))}
         </div>
         <div className="row spread border-t border-border py-5 text-[13px]">
-          <span>Payments held in escrow until delivery is confirmed or the protection window ends.</span>
-          <span className="mono">Card data is entered only on our payment partner's hosted page.</span>
+          <span>{t('footer.escrowLine')}</span>
+          <span className="mono">{t('footer.cardLine')}</span>
         </div>
       </div>
     </footer>

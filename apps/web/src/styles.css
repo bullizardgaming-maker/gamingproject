@@ -17,8 +17,8 @@
   --btn-hover: #26344a;
   --banner-rule: #4a5a72;
 
-  --display: 'Bricolage Grotesque', 'Segoe UI', sans-serif;
-  --body: 'IBM Plex Sans', system-ui, sans-serif;
+  --display: 'Bricolage Grotesque', 'IBM Plex Sans Arabic', 'Segoe UI', sans-serif;
+  --body: 'IBM Plex Sans', 'IBM Plex Sans Arabic', system-ui, sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, monospace;
 
   --radius: 10px;
@@ -44,7 +44,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .topbar { border-bottom: 1px solid var(--rule); background: var(--paper); position: sticky; top: 0; z-index: 10; }
 .topbar .shell { display: flex; align-items: center; gap: 24px; height: 60px; }
 .brand { font: 700 20px/1 var(--display); letter-spacing: -0.02em; text-decoration: none; display: flex; align-items: center; gap: 8px; }
-.brand-mark { width: 14px; height: 14px; border-radius: 50%; background: var(--held); box-shadow: 10px 0 0 var(--released); margin-right: 10px; }
+.brand-mark { width: 14px; height: 14px; border-radius: 50%; background: var(--held); box-shadow: 10px 0 0 var(--released); margin-inline-end: 10px; }
 .nav { display: flex; gap: 4px; flex: 1; overflow-x: auto; }
 .nav a { text-decoration: none; padding: 6px 10px; border-radius: 6px; color: var(--steel); white-space: nowrap; }
 .nav a.active, .nav a:hover { color: var(--ink); background: var(--frost); }
@@ -87,9 +87,9 @@ input, select, textarea { background: var(--field); border: 1px solid var(--rule
 input:focus, select:focus, textarea:focus { border-color: var(--ink); outline: none; }
 textarea { min-height: 110px; resize: vertical; }
 
-.alert { border-left: 3px solid var(--disputed); background: var(--disputed-soft); padding: 10px 14px; border-radius: 6px; font-size: 14px; }
-.notice { border-left: 3px solid var(--held); background: var(--held-soft); padding: 10px 14px; border-radius: 6px; font-size: 14px; }
-.ok { border-left: 3px solid var(--released); background: var(--released-soft); padding: 10px 14px; border-radius: 6px; font-size: 14px; }
+.alert { border-inline-start: 3px solid var(--disputed); background: var(--disputed-soft); padding: 10px 14px; border-radius: 6px; font-size: 14px; }
+.notice { border-inline-start: 3px solid var(--held); background: var(--held-soft); padding: 10px 14px; border-radius: 6px; font-size: 14px; }
+.ok { border-inline-start: 3px solid var(--released); background: var(--released-soft); padding: 10px 14px; border-radius: 6px; font-size: 14px; }
 
 .chip { display: inline-flex; align-items: center; gap: 6px; font: 500 12px/1 var(--mono); padding: 5px 8px; border-radius: 999px; border: 1px solid var(--rule); color: var(--steel); background: var(--paper); white-space: nowrap; }
 .chip.held { color: var(--held-ink); background: var(--held-soft); border-color: transparent; }
@@ -97,27 +97,27 @@ textarea { min-height: 110px; resize: vertical; }
 .chip.disputed { color: var(--disputed); background: var(--disputed-soft); border-color: transparent; }
 
 table.data { width: 100%; border-collapse: collapse; font-size: 15px; }
-table.data th { text-align: left; font: 500 12px/1 var(--mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--steel); padding: 10px 8px; border-bottom: 1px solid var(--rule); }
+table.data th { text-align: start; font: 500 12px/1 var(--mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--steel); padding: 10px 8px; border-bottom: 1px solid var(--rule); }
 table.data td { padding: 12px 8px; border-bottom: 1px solid var(--rule); vertical-align: top; }
 .table-wrap { overflow-x: auto; }
 
 /* ---------- Escrow track (signature) ---------- */
 .track { position: relative; padding: 44px 0 8px; }
 .track-rail { position: relative; height: 4px; background: var(--rule); border-radius: 2px; margin: 0 28px; }
-.track-fill { position: absolute; inset: 0 auto 0 0; background: var(--held); border-radius: 2px; transition: width 900ms cubic-bezier(.6,.05,.3,1); }
+.track-fill { position: absolute; inset-block: 0; inset-inline-start: 0; background: var(--held); border-radius: 2px; transition: width 900ms cubic-bezier(.6,.05,.3,1); }
 .track[data-variant='released'] .track-fill { background: var(--released); }
 .track[data-variant='disputed'] .track-fill { background: var(--disputed); }
 .track[data-variant='refunded'] .track-fill { background: var(--steel); }
 .track-stops { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 36px; }
 .track-stop { font-size: 14px; }
 .track-stop:nth-child(2) { text-align: center; }
-.track-stop:nth-child(3) { text-align: right; }
+.track-stop:nth-child(3) { text-align: end; }
 .track-stop b { display: block; font: 600 15px/1.2 var(--display); }
 .track-stop span { color: var(--steel); }
 .track-stop.on b { color: var(--ink); }
 .track-stop:not(.on) b { color: var(--steel); }
 .coin {
-  position: absolute; top: -20px; width: 56px; height: 44px; margin-left: -28px;
+  position: absolute; top: -20px; width: 56px; height: 44px; margin-inline-start: -28px;
   display: grid; place-items: center; border-radius: 22px;
   background: var(--held); color: #fff; font: 600 13px/1 var(--mono);
   box-shadow: 0 0 0 5px var(--frost), 0 6px 18px rgba(22, 32, 46, .18);
@@ -126,7 +126,7 @@ table.data td { padding: 12px 8px; border-bottom: 1px solid var(--rule); vertica
 .track[data-variant='released'] .coin { background: var(--released); }
 .track[data-variant='disputed'] .coin { background: var(--disputed); }
 .track[data-variant='refunded'] .coin { background: var(--steel); }
-.track-clock { position: absolute; right: 0; top: 10px; font: 500 13px/1 var(--mono); color: var(--steel); }
+.track-clock { position: absolute; inset-inline-end: 0; top: 10px; font: 500 13px/1 var(--mono); color: var(--steel); }
 
 /* ---------- Home ---------- */
 .hero { display: grid; grid-template-columns: 1.05fr 1fr; gap: clamp(24px, 5vw, 64px); align-items: center; padding: 24px 0 56px; }
@@ -205,7 +205,7 @@ table.data td { padding: 12px 8px; border-bottom: 1px solid var(--rule); vertica
 .demo-banner .shell { min-height: 40px; padding-top: 6px; padding-bottom: 6px; gap: 12px; }
 .demo-banner .btn.ghost { color: var(--paper); border-color: var(--banner-rule); padding: 4px 12px; font-size: 13px; }
 .demo-banner .btn.ghost:hover { border-color: var(--paper); }
-.demo-account { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; cursor: pointer; font: inherit; }
+.demo-account { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: start; cursor: pointer; font: inherit; }
 .demo-account:hover { border-color: var(--ink); }
 .checkout-card { max-width: 520px; margin: 32px auto; }
 
@@ -229,7 +229,7 @@ table.data td { padding: 12px 8px; border-bottom: 1px solid var(--rule); vertica
 .cat-tile:hover { border-color: var(--ink); transform: translateY(-1px); }
 .steps { list-style: none; padding: 0; margin: 24px 0 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; counter-reset: s; }
 .steps .card { position: relative; }
-.step-no { position: absolute; top: 16px; right: 18px; font-size: 12px; color: var(--steel); }
+.step-no { position: absolute; top: 16px; inset-inline-end: 18px; font-size: 12px; color: var(--steel); }
 
 .site-footer { padding: 0; background: var(--paper); margin-top: 32px; }
 .game-banner { position: relative; border-radius: 16px; overflow: hidden; color: #fff; }
@@ -261,7 +261,7 @@ table.data td { padding: 12px 8px; border-bottom: 1px solid var(--rule); vertica
   .home-hero { grid-template-columns: 1fr; }
   .site-header .header-main { flex-wrap: wrap; height: auto; padding-top: 10px; padding-bottom: 10px; row-gap: 10px; }
   .header-search { order: 3; flex-basis: 100%; max-width: none; }
-  .who { margin-left: auto; }
+  .who { margin-inline-start: auto; }
   .seller-head { grid-template-columns: auto 1fr; }
   .seller-head > :last-child { grid-column: 1 / -1; }
 }
@@ -269,7 +269,7 @@ table.data td { padding: 12px 8px; border-bottom: 1px solid var(--rule); vertica
   .steps { grid-template-columns: 1fr; }
   .header-account { display: none; }
 }
-.filters .side-filter { display: flex; justify-content: space-between; align-items: center; width: 100%; border: 0; border-radius: 8px; background: transparent; padding: 8px 10px; text-align: left; }
+.filters .side-filter { display: flex; justify-content: space-between; align-items: center; width: 100%; border: 0; border-radius: 8px; background: transparent; padding: 8px 10px; text-align: start; }
 .filters .side-filter:hover { background: var(--frost); }
 .filters .side-filter[aria-pressed='true'] { background: var(--ink); color: var(--paper); }
 @media (min-width: 1024px) { .filters-toggle { display: none; } }
@@ -300,3 +300,9 @@ html.dark .secret { background: #0a0f17; color: #dbe4ef; }
 
 .pref-select { width: auto; height: 40px; padding: 0 8px; font: 500 13px/1 var(--mono); border-radius: 8px; background: transparent; cursor: pointer; }
 @media (max-width: 520px) { .pref-select { display: none; } }
+
+/* Arabic script is joined: letter-spacing breaks the joins, and it has no capitals to track. */
+html[lang='ar'] * { letter-spacing: normal !important; }
+html[lang='ar'] body { line-height: 1.7; }
+/* Plex Mono has no Arabic glyphs: let Arabic text in mono labels fall back to Plex Sans Arabic. */
+html[lang='ar'] { --mono: 'IBM Plex Mono', 'IBM Plex Sans Arabic', ui-monospace, monospace; --font-mono: 'IBM Plex Mono', 'IBM Plex Sans Arabic', ui-monospace, monospace; }

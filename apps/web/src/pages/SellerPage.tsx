@@ -134,7 +134,7 @@ export function SellerPage() {
                 </div>
                 {rv.comment && <p style={{ margin: '6px 0 0' }}>{rv.comment}</p>}
                 {rv.seller_reply && (
-                  <div className="mt-2 border-l-2 border-border pl-3 text-sm text-muted-foreground">
+                  <div className="mt-2 border-s-2 border-border ps-3 text-sm text-muted-foreground">
                     <b className="text-foreground">{profile.display_name}:</b> {rv.seller_reply}
                   </div>
                 )}
