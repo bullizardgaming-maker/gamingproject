@@ -127,8 +127,11 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return many(
       ctx.db,
       `SELECT p.id, p.offer_id, p.seller_id, p.registration_email, p.registration_date, p.billing_name, p.status, p.created_at,
-              u.legal_name AS seller_legal_name, f.title
+              u.legal_name AS seller_legal_name, f.title,
+              la.provider AS linked_platform, la.display_name AS linked_name, la.profile_url AS linked_profile_url,
+              la.account_created_at AS linked_account_created_at, la.linked_at
          FROM owner_proofs p JOIN users u ON u.id = p.seller_id JOIN offers f ON f.id = p.offer_id
+         LEFT JOIN linked_accounts la ON la.id = f.linked_account_id AND la.unlinked_at IS NULL
         WHERE p.status = 'pending' ORDER BY p.created_at`,
     );
   });

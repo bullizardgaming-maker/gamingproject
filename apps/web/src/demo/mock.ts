@@ -10,8 +10,9 @@ import { CATEGORY_DEFAULTS, GAME_SETS, attributesFor, cleanAttributes } from '..
 import { checkTiers, effectivePrice, unitPriceFor } from '../../../api/src/domain/priceTiers';
 import { detectOffPlatform, matchTerms } from '../../../api/src/domain/safety';
 import { parseCsv } from '../../../api/src/domain/csv';
+import { platformForGame } from '../../../api/src/domain/platforms';
 
-const KEY = 'bz.demo.v16';
+const KEY = 'bz.demo.v17';
 const day = 86_400_000;
 const now = () => new Date().toISOString();
 const rid = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2) + Date.now().toString(16));
@@ -119,6 +120,20 @@ function availableOf(o: any): number {
   }
   return o.delivery_mode === 'auto' ? o.inventory.length : o.stock;
 }
+/** Public face of a linked account on a listing: platform and age only, never the name. */
+function linkedView(o: any) {
+  const la = o.linked_account_id ? state.linkedAccounts.find((a) => a.id === o.linked_account_id && !a.unlinked_at) : null;
+  return { linked_platform: la?.provider ?? null, linked_account_created_at: la?.account_created_at ?? null };
+}
+function checkAttach(u: any, id: string, game: string, kind: string, exceptOfferId?: string) {
+  if (kind !== 'account') fail(400, 'invalid_linked_account', 'Only account listings can show a linked game account');
+  const la = state.linkedAccounts.find((a) => a.id === id && a.user_id === u.id && !a.unlinked_at) ?? fail(400, 'invalid_linked_account', 'Link the account from your seller hub first');
+  const want = platformForGame(game);
+  if (want !== la.provider) fail(400, 'invalid_linked_account', want ? `${game} accounts are verified with ${want === 'steam' ? 'Steam' : 'Riot'}` : `${game} accounts can’t be verified by sign-in yet`);
+  if (state.offers.some((f) => f.linked_account_id === id && f.id !== exceptOfferId && ['active', 'paused', 'review'].includes(f.status))) fail(409, 'linked_account_in_use', 'Another of your listings already shows this account');
+}
+const linkedOf = (userId: string) => state.linkedAccounts.filter((a) => a.user_id === userId && !a.unlinked_at).map(({ user_id: _u, unlinked_at: _x, ...a }) => a).sort((a, b) => b.linked_at.localeCompare(a.linked_at));
+
 function offerView(o: any) {
   const s = sellerStats(o.seller_id);
   const pr = presenceOf(o.seller_id);
@@ -140,6 +155,8 @@ function offerView(o: any) {
     }),
     seller_name: userById(o.seller_id)?.display_name ?? 'Seller',
     high_risk_secondary: o.category_kind === 'account' && o.owner_proof_status !== 'verified',
+    linked_account_id: undefined,
+    ...linkedView(o),
     seller_completed_orders: s.completed,
     seller_rating: s.rating,
     seller_review_count: s.count,
@@ -210,6 +227,13 @@ function releaseOrder(o: any, reason: string) {
   transition(o, 'completed', reason);
   o.completed_at = now();
   if (o.warranty_days) o.warranty_ends_at = new Date(Date.now() + o.warranty_days * day).toISOString();
+  // A sold account leaves the seller: their link is released so the buyer can link it.
+  const sold = state.offers.find((f) => f.id === o.offer_id);
+  if (sold?.linked_account_id) {
+    const la = state.linkedAccounts.find((a) => a.id === sold.linked_account_id);
+    if (la) la.unlinked_at = now();
+    sold.linked_account_id = null;
+  }
   state.balances[o.seller_id] = (state.balances[o.seller_id] ?? 0) + o.seller_net_cents;
   state.monthlySales[o.seller_id] = (state.monthlySales[o.seller_id] ?? 0) + o.amount_cents;
   state.platform.escrow -= o.amount_cents;
@@ -1006,7 +1030,7 @@ route('GET', '/seller/offers', ({ me }) => {
   const u = needSeller(me);
   return state.offers
     .filter((o) => o.seller_id === u.id)
-    .map((o) => ({ ...offerView(o), available: availableOf(o) }));
+    .map((o) => ({ ...offerView(o), available: availableOf(o), linked_account_id: o.linked_account_id ?? null }));
 });
 route('POST', '/offers', ({ me, body }) => {
   const u = needSeller(me);
@@ -1041,7 +1065,12 @@ route('POST', '/offers', ({ me, body }) => {
     stock: body.deliveryMode === 'manual' ? Number(body.stock ?? 1) : 0, inventory: [] as string[], status: reviewReasons.length ? 'review' : 'active', review_reasons: reviewReasons, owner_proof_status: 'none', version: 1, created_at: now(),
     attributes: attrs.ok ? attrs.value : {}, reserved_for: null, request_id: null, price_tiers: tiers.ok ? tiers.value : [], sale_price_cents: null, sale_starts_at: null, sale_ends_at: null,
     warranty_days: cat.kind === 'account' ? Number(body.warrantyDays ?? 0) : 0,
+    linked_account_id: null as string | null,
   };
+  if (body.linkedAccountId) {
+    checkAttach(u, body.linkedAccountId, body.game, cat.kind);
+    o.linked_account_id = body.linkedAccountId;
+  }
   state.offers.unshift(o);
   if (reviewReasons.length) notify(u.id, 'selling', 'listing_review', 'Your listing is being reviewed', 'It mentions something our rules ask us to check, so it’s hidden until a moderator looks at it.', '/sell');
   return offerView(o);
@@ -1118,6 +1147,25 @@ route('POST', '/offers/:id/owner-proof', ({ me, params, body }) => {
     billing_name: body.billingName ?? null, seller_legal_name: u.legal_name, status: 'pending', created_at: now(),
   });
   return { status: 'pending' };
+});
+// Linked game accounts: the platform sign-in completes instantly in the demo.
+route('GET', '/seller/linked-accounts', ({ me }) => linkedOf(need(me).id));
+route('POST', '/seller/linked-accounts/:provider/start', ({ me, params }) => {
+  const u = needSeller(me);
+  const provider = params[0] as 'steam' | 'riot';
+  const n = state.linkedAccounts.filter((a) => a.user_id === u.id && a.provider === provider).length + 1;
+  state.linkedAccounts.push({
+    id: `la-${rid().slice(0, 8)}`, user_id: u.id, provider, display_name: provider === 'steam' ? `${u.display_name}_steam${n}` : `${u.display_name}#${1000 + n}`,
+    profile_url: null, account_created_at: provider === 'steam' ? '2016-03-14T00:00:00Z' : null, linked_at: now(), unlinked_at: null,
+  });
+  return { url: `/sell?linked=${provider}` };
+});
+route('DELETE', '/seller/linked-accounts/:id', ({ me, params }) => {
+  const u = need(me);
+  const a = state.linkedAccounts.find((x) => x.id === params[0] && x.user_id === u.id && !x.unlinked_at) ?? fail(404, 'not_found', 'Linked account not found');
+  a.unlinked_at = now();
+  for (const o of state.offers) if (o.linked_account_id === a.id) o.linked_account_id = null;
+  return linkedOf(u.id);
 });
 route('POST', '/seller/payout-account', ({ me }) => {
   const u = needSeller(me);
@@ -1390,7 +1438,7 @@ route('POST', '/requests/:id/proposals/:pid/accept', ({ me, params }) => {
     id: `offer-r-${rid().slice(0, 8)}`, seller_id: p.seller_id, category_slug: r.category_slug, category_kind: CATEGORIES.find((c) => c.slug === r.category_slug)!.kind, game: r.game,
     title: r.title, description: [r.description, p.message].filter(Boolean).join('\n\n'), price_cents: p.price_cents, currency: r.currency, delivery_mode: 'manual' as const,
     delivery_hours: p.delivery_hours, stock: 1, inventory: [] as string[], price_tiers: [], review_reasons: [] as string[], bundle: null, sale_price_cents: null, sale_starts_at: null, sale_ends_at: null, status: 'active', owner_proof_status: 'none', attributes: r.attributes ?? {}, version: 1, created_at: now(),
-    reserved_for: u.id, request_id: r.id, warranty_days: 0,
+    reserved_for: u.id, request_id: r.id, warranty_days: 0, linked_account_id: null,
   };
   state.offers.push(offer);
   Object.assign(p, { status: 'accepted', offer_id: offer.id, updated_at: now() });
@@ -1620,7 +1668,14 @@ route('POST', '/admin/risk-flags/:id/review', ({ me, params, body }) => {
   f.status = body.decision === 'clear' ? 'cleared' : 'confirmed';
   return f;
 });
-route('GET', '/admin/owner-proofs', ({ me }) => (needStaff(me), state.ownerProofs.filter((p) => p.status === 'pending')));
+route('GET', '/admin/owner-proofs', ({ me }) => {
+  needStaff(me);
+  return state.ownerProofs.filter((p) => p.status === 'pending').map((p) => {
+    const o = state.offers.find((x) => x.id === p.offer_id);
+    const la = o?.linked_account_id ? state.linkedAccounts.find((a) => a.id === o.linked_account_id && !a.unlinked_at) : null;
+    return { ...p, linked_platform: la?.provider ?? null, linked_name: la?.display_name ?? null, linked_profile_url: la?.profile_url ?? null, linked_account_created_at: la?.account_created_at ?? null, linked_at: la?.linked_at ?? null };
+  });
+});
 route('POST', '/admin/owner-proofs/:id/review', ({ me, params, body }) => {
   needStaff(me);
   const p = state.ownerProofs.find((x) => x.id === params[0]) ?? fail(404, 'not_found', 'Proof not found');

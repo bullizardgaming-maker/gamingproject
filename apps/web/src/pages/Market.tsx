@@ -24,6 +24,9 @@ export interface Offer {
   is_bundle?: boolean;
   /** Account listings: warranty after escrow releases, in days (0 = none). */
   warranty_days?: number;
+  /** Account listings tied to a platform account the seller signed in to (the account name stays private). */
+  linked_platform?: 'steam' | 'riot' | null;
+  linked_account_created_at?: string | null;
   /** A bundle's parts: what's inside and what each costs on its own. */
   bundle?: Array<{ offer_id: string; quantity: number; title: string; game: string; currency: string; price_cents: number }>;
   /** Set while a sale runs: the price before the sale (price_cents is the sale price). */
@@ -62,6 +65,17 @@ export interface Offer {
   attributes?: Record<string, string>;
 }
 
+/** "Steam account verified · since 2014": the seller signed in to it, so we know they control it. */
+export function LinkedBadge({ offer }: { offer: Pick<Offer, 'linked_platform' | 'linked_account_created_at'> }) {
+  const platform = offer.linked_platform === 'steam' ? 'Steam' : 'Riot';
+  const year = offer.linked_account_created_at ? String(new Date(offer.linked_account_created_at).getFullYear()) : null;
+  return (
+    <span className="chip released" title={t('linked.badgeHint', { platform })}>
+      {year ? t('linked.badgeSince', { platform, year }) : t('linked.badge', { platform })}
+    </span>
+  );
+}
+
 export function OfferBadges({ offer }: { offer: Offer }) {
   return (
     <div className="row" style={{ gap: 6 }}>
@@ -70,6 +84,7 @@ export function OfferBadges({ offer }: { offer: Offer }) {
         <>
           <span className="chip held">{t('badge.insurance')}</span>
           {offer.high_risk_secondary ? <span className="chip disputed">{t('badge.highRisk')}</span> : <span className="chip released">{t('badge.ownerVerified')}</span>}
+          {offer.linked_platform && <LinkedBadge offer={offer} />}
           {!!offer.warranty_days && <span className="chip released" title={t('warranty.badgeHint', { days: offer.warranty_days })}>{t('warranty.badge', { days: offer.warranty_days })}</span>}
         </>
       ) : (

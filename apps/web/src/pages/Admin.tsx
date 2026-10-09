@@ -191,7 +191,18 @@ export function Admin() {
                 const match = !p.billing_name || !p.seller_legal_name || p.billing_name.trim().toLowerCase() === p.seller_legal_name.trim().toLowerCase();
                 return (
                   <tr key={p.id}>
-                    <td>{p.title}</td>
+                    <td>
+                      {p.title}
+                      {p.linked_platform ? (
+                        <div className="small">
+                          <span className="chip released">{p.linked_platform === 'steam' ? 'Steam' : 'Riot'} sign-in</span>{' '}
+                          {p.linked_profile_url ? <a href={p.linked_profile_url} target="_blank" rel="noreferrer noopener">{p.linked_name}</a> : p.linked_name}
+                          <span className="muted"> · created {p.linked_account_created_at ? p.linked_account_created_at.slice(0, 10) : 'unknown'} · linked {p.linked_at?.slice(0, 10)}</span>
+                        </div>
+                      ) : (
+                        <div className="small muted">No linked account</div>
+                      )}
+                    </td>
                     <td className="small">{p.registration_email}<div className="muted">{p.registration_date?.slice(0, 10)}</div></td>
                     <td className="small">{p.billing_name ?? '—'} / {p.seller_legal_name ?? '—'} {!match && <span className="chip disputed">mismatch</span>}</td>
                     <td>

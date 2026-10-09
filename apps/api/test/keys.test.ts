@@ -143,7 +143,7 @@ describe('escrow signer in KMS', () => {
   });
 
   it('refuses a private key in production unless explicitly allowed', () => {
-    const base = { NODE_ENV: 'production', MALWARE_SCANNER: 'clamd', JWT_SECRET: 'x'.repeat(40), ESCROW_SIGNER_PRIVATE_KEY: Wallet.createRandom().privateKey } as any;
+    const base = { NODE_ENV: 'production', MALWARE_SCANNER: 'clamd', PLATFORM_ACCOUNTS: 'live', JWT_SECRET: 'x'.repeat(40), ESCROW_SIGNER_PRIVATE_KEY: Wallet.createRandom().privateKey } as any;
     expect(() => loadConfig(base)).toThrow(/aws_kms/);
     expect(() => loadConfig({ ...base, ESCROW_SIGNER: 'aws_kms' })).toThrow(/ESCROW_KMS_KEY_ID/);
   });

@@ -13,6 +13,8 @@ import { replyLabel } from '@/lib/presence';
 import { TrustBadge } from '../components/CatalogUi';
 import { StorefrontEditor } from '../components/StorefrontEditor';
 import { BulkListings } from '../components/BulkListings';
+import { LinkedAccounts, platformName, type LinkedAccount } from '../components/LinkedAccounts';
+import { platformForGame } from '../../../api/src/domain/platforms';
 
 interface Dashboard {
   tier: { name: string; accountRateBps: number; otherRateBps: number };
@@ -41,6 +43,7 @@ interface SellerOffer {
   sale_ends_at?: string | null;
   reserved_for?: string | null;
   is_bundle?: boolean;
+  linked_account_id?: string | null;
 }
 
 const TIER_ROWS = [0, 1, 2];
@@ -130,12 +133,14 @@ export function Sell() {
   const analyticsTab = pathname.startsWith('/sell/analytics');
   const [dash, setDash] = useState<Dashboard | null>(null);
   const [offers, setOffers] = useState<SellerOffer[]>([]);
+  const [linked, setLinked] = useState<LinkedAccount[]>([]);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'alert'; text: string } | null>(null);
 
   const load = useCallback(async () => {
-    const [d, o] = await Promise.all([api<Dashboard>('/seller/dashboard'), api<SellerOffer[]>('/seller/offers')]);
+    const [d, o, l] = await Promise.all([api<Dashboard>('/seller/dashboard'), api<SellerOffer[]>('/seller/offers'), api<LinkedAccount[]>('/seller/linked-accounts').catch(() => [])]);
     setDash(d);
     setOffers(o);
+    setLinked(l);
   }, []);
 
   useEffect(() => {
@@ -255,15 +260,16 @@ export function Sell() {
             <table className="data">
               <thead><tr><th>{t('sell.col.listing')}</th><th>{t('table.price')}</th><th>{t('table.stock')}</th><th>{t('table.delivery')}</th><th /></tr></thead>
               <tbody>
-                {offers.map((o) => <OfferRow key={o.id} offer={o} onChange={load} />)}
+                {offers.map((o) => <OfferRow key={o.id} offer={o} linked={linked} onChange={load} />)}
               </tbody>
             </table>
           </div>
         )}
       </div>
 
+      <LinkedAccounts accounts={linked} onChange={load} />
       <DiscountCodes />
-      <NewOffer onCreated={load} offers={offers} />
+      <NewOffer onCreated={load} offers={offers} linked={linked} />
       <BulkListings onApplied={load} />
     </div>
   );
@@ -364,7 +370,8 @@ function DiscountCodes() {
   );
 }
 
-function OfferRow({ offer, onChange }: { offer: SellerOffer; onChange: () => void }) {
+function OfferRow({ offer, linked, onChange }: { offer: SellerOffer; linked: LinkedAccount[]; onChange: () => void }) {
+  const shown = linked.find((a) => a.id === offer.linked_account_id);
   const [open, setOpen] = useState(false);
   const [format, setFormat] = useState<'txt' | 'json'>('txt');
   const [content, setContent] = useState('');
@@ -412,6 +419,7 @@ function OfferRow({ offer, onChange }: { offer: SellerOffer; onChange: () => voi
           {offer.status === 'review' && (
             <div className="small" title={t('mod.inReviewHint')}><span className="chip held">{t('mod.inReview')}</span> <span className="muted">{t('mod.inReviewHint')}</span></div>
           )}
+          {shown && <div className="small"><span className="chip released">{t('linked.listingChip', { platform: platformName(shown.provider) })}</span> <span className="muted">{shown.display_name}</span></div>}
           {offer.category_slug === 'accounts' && offer.owner_proof_status !== 'verified' && (
             <div className="small" style={{ color: 'var(--disputed)' }}>{t('sell.ownerProof', { status: offer.owner_proof_status })}</div>
           )}
@@ -476,7 +484,7 @@ function OfferRow({ offer, onChange }: { offer: SellerOffer; onChange: () => voi
   );
 }
 
-function NewOffer({ onCreated, offers }: { onCreated: () => void; offers: SellerOffer[] }) {
+function NewOffer({ onCreated, offers, linked }: { onCreated: () => void; offers: SellerOffer[]; linked: LinkedAccount[] }) {
   const [error, setError] = useState('');
   const [bundleOn, setBundleOn] = useState(false);
   const [parts, setParts] = useState<Record<string, number>>({});
@@ -485,6 +493,10 @@ function NewOffer({ onCreated, offers }: { onCreated: () => void; offers: Seller
   const [game, setGame] = useState('');
   const fields = attributesFor(game, category);
   const { games } = useGames();
+  // Account listings can show a linked account from the game's own platform, if it isn't on another listing.
+  const platform = category === 'accounts' ? platformForGame(game) : null;
+  const inUse = new Set(offers.filter((o) => ['active', 'paused', 'review'].includes(o.status)).map((o) => o.linked_account_id));
+  const linkable = platform ? linked.filter((a) => a.provider === platform && !inUse.has(a.id)) : [];
   const submit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const form = e.currentTarget;
@@ -503,6 +515,7 @@ function NewOffer({ onCreated, offers }: { onCreated: () => void; offers: Seller
           priceTiers: category === 'accounts' ? undefined : TIER_ROWS.filter((i) => f[`tierQty${i}`] && f[`tierPrice${i}`]).map((i) => ({ minQty: Number(f[`tierQty${i}`]), priceCents: Math.round(Number(f[`tierPrice${i}`]) * 100) })),
           ...(f.deliveryMode === 'manual' && f.categorySlug !== 'accounts' ? { stock: Number(f.stock || 1) } : {}),
           ...(f.categorySlug === 'accounts' && Number(f.warrantyDays) ? { warrantyDays: Number(f.warrantyDays) } : {}),
+          ...(f.linkedAccountId ? { linkedAccountId: f.linkedAccountId } : {}),
           ...(bundleOn ? { bundle: Object.entries(parts).map(([offerId, quantity]) => ({ offerId, quantity })) } : {}),
         },
       });
@@ -546,6 +559,16 @@ function NewOffer({ onCreated, offers }: { onCreated: () => void; offers: Seller
               {[0, 7, 14, 30, 60, 90].map((d) => <option key={d} value={d}>{d ? t('warranty.days', { count: d }) : t('warranty.none')}</option>)}
             </select>
             <span id="warranty-hint" className="small muted">{t('warranty.sellHint')}</span>
+          </label>
+        )}
+        {platform && (
+          <label className="field">
+            {t('linked.sellLabel', { platform: platformName(platform) })}
+            <select name="linkedAccountId" defaultValue="" aria-describedby="linked-hint" key={`${platform}-${linkable.length}`}>
+              <option value="">{t('linked.sellNone')}</option>
+              {linkable.map((a) => <option key={a.id} value={a.id}>{a.display_name}</option>)}
+            </select>
+            <span id="linked-hint" className="small muted">{linkable.length ? t('linked.sellHint') : t('linked.sellLinkFirst', { platform: platformName(platform) })}</span>
           </label>
         )}
       </div>

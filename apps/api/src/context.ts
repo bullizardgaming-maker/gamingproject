@@ -36,6 +36,7 @@ export interface Logger {
 
 /** Everything a domain function needs. Constructed once per process. */
 import { createViewDeduper, type ViewDeduper } from './lib/viewDedupe.js';
+import { LivePlatformAccounts, MockPlatformAccounts, type PlatformAccounts } from './providers/platformAccounts.js';
 export interface Ctx {
   cfg: Config;
   db: Db;
@@ -59,6 +60,7 @@ export interface Ctx {
   push: PushSender;
   /** Null when crypto escrow is not configured. */
   escrowSigner: EscrowSigner | null;
+  platformAccounts: PlatformAccounts;
   log: Logger;
   apiBaseUrl: string;
 }
@@ -102,6 +104,11 @@ export function createContext(cfg: Config, log: Logger, overrides: Partial<Ctx> 
       (cfg.VAPID_PUBLIC_KEY && cfg.VAPID_PRIVATE_KEY
         ? new WebPushSender(cfg.VAPID_PUBLIC_KEY, cfg.VAPID_PRIVATE_KEY, cfg.VAPID_SUBJECT, cfg.NODE_ENV === 'production')
         : new NoPush()),
+    platformAccounts:
+      overrides.platformAccounts ??
+      (cfg.PLATFORM_ACCOUNTS === 'live'
+        ? new LivePlatformAccounts({ steamApiKey: cfg.STEAM_WEB_API_KEY, riotClientId: cfg.RIOT_CLIENT_ID, riotClientSecret: cfg.RIOT_CLIENT_SECRET, riotAccountRegion: cfg.RIOT_ACCOUNT_REGION })
+        : new MockPlatformAccounts()),
     vat: overrides.vat ?? (cfg.VAT_VALIDATION === 'vies' ? new ViesValidator() : new NoVatValidator()),
     escrowSigner:
       overrides.escrowSigner !== undefined

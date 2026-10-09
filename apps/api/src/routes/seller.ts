@@ -11,6 +11,7 @@ import { createOffer, getOffer, requireSeller, submitOwnerProof, updateOffer, up
 import { createSellerCode, endSale, listSellerCodes, setSale, setSellerCodeActive } from '../domain/discounts.js';
 import { trustSummary } from '../domain/trust.js';
 import { exportListings, importListings } from '../domain/bulkListings.js';
+import { listLinked, startLink, unlink } from '../domain/linkedAccounts.js';
 import { ACCENTS, MAX_INTRO, MAX_PINNED, deleteBanner, storefront, updateStorefront, uploadBanner } from '../domain/storefront.js';
 import { requestWithdrawal } from '../domain/users.js';
 import { payoutStatus, startPayoutOnboarding } from '../domain/payouts.js';
@@ -42,6 +43,7 @@ export const OfferBody = z.object({
   lowStockThreshold: z.number().int().min(0).max(100_000).optional(),
   deliveryHours: z.number().int().min(1).max(168).optional().describe('Promised delivery time for manual orders, in hours'),
   warrantyDays: z.union([z.literal(0), z.literal(7), z.literal(14), z.literal(30), z.literal(60), z.literal(90)]).optional().describe('Account listings only: a warranty after escrow releases, in days'),
+  linkedAccountId: z.string().uuid().nullable().optional().describe('Account listings: a Steam/Riot account you linked (GET /v1/seller/linked-accounts); null detaches'),
   attributes: z.record(z.string().max(30), z.string().max(60)).optional().describe('Game-specific fields such as server, region, platform or rank (GET /v1/catalog/attributes)'),
   bundle: z
     .array(z.object({ offerId: z.string().uuid(), quantity: z.number().int().min(1).max(20) }))
@@ -105,6 +107,20 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
   /** The seller's trust level, the numbers behind it and what the next level needs. */
   app.get('/seller/trust', async (req) => trustSummary(ctx.db, me(req).id));
 
+  // --- Linked game accounts (Steam / Riot sign-in) ------------------------------------------
+  app.get('/seller/linked-accounts', async (req) => listLinked(ctx.db, me(req).id));
+  app.post('/seller/linked-accounts/:provider/start', async (req) => {
+    const user = me(req);
+    requireSeller(user);
+    const { provider } = z.object({ provider: z.enum(['steam', 'riot']) }).parse(req.params);
+    const body = z.object({ mockAccount: z.string().max(80).optional() }).parse(req.body ?? {});
+    return startLink(ctx, user.id, provider, body);
+  });
+  app.delete('/seller/linked-accounts/:id', async (req) => {
+    await unlink(ctx, me(req).id, Id.parse(req.params).id);
+    return listLinked(ctx.db, me(req).id);
+  });
+
   // --- Bulk listings: CSV export and import (preview first) ---------------------------------
   app.get('/seller/listings/export.csv', async (req, reply) => {
     const csv = await exportListings(ctx.db, me(req).id);
@@ -159,7 +175,7 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/offers', async (req, reply) => reply.status(201).send(await createOffer(ctx, me(req), OfferBody.parse(req.body))));
 
   app.patch('/offers/:id', async (req) => {
-    const body = OfferBody.pick({ title: true, description: true, priceCents: true, stock: true, lowStockThreshold: true, deliveryHours: true, attributes: true, priceTiers: true, warrantyDays: true })
+    const body = OfferBody.pick({ title: true, description: true, priceCents: true, stock: true, lowStockThreshold: true, deliveryHours: true, attributes: true, priceTiers: true, warrantyDays: true, linkedAccountId: true })
       .partial()
       .extend({ version: z.number().int().min(0), status: z.enum(['active', 'paused', 'removed']).optional() })
       .parse(req.body);

@@ -22,6 +22,7 @@ import {
 import { recordView } from '../domain/analytics.js';
 import { MAX_HISTORY_DAYS, marketPriceHistory, offerPriceHistory } from '../domain/priceHistory.js';
 import { alsoBought } from '../domain/recommendations.js';
+import { completeLink } from '../domain/linkedAccounts.js';
 import { LOCALES } from '../domain/locales/index.js';
 import { createSavedSearch, deleteSavedSearch, listSavedSearches, updateSavedSearch } from '../domain/savedSearches.js';
 import { TICKET_CATEGORIES, createTicket, customerReply, customerResolve, getTicket, listMyTickets } from '../domain/support.js';
@@ -449,6 +450,18 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     return offer;
   };
   const Days = z.object({ days: z.coerce.number().int().min(7).max(MAX_HISTORY_DAYS).default(90) });
+
+  /** Return trip from Steam / Riot sign-in: link the account, then back to the seller hub. */
+  app.get('/linked-accounts/:provider/callback', async (req, reply) => {
+    const { provider } = z.object({ provider: z.enum(['steam', 'riot']) }).parse(req.params);
+    const web = `${ctx.cfg.PUBLIC_WEB_URL.replace(/\/+$/, '')}/sell`;
+    try {
+      await completeLink(ctx, provider, req.query as Record<string, string>);
+      return reply.redirect(`${web}?linked=${provider}`);
+    } catch (err) {
+      return reply.redirect(`${web}?link_error=${encodeURIComponent((err as any).code ?? 'link_failed')}`);
+    }
+  });
 
   app.get('/offers/:id/price-history', async (req) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);

@@ -37,6 +37,13 @@ const Env = z.object({
   DATA_ENCRYPTION_KEYS: z.string().default('v1:ZGV2LW9ubHktZGF0YS1rZXktMzItYnl0ZXMtLS0tLS0='),
   // Separate key for deterministic fingerprints (inventory de-dup) and API key hashing.
   FINGERPRINT_KEY: z.string().default('dev-only-fingerprint-key'),
+  // Linking Steam / Riot accounts to listings (domain/linkedAccounts.ts). Mock completes without
+  // leaving the site; only allowed in production together with SANDBOX_MODE.
+  PLATFORM_ACCOUNTS: z.enum(['mock', 'live']).default('mock'),
+  STEAM_WEB_API_KEY: z.string().optional(),
+  RIOT_CLIENT_ID: z.string().optional(),
+  RIOT_CLIENT_SECRET: z.string().optional(),
+  RIOT_ACCOUNT_REGION: z.enum(['americas', 'asia', 'europe']).default('europe'),
   PAYMENT_PROVIDER: z.enum(['mock', 'stripe']).default('mock'),
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
@@ -175,6 +182,9 @@ export function loadConfig(overrides: Partial<Record<keyof Config, string>> = {}
   const cfg = Env.parse({ ...process.env, ...overrides });
   if (cfg.SANDBOX_MODE && (cfg.PAYMENT_PROVIDER !== 'mock' || cfg.KYC_PROVIDER !== 'mock')) {
     throw new Error('SANDBOX_MODE requires PAYMENT_PROVIDER=mock and KYC_PROVIDER=mock');
+  }
+  if (cfg.NODE_ENV === 'production' && cfg.PLATFORM_ACCOUNTS === 'mock' && !cfg.SANDBOX_MODE) {
+    throw new Error('PLATFORM_ACCOUNTS=live is required in production (mock links are for the sandbox)');
   }
   if (cfg.NODE_ENV === 'production' && cfg.MALWARE_SCANNER === 'dev') {
     throw new Error('MALWARE_SCANNER=clamd is required in production');

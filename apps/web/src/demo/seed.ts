@@ -241,6 +241,7 @@ export function seed() {
       price_tiers: TIERS[title] ?? [],
       // Account listings: a warranty that runs on after escrow releases.
       warranty_days: WARRANTY[title] ?? 0,
+      linked_account_id: (title.startsWith('Immortal 2') ? 'la-1' : null) as string | null,
       review_reasons: [] as string[],
       bundle: null as Array<{ offer_id: string; quantity: number }> | null,
       sale_price_cents: (SALES[title]?.[0] ?? null) as number | null,
@@ -273,9 +274,17 @@ export function seed() {
     ['u-req-zed', 'Can I pay you with PayPal friends and family? Cheaper for both of us. My whatsapp is +44 7700 900456'],
   ].map(([sender, body], k) => ({ id: `fm-${k}`, room_id: flagRoom.id, seq: k + 1, sender_id: sender, kind: 'text', body, flags: k === 2 ? ['offplatform:whatsapp'] : [], hash: `seed-${k}`, created_at: ago((40 - k * 5) * 60_000) }));
 
+  // Linked Steam/Riot accounts: RiftTrader's Valorant account shows a verified badge; the demo seller has a
+  // Steam account linked but not yet on a listing.
+  const linkedAccounts = [
+    { id: 'la-1', user_id: users[3]!.id, provider: 'riot', display_name: 'RiftTrader#EUW', profile_url: null, account_created_at: null, linked_at: ago(3 * day), unlinked_at: null },
+    { id: 'la-2', user_id: users[1]!.id, provider: 'steam', display_name: 'keystone_shop', profile_url: 'https://steamcommunity.com/profiles/76561198000000001', account_created_at: '2014-06-01T00:00:00Z', linked_at: ago(10 * day), unlinked_at: null },
+  ];
+
   return {
     users,
     offers,
+    linkedAccounts: linkedAccounts as any[],
     orders: [] as any[],
     warrantyClaims: [] as any[],
     rooms: [flagRoom] as any[],
