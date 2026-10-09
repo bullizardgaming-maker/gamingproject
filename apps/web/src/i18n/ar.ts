@@ -445,5 +445,14 @@ const ar: Messages = {
   "req.reservedForYou": "أُنشئ هذا العرض لك من عرض قبلته. أنت وحدك من يراه ويشتريه.",
   "req.reservedSeller": "عرض خاص أُنشئ من طلب مشترٍ. لا يراه إلا ذلك المشتري.",
   "req.viewRequest": "عرض الطلب",
+  // Quantity price tiers
+  "tier.title": "اشترِ أكثر وادفع أقل",
+  "tier.row": "{qty}+ · {price} للوحدة",
+  "tier.saving": "توفّر {amount} ({each} للوحدة)",
+  "tier.bulkFrom": "{price} عند {qty}+",
+  "tier.sellTitle": "أسعار الكميات (اختياري)",
+  "tier.sellHint": "سعر وحدة أقل للطلبات الأكبر",
+  "tier.fromQty": "من (وحدات)",
+  "tier.each": "سعر الوحدة",
 };
 export default ar;

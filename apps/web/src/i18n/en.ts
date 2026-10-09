@@ -593,6 +593,16 @@ const en = {
   "req.reservedSeller": "Private listing made from a buyer request. Only that buyer can see it.",
   "req.viewRequest": "View request",
 
+  // Quantity price tiers
+  "tier.title": "Buy more, pay less",
+  "tier.row": "{qty}+ · {price} each",
+  "tier.saving": "You save {amount} ({each} each)",
+  "tier.bulkFrom": "{price} at {qty}+",
+  "tier.sellTitle": "Quantity prices (optional)",
+  "tier.sellHint": "cheaper unit prices for bigger orders",
+  "tier.fromQty": "From (units)",
+  "tier.each": "Price each",
+
   // Generic
   'common.notFound': 'Page not found',
   'common.englishOnly': 'This section is in English.',

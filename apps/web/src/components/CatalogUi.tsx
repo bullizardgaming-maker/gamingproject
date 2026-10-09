@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { money } from '../api';
 import { BadgeCheck, Coins, Gamepad2, Gift, KeyRound, Rocket, ShieldCheck, Smartphone, Star, Swords, UserRound, Zap } from 'lucide-react';
 import { categoryLabel, deliveryLabel, hueOf, initials, slugify } from '@/lib/catalog';
 import { cn } from '@/lib/utils';
@@ -165,8 +166,11 @@ export function OfferTable({ offers, showGame = false, showSeller = true, empty 
                 <span className="font-mono text-xs text-muted-foreground md:hidden">· {t('table.inStock', { n: o.stock })}</span>
               </div>
               <span className="hidden font-mono text-sm text-muted-foreground md:block">{o.stock}</span>
-              <div className="order-2 flex items-center justify-end gap-3 md:order-none">
+              <div className="order-2 flex flex-col items-end justify-center md:order-none">
                 <span className="font-mono text-base font-semibold">{price.offer(o as any)}</span>
+                {!!o.price_tiers?.length && (
+                  <span className="text-xs text-released">{t('tier.bulkFrom', { price: money(o.price_tiers.at(-1)!.priceCents, o.currency), qty: o.price_tiers.at(-1)!.minQty })}</span>
+                )}
               </div>
             </div>
           </li>

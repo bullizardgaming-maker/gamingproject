@@ -5,6 +5,8 @@ import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { addInventory, parseBulkUpload } from './inventory.js';
 import { getRate } from './fx.js';
 import { cleanAttributes } from './attributeSets.js';
+import { checkTiers, type PriceTier } from './priceTiers.js';
+export { unitPriceFor, type PriceTier } from './priceTiers.js';
 
 export interface OfferInput {
   categorySlug: string;
@@ -19,11 +21,20 @@ export interface OfferInput {
   deliveryHours?: number;
   /** Game-specific fields (server, region, rank…); see attributeSets.ts. */
   attributes?: Record<string, string>;
+  /** Cheaper unit prices for larger orders. */
+  priceTiers?: PriceTier[];
+}
+
+/** Validates tiers, as a 400 error. */
+export function cleanTiers(basePriceCents: number, tiers: PriceTier[] | undefined, kind: string): PriceTier[] {
+  const r = checkTiers(basePriceCents, tiers, kind);
+  if (!r.ok) throw badRequest('invalid_tiers', r.error);
+  return r.value;
 }
 
 export const OFFER_LIST_SQL = `
   SELECT f.id, f.seller_id, f.category_slug, f.game, f.title, f.description, f.price_cents, f.currency, f.price_settlement_cents, f.delivery_mode,
-         f.status, f.owner_proof_status, f.version, f.attributes, f.reserved_for, f.request_id, f.created_at, f.updated_at, f.low_stock_threshold,
+         f.status, f.owner_proof_status, f.version, f.attributes, f.price_tiers, f.reserved_for, f.request_id, f.created_at, f.updated_at, f.low_stock_threshold,
          c.kind AS category_kind, c.risk_class, u.display_name AS seller_name, f.delivery_hours,
          (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now())) AS shop_paused,
          u.shop_paused_until, u.shop_pause_message,
@@ -53,12 +64,13 @@ export async function createOffer(ctx: Ctx, seller: { id: string; kyc_tier: numb
   const attrs = cleanAttributes(input.game, input.categorySlug, input.attributes);
   if (!attrs.ok) throw badRequest('invalid_attributes', attrs.error);
   const stock = input.deliveryMode === 'manual' ? (cat.kind === 'account' ? 1 : input.stock ?? 1) : 0;
+  const tiers = cleanTiers(input.priceCents, input.priceTiers, cat.kind);
   const offer = await one(
     ctx.db,
-    `INSERT INTO offers (seller_id, category_slug, game, title, description, price_cents, currency, delivery_mode, stock, low_stock_threshold, delivery_hours, attributes)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
+    `INSERT INTO offers (seller_id, category_slug, game, title, description, price_cents, currency, delivery_mode, stock, low_stock_threshold, delivery_hours, attributes, price_tiers)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
     [seller.id, input.categorySlug, input.game, input.title, input.description ?? '', input.priceCents, (input.currency ?? ctx.cfg.SETTLEMENT_CURRENCY).toUpperCase(),
-     input.deliveryMode, stock, input.lowStockThreshold ?? 5, input.deliveryHours ?? 24, JSON.stringify(attrs.value)],
+     input.deliveryMode, stock, input.lowStockThreshold ?? 5, input.deliveryHours ?? 24, JSON.stringify(attrs.value), JSON.stringify(tiers)],
   );
   return getOffer(ctx.db, offer.id);
 }
@@ -79,13 +91,19 @@ export async function updateOffer(
   sellerId: string,
   offerId: string,
   version: number,
-  patch: Partial<Pick<OfferInput, 'title' | 'description' | 'priceCents' | 'stock' | 'lowStockThreshold' | 'deliveryHours' | 'attributes'>> & { status?: 'active' | 'paused' | 'removed' },
+  patch: Partial<Pick<OfferInput, 'title' | 'description' | 'priceCents' | 'stock' | 'lowStockThreshold' | 'deliveryHours' | 'attributes' | 'priceTiers'>> & { status?: 'active' | 'paused' | 'removed' },
 ) {
   let attributes: string | null = null;
-  if (patch.priceCents != null || patch.attributes || patch.title || patch.stock != null) {
+  if (patch.priceCents != null || patch.attributes || patch.title || patch.stock != null || patch.priceTiers) {
     // The terms of an accepted buyer request are fixed; the seller can only pause or remove it.
     const cur = await maybeOne(ctx.db, 'SELECT reserved_for FROM offers WHERE id = $1 AND seller_id = $2', [offerId, sellerId]);
     if (cur?.reserved_for) throw conflict('reserved_offer', 'This listing was agreed with a buyer and its terms can’t be changed');
+  }
+  let tiers: string | null = null;
+  if (patch.priceTiers) {
+    const cur = await maybeOne(ctx.db, 'SELECT f.seller_id, f.price_cents, c.kind FROM offers f JOIN categories c ON c.slug = f.category_slug WHERE f.id = $1', [offerId]);
+    if (!cur || cur.seller_id !== sellerId) throw notFound('Offer');
+    tiers = JSON.stringify(cleanTiers(patch.priceCents ?? cur.price_cents, patch.priceTiers, cur.kind));
   }
   if (patch.attributes) {
     const cur = await maybeOne(ctx.db, 'SELECT seller_id, game, category_slug FROM offers WHERE id = $1', [offerId]);
@@ -99,10 +117,10 @@ export async function updateOffer(
         title = COALESCE($4, title), description = COALESCE($5, description), price_cents = COALESCE($6, price_cents),
         stock = CASE WHEN delivery_mode = 'manual' THEN COALESCE($7, stock) ELSE stock END,
         low_stock_threshold = COALESCE($8, low_stock_threshold), status = COALESCE($9, status),
-        delivery_hours = COALESCE($10, delivery_hours), attributes = COALESCE($11::jsonb, attributes),
+        delivery_hours = COALESCE($10, delivery_hours), attributes = COALESCE($11::jsonb, attributes), price_tiers = COALESCE($12::jsonb, price_tiers),
         version = version + 1, updated_at = now()
       WHERE id = $1 AND seller_id = $2 AND version = $3 RETURNING id`,
-    [offerId, sellerId, version, patch.title, patch.description, patch.priceCents, patch.stock, patch.lowStockThreshold, patch.status, patch.deliveryHours, attributes],
+    [offerId, sellerId, version, patch.title, patch.description, patch.priceCents, patch.stock, patch.lowStockThreshold, patch.status, patch.deliveryHours, attributes, tiers],
   );
   if (res.rowCount === 0) {
     const cur = await maybeOne(ctx.db, 'SELECT seller_id, version FROM offers WHERE id = $1', [offerId]);

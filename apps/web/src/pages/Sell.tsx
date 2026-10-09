@@ -33,6 +33,8 @@ interface SellerOffer {
   version: number;
 }
 
+const TIER_ROWS = [0, 1, 2];
+
 export function Sell() {
   usePageMeta({ title: 'Sell on Bullizard', description: 'Open a shop: fees fall as your sales grow, instant delivery for codes, Chargeback Shield and payouts in USD, EUR or GBP.' });
   const { user, refresh } = useSession();
@@ -291,6 +293,7 @@ function NewOffer({ onCreated }: { onCreated: () => void }) {
           priceCents: Math.round(Number(f.price) * 100),
           deliveryMode: f.deliveryMode,
           attributes: Object.fromEntries(fields.map((d) => [d.key, f[`attr.${d.key}`] ?? '']).filter(([, v]) => v)),
+          priceTiers: category === 'accounts' ? undefined : TIER_ROWS.filter((i) => f[`tierQty${i}`] && f[`tierPrice${i}`]).map((i) => ({ minQty: Number(f[`tierQty${i}`]), priceCents: Math.round(Number(f[`tierPrice${i}`]) * 100) })),
           ...(f.deliveryMode === 'manual' && f.categorySlug !== 'accounts' ? { stock: Number(f.stock || 1) } : {}),
         },
       });
@@ -344,6 +347,19 @@ function NewOffer({ onCreated }: { onCreated: () => void }) {
                   <input name={`attr.${d.key}`} required={d.required} maxLength={60} />
                 )}
               </label>
+            ))}
+          </div>
+        </fieldset>
+      )}
+      {category !== 'accounts' && (
+        <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0, gap: 8 }}>
+          <legend className="small muted" style={{ marginBottom: 8 }}>{t('tier.sellTitle')} · {t('tier.sellHint')}</legend>
+          <div className="grid three">
+            {TIER_ROWS.map((i) => (
+              <div key={i} className="row" style={{ gap: 8, flexWrap: 'nowrap' }}>
+                <label className="field" style={{ flex: 1 }}>{t('tier.fromQty')}<input name={`tierQty${i}`} type="number" min={2} placeholder={String([10, 50, 100][i])} /></label>
+                <label className="field" style={{ flex: 1 }}>{t('tier.each')}<input name={`tierPrice${i}`} type="number" step="0.01" min="0.01" /></label>
+              </div>
             ))}
           </div>
         </fieldset>

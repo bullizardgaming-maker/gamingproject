@@ -419,5 +419,14 @@ const es: Messages = {
   "req.reservedForYou": "Esta oferta se creó para ti a partir de una propuesta que aceptaste. Solo tú puedes verla y comprarla.",
   "req.reservedSeller": "Oferta privada creada a partir de una solicitud. Solo ese comprador puede verla.",
   "req.viewRequest": "Ver solicitud",
+  // Quantity price tiers
+  "tier.title": "Compra más, paga menos",
+  "tier.row": "{qty}+ · {price} c/u",
+  "tier.saving": "Ahorras {amount} ({each} c/u)",
+  "tier.bulkFrom": "{price} desde {qty}",
+  "tier.sellTitle": "Precios por cantidad (opcional)",
+  "tier.sellHint": "precio unitario menor en pedidos grandes",
+  "tier.fromQty": "Desde (unidades)",
+  "tier.each": "Precio c/u",
 };
 export default es;

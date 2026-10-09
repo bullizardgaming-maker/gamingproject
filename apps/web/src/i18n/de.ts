@@ -419,5 +419,14 @@ const de: Messages = {
   "req.reservedForYou": "Dieses Angebot wurde aus einem von dir angenommenen Vorschlag für dich erstellt. Nur du kannst es sehen und kaufen.",
   "req.reservedSeller": "Privates Angebot aus einer Käuferanfrage. Nur dieser Käufer kann es sehen.",
   "req.viewRequest": "Anfrage ansehen",
+  // Quantity price tiers
+  "tier.title": "Mehr kaufen, weniger zahlen",
+  "tier.row": "ab {qty} · {price} pro Stück",
+  "tier.saving": "Du sparst {amount} ({each} pro Stück)",
+  "tier.bulkFrom": "{price} ab {qty}",
+  "tier.sellTitle": "Mengenpreise (optional)",
+  "tier.sellHint": "günstigerer Stückpreis bei größeren Bestellungen",
+  "tier.fromQty": "Ab (Stück)",
+  "tier.each": "Stückpreis",
 };
 export default de;

@@ -9,6 +9,7 @@ import { usePrice } from '@/lib/prefs';
 import { usePageMeta } from '@/lib/seo';
 import { attributePairs } from '@/lib/attributes';
 import { WatchButton } from '../components/WatchButton';
+import { unitPriceFor } from '@/lib/tiers';
 import { t } from '../i18n';
 
 export function OfferPage() {
@@ -38,7 +39,9 @@ export function OfferPage() {
 
   if (!offer) return <p className="muted">{error || t('offer.loading')}</p>;
   const isAccount = offer.category_kind === 'account';
-  const total = offer.price_cents * qty;
+  const tiers = isAccount ? [] : offer.price_tiers ?? [];
+  const unit = unitPriceFor(offer, qty);
+  const total = unit * qty;
   const own = user?.id === offer.seller_id;
 
   const buy = async () => {
@@ -131,6 +134,24 @@ export function OfferPage() {
             {t('offer.quantity')}
             <input type="number" min={1} max={offer.stock} value={qty} onChange={(e) => setQty(Math.max(1, Number(e.target.value)))} />
           </label>
+        )}
+        {tiers.length > 0 && (
+          <div className="stack" style={{ gap: 6 }}>
+            <div className="small muted">{t('tier.title')}</div>
+            <div className="flex flex-wrap gap-2" role="group" aria-label={t('tier.title')}>
+              {[{ minQty: 1, priceCents: offer.price_cents }, ...tiers].map((tr) => (
+                <button
+                  key={tr.minQty}
+                  type="button"
+                  className={`chip cursor-pointer ${unit === tr.priceCents && qty >= tr.minQty ? 'released' : ''}`}
+                  onClick={() => setQty(tr.minQty)}
+                >
+                  {t('tier.row', { qty: tr.minQty, price: money(tr.priceCents, offer.currency) })}
+                </button>
+              ))}
+            </div>
+            {unit < offer.price_cents && <div className="small text-released">{t('tier.saving', { amount: money((offer.price_cents - unit) * qty, offer.currency), each: money(unit, offer.currency) })}</div>}
+          </div>
         )}
         <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0 }}>
           <legend className="small muted" style={{ marginBottom: 8 }}>{t('offer.payWith')}</legend>

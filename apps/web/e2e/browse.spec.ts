@@ -73,4 +73,16 @@ test.describe('browsing', () => {
     await page.reload();
     await expect(page.locator('html')).toHaveClass(/dark/);
   });
+
+  test('quantity prices lower the unit price as you buy more', async ({ page }) => {
+    await page.goto('/games/world-of-warcraft/currency');
+    await expect(page.getByText('$15.00 at 10+')).toBeVisible();
+    await page.goto('/offers/offer-7');
+    await page.getByRole('button', { name: '10+ · $15.00 each' }).click();
+    await expect(page.getByLabel('Quantity')).toHaveValue('10');
+    await expect(page.getByText('$150.00').first()).toBeVisible();
+    await expect(page.getByText('You save $30.00 ($15.00 each)')).toBeVisible();
+    await page.getByLabel('Quantity').fill('3');
+    await expect(page.getByText('$54.00').first()).toBeVisible();
+  });
 });

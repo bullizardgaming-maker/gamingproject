@@ -7,8 +7,9 @@
  */
 import { CATEGORIES, DEMO_CODE, seed, type DemoState, type DemoUser } from './seed';
 import { CATEGORY_DEFAULTS, GAME_SETS, attributesFor, cleanAttributes } from '../../../api/src/domain/attributeSets';
+import { checkTiers, unitPriceFor } from '../../../api/src/domain/priceTiers';
 
-const KEY = 'bz.demo.v6';
+const KEY = 'bz.demo.v7';
 const day = 86_400_000;
 const now = () => new Date().toISOString();
 const rid = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2) + Date.now().toString(16));
@@ -240,7 +241,7 @@ function seedOrdersFor(buyer: DemoUser) {
 }
 
 function createOrderRecord(buyer: DemoUser, offer: any, quantity: number, rail: 'fiat' | 'crypto') {
-  const amount = offer.price_cents * quantity;
+  const amount = unitPriceFor(offer, quantity) * quantity;
   const bps = rateFor(offer);
   const commission = Math.round((amount * bps) / 10_000);
   const isAccount = offer.category_kind === 'account';
@@ -659,11 +660,13 @@ route('POST', '/offers', ({ me, body }) => {
   if (!(body.priceCents > 0)) fail(400, 'validation_error', 'Set a price');
   const attrs = cleanAttributes(String(body.game ?? ''), cat.slug, body.attributes);
   if (!attrs.ok) fail(400, 'invalid_attributes', attrs.error);
+  const tiers = checkTiers(Number(body.priceCents), body.priceTiers, cat.kind);
+  if (!tiers.ok) fail(400, 'invalid_tiers', tiers.error);
   const o = {
     id: `offer-${rid().slice(0, 8)}`, seller_id: u.id, category_slug: cat.slug, category_kind: cat.kind, game: body.game, title: body.title,
     description: body.description ?? '', price_cents: body.priceCents, currency: 'USD', delivery_mode: body.deliveryMode, delivery_hours: body.deliveryMode === 'auto' ? 0 : Number(body.deliveryHours ?? 2),
     stock: body.deliveryMode === 'manual' ? Number(body.stock ?? 1) : 0, inventory: [] as string[], status: 'active', owner_proof_status: 'none', version: 1, created_at: now(),
-    attributes: attrs.ok ? attrs.value : {}, reserved_for: null, request_id: null,
+    attributes: attrs.ok ? attrs.value : {}, reserved_for: null, request_id: null, price_tiers: tiers.ok ? tiers.value : [],
   };
   state.offers.unshift(o);
   return offerView(o);
@@ -884,7 +887,7 @@ route('POST', '/requests/:id/proposals/:pid/accept', ({ me, params }) => {
   const offer = {
     id: `offer-r-${rid().slice(0, 8)}`, seller_id: p.seller_id, category_slug: r.category_slug, category_kind: CATEGORIES.find((c) => c.slug === r.category_slug)!.kind, game: r.game,
     title: r.title, description: [r.description, p.message].filter(Boolean).join('\n\n'), price_cents: p.price_cents, currency: r.currency, delivery_mode: 'manual' as const,
-    delivery_hours: p.delivery_hours, stock: 1, inventory: [] as string[], status: 'active', owner_proof_status: 'none', attributes: r.attributes ?? {}, version: 1, created_at: now(),
+    delivery_hours: p.delivery_hours, stock: 1, inventory: [] as string[], price_tiers: [], status: 'active', owner_proof_status: 'none', attributes: r.attributes ?? {}, version: 1, created_at: now(),
     reserved_for: u.id, request_id: r.id,
   };
   state.offers.push(offer);

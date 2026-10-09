@@ -7,6 +7,7 @@ import { CATEGORY_ORDER, categoryLabel, popular, slugify, useGames } from '@/lib
 import { cn } from '@/lib/utils';
 import { usePageMeta } from '@/lib/seo';
 import { t, type MessageKey } from '../i18n';
+import type { PriceTier } from '@/lib/tiers';
 
 interface Category {
   slug: string;
@@ -18,6 +19,8 @@ export interface Offer {
   /** Set on a listing agreed on a buyer request: only that buyer can see and buy it. */
   reserved_for?: string | null;
   request_id?: string | null;
+  /** Cheaper unit prices for larger orders, ascending by quantity. */
+  price_tiers?: PriceTier[];
   id: string;
   seller_id: string;
   seller_name: string;

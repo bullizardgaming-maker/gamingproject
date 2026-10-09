@@ -126,6 +126,14 @@ const LISTINGS: Seed[] = [
   ['keys', 'Red Dead Redemption 2', 'Red Dead Redemption 2 — Rockstar key', 15_50, 'auto', 20, 'seller2'],
 ];
 /** Game-specific fields per listing title (see apps/api/src/domain/attributeSets.ts). */
+/** Quantity prices on bulk listings (gold, top-ups). */
+const TIERS: Record<string, Array<{ minQty: number; priceCents: number }>> = {
+  '100k Gold — Stormrage (Alliance)': [{ minQty: 5, priceCents: 16_50 }, { minQty: 10, priceCents: 15_00 }],
+  '100M OSRS GP': [{ minQty: 3, priceCents: 51_00 }],
+  '1 billion gold, Season 6 softcore': [{ minQty: 5, priceCents: 5_90 }, { minQty: 20, priceCents: 5_20 }],
+  'Blessing of the Welkin Moon — UID top-up': [{ minQty: 3, priceCents: 4_19 }, { minQty: 6, priceCents: 3_99 }],
+};
+
 const ATTRS: Record<string, Record<string, string>> = {
   'Elden Ring — Steam key (Global)': { platform: 'Steam', region: 'Global' },
   'Baldur’s Gate 3 — Steam key (EU)': { platform: 'Steam', region: 'Europe' },
@@ -221,6 +229,7 @@ export function seed() {
       status: 'active',
       owner_proof_status: kind === 'account' ? proof ?? 'none' : 'none',
       attributes: ATTRS[title] ?? {},
+      price_tiers: TIERS[title] ?? [],
       // Set on listings made from an accepted buyer request.
       reserved_for: null as string | null,
       request_id: null as string | null,
