@@ -18,6 +18,7 @@ import { maybeCheckWatches } from './domain/watches.js';
 import { autoResolveTickets } from './domain/support.js';
 import { expireRequests } from './domain/requests.js';
 import { syncSales } from './domain/discounts.js';
+import { maybeRefreshTrustLevels } from './domain/trust.js';
 import { maybeRefreshResponseTimes } from './domain/presence.js';
 
 /**
@@ -49,6 +50,7 @@ export async function runJobsOnce(ctx: Ctx) {
     job(ctx, 'support_auto_resolve', () => autoResolveTickets(ctx), 0),
     job(ctx, 'requests_expire', () => expireRequests(ctx), 0),
     job(ctx, 'sales', () => syncSales(ctx), 0),
+    job(ctx, 'trust_levels', () => maybeRefreshTrustLevels(ctx), null),
     job(ctx, 'response_times', () => maybeRefreshResponseTimes(ctx), null),
   ]);
   const reconciled = await job(ctx, 'reconciliation_scheduler', () => maybeRunScheduledReconciliation(ctx), false);

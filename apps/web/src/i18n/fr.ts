@@ -514,5 +514,23 @@ const fr: Messages = {
   "bundle.make": "En faire un pack de mes offres instantanées",
   "bundle.makeHint": "Choisissez 2 à 10 de vos offres à livraison instantanée. L’acheteur les reçoit toutes en même temps, depuis le stock de ces offres, au prix indiqué plus haut.",
   "bundle.qtyOf": "Combien de {title}",
+  // Trust levels
+  "trust.new": "Nouveau vendeur",
+  "trust.rising": "Vendeur en progression",
+  "trust.trusted": "Vendeur de confiance",
+  "trust.top": "Vendeur top",
+  "trust.rising.hint": "Plus de 10 ventes terminées, à l’heure et avec peu de litiges",
+  "trust.trusted.hint": "Plus de 100 ventes terminées sur 6 mois ou plus, livraisons fiables à l’heure, très peu de litiges",
+  "trust.top.hint": "Plus de 1 000 ventes terminées sur plus d’un an, presque toujours à l’heure, quasiment aucun litige",
+  "trust.yourLevel": "Votre niveau de confiance",
+  "trust.nextIs": "Pour atteindre {level} :",
+  "trust.atTop": "Vous êtes au niveau le plus élevé. Continuez à livrer à l’heure pour le garder.",
+  "trust.footnote": "Les niveaux sont recalculés toutes les heures sur les 90 derniers jours et affichés sur vos offres. Les taux comptent à partir de 10 commandes récentes.",
+  "trust.req.completed": "{n}+ ventes terminées",
+  "trust.req.age": "Vendeur depuis {n}+ jours",
+  "trust.req.onTime": "Au moins {n} % livrés à l’heure",
+  "trust.req.disputes": "Litiges sur {n} % des commandes au plus",
+  "trust.req.chargebacks": "Rétrofacturations sur {n} % des commandes au plus",
+  "sort.trust": "Vendeurs les plus fiables",
 };
 export default fr;

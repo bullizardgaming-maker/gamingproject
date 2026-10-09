@@ -9,6 +9,7 @@ import { recordSignals } from '../domain/fraud.js';
 import { sellerAvailable } from '../domain/ledger.js';
 import { createOffer, getOffer, requireSeller, submitOwnerProof, updateOffer, uploadInventory } from '../domain/offers.js';
 import { createSellerCode, endSale, listSellerCodes, setSale, setSellerCodeActive } from '../domain/discounts.js';
+import { trustSummary } from '../domain/trust.js';
 import { requestWithdrawal } from '../domain/users.js';
 import { payoutStatus, startPayoutOnboarding } from '../domain/payouts.js';
 import { withdrawable } from '../domain/payoutholds.js';
@@ -97,6 +98,9 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
       stats,
     };
   });
+
+  /** The seller's trust level, the numbers behind it and what the next level needs. */
+  app.get('/seller/trust', async (req) => trustSummary(ctx.db, me(req).id));
 
   app.get('/seller/analytics', async (req) => {
     const user = me(req);

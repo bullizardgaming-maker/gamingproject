@@ -2,7 +2,7 @@ import type { Queryable } from '../db.js';
 import { many } from '../db.js';
 import { OFFER_LIST_SQL } from './offers.js';
 
-export const SORTS = ['relevance', 'newest', 'price_asc', 'price_desc', 'rating', 'best_selling'] as const;
+export const SORTS = ['relevance', 'newest', 'price_asc', 'price_desc', 'rating', 'best_selling', 'trust'] as const;
 export type Sort = (typeof SORTS)[number];
 
 export interface SearchParams {
@@ -84,6 +84,7 @@ export async function searchOffers(q: Queryable, p: SearchParams) {
     price_asc: 'price_settlement_cents ASC, created_at DESC',
     price_desc: 'price_settlement_cents DESC, created_at DESC',
     rating: 'seller_rating DESC NULLS LAST, seller_review_count DESC, created_at DESC',
+    trust: "array_position(ARRAY['top','trusted','rising','new'], seller_trust_level), seller_rating DESC NULLS LAST, created_at DESC",
     best_selling: 'seller_completed_orders DESC, created_at DESC',
   }[sort];
   const pageSize = Math.min(Math.max(p.pageSize ?? 24, 1), 60);

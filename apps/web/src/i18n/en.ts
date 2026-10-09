@@ -694,6 +694,25 @@ const en = {
   "bundle.makeHint": "Pick 2–10 of your instant-delivery listings. Buyers get them all at once, delivered from those listings’ stock, at the price you set above.",
   "bundle.qtyOf": "How many of {title}",
 
+  // Trust levels
+  "trust.new": "New seller",
+  "trust.rising": "Rising seller",
+  "trust.trusted": "Trusted seller",
+  "trust.top": "Top seller",
+  "trust.rising.hint": "10+ completed sales, on time and with few disputes",
+  "trust.trusted.hint": "100+ completed sales over 6+ months, reliably on time, very few disputes",
+  "trust.top.hint": "1,000+ completed sales over a year+, almost always on time, almost no disputes",
+  "trust.yourLevel": "Your trust level",
+  "trust.nextIs": "To reach {level}:",
+  "trust.atTop": "You’re at the top level. Keep delivering on time to stay there.",
+  "trust.footnote": "Levels are recalculated every hour from the last 90 days and shown on your listings. Rates count once you have 10 recent orders.",
+  "trust.req.completed": "{n}+ completed sales",
+  "trust.req.age": "Selling for {n}+ days",
+  "trust.req.onTime": "At least {n}% delivered on time",
+  "trust.req.disputes": "Disputes on at most {n}% of orders",
+  "trust.req.chargebacks": "Chargebacks on at most {n}% of orders",
+  "sort.trust": "Most trusted sellers",
+
   // Generic
   'common.notFound': 'Page not found',
   'common.englishOnly': 'This section is in English.',

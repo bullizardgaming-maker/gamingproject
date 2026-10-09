@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { BadgeCheck, CalendarDays, MessageCircle, PackageCheck, Star, Timer } from 'lucide-react';
 import { api } from '../api';
-import { Avatar, OfferTable } from '../components/CatalogUi';
+import { Avatar, OfferTable, TrustBadge } from '../components/CatalogUi';
 import { cn } from '@/lib/utils';
 import type { Offer } from './Market';
 import { usePageMeta } from '@/lib/seo';
@@ -18,6 +18,7 @@ interface Profile {
   active_listings: number;
   on_time_delivery_pct: number | string | null;
   online?: boolean;
+  trust_level?: string;
   last_seen_at?: string | null;
   response_minutes?: number | null;
   shop_paused: boolean;
@@ -73,6 +74,7 @@ export function SellerPage() {
             {profile.identity_verified && (
               <span className="chip released"><BadgeCheck className="size-3.5" /> ID verified</span>
             )}
+            <TrustBadge level={profile.trust_level} />
           </h1>
           <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm text-muted-foreground">
             <span className="inline-flex items-center gap-1.5"><CalendarDays className="size-4" /> Selling since {since(profile.member_since)}</span>

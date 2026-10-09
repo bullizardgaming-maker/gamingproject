@@ -98,7 +98,7 @@ export function Games() {
   );
 }
 
-const SORTS = ['price_asc', 'rating', 'best_selling', 'newest', 'price_desc'] as const;
+const SORTS = ['price_asc', 'rating', 'trust', 'best_selling', 'newest', 'price_desc'] as const;
 
 /** /games/:slug(/:category): one game's market, split into category tabs, as a comparison table. */
 export function GamePage() {

@@ -514,5 +514,23 @@ const es: Messages = {
   "bundle.make": "Convertir en un pack de mis ofertas instantáneas",
   "bundle.makeHint": "Elige de 2 a 10 de tus ofertas con entrega instantánea. El comprador las recibe todas a la vez, del stock de esas ofertas, al precio que pusiste arriba.",
   "bundle.qtyOf": "Cuántas de {title}",
+  // Trust levels
+  "trust.new": "Vendedor nuevo",
+  "trust.rising": "Vendedor en ascenso",
+  "trust.trusted": "Vendedor de confianza",
+  "trust.top": "Vendedor top",
+  "trust.rising.hint": "Más de 10 ventas completadas, a tiempo y con pocas disputas",
+  "trust.trusted.hint": "Más de 100 ventas completadas en 6+ meses, entregas fiables a tiempo, muy pocas disputas",
+  "trust.top.hint": "Más de 1.000 ventas completadas en más de un año, casi siempre a tiempo, casi sin disputas",
+  "trust.yourLevel": "Tu nivel de confianza",
+  "trust.nextIs": "Para llegar a {level}:",
+  "trust.atTop": "Estás en el nivel más alto. Sigue entregando a tiempo para mantenerlo.",
+  "trust.footnote": "Los niveles se recalculan cada hora con los últimos 90 días y se muestran en tus ofertas. Las tasas cuentan cuando tienes 10 pedidos recientes.",
+  "trust.req.completed": "{n}+ ventas completadas",
+  "trust.req.age": "Vendiendo desde hace {n}+ días",
+  "trust.req.onTime": "Al menos {n}% entregado a tiempo",
+  "trust.req.disputes": "Disputas en como máximo el {n}% de los pedidos",
+  "trust.req.chargebacks": "Contracargos en como máximo el {n}% de los pedidos",
+  "sort.trust": "Vendedores de más confianza",
 };
 export default es;

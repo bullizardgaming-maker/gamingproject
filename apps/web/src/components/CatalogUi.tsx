@@ -1,13 +1,13 @@
 import { Link } from 'react-router-dom';
 import { money } from '../api';
-import { BadgeCheck, Coins, Gamepad2, Gift, KeyRound, Rocket, ShieldCheck, Smartphone, Star, Swords, UserRound, Zap } from 'lucide-react';
+import { Award, BadgeCheck, Coins, Gamepad2, Gift, KeyRound, Rocket, ShieldCheck, Smartphone, Star, Swords, UserRound, Zap } from 'lucide-react';
 import { categoryLabel, deliveryLabel, hueOf, initials, slugify } from '@/lib/catalog';
 import { cn } from '@/lib/utils';
 import { attributePairs } from '@/lib/attributes';
 import { usePrice } from '@/lib/prefs';
 import type { Offer } from '../pages/Market';
 import { OnlineDot } from '@/lib/presence';
-import { t } from '../i18n';
+import { t, type MessageKey } from '../i18n';
 
 export const CATEGORY_ICON: Record<string, typeof Coins> = {
   accounts: UserRound,
@@ -162,6 +162,7 @@ export function OfferTable({ offers, showGame = false, showSeller = true, empty 
                       <Link to={`/sellers/${o.seller_id}`} className="block truncate text-sm font-medium no-underline hover:underline">{o.seller_name}</Link>
                       {o.seller_online && <OnlineDot />}
                     </span>
+                    {o.seller_trust_level && o.seller_trust_level !== 'new' && <TrustBadge level={o.seller_trust_level} className="mb-0.5 px-1.5 py-0.5 text-[10px]" />}
                     <Rating value={o.seller_rating} count={o.seller_review_count} />
                   </div>
                 </div>
@@ -228,5 +229,16 @@ export function TrustStrip({ className }: { className?: string }) {
         </div>
       ))}
     </div>
+  );
+}
+
+/** Seller trust level badge (nothing for new sellers). */
+export function TrustBadge({ level, className }: { level?: string | null; className?: string }) {
+  if (!level || level === 'new') return null;
+  const tone = level === 'top' ? 'border-transparent bg-amber-500/15 text-amber-700 dark:text-amber-300' : level === 'trusted' ? 'released' : 'held';
+  return (
+    <span className={cn('chip', tone, className)} title={t(`trust.${level}.hint` as MessageKey)}>
+      <Award className="size-3.5" /> {t(`trust.${level}` as MessageKey)}
+    </span>
   );
 }

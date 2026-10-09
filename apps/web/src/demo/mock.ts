@@ -10,7 +10,7 @@ import { CATEGORY_DEFAULTS, GAME_SETS, attributesFor, cleanAttributes } from '..
 import { checkTiers, effectivePrice, unitPriceFor } from '../../../api/src/domain/priceTiers';
 import { detectOffPlatform, matchTerms } from '../../../api/src/domain/safety';
 
-const KEY = 'bz.demo.v12';
+const KEY = 'bz.demo.v13';
 const day = 86_400_000;
 const now = () => new Date().toISOString();
 const rid = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2) + Date.now().toString(16));
@@ -128,6 +128,7 @@ function offerView(o: any) {
     regular_price_cents: o.price_cents,
     sale_ends_at: price < o.price_cents ? o.sale_ends_at : null,
     seller_online: pr.online,
+    seller_trust_level: state.trust[o.seller_id] ?? 'new',
     seller_response_minutes: pr.response_minutes,
     inventory: undefined,
     stock: availableOf(o),
@@ -462,6 +463,7 @@ route('GET', '/offers', ({ query }) => {
     price_desc: (a, b) => b.price_cents - a.price_cents,
     rating: (a, b) => (b.seller_rating ?? 0) - (a.seller_rating ?? 0),
     best_selling: (a, b) => b.seller_completed_orders - a.seller_completed_orders,
+    trust: (a, b) => TRUST_ORDER.indexOf(a.seller_trust_level) - TRUST_ORDER.indexOf(b.seller_trust_level) || (b.seller_rating ?? 0) - (a.seller_rating ?? 0),
   };
   if (by[sort]) items.sort(by[sort]);
   const page = Math.max(1, Number(query.get('page') ?? 1));
@@ -513,6 +515,7 @@ route('GET', '/sellers/:id', ({ params, query }) => {
     active_listings: state.offers.filter((o) => o.seller_id === u.id && listed(o)).length,
     on_time_delivery_pct: before ? Math.min(100, 93 + (before.count % 7)) : null, shop_paused: false, shop_paused_until: null, shop_pause_message: null,
     ...presenceOf(u.id),
+    trust_level: state.trust[u.id] ?? 'new',
     rating: { average: s.rating, count: s.count, positive_pct: s.count ? Math.round(((s.rating ?? 0) / 5) * 1000) / 10 : null },
     reviews: reviews.slice(offset, offset + limit),
   };
@@ -751,6 +754,27 @@ const needSeller = (me: DemoUser | null) => {
   if (u.kyc_tier < 2) fail(403, 'kyc_required', 'Tier 2 identity verification is required to sell');
   return u;
 };
+const TRUST_ORDER = ['top', 'trusted', 'rising', 'new'];
+const TRUST_REQ: Record<string, { completed: number; ageDays: number; onTimePct: number; disputePct: number; chargebackPct: number }> = {
+  rising: { completed: 10, ageDays: 30, onTimePct: 85, disputePct: 5, chargebackPct: 1 },
+  trusted: { completed: 100, ageDays: 180, onTimePct: 92, disputePct: 2, chargebackPct: 0.5 },
+  top: { completed: 1000, ageDays: 365, onTimePct: 97, disputePct: 1, chargebackPct: 0.3 },
+};
+route('GET', '/seller/trust', ({ me }) => {
+  const u = needSeller(me);
+  const level = state.trust[u.id] ?? 'new';
+  const before = state.reviewsBefore[u.id];
+  const metrics = {
+    completed: sellerStats(u.id).completed, ageDays: Math.floor((Date.now() - Date.parse(u.created_at)) / day),
+    onTimePct: before ? Math.min(100, 93 + (before.count % 7)) : null, disputePct: before ? 0.8 : null, chargebackPct: before ? 0.1 : null,
+  };
+  const nextLevel = ['new', 'rising', 'trusted', 'top'][['new', 'rising', 'trusted', 'top'].indexOf(level) + 1];
+  const r = nextLevel ? TRUST_REQ[nextLevel]! : null;
+  return {
+    level, metrics,
+    next: r ? { level: nextLevel, requirements: r, met: { completed: metrics.completed >= r.completed, ageDays: metrics.ageDays >= r.ageDays, onTimePct: (metrics.onTimePct ?? 100) >= r.onTimePct, disputePct: (metrics.disputePct ?? 0) <= r.disputePct, chargebackPct: (metrics.chargebackPct ?? 0) <= r.chargebackPct } } : null,
+  };
+});
 route('PUT', '/seller/presence', ({ me, body }) => {
   const u = needSeller(me);
   state.showOnline[u.id] = !!body.showOnline;

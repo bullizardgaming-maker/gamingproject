@@ -19,6 +19,7 @@ export interface Offer {
   /** Set on a listing agreed on a buyer request: only that buyer can see and buy it. */
   reserved_for?: string | null;
   status?: string;
+  seller_trust_level?: 'new' | 'rising' | 'trusted' | 'top';
   is_bundle?: boolean;
   /** A bundle's parts: what's inside and what each costs on its own. */
   bundle?: Array<{ offer_id: string; quantity: number; title: string; game: string; currency: string; price_cents: number }>;
@@ -83,7 +84,7 @@ interface SearchResult {
   facets: { categories: Array<{ category_slug: string; count: number }> };
 }
 
-const SORTS = ['relevance', 'newest', 'price_asc', 'price_desc', 'rating', 'best_selling'] as const;
+const SORTS = ['relevance', 'newest', 'price_asc', 'price_desc', 'rating', 'best_selling', 'trust'] as const;
 
 export function Market() {
   const [params, setParams] = useSearchParams();

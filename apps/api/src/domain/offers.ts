@@ -72,7 +72,7 @@ export const OFFER_LIST_SQL = `
          f.status, f.owner_proof_status, f.version, f.attributes, f.price_tiers, f.reserved_for, f.request_id, f.review_reasons, f.review_note, f.created_at, f.updated_at, f.low_stock_threshold,
          c.kind AS category_kind, c.risk_class, u.display_name AS seller_name, f.delivery_hours,
          (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now())) AS shop_paused,
-         u.shop_paused_until, u.shop_pause_message, ${ONLINE_SQL} AS seller_online, u.response_minutes AS seller_response_minutes,
+         u.shop_paused_until, u.shop_pause_message, ${ONLINE_SQL} AS seller_online, u.response_minutes AS seller_response_minutes, u.trust_level AS seller_trust_level,
          offer_available(f.id) AS stock, f.is_bundle,
          (c.kind = 'account' AND f.owner_proof_status <> 'verified') AS high_risk_secondary,
          (SELECT count(*)::int FROM orders o WHERE o.seller_id = f.seller_id AND o.status = 'completed') AS seller_completed_orders,

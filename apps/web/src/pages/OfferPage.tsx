@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, money } from '../api';
 import { useSession } from '../session';
 import { OfferBadges, type Offer } from './Market';
-import { Avatar, DeliveryTag, GameArt, OfferTable, Rating } from '../components/CatalogUi';
+import { Avatar, DeliveryTag, GameArt, OfferTable, Rating, TrustBadge } from '../components/CatalogUi';
 import { categoryLabel, slugify } from '@/lib/catalog';
 import { usePrice } from '@/lib/prefs';
 import { usePageMeta } from '@/lib/seo';
@@ -135,6 +135,7 @@ export function OfferPage() {
             <div className="flex items-center gap-2 font-semibold">
               {offer.seller_name}
               {offer.seller_online && <span className="inline-flex items-center gap-1 text-xs font-medium text-released"><OnlineDot /> {t('presence.online')}</span>}
+              <TrustBadge level={offer.seller_trust_level} />
             </div>
             <div className="flex flex-wrap items-center gap-x-3 text-xs text-muted-foreground">
               <Rating value={offer.seller_rating} count={offer.seller_review_count} />

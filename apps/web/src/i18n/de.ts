@@ -514,5 +514,23 @@ const de: Messages = {
   "bundle.make": "Als Bundle meiner Sofort-Angebote anbieten",
   "bundle.makeHint": "Wähle 2–10 deiner Angebote mit Sofortlieferung. Käufer bekommen alle auf einmal aus deren Bestand, zum oben gesetzten Preis.",
   "bundle.qtyOf": "Wie viele von {title}",
+  // Trust levels
+  "trust.new": "Neuer Verkäufer",
+  "trust.rising": "Aufsteigender Verkäufer",
+  "trust.trusted": "Vertrauenswürdiger Verkäufer",
+  "trust.top": "Top-Verkäufer",
+  "trust.rising.hint": "Über 10 abgeschlossene Verkäufe, pünktlich und mit wenigen Streitfällen",
+  "trust.trusted.hint": "Über 100 abgeschlossene Verkäufe in 6+ Monaten, verlässlich pünktlich, sehr wenige Streitfälle",
+  "trust.top.hint": "Über 1.000 abgeschlossene Verkäufe in über einem Jahr, fast immer pünktlich, kaum Streitfälle",
+  "trust.yourLevel": "Deine Vertrauensstufe",
+  "trust.nextIs": "Für {level}:",
+  "trust.atTop": "Du bist auf der höchsten Stufe. Liefere weiter pünktlich, um sie zu halten.",
+  "trust.footnote": "Stufen werden stündlich aus den letzten 90 Tagen berechnet und an deinen Angeboten angezeigt. Quoten zählen ab 10 aktuellen Bestellungen.",
+  "trust.req.completed": "{n}+ abgeschlossene Verkäufe",
+  "trust.req.age": "Seit {n}+ Tagen Verkäufer",
+  "trust.req.onTime": "Mindestens {n} % pünktlich geliefert",
+  "trust.req.disputes": "Streitfälle bei höchstens {n} % der Bestellungen",
+  "trust.req.chargebacks": "Rückbuchungen bei höchstens {n} % der Bestellungen",
+  "sort.trust": "Vertrauenswürdigste Verkäufer",
 };
 export default de;

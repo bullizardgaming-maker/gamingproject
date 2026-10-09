@@ -6,10 +6,11 @@ import { useSession } from '../session';
 import { SellerMoney } from './SellerMoney';
 import { SellerAnalytics } from './SellerAnalytics';
 import { usePageMeta } from '@/lib/seo';
-import { intlLocale, t } from '../i18n';
+import { intlLocale, t, type MessageKey } from '../i18n';
 import { attrLabel, attributesFor } from '@/lib/attributes';
 import { categoryLabel, useGames } from '@/lib/catalog';
 import { replyLabel } from '@/lib/presence';
+import { TrustBadge } from '../components/CatalogUi';
 
 interface Dashboard {
   tier: { name: string; accountRateBps: number; otherRateBps: number };
@@ -41,6 +42,56 @@ interface SellerOffer {
 }
 
 const TIER_ROWS = [0, 1, 2];
+
+interface TrustInfo {
+  level: 'new' | 'rising' | 'trusted' | 'top';
+  metrics: { completed: number; ageDays: number; onTimePct: number | null; disputePct: number | null; chargebackPct: number | null };
+  next: { level: string; requirements: { completed: number; ageDays: number; onTimePct: number; disputePct: number; chargebackPct: number }; met: Record<string, boolean> } | null;
+}
+
+/** The seller's trust level and a checklist for the next one. */
+function TrustCard() {
+  const [info, setInfo] = useState<TrustInfo | null>(null);
+  useEffect(() => void api<TrustInfo>('/seller/trust').then(setInfo).catch(() => {}), []);
+  if (!info) return null;
+  const m = info.metrics;
+  const rows = info.next
+    ? ([
+        ['completed', t('trust.req.completed', { n: info.next.requirements.completed }), `${m.completed}`],
+        ['ageDays', t('trust.req.age', { n: info.next.requirements.ageDays }), `${m.ageDays}`],
+        ['onTimePct', t('trust.req.onTime', { n: info.next.requirements.onTimePct }), m.onTimePct == null ? '—' : `${m.onTimePct}%`],
+        ['disputePct', t('trust.req.disputes', { n: info.next.requirements.disputePct }), m.disputePct == null ? '—' : `${m.disputePct}%`],
+        ['chargebackPct', t('trust.req.chargebacks', { n: info.next.requirements.chargebackPct }), m.chargebackPct == null ? '—' : `${m.chargebackPct}%`],
+      ] as const)
+    : [];
+  return (
+    <div className="card stack" style={{ gap: 10 }}>
+      <div className="row spread">
+        <div>
+          <div className="eyebrow">{t('trust.yourLevel')}</div>
+          <h3 style={{ margin: 0 }}>{info.level === 'new' ? t('trust.new') : t(`trust.${info.level}` as MessageKey)}</h3>
+        </div>
+        <TrustBadge level={info.level} />
+      </div>
+      {info.next ? (
+        <>
+          <div className="small muted">{t('trust.nextIs', { level: t(`trust.${info.next.level}` as MessageKey) })}</div>
+          <ul className="m-0 list-none p-0 small">
+            {rows.map(([k, label, value]) => (
+              <li key={k} className="flex items-center justify-between gap-3 border-b border-border py-1.5 last:border-b-0">
+                <span>{info.next!.met[k] ? '✓' : '○'} {label}</span>
+                <span className="font-mono muted">{value}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : (
+        <div className="small muted">{t('trust.atTop')}</div>
+      )}
+      <div className="small muted">{t('trust.footnote')}</div>
+    </div>
+  );
+}
 
 /** "Online now" opt-out and the seller's own reply time, as buyers see it. */
 function PresenceSettings({ shop }: { shop?: Dashboard['shop'] }) {
@@ -153,6 +204,7 @@ export function Sell() {
       <h1 style={{ fontSize: 40 }}>{t('sell.title')}</h1>
       {tabs}
       <PresenceSettings shop={dash.shop} />
+      <TrustCard />
       <div className="grid three">
         <div className="card stack">
           <div className="eyebrow">{t('sell.level')}</div>
