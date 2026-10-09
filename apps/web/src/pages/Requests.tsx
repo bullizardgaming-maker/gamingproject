@@ -27,6 +27,8 @@ export interface BuyerRequest {
   open?: boolean;
   mine?: boolean;
   proposal_list?: Proposal[];
+  /** For a seller viewing it: their own listings that already match. */
+  my_matches?: Array<{ id: string; title: string; price_cents: number; currency: string; stock: number }>;
 }
 export interface Proposal {
   id: string;
@@ -40,6 +42,8 @@ export interface Proposal {
   message: string;
   status: 'pending' | 'accepted' | 'declined' | 'withdrawn';
   offer_id: string | null;
+  /** Set when the seller offered one of their existing listings. */
+  listing_offer_id?: string | null;
   updated_at: string;
   // On a seller's own list
   request_title?: string;
@@ -346,6 +350,7 @@ function ProposalCard({ p, r, onAccept }: { p: Proposal; r: BuyerRequest; onAcce
           {p.seller_rating != null && <><Star className="inline size-3" /> {Number(p.seller_rating).toFixed(1)} · </>}
           {t('req.p.sales', { count: p.seller_completed_orders })} · {t('req.p.within', { count: p.delivery_hours })}
         </div>
+        {p.listing_offer_id && <div className="small" style={{ marginTop: 4 }}><span className="chip">{t('req.p.listing')}</span> <Link to={`/offers/${p.listing_offer_id}`}>{t('req.p.viewListing')}</Link></div>}
         {p.message && <p className="small" style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap' }}>{p.message}</p>}
       </div>
       <div className="flex items-center gap-3">
@@ -439,6 +444,23 @@ export function RequestPage() {
         <>
           {mineAsSeller && mineAsSeller.status !== 'withdrawn' && (
             <ul className="m-0 list-none overflow-hidden rounded-xl border border-border bg-card p-0"><ProposalCard p={mineAsSeller} r={r} /></ul>
+          )}
+          {r.open && !!r.my_matches?.length && (!mineAsSeller || mineAsSeller.status === 'withdrawn') && (
+            <div className="card stack" style={{ gap: 8 }}>
+              <b>{t('req.matches.title')}</b>
+              <p className="small muted" style={{ margin: 0 }}>{t('req.matches.lede')}</p>
+              <ul className="m-0 list-none p-0">
+                {r.my_matches.map((m) => (
+                  <li key={m.id} className="flex flex-wrap items-center justify-between gap-3 border-b border-border py-2 last:border-b-0">
+                    <Link to={`/offers/${m.id}`} className="min-w-0 truncate">{m.title}</Link>
+                    <span className="flex items-center gap-3">
+                      <span className="font-mono">{money(m.price_cents, m.currency)}</span>
+                      <button className="btn ghost" onClick={async () => setR(await api<BuyerRequest>(`/requests/${r.id}/proposals`, { body: { offerId: m.id } }))}>{t('req.matches.offer')}</button>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
           {r.open && <ProposalForm r={r} mine={mineAsSeller} onSaved={setR} />}
           {mineAsSeller?.status === 'pending' && <p className="small muted" style={{ margin: 0 }}>{t('req.p.sent')}</p>}

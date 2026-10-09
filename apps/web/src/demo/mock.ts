@@ -1018,7 +1018,12 @@ const propView = (p: any) => {
 const reqView = (r: any, viewer?: string) => {
   const ps = state.proposals.filter((p) => p.request_id === r.id);
   const mine = r.buyer_id === viewer;
+  const matches = viewer && !mine && reqOpen(r)
+    ? state.offers.filter((f) => f.seller_id === viewer && listed(f) && f.game.toLowerCase() === r.game.toLowerCase() && f.category_slug === r.category_slug && availableOf(f) > 0)
+        .map((f) => ({ id: f.id, title: f.title, price_cents: effectivePrice(f), currency: f.currency, stock: availableOf(f) }))
+    : [];
   return {
+    my_matches: matches,
     ...r, category_kind: CATEGORIES.find((c) => c.slug === r.category_slug)?.kind, open: reqOpen(r), mine,
     proposals: ps.filter((p) => ['pending', 'accepted'].includes(p.status)).length,
     proposal_list: !viewer ? [] : ps.filter((p) => (mine ? p.status !== 'withdrawn' : p.seller_id === viewer)).sort((a, b) => a.price_cents - b.price_cents).map(propView),
@@ -1096,13 +1101,21 @@ route('POST', '/requests/:id/proposals', ({ me, params, body }) => {
   const r = reqById(params[0]!);
   if (r.buyer_id === u.id) fail(403, 'own_request', 'You cannot answer your own request');
   if (!reqOpen(r)) fail(409, 'not_open', 'This request is no longer taking proposals');
-  const price = Number(body.priceCents);
-  const hours = Number(body.deliveryHours);
+  let price = Number(body.priceCents);
+  let hours = Number(body.deliveryHours);
+  let listingId: string | null = null;
+  if (body.offerId) {
+    const f = state.offers.find((x) => x.id === body.offerId && x.seller_id === u.id && listed(x)) ?? fail(404, 'not_found', 'Listing not found');
+    if (f.game.toLowerCase() !== r.game.toLowerCase() || f.category_slug !== r.category_slug) fail(400, 'listing_mismatch', 'That listing is for a different game or category');
+    price = effectivePrice(f);
+    hours = f.delivery_mode === 'auto' ? 1 : f.delivery_hours;
+    listingId = f.id;
+  }
   if (!(price > 0) || !(hours >= 1 && hours <= 168)) fail(400, 'validation_error', 'Enter a price and a delivery time between 1 and 168 hours');
   let p = state.proposals.find((x) => x.request_id === r.id && x.seller_id === u.id);
   if (p && !['pending', 'withdrawn'].includes(p.status)) fail(409, 'proposal_closed', 'Your proposal on this request can no longer be changed');
   if (!p) state.proposals.push((p = { id: rid(), request_id: r.id, seller_id: u.id, created_at: now(), offer_id: null }));
-  Object.assign(p, { price_cents: price, delivery_hours: hours, message: String(body.message ?? '').trim(), status: 'pending', updated_at: now() });
+  Object.assign(p, { price_cents: price, delivery_hours: hours, message: String(body.message ?? '').trim(), status: 'pending', listing_offer_id: listingId, updated_at: now() });
   return reqView(r, u.id);
 });
 route('DELETE', '/requests/:id/proposals/mine', ({ me, params }) => {
@@ -1117,6 +1130,12 @@ route('POST', '/requests/:id/proposals/:pid/accept', ({ me, params }) => {
   if (r.buyer_id !== u.id) fail(404, 'not_found', 'Request not found');
   if (!reqOpen(r)) fail(409, 'not_open', 'This request is no longer open');
   const p = state.proposals.find((x) => x.id === params[1] && x.request_id === r.id && x.status === 'pending') ?? fail(404, 'not_found', 'Proposal not found');
+  if (p.listing_offer_id) {
+    Object.assign(p, { status: 'accepted', offer_id: p.listing_offer_id, updated_at: now() });
+    for (const x of state.proposals) if (x.request_id === r.id && x.id !== p.id && x.status === 'pending') Object.assign(x, { status: 'declined', updated_at: now() });
+    Object.assign(r, { status: 'accepted', accepted_proposal_id: p.id, updated_at: now() });
+    return { offerId: p.listing_offer_id, request: reqView(r, u.id) };
+  }
   const offer = {
     id: `offer-r-${rid().slice(0, 8)}`, seller_id: p.seller_id, category_slug: r.category_slug, category_kind: CATEGORIES.find((c) => c.slug === r.category_slug)!.kind, game: r.game,
     title: r.title, description: [r.description, p.message].filter(Boolean).join('\n\n'), price_cents: p.price_cents, currency: r.currency, delivery_mode: 'manual' as const,

@@ -532,5 +532,11 @@ const fr: Messages = {
   "trust.req.disputes": "Litiges sur {n} % des commandes au plus",
   "trust.req.chargebacks": "Rétrofacturations sur {n} % des commandes au plus",
   "sort.trust": "Vendeurs les plus fiables",
+  // Request matches
+  "req.matches.title": "Vos offres correspondantes",
+  "req.matches.lede": "Proposez l’une d’elles à son prix actuel en un clic. Si l’acheteur accepte, il l’achète comme n’importe quelle offre.",
+  "req.matches.offer": "Proposer cette offre",
+  "req.p.listing": "Offre existante",
+  "req.p.viewListing": "Voir l’offre",
 };
 export default fr;

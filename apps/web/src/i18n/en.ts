@@ -713,6 +713,13 @@ const en = {
   "trust.req.chargebacks": "Chargebacks on at most {n}% of orders",
   "sort.trust": "Most trusted sellers",
 
+  // Request matches
+  "req.matches.title": "Your matching listings",
+  "req.matches.lede": "Offer one of these at its current price in one click. If the buyer accepts, they buy it like any other listing.",
+  "req.matches.offer": "Offer this listing",
+  "req.p.listing": "Existing listing",
+  "req.p.viewListing": "View listing",
+
   // Generic
   'common.notFound': 'Page not found',
   'common.englishOnly': 'This section is in English.',

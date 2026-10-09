@@ -41,10 +41,12 @@ export async function requestRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/requests/:id/proposals', async (req, reply) => {
     const body = z
       .object({
-        priceCents: z.number().int().positive().max(100_000_00),
-        deliveryHours: z.number().int().min(1).max(168),
+        priceCents: z.number().int().positive().max(100_000_00).optional(),
+        deliveryHours: z.number().int().min(1).max(168).optional(),
         message: z.string().trim().max(1_000).optional(),
+        offerId: z.string().uuid().optional(),
       })
+      .refine((b) => b.offerId || (b.priceCents != null && b.deliveryHours != null), 'Give a price and a delivery time, or offer one of your listings')
       .parse(req.body);
     return reply.status(201).send(await propose(ctx, me(req), Id.parse(req.params).id, body));
   });

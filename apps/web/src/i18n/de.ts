@@ -532,5 +532,11 @@ const de: Messages = {
   "trust.req.disputes": "Streitfälle bei höchstens {n} % der Bestellungen",
   "trust.req.chargebacks": "Rückbuchungen bei höchstens {n} % der Bestellungen",
   "sort.trust": "Vertrauenswürdigste Verkäufer",
+  // Request matches
+  "req.matches.title": "Deine passenden Angebote",
+  "req.matches.lede": "Biete eines davon mit einem Klick zum aktuellen Preis an. Nimmt der Käufer an, kauft er es wie jedes andere Angebot.",
+  "req.matches.offer": "Dieses Angebot vorschlagen",
+  "req.p.listing": "Bestehendes Angebot",
+  "req.p.viewListing": "Angebot ansehen",
 };
 export default de;

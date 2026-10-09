@@ -533,5 +533,11 @@ const pt: Messages = {
   "trust.req.disputes": "Disputas em no máximo {n}% dos pedidos",
   "trust.req.chargebacks": "Estornos em no máximo {n}% dos pedidos",
   "sort.trust": "Vendedores mais confiáveis",
+  // Request matches
+  "req.matches.title": "Seus anúncios compatíveis",
+  "req.matches.lede": "Ofereça um deles pelo preço atual com um clique. Se o comprador aceitar, ele compra como qualquer outro anúncio.",
+  "req.matches.offer": "Oferecer este anúncio",
+  "req.p.listing": "Anúncio existente",
+  "req.p.viewListing": "Ver anúncio",
 };
 export default pt;

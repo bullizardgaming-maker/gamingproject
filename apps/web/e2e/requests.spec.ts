@@ -70,4 +70,14 @@ test.describe('buyer requests', () => {
     await expect(page.getByText('$40.00')).toBeVisible();
     await expect(page.getByText('Waiting for buyer')).toBeVisible();
   });
+
+  test('a seller offers a listing they already have in one click', async ({ page }) => {
+    await signIn(page, 'Seller');
+    await page.goto('/requests');
+    await page.getByRole('link', { name: 'Shadow of the Erdtree DLC key, Steam (Global)' }).click();
+    await expect(page.getByText('Your matching listings')).toBeVisible();
+    await page.getByRole('button', { name: 'Offer this listing' }).first().click();
+    await expect(page.getByText('Existing listing')).toBeVisible();
+    await expect(page.getByText(/Your proposal is with the buyer/)).toBeVisible();
+  });
 });

@@ -570,5 +570,11 @@ const ar: Messages = {
   "trust.req.disputes": "نزاعات على {n}% من الطلبات كحد أقصى",
   "trust.req.chargebacks": "استردادات بنكية على {n}% من الطلبات كحد أقصى",
   "sort.trust": "البائعون الأكثر ثقة",
+  // Request matches
+  "req.matches.title": "عروضك المطابقة",
+  "req.matches.lede": "اعرض أحدها بسعره الحالي بنقرة واحدة. إذا قبل المشتري، يشتريه مثل أي عرض آخر.",
+  "req.matches.offer": "اعرض هذا العرض",
+  "req.p.listing": "عرض قائم",
+  "req.p.viewListing": "عرض الصفحة",
 };
 export default ar;

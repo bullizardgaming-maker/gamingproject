@@ -7,6 +7,7 @@ import { assertSupported, getRate } from './fx.js';
 import { notify } from './notifications.js';
 import { requireSeller } from './offers.js';
 import { detectOffPlatform } from './safety.js';
+import { EFFECTIVE_PRICE_SQL } from './discounts.js';
 
 const noContact = (...texts: Array<string | undefined>) => {
   if (detectOffPlatform(texts.filter(Boolean).join('\n')).length) throw badRequest('offplatform_contact', 'Keep contact details and outside payment methods off Bullizard: deals made elsewhere aren’t protected');
@@ -38,7 +39,7 @@ const REQUEST_COLS = `r.id, r.buyer_id, r.game, r.category_slug, r.title, r.desc
   (SELECT count(*)::int FROM request_proposals p WHERE p.request_id = r.id AND p.status IN ('pending', 'accepted')) AS proposals`;
 const REQUEST_FROM = `buyer_requests r JOIN users b ON b.id = r.buyer_id JOIN categories c ON c.slug = r.category_slug`;
 
-const PROPOSAL_COLS = `p.id, p.request_id, p.seller_id, p.price_cents, p.delivery_hours, p.message, p.status, p.offer_id, p.created_at, p.updated_at,
+const PROPOSAL_COLS = `p.id, p.request_id, p.seller_id, p.price_cents, p.delivery_hours, p.message, p.status, p.offer_id, p.listing_offer_id, p.created_at, p.updated_at,
   s.display_name AS seller_name,
   (SELECT count(*)::int FROM orders o WHERE o.seller_id = p.seller_id AND o.status = 'completed') AS seller_completed_orders,
   (SELECT round(avg(rating)::numeric, 2) FROM reviews v WHERE v.seller_id = p.seller_id AND NOT v.hidden) AS seller_rating`;
@@ -108,7 +109,18 @@ export async function getRequest(q: Queryable, id: string, viewerId?: string) {
     ? await many(q, `SELECT ${PROPOSAL_COLS} FROM request_proposals p JOIN users s ON s.id = p.seller_id WHERE p.request_id = $1 ${isBuyer ? `AND p.status <> 'withdrawn'` : 'AND p.seller_id = $2'} ORDER BY p.price_cents, p.created_at`, isBuyer ? [id] : [id, viewerId])
     : [];
   if (r.status !== 'open' && !isBuyer && proposals.length === 0) throw notFound('Request');
-  return { ...r, open: r.status === 'open' && new Date(r.expires_at) > new Date(), mine: isBuyer, proposal_list: proposals };
+  // A seller looking at an open request sees their own listings that already match it.
+  const matches =
+    viewerId && !isBuyer && r.status === 'open'
+      ? await many(
+          q,
+          `SELECT f.id, f.title, ${EFFECTIVE_PRICE_SQL} AS price_cents, f.currency, f.delivery_mode, f.delivery_hours, offer_available(f.id) AS stock
+             FROM offers f WHERE f.seller_id = $1 AND lower(f.game) = lower($2) AND f.category_slug = $3 AND f.status = 'active' AND f.reserved_for IS NULL
+              AND offer_available(f.id) > 0 ORDER BY ${EFFECTIVE_PRICE_SQL} LIMIT 10`,
+          [viewerId, r.game, r.category_slug],
+        )
+      : [];
+  return { ...r, open: r.status === 'open' && new Date(r.expires_at) > new Date(), mine: isBuyer, proposal_list: proposals, my_matches: matches };
 }
 
 export async function listMyRequests(q: Queryable, buyerId: string) {
@@ -137,9 +149,11 @@ export async function closeRequest(ctx: Ctx, id: string, buyerId: string) {
 }
 
 export interface ProposalInput {
-  priceCents: number;
-  deliveryHours: number;
+  priceCents?: number;
+  deliveryHours?: number;
   message?: string;
+  /** Offer one of the seller's existing listings (same game and category) at its current price. */
+  offerId?: string;
 }
 
 /** Send or revise a proposal. One per seller per request; revising a withdrawn one re-sends it. */
@@ -147,20 +161,36 @@ export async function propose(ctx: Ctx, seller: { id: string; kyc_tier: number; 
   requireSeller(seller);
   noContact(input.message);
   return withTx(ctx.db, async (tx) => {
-    const r = await maybeOne(tx, `SELECT buyer_id, status, expires_at, title, currency FROM buyer_requests WHERE id = $1 FOR UPDATE`, [requestId]);
+    const r = await maybeOne(tx, `SELECT buyer_id, status, expires_at, title, currency, game, category_slug FROM buyer_requests WHERE id = $1 FOR UPDATE`, [requestId]);
     if (!r) throw notFound('Request');
     if (r.buyer_id === seller.id) throw forbidden('own_request', 'You cannot answer your own request');
     if (r.status !== 'open' || new Date(r.expires_at) <= new Date()) throw conflict('not_open', 'This request is no longer taking proposals');
+    let listingId: string | null = null;
+    if (input.offerId) {
+      const f = await maybeOne<any>(
+        tx,
+        `SELECT f.id, f.seller_id, f.game, f.category_slug, f.currency, f.delivery_mode, f.delivery_hours, f.status, f.reserved_for, ${EFFECTIVE_PRICE_SQL} AS price_cents, offer_available(f.id) AS stock
+           FROM offers f WHERE f.id = $1`,
+        [input.offerId],
+      );
+      if (!f || f.seller_id !== seller.id || f.status !== 'active' || f.reserved_for) throw notFound('Listing');
+      if (f.game.toLowerCase() !== r.game.toLowerCase() || f.category_slug !== r.category_slug) throw badRequest('listing_mismatch', 'That listing is for a different game or category');
+      if (f.stock < 1) throw conflict('out_of_stock', 'That listing is out of stock');
+      if (f.currency !== r.currency) throw badRequest('currency_mismatch', `The request is in ${r.currency}; that listing is priced in ${f.currency}`);
+      listingId = f.id;
+      input = { ...input, priceCents: Number(f.price_cents), deliveryHours: f.delivery_mode === 'auto' ? 1 : f.delivery_hours };
+    }
+    if (input.priceCents == null || input.deliveryHours == null) throw badRequest('validation_error', 'Give a price and a delivery time, or offer one of your listings');
     const p = await maybeOne(
       tx,
-      `INSERT INTO request_proposals (request_id, seller_id, price_cents, delivery_hours, message)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO request_proposals (request_id, seller_id, price_cents, delivery_hours, message, listing_offer_id)
+       VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (request_id, seller_id) DO UPDATE
          SET price_cents = EXCLUDED.price_cents, delivery_hours = EXCLUDED.delivery_hours, message = EXCLUDED.message,
-             status = 'pending', updated_at = now()
+             listing_offer_id = EXCLUDED.listing_offer_id, status = 'pending', updated_at = now()
          WHERE request_proposals.status IN ('pending', 'withdrawn')
        RETURNING id, (xmax = 0) AS created`,
-      [requestId, seller.id, input.priceCents, input.deliveryHours, input.message ?? ''],
+      [requestId, seller.id, input.priceCents, input.deliveryHours, input.message ?? '', listingId],
     );
     if (!p) throw conflict('proposal_closed', 'Your proposal on this request can no longer be changed');
     await notify(tx, r.buyer_id, 'request_proposal', {
@@ -199,6 +229,16 @@ export async function acceptProposal(ctx: Ctx, buyerId: string, requestId: strin
     if (!p || p.status !== 'pending') throw notFound('Proposal');
     if (p.seller_status !== 'active' || p.kyc_tier < 2) throw conflict('seller_unavailable', 'This seller can no longer sell');
 
+    if (p.listing_offer_id) {
+      // An existing listing: the buyer checks it out like anyone else, nothing private is created.
+      const live = await maybeOne(tx, `SELECT id FROM offers WHERE id = $1 AND status = 'active' AND offer_available(id) > 0`, [p.listing_offer_id]);
+      if (!live) throw conflict('listing_unavailable', 'That listing is no longer available');
+      await tx.query(`UPDATE request_proposals SET status = 'accepted', offer_id = $2, updated_at = now() WHERE id = $1`, [proposalId, p.listing_offer_id]);
+      await tx.query(`UPDATE request_proposals SET status = 'declined', updated_at = now() WHERE request_id = $1 AND id <> $2 AND status = 'pending'`, [requestId, proposalId]);
+      await tx.query(`UPDATE buyer_requests SET status = 'accepted', accepted_proposal_id = $2, updated_at = now() WHERE id = $1`, [requestId, proposalId]);
+      await notify(tx, p.seller_id, 'request_accepted', { request_id: requestId, title: r.title, price_cents: p.price_cents, currency: r.currency, offer_id: p.listing_offer_id }, `request:${requestId}:accepted`);
+      return { offerId: p.listing_offer_id as string, request: await getRequest(tx, requestId, buyerId) };
+    }
     await getRate(ctx, tx, r.currency);
     const offer = await one(
       tx,

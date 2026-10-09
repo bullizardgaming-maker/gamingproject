@@ -109,4 +109,26 @@ describe('buyer requests', () => {
     expect(ok.status, JSON.stringify(ok.body)).toBe(201);
     expect(ok.body.attributes).toEqual({ server: 'EUW' });
   });
+
+  it('lets a seller offer a matching listing they already have', async () => {
+    const game = `Listing Match ${Date.now()}`;
+    const buyer = await makeUser(h);
+    const seller = await makeUser(h, { tier: 2 });
+    const listing = (await seller.api.post('/v1/offers', { categorySlug: 'keys', game, title: 'Ready key', priceCents: 12_00, deliveryMode: 'manual', stock: 3, deliveryHours: 4 })).body;
+    const elsewhere = (await seller.api.post('/v1/offers', { categorySlug: 'items', game, title: 'Other thing', priceCents: 5_00, deliveryMode: 'manual', stock: 3 })).body;
+    const r = (await buyer.api.post('/v1/requests', { game, categorySlug: 'keys', title: 'Looking for a key' })).body;
+
+    const view = (await seller.api.get(`/v1/requests/${r.id}`)).body;
+    expect(view.my_matches.map((m: any) => m.id)).toEqual([listing.id]);
+    expect((await seller.api.post(`/v1/requests/${r.id}/proposals`, { offerId: elsewhere.id })).body.error.code).toBe('listing_mismatch');
+    const p = await seller.api.post(`/v1/requests/${r.id}/proposals`, { offerId: listing.id, message: 'In stock now' });
+    expect(p.status, JSON.stringify(p.body)).toBe(201);
+    expect(p.body.proposal_list[0]).toMatchObject({ listing_offer_id: listing.id, price_cents: 12_00, delivery_hours: 4 });
+
+    const proposal = (await buyer.api.get(`/v1/requests/${r.id}`)).body.proposal_list[0];
+    const acc = await buyer.api.post(`/v1/requests/${r.id}/proposals/${proposal.id}/accept`);
+    expect(acc.body.offerId).toBe(listing.id); // the public listing itself, no private copy
+    expect((await h.ctx.db.query('SELECT count(*)::int AS n FROM offers WHERE request_id = $1', [r.id])).rows[0].n).toBe(0);
+    expect((await buyer.api.post('/v1/orders', { offerId: listing.id, quantity: 1, acceptTos: true })).status).toBe(201);
+  });
 });
