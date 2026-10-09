@@ -221,6 +221,9 @@ export function seed() {
       status: 'active',
       owner_proof_status: kind === 'account' ? proof ?? 'none' : 'none',
       attributes: ATTRS[title] ?? {},
+      // Set on listings made from an accepted buyer request.
+      reserved_for: null as string | null,
+      request_id: null as string | null,
       version: 1,
       created_at: ago((LISTINGS.length - i) * 3_600_000 * 7),
     };
@@ -267,6 +270,34 @@ export function seed() {
     apiKeys: [] as any[],
     watches: [] as any[],
     tickets: [] as any[],
+    // Buyer requests board: one by the demo buyer with proposals waiting, others for sellers to answer.
+    requests: [
+      {
+        id: 'req-1', buyer_id: users[0]!.id, buyer_name: users[0]!.display_name, game: 'Valorant', category_slug: 'accounts', title: 'EU account with Reaver Vandal, Diamond or higher',
+        description: 'Full access with original email please. Happy to wait a day.', budget_cents: 120_00, currency: 'USD', attributes: { region: 'Europe' },
+        status: 'open', accepted_proposal_id: null, expires_at: ago(-12 * day), created_at: ago(2 * day), updated_at: ago(day),
+      },
+      {
+        id: 'req-2', buyer_id: 'u-req-mira', buyer_name: 'Mira_K', game: 'League of Legends', category_slug: 'boosting', title: 'Silver II → Gold IV on EUW before the split ends',
+        description: 'Solo queue, I play Lux and Ahri mostly.', budget_cents: 45_00, currency: 'USD', attributes: { server: 'EUW', rank_from: 'Silver', rank_to: 'Gold' },
+        status: 'open', accepted_proposal_id: null, expires_at: ago(-13 * day), created_at: ago(20 * 3_600_000), updated_at: ago(20 * 3_600_000),
+      },
+      {
+        id: 'req-3', buyer_id: 'u-req-zed', buyer_name: 'zed.plays', game: 'Elden Ring', category_slug: 'keys', title: 'Shadow of the Erdtree DLC key, Steam (Global)',
+        description: '', budget_cents: 30_00, currency: 'USD', attributes: { platform: 'Steam', region: 'Global' },
+        status: 'open', accepted_proposal_id: null, expires_at: ago(-10 * day), created_at: ago(4 * day), updated_at: ago(4 * day),
+      },
+      {
+        id: 'req-4', buyer_id: 'u-req-holl', buyer_name: 'Hollowfang', game: 'Old School RuneScape', category_slug: 'currency', title: '500M OSRS GP, delivered in two trades',
+        description: 'Grand Exchange or in-person trade at Varrock.', budget_cents: null, currency: 'USD', attributes: {},
+        status: 'open', accepted_proposal_id: null, expires_at: ago(-9 * day), created_at: ago(5 * day), updated_at: ago(5 * day),
+      },
+    ] as any[],
+    proposals: [
+      { id: 'prop-1', request_id: 'req-1', seller_id: users[3]!.id, price_cents: 110_00, delivery_hours: 6, message: 'Diamond 3, Reaver Vandal + Prime collection. Original email included.', status: 'pending', offer_id: null, created_at: ago(day), updated_at: ago(day) },
+      { id: 'prop-2', request_id: 'req-1', seller_id: users[5]!.id, price_cents: 98_00, delivery_hours: 12, message: 'Ascendant 1 with Reaver Vandal and Karambit. Owner-verified seller.', status: 'pending', offer_id: null, created_at: ago(20 * 3_600_000), updated_at: ago(20 * 3_600_000) },
+      { id: 'prop-3', request_id: 'req-3', seller_id: users[6]!.id, price_cents: 28_50, delivery_hours: 1, message: '', status: 'pending', offer_id: null, created_at: ago(3 * day), updated_at: ago(3 * day) },
+    ] as any[],
     webhooks: [] as any[],
     emailPrefs: {} as Record<string, Record<string, boolean>>,
     ownerProofs: [

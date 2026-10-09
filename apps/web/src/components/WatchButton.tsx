@@ -15,7 +15,7 @@ type Target = { offerId: string } | { game: string; category?: string; attribute
  * an optional target price in the viewer's display currency.
  */
 export function WatchButton({ target, label = t('watch.alert'), className }: { target: Target; label?: string; className?: string }) {
-  const { user } = useSession();
+  const { user, loading } = useSession();
   const nav = useNavigate();
   const loc = useLocation();
   const list = useWatches(user?.id);
@@ -77,6 +77,7 @@ export function WatchButton({ target, label = t('watch.alert'), className }: { t
         className={cn('btn ghost inline-flex items-center gap-1.5', watch && 'border-released text-released')}
         aria-expanded={open}
         onClick={click}
+        disabled={loading} // until the session is known, a click would wrongly send a signed-in user to log in
         style={{ fontSize: 14 }}
       >
         {watch ? <BellRing className="size-4" /> : <BellPlus className="size-4" />}

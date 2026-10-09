@@ -77,6 +77,12 @@ export function OfferPage() {
           <div className="eyebrow" style={{ margin: 0 }}>{offer.game} · {categoryLabel(offer.category_slug)}</div>
         </div>
         <h1 style={{ fontSize: 40 }}>{offer.title}</h1>
+        {offer.reserved_for && (
+          <div className="notice small">
+            {user?.id === offer.reserved_for ? t('req.reservedForYou') : t('req.reservedSeller')}{' '}
+            {offer.request_id && <Link to={`/requests/${offer.request_id}`}>{t('req.viewRequest')}</Link>}
+          </div>
+        )}
         <div className="row" style={{ gap: 12 }}>
           <OfferBadges offer={offer} />
           <DeliveryTag offer={offer} />

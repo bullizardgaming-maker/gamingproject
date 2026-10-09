@@ -16,6 +16,7 @@ import { SellerPage } from './pages/SellerPage';
 import { Watchlist } from './pages/Watchlist';
 import { HelpArticlePage, HelpCentre, SupportList, SupportNew, SupportTicket } from './pages/Help';
 import { StatusPage } from './pages/StatusPage';
+import { MyProposals, MyRequests, RequestNew, RequestPage, RequestsBoard } from './pages/Requests';
 import { SiteHeader } from './components/SiteHeader';
 import { SiteFooter } from './components/SiteFooter';
 import { DEMO } from './api';
@@ -54,6 +55,11 @@ function App() {
           <Route path="/sellers/:id" element={<SellerPage />} />
           <Route path="/status" element={<StatusPage />} />
           <Route path="/watchlist" element={<Watchlist />} />
+          <Route path="/requests" element={<RequestsBoard />} />
+          <Route path="/requests/new" element={<RequestNew />} />
+          <Route path="/requests/mine" element={<MyRequests />} />
+          <Route path="/requests/proposals" element={<MyProposals />} />
+          <Route path="/requests/:id" element={<RequestPage />} />
           <Route path="/help" element={<HelpCentre />} />
           <Route path="/help/:slug" element={<HelpArticlePage />} />
           <Route path="/support" element={<SupportList />} />

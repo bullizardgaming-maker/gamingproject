@@ -18,6 +18,7 @@ import { hasPermission, type Permission } from './domain/permissions.js';
 import { publicRoutes } from './routes/public.js';
 import { orderRoutes } from './routes/orders.js';
 import { sellerRoutes } from './routes/seller.js';
+import { requestRoutes } from './routes/requests.js';
 import { merchantRoutes } from './routes/merchant.js';
 import { integrationRoutes } from './routes/integrations.js';
 import { adminRoutes } from './routes/admin.js';
@@ -215,6 +216,7 @@ export async function buildApp(ctx: Ctx, opts: { logger?: PinoLogger } = {}): Pr
     await publicRoutes(v1, ctx);
     await orderRoutes(v1, ctx);
     await sellerRoutes(v1, ctx);
+    await requestRoutes(v1, ctx);
     await merchantRoutes(v1, ctx);
     await integrationRoutes(v1, ctx);
     await adminRoutes(v1, ctx);

@@ -23,7 +23,7 @@ export interface OfferInput {
 
 export const OFFER_LIST_SQL = `
   SELECT f.id, f.seller_id, f.category_slug, f.game, f.title, f.description, f.price_cents, f.currency, f.price_settlement_cents, f.delivery_mode,
-         f.status, f.owner_proof_status, f.version, f.attributes, f.created_at, f.updated_at, f.low_stock_threshold,
+         f.status, f.owner_proof_status, f.version, f.attributes, f.reserved_for, f.request_id, f.created_at, f.updated_at, f.low_stock_threshold,
          c.kind AS category_kind, c.risk_class, u.display_name AS seller_name, f.delivery_hours,
          (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now())) AS shop_paused,
          u.shop_paused_until, u.shop_pause_message,
@@ -82,6 +82,11 @@ export async function updateOffer(
   patch: Partial<Pick<OfferInput, 'title' | 'description' | 'priceCents' | 'stock' | 'lowStockThreshold' | 'deliveryHours' | 'attributes'>> & { status?: 'active' | 'paused' | 'removed' },
 ) {
   let attributes: string | null = null;
+  if (patch.priceCents != null || patch.attributes || patch.title || patch.stock != null) {
+    // The terms of an accepted buyer request are fixed; the seller can only pause or remove it.
+    const cur = await maybeOne(ctx.db, 'SELECT reserved_for FROM offers WHERE id = $1 AND seller_id = $2', [offerId, sellerId]);
+    if (cur?.reserved_for) throw conflict('reserved_offer', 'This listing was agreed with a buyer and its terms can’t be changed');
+  }
   if (patch.attributes) {
     const cur = await maybeOne(ctx.db, 'SELECT seller_id, game, category_slug FROM offers WHERE id = $1', [offerId]);
     if (!cur || cur.seller_id !== sellerId) throw notFound('Offer');

@@ -254,8 +254,8 @@ export async function priceOrder(
 
 export async function quoteOrder(ctx: Ctx, buyerId: string, input: Pick<CreateOrderInput, 'offerId' | 'quantity' | 'rail' | 'promoCode' | 'useCredit' | 'currency'>) {
   return withTx(ctx.db, async (tx) => {
-    const offer = await maybeOne(tx, `SELECT price_cents, currency, category_slug FROM offers WHERE id = $1 AND status = 'active'`, [input.offerId]);
-    if (!offer) throw notFound('Offer');
+    const offer = await maybeOne(tx, `SELECT price_cents, currency, category_slug, reserved_for FROM offers WHERE id = $1 AND status = 'active'`, [input.offerId]);
+    if (!offer || (offer.reserved_for && offer.reserved_for !== buyerId)) throw notFound('Offer');
     return priceOrder(ctx, tx, offer, buyerId, input);
   });
 }
@@ -296,6 +296,8 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
       [input.offerId],
     );
     if (!offer || offer.status !== 'active' || offer.seller_status !== 'active') throw notFound('Offer');
+    // Listings made from an accepted buyer request can only be bought by that buyer.
+    if (offer.reserved_for && offer.reserved_for !== buyer.id) throw notFound('Offer');
     if (offer.shop_paused) throw conflict('shop_paused', offer.shop_pause_message || 'This seller is away and not taking orders right now');
     if (offer.seller_id === buyer.id) throw forbidden('own_offer', 'You cannot buy your own offer');
     if (offer.category_kind === 'account' && input.quantity !== 1) throw badRequest('invalid_quantity', 'Accounts are sold one at a time');

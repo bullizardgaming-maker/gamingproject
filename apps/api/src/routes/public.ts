@@ -12,7 +12,7 @@ import { beginSetup, disable, enable, remainingRecoveryCodes } from '../domain/m
 import { changePassword, requestPasswordReset, resetPassword, completeMfaLogin, confirmVerificationCode, login, register, sendVerificationCode, startKyc } from '../domain/users.js';
 import { REFRESH_TTL_DAYS, issueAccessToken, listSessions, refreshSession, revokeByRefreshToken, revokeFamily, revokeOtherSessions, revokeSessionById } from '../domain/sessions.js';
 import { enqueueEmail, getPreferences, setPreferences } from '../domain/notifications.js';
-import { AppError, badRequest, unauthorized } from '../lib/errors.js';
+import { AppError, badRequest, notFound, unauthorized } from '../lib/errors.js';
 import { ATTR_KEY, ATTR_VALUE_MAX, CATEGORY_DEFAULTS, GAME_SETS, attributesFor } from '../domain/attributeSets.js';
 import { deleteAccount, exportData } from '../domain/privacy.js';
 import { isStaff as isStaffUser, permissionsOf } from '../domain/permissions.js';
@@ -408,6 +408,8 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/offers/:id', async (req) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const offer = await getOffer(ctx.dbRead, id);
+    // A listing agreed on a buyer request is only visible to that buyer, its seller and staff.
+    if (offer.reserved_for && ![offer.reserved_for, offer.seller_id].includes(req.user?.id) && !(req.user && isStaffUser(req.user as any))) throw notFound('Offer');
     recordView(ctx.db, offer.id, offer.seller_id, { userId: req.user?.id, ip: req.ip });
     return offer;
   });

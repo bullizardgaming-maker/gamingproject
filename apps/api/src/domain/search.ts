@@ -45,6 +45,7 @@ export async function searchOffers(q: Queryable, p: SearchParams) {
   };
   const where: string[] = [
     `f.status = 'active'`,
+    `f.reserved_for IS NULL`,
     `u.status = 'active'`,
     `u.deleted_at IS NULL`,
     `NOT (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now()))`,
@@ -163,7 +164,7 @@ export async function gameDirectory(q: Queryable) {
     `WITH live AS (
        SELECT f.game, f.category_slug, f.seller_id, f.price_settlement_cents, f.delivery_mode
          FROM offers f JOIN users u ON u.id = f.seller_id
-        WHERE f.status = 'active' AND u.status = 'active' AND u.deleted_at IS NULL
+        WHERE f.status = 'active' AND f.reserved_for IS NULL AND u.status = 'active' AND u.deleted_at IS NULL
           AND NOT (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now()))
           AND (CASE WHEN f.delivery_mode = 'auto'
                     THEN EXISTS (SELECT 1 FROM inventory_items i WHERE i.offer_id = f.id AND i.status = 'available')
@@ -185,7 +186,7 @@ export async function suggestGames(q: Queryable, prefix: string, limit = 8) {
   return many<{ game: string; offers: number }>(
     q,
     `SELECT f.game, count(*)::int AS offers FROM offers f
-      WHERE f.status = 'active' AND (lower(f.game) LIKE lower($3) || '%' OR lower($1) <% lower(f.game))
+      WHERE f.status = 'active' AND f.reserved_for IS NULL AND (lower(f.game) LIKE lower($3) || '%' OR lower($1) <% lower(f.game))
       GROUP BY f.game ORDER BY max(word_similarity(lower($1), lower(f.game))) DESC, offers DESC LIMIT $2`,
     [prefix, Math.min(limit, 20), prefix.replace(/[\\%_]/g, '\\$&')],
   );

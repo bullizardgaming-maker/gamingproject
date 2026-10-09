@@ -145,6 +145,18 @@ const de: LocalePack = {
       body: (d, link, h) =>
         `Ein beobachtetes ${d.game}-Angebot liegt ${d.target_cents ? `bei oder unter deinem Ziel von ${h.money(d.target_cents, d.currency)}` : 'auf einem neuen Tiefstand'}: „${d.title}“ für ${h.money(d.price_cents, d.currency)}.\n\n${link(`/offers/${d.offer_id}`)}`,
     },
+    request_posted: {
+      subject: (d) => `Neue Anfrage in ${d.game}: ${d.title}`,
+      body: (d, link, h) => `Ein Käufer sucht „${d.title}“${d.budget_cents ? ` mit einem Budget von ${h.money(d.budget_cents, d.currency)}` : ''}. Du verkaufst in ${d.game} und hast vielleicht, was er braucht. Sende einen Preis und eine Lieferzeit.\n\n${link(`/requests/${d.request_id}`)}`,
+    },
+    request_proposal: {
+      subject: (d) => `${d.revised ? 'Aktualisiertes Angebot' : 'Neues Angebot'} für „${d.title}“`,
+      body: (d, link, h) => `${d.seller_name} bietet ${h.money(d.price_cents, d.currency)} mit Lieferung innerhalb von ${d.delivery_hours} Stunden. Nimm es an, um zu bezahlen; deine Zahlung liegt wie bei jeder Bestellung auf dem Treuhandkonto.\n\n${link(`/requests/${d.request_id}`)}`,
+    },
+    request_accepted: {
+      subject: (d) => `Angebot angenommen: ${d.title}`,
+      body: (d, link, h) => `Der Käufer hat dein Angebot über ${h.money(d.price_cents, d.currency)} angenommen. Wir haben ein privates Angebot für ihn erstellt; sobald er bezahlt, bekommst du die übliche Benachrichtigung über die neue Bestellung.\n\n${link(`/requests/${d.request_id}`)}`,
+    },
     support_received: {
       subject: (d) => `Wir haben deine Anfrage #${d.number} erhalten`,
       body: (d, link) => `Danke für deine Nachricht zu „${d.subject}“. Unser Support antwortet meist innerhalb weniger Stunden; du bekommst eine E-Mail, sobald er antwortet.\n\n${link(`/support/${d.ticket_id}`)}`,

@@ -270,6 +270,10 @@ export function GamePage() {
             }
           />
           {hasMore && <button className="btn ghost" style={{ alignSelf: 'center' }} onClick={more}>{t('game.more')}</button>}
+          <p className="small muted" style={{ margin: 0 }}>
+            {t('req.cta')}{' '}
+            <Link to={`/requests/new?${new URLSearchParams({ game: entry.game, ...(category ? { category } : {}) })}`}>{t('req.post')}</Link>
+          </p>
         </>
       )}
     </div>

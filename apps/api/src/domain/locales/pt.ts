@@ -146,6 +146,18 @@ const pt: LocalePack = {
       body: (d, link, h) =>
         `Um anúncio de ${d.game} que você acompanha está ${d.target_cents ? `no seu preço-alvo de ${h.money(d.target_cents, d.currency)} ou abaixo` : 'em um novo preço mais baixo'}: “${d.title}” por ${h.money(d.price_cents, d.currency)}.\n\n${link(`/offers/${d.offer_id}`)}`,
     },
+    request_posted: {
+      subject: (d) => `Novo pedido em ${d.game}: ${d.title}`,
+      body: (d, link, h) => `Um comprador procura “${d.title}”${d.budget_cents ? ` com orçamento de ${h.money(d.budget_cents, d.currency)}` : ''}. Você vende em ${d.game}, então pode ter o que ele precisa. Envie um preço e um prazo de entrega.\n\n${link(`/requests/${d.request_id}`)}`,
+    },
+    request_proposal: {
+      subject: (d) => `${d.revised ? 'Proposta atualizada' : 'Nova proposta'} para “${d.title}”`,
+      body: (d, link, h) => `${d.seller_name} oferece ${h.money(d.price_cents, d.currency)} com entrega em até ${d.delivery_hours} horas. Aceite para pagar; seu pagamento fica em custódia como em qualquer pedido.\n\n${link(`/requests/${d.request_id}`)}`,
+    },
+    request_accepted: {
+      subject: (d) => `Proposta aceita: ${d.title}`,
+      body: (d, link, h) => `O comprador aceitou sua proposta de ${h.money(d.price_cents, d.currency)}. Criamos um anúncio privado para ele; você recebe o aviso de novo pedido assim que ele pagar.\n\n${link(`/requests/${d.request_id}`)}`,
+    },
     support_received: {
       subject: (d) => `Recebemos sua solicitação nº ${d.number}`,
       body: (d, link) => `Obrigado por falar com a gente sobre “${d.subject}”. Nosso suporte costuma responder em poucas horas; você receberá um e-mail quando responderem.\n\n${link(`/support/${d.ticket_id}`)}`,

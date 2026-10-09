@@ -8,7 +8,7 @@
 import { CATEGORIES, DEMO_CODE, seed, type DemoState, type DemoUser } from './seed';
 import { CATEGORY_DEFAULTS, GAME_SETS, attributesFor, cleanAttributes } from '../../../api/src/domain/attributeSets';
 
-const KEY = 'bz.demo.v5';
+const KEY = 'bz.demo.v6';
 const day = 86_400_000;
 const now = () => new Date().toISOString();
 const rid = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2) + Date.now().toString(16));
@@ -271,6 +271,8 @@ const routes: Array<[string, RegExp, Handler]> = [];
 const route = (method: string, pattern: string, h: Handler) =>
   routes.push([method, new RegExp('^' + pattern.replace(/:[a-z]+/gi, '([^/]+)') + '$'), h]);
 
+/** Shown in search, game pages and shops: active and not reserved for one buyer. */
+const listed = (o: any) => o.status === 'active' && !o.reserved_for;
 const need = (me: DemoUser | null) => me ?? fail(401, 'unauthorized', 'Sign in first');
 const needStaff = (me: DemoUser | null) => {
   const u = need(me);
@@ -394,7 +396,7 @@ route('POST', '/me/delete', () => fail(409, 'demo', 'Demo accounts can’t be de
 route('GET', '/categories', () => CATEGORIES);
 route('GET', '/offers', ({ query }) => {
   const q = (query.get('q') ?? '').toLowerCase().trim();
-  let items = state.offers.filter((o) => o.status === 'active').map(offerView);
+  let items = state.offers.filter(listed).map(offerView);
   if (q) items = items.filter((o) => `${o.title} ${o.game} ${o.description}`.toLowerCase().includes(q) || q.split(/\s+/).every((w) => `${o.title} ${o.game}`.toLowerCase().includes(w)));
   if (query.get('delivery') === 'instant') items = items.filter((o) => o.delivery_mode === 'auto');
   if (query.get('ownerVerified') === 'true') items = items.filter((o) => o.category_kind !== 'account' || o.owner_proof_status === 'verified');
@@ -442,7 +444,7 @@ route('GET', '/catalog/attributes', ({ query }) => {
   return game && category ? { game, category, fields: attributesFor(game, category) } : { defaults: CATEGORY_DEFAULTS, games: GAME_SETS };
 });
 route('GET', '/catalog/games', () => {
-  const live = state.offers.filter((o) => o.status === 'active').map(offerView).filter((o) => o.stock > 0);
+  const live = state.offers.filter(listed).map(offerView).filter((o) => o.stock > 0);
   const games = new Map<string, any[]>();
   for (const o of live) games.set(o.game, [...(games.get(o.game) ?? []), o]);
   return [...games.entries()]
@@ -460,7 +462,7 @@ route('GET', '/catalog/games', () => {
 route('GET', '/games', ({ query }) => {
   const q = (query.get('q') ?? '').toLowerCase();
   const counts = new Map<string, number>();
-  for (const o of state.offers) if (o.status === 'active' && o.game.toLowerCase().includes(q)) counts.set(o.game, (counts.get(o.game) ?? 0) + 1);
+  for (const o of state.offers) if (listed(o) && o.game.toLowerCase().includes(q)) counts.set(o.game, (counts.get(o.game) ?? 0) + 1);
   return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([game, offers]) => ({ game, offers }));
 });
 route('GET', '/sellers/:id', ({ params, query }) => {
@@ -478,15 +480,16 @@ route('GET', '/sellers/:id', ({ params, query }) => {
   const before = state.reviewsBefore[u.id];
   return {
     id: u.id, display_name: u.display_name, member_since: u.created_at, identity_verified: u.kyc_tier >= 2, completed_orders: s.completed,
-    active_listings: state.offers.filter((o) => o.seller_id === u.id && o.status === 'active').length,
+    active_listings: state.offers.filter((o) => o.seller_id === u.id && listed(o)).length,
     on_time_delivery_pct: before ? Math.min(100, 93 + (before.count % 7)) : null, shop_paused: false, shop_paused_until: null, shop_pause_message: null,
     rating: { average: s.rating, count: s.count, positive_pct: s.count ? Math.round(((s.rating ?? 0) / 5) * 1000) / 10 : null },
     reviews: reviews.slice(offset, offset + limit),
   };
 });
-route('GET', '/offers/:id', ({ params }) => {
+route('GET', '/offers/:id', ({ me, params }) => {
   const o = state.offers.find((x) => x.id === params[0]);
-  if (!o) fail(404, 'not_found', 'Listing not found');
+  // A listing agreed on a buyer request is only for that buyer (and its seller and staff).
+  if (!o || (o.reserved_for && ![o.reserved_for, o.seller_id].includes(me?.id ?? '') && (!me || (me.role === 'user' && !me.staff_roles?.length)))) fail(404, 'not_found', 'Listing not found');
   return offerView(o);
 });
 
@@ -494,7 +497,7 @@ route('GET', '/offers/:id', ({ params }) => {
 route('POST', '/orders', ({ me, body }) => {
   const u = need(me);
   if (u.kyc_tier < 1) fail(403, 'kyc_required', 'Verify your email and phone before purchasing');
-  const offer = state.offers.find((x) => x.id === body.offerId) ?? fail(404, 'not_found', 'Listing not found');
+  const offer = state.offers.find((x) => x.id === body.offerId && (!x.reserved_for || x.reserved_for === u.id)) ?? fail(404, 'not_found', 'Listing not found');
   if (offer.seller_id === u.id) fail(400, 'own_listing', 'You can’t buy your own listing');
   const qty = Number(body.quantity ?? 1);
   const available = offer.delivery_mode === 'auto' ? offer.inventory.length : offer.stock;
@@ -660,7 +663,7 @@ route('POST', '/offers', ({ me, body }) => {
     id: `offer-${rid().slice(0, 8)}`, seller_id: u.id, category_slug: cat.slug, category_kind: cat.kind, game: body.game, title: body.title,
     description: body.description ?? '', price_cents: body.priceCents, currency: 'USD', delivery_mode: body.deliveryMode, delivery_hours: body.deliveryMode === 'auto' ? 0 : Number(body.deliveryHours ?? 2),
     stock: body.deliveryMode === 'manual' ? Number(body.stock ?? 1) : 0, inventory: [] as string[], status: 'active', owner_proof_status: 'none', version: 1, created_at: now(),
-    attributes: attrs.ok ? attrs.value : {},
+    attributes: attrs.ok ? attrs.value : {}, reserved_for: null, request_id: null,
   };
   state.offers.unshift(o);
   return offerView(o);
@@ -770,9 +773,130 @@ route('POST', '/me/notifications/:id/read', ({ me, params }) => {
   if (n) n.read_at ??= now();
   return { unread: unreadOf(u.id) };
 });
+// --- Buyer requests board ----------------------------------------------------------------
+const reqOpen = (r: any) => r.status === 'open' && r.expires_at > now();
+const propView = (p: any) => {
+  const s = sellerStats(p.seller_id);
+  return { ...p, seller_name: userById(p.seller_id)?.display_name ?? 'Seller', seller_completed_orders: s.completed, seller_rating: s.rating };
+};
+const reqView = (r: any, viewer?: string) => {
+  const ps = state.proposals.filter((p) => p.request_id === r.id);
+  const mine = r.buyer_id === viewer;
+  return {
+    ...r, category_kind: CATEGORIES.find((c) => c.slug === r.category_slug)?.kind, open: reqOpen(r), mine,
+    proposals: ps.filter((p) => ['pending', 'accepted'].includes(p.status)).length,
+    proposal_list: !viewer ? [] : ps.filter((p) => (mine ? p.status !== 'withdrawn' : p.seller_id === viewer)).sort((a, b) => a.price_cents - b.price_cents).map(propView),
+  };
+};
+const reqById = (id: string) => state.requests.find((r) => r.id === id) ?? fail(404, 'not_found', 'Request not found');
+route('GET', '/requests', ({ query }) => {
+  const game = query.get('game')?.toLowerCase();
+  const cat = query.get('category');
+  const q = query.get('q')?.toLowerCase().trim();
+  return state.requests
+    .filter((r) => reqOpen(r) && (!game || r.game.toLowerCase() === game) && (!cat || r.category_slug === cat) && (!q || `${r.title} ${r.game}`.toLowerCase().includes(q)))
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .map((r) => ({ ...reqView(r), proposal_list: undefined }));
+});
+route('GET', '/requests/mine', ({ me }) => {
+  const u = need(me);
+  return state.requests.filter((r) => r.buyer_id === u.id).sort((a, b) => b.created_at.localeCompare(a.created_at)).map((r) => ({ ...reqView(r, u.id), proposal_list: undefined }));
+});
+route('GET', '/requests/proposals/mine', ({ me }) => {
+  const u = need(me);
+  return state.proposals
+    .filter((p) => p.seller_id === u.id)
+    .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+    .map((p) => {
+      const r = reqById(p.request_id);
+      return { ...propView(p), request_title: r.title, game: r.game, category_slug: r.category_slug, currency: r.currency, request_status: r.status, expires_at: r.expires_at };
+    });
+});
+route('POST', '/requests', ({ me, body }) => {
+  const u = need(me);
+  if (u.kyc_tier < 1) fail(403, 'kyc_required', 'Verify your email and phone (Tier 1) before posting a request');
+  if (!CATEGORIES.some((c) => c.slug === body.categorySlug)) fail(400, 'unknown_category', 'Unknown category');
+  const game = String(body.game ?? '').trim();
+  const title = String(body.title ?? '').trim();
+  if (!game || title.length < 5) fail(400, 'validation_error', 'Add the game and a title of at least 5 characters');
+  const attrs = cleanAttributes(game, body.categorySlug, body.attributes, { partial: true });
+  if (!attrs.ok) fail(400, 'invalid_attributes', attrs.error);
+  if (state.requests.filter((r) => r.buyer_id === u.id && reqOpen(r)).length >= 10) fail(409, 'too_many_requests', 'You can have up to 10 open requests');
+  const r = {
+    id: rid(), buyer_id: u.id, buyer_name: u.display_name, game, category_slug: body.categorySlug, title, description: String(body.description ?? '').trim(),
+    budget_cents: body.budgetCents ?? null, currency: body.currency ?? 'USD', attributes: (attrs as any).value, status: 'open', accepted_proposal_id: null,
+    expires_at: new Date(Date.now() + 14 * day).toISOString(), created_at: now(), updated_at: now(),
+  };
+  state.requests.unshift(r);
+  // Stand-in for sellers answering, so the demo shows a proposal arriving.
+  const seller = state.users.find((x) => x.kyc_tier >= 2 && x.id !== u.id && x.role === 'user' && state.offers.some((o) => listed(o) && o.seller_id === x.id && o.game.toLowerCase() === game.toLowerCase()))
+    ?? state.users.find((x) => x.email === 'koi@demo.test')!;
+  setTimeout(() => {
+    if (!reqOpen(r)) return;
+    const price = r.budget_cents ? Math.round(r.budget_cents * 0.9) : 25_00;
+    state.proposals.push({ id: rid(), request_id: r.id, seller_id: seller.id, price_cents: price, delivery_hours: 6, message: 'I can do this today. (Demo: this proposal is simulated.)', status: 'pending', offer_id: null, created_at: now(), updated_at: now() });
+    notify(u.id, 'orders', 'request_proposal', `New proposal for "${r.title}"`, `${seller.display_name} offers ${(price / 100).toFixed(2)} ${r.currency} with delivery within 6 hours.`, `/requests/${r.id}`);
+    save();
+  }, 5000);
+  return reqView(r, u.id);
+});
+route('GET', '/requests/:id', ({ me, params }) => {
+  const r = reqById(params[0]!);
+  const v = reqView(r, me?.id);
+  if (r.status !== 'open' && !v.mine && v.proposal_list.length === 0) fail(404, 'not_found', 'Request not found');
+  return v;
+});
+route('POST', '/requests/:id/close', ({ me, params }) => {
+  const u = need(me);
+  const r = reqById(params[0]!);
+  if (r.buyer_id !== u.id) fail(404, 'not_found', 'Request not found');
+  if (r.status !== 'open') fail(409, 'not_open', 'This request is no longer open');
+  Object.assign(r, { status: 'closed', updated_at: now() });
+  for (const p of state.proposals) if (p.request_id === r.id && p.status === 'pending') Object.assign(p, { status: 'declined', updated_at: now() });
+  return reqView(r, u.id);
+});
+route('POST', '/requests/:id/proposals', ({ me, params, body }) => {
+  const u = needSeller(me);
+  const r = reqById(params[0]!);
+  if (r.buyer_id === u.id) fail(403, 'own_request', 'You cannot answer your own request');
+  if (!reqOpen(r)) fail(409, 'not_open', 'This request is no longer taking proposals');
+  const price = Number(body.priceCents);
+  const hours = Number(body.deliveryHours);
+  if (!(price > 0) || !(hours >= 1 && hours <= 168)) fail(400, 'validation_error', 'Enter a price and a delivery time between 1 and 168 hours');
+  let p = state.proposals.find((x) => x.request_id === r.id && x.seller_id === u.id);
+  if (p && !['pending', 'withdrawn'].includes(p.status)) fail(409, 'proposal_closed', 'Your proposal on this request can no longer be changed');
+  if (!p) state.proposals.push((p = { id: rid(), request_id: r.id, seller_id: u.id, created_at: now(), offer_id: null }));
+  Object.assign(p, { price_cents: price, delivery_hours: hours, message: String(body.message ?? '').trim(), status: 'pending', updated_at: now() });
+  return reqView(r, u.id);
+});
+route('DELETE', '/requests/:id/proposals/mine', ({ me, params }) => {
+  const u = need(me);
+  const p = state.proposals.find((x) => x.request_id === params[0] && x.seller_id === u.id && x.status === 'pending') ?? fail(404, 'not_found', 'Proposal not found');
+  Object.assign(p, { status: 'withdrawn', updated_at: now() });
+  return reqView(reqById(params[0]!), u.id);
+});
+route('POST', '/requests/:id/proposals/:pid/accept', ({ me, params }) => {
+  const u = need(me);
+  const r = reqById(params[0]!);
+  if (r.buyer_id !== u.id) fail(404, 'not_found', 'Request not found');
+  if (!reqOpen(r)) fail(409, 'not_open', 'This request is no longer open');
+  const p = state.proposals.find((x) => x.id === params[1] && x.request_id === r.id && x.status === 'pending') ?? fail(404, 'not_found', 'Proposal not found');
+  const offer = {
+    id: `offer-r-${rid().slice(0, 8)}`, seller_id: p.seller_id, category_slug: r.category_slug, category_kind: CATEGORIES.find((c) => c.slug === r.category_slug)!.kind, game: r.game,
+    title: r.title, description: [r.description, p.message].filter(Boolean).join('\n\n'), price_cents: p.price_cents, currency: r.currency, delivery_mode: 'manual' as const,
+    delivery_hours: p.delivery_hours, stock: 1, inventory: [] as string[], status: 'active', owner_proof_status: 'none', attributes: r.attributes ?? {}, version: 1, created_at: now(),
+    reserved_for: u.id, request_id: r.id,
+  };
+  state.offers.push(offer);
+  Object.assign(p, { status: 'accepted', offer_id: offer.id, updated_at: now() });
+  for (const x of state.proposals) if (x.request_id === r.id && x.id !== p.id && x.status === 'pending') Object.assign(x, { status: 'declined', updated_at: now() });
+  Object.assign(r, { status: 'accepted', accepted_proposal_id: p.id, updated_at: now() });
+  notify(p.seller_id, 'selling', 'request_accepted', `Proposal accepted: ${r.title}`, 'The buyer accepted your proposal. You’ll get the usual new-order notice when they pay.', `/requests/${r.id}`);
+  return { offerId: offer.id, request: reqView(r, u.id) };
+});
 // --- Watchlist & price alerts ------------------------------------------------------------
 const RATES: Record<string, number> = { USD: 1, EUR: 0.92, GBP: 0.79 };
-const onSale = (o: any) => o.status === 'active' && (o.delivery_mode === 'auto' ? o.inventory.length : o.stock) > 0;
+const onSale = (o: any) => listed(o) && (o.delivery_mode === 'auto' ? o.inventory.length : o.stock) > 0;
 const cheapestFor = (w: any) =>
   state.offers
     .filter((o) => onSale(o) && o.game.toLowerCase() === w.game.toLowerCase() && (!w.category || o.category_slug === w.category))

@@ -145,6 +145,18 @@ const ar: LocalePack = {
       body: (d, link, h) =>
         `عرض في ${d.game} تتابعه ${d.target_cents ? `عند هدفك ${h.money(d.target_cents, d.currency)} أو أقل` : 'بأدنى سعر جديد'}: «${d.title}» بسعر ${h.money(d.price_cents, d.currency)}.\n\n${link(`/offers/${d.offer_id}`)}`,
     },
+    request_posted: {
+      subject: (d) => `طلب جديد في ${d.game}: «${d.title}»`,
+      body: (d, link, h) => `يبحث مشترٍ عن «${d.title}»${d.budget_cents ? ` بميزانية ${h.money(d.budget_cents, d.currency)}` : ''}. أنت تبيع في ${d.game}، فقد يكون لديك ما يحتاجه. أرسل سعرًا ومدة تسليم.\n\n${link(`/requests/${d.request_id}`)}`,
+    },
+    request_proposal: {
+      subject: (d) => `${d.revised ? 'عرض محدَّث' : 'عرض جديد'} لـ«${d.title}»`,
+      body: (d, link, h) => `يعرض ${d.seller_name} مبلغ ${h.money(d.price_cents, d.currency)} مع التسليم خلال ${d.delivery_hours} ساعة. اقبله لإتمام الدفع؛ يُحفظ مبلغك في الضمان كأي طلب.\n\n${link(`/requests/${d.request_id}`)}`,
+    },
+    request_accepted: {
+      subject: (d) => `قُبل عرضك: ${d.title}`,
+      body: (d, link, h) => `قبل المشتري عرضك بقيمة ${h.money(d.price_cents, d.currency)}. أنشأنا له عرضًا خاصًا، وسيصلك إشعار الطلب الجديد المعتاد فور دفعه.\n\n${link(`/requests/${d.request_id}`)}`,
+    },
     support_received: {
       subject: (d) => `استلمنا طلبك رقم ${d.number}`,
       body: (d, link) => `شكرًا لتواصلك بخصوص «${d.subject}». يرد فريق الدعم عادة خلال ساعات قليلة، وستصلك رسالة عند الرد.\n\n${link(`/support/${d.ticket_id}`)}`,

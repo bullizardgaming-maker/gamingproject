@@ -142,6 +142,7 @@ export function SiteHeader() {
         <div className="header-search"><GameSearch /></div>
         <nav className="nav header-links" aria-label={t('nav.main')}>
           <NavLink to="/market" end>{t('nav.market')}</NavLink>
+          <NavLink to="/requests">{t('nav.requests')}</NavLink>
           {user && <NavLink to="/orders">{t('nav.orders')}</NavLink>}
           <NavLink to="/sell">{t('nav.sell')}</NavLink>
           {user && user.role !== 'user' && <NavLink to="/admin">{t('nav.operations')}</NavLink>}

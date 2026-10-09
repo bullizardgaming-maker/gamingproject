@@ -117,7 +117,8 @@ export const ATTR_VALUE_MAX = 60;
  * object, or a message describing the first problem. Select values are matched without case and
  * stored in their canonical spelling; empty values are dropped.
  */
-export function cleanAttributes(game: string, category: string, input: Record<string, unknown> | undefined): { ok: true; value: Record<string, string> } | { ok: false; error: string } {
+/** `partial` skips required fields (buyer requests may leave a field open). */
+export function cleanAttributes(game: string, category: string, input: Record<string, unknown> | undefined, opts: { partial?: boolean } = {}): { ok: true; value: Record<string, string> } | { ok: false; error: string } {
   const defs = attributesFor(game, category);
   const out: Record<string, string> = {};
   for (const [k, raw] of Object.entries(input ?? {})) {
@@ -134,7 +135,7 @@ export function cleanAttributes(game: string, category: string, input: Record<st
       out[k] = match;
     } else out[k] = v;
   }
-  const missing = defs.find((d) => d.required && !out[d.key]);
+  const missing = !opts.partial && defs.find((d) => d.required && !out[d.key]);
   if (missing) return { ok: false, error: `${missing.label} is required for ${game} listings` };
   return { ok: true, value: out };
 }

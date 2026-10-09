@@ -23,7 +23,9 @@ test.describe('browsing', () => {
     await expect(page).toHaveURL(/genshin-impact/);
     await page.getByRole('link', { name: /^Accounts 2$/ }).click();
     await expect(page).toHaveURL(/genshin-impact\/accounts/);
-    await page.getByLabel('Owner-verified').check();
+    // Router updates run in a transition, so click and wait rather than check() (which reads state at once).
+    await page.getByLabel('Owner-verified').click();
+    await expect(page.getByLabel('Owner-verified')).toBeChecked();
     await expect(page.getByText(/^1 offer/)).toBeVisible();
   });
 

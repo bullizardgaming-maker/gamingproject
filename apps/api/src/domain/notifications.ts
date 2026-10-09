@@ -232,6 +232,24 @@ export const TEMPLATES = {
     body: (d, link) =>
       `A ${d.game} listing you're watching for is ${d.target_cents ? `at or below your ${money(d.target_cents, d.currency)} target` : 'at a new low'}: "${d.title}" for ${money(d.price_cents, d.currency)}.\n\n${link(`/offers/${d.offer_id}`)}`,
   },
+  request_posted: {
+    category: 'selling',
+    subject: (d) => `New request in ${d.game}: ${d.title}`,
+    body: (d, link) =>
+      `A buyer is looking for "${d.title}"${d.budget_cents ? ` with a budget of ${money(d.budget_cents, d.currency)}` : ''}. You list in ${d.game}, so you may have what they need. Send a price and delivery time.\n\n${link(`/requests/${d.request_id}`)}`,
+  },
+  request_proposal: {
+    category: 'orders',
+    subject: (d) => `${d.revised ? 'Updated proposal' : 'New proposal'} for "${d.title}"`,
+    body: (d, link) =>
+      `${d.seller_name} offers ${money(d.price_cents, d.currency)} with delivery within ${d.delivery_hours} hours. Accept it to check out; your payment is held in escrow as for any order.\n\n${link(`/requests/${d.request_id}`)}`,
+  },
+  request_accepted: {
+    category: 'selling',
+    subject: (d) => `Proposal accepted: ${d.title}`,
+    body: (d, link) =>
+      `The buyer accepted your ${money(d.price_cents, d.currency)} proposal. We've made a private listing for them; you'll get the usual new-order notice as soon as they pay.\n\n${link(`/requests/${d.request_id}`)}`,
+  },
   support_received: {
     category: 'support',
     subject: (d) => `We got your request #${d.number}`,

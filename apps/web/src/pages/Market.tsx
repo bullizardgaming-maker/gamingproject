@@ -15,6 +15,9 @@ interface Category {
 }
 
 export interface Offer {
+  /** Set on a listing agreed on a buyer request: only that buyer can see and buy it. */
+  reserved_for?: string | null;
+  request_id?: string | null;
   id: string;
   seller_id: string;
   seller_name: string;
