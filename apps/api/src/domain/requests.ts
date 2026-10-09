@@ -6,6 +6,11 @@ import { cleanAttributes } from './attributeSets.js';
 import { assertSupported, getRate } from './fx.js';
 import { notify } from './notifications.js';
 import { requireSeller } from './offers.js';
+import { detectOffPlatform } from './safety.js';
+
+const noContact = (...texts: Array<string | undefined>) => {
+  if (detectOffPlatform(texts.filter(Boolean).join('\n')).length) throw badRequest('offplatform_contact', 'Keep contact details and outside payment methods off Bullizard: deals made elsewhere aren’t protected');
+};
 
 /**
  * Buyer requests ("wanted" posts). A buyer describes what they want; sellers answer with a price
@@ -41,6 +46,7 @@ const PROPOSAL_COLS = `p.id, p.request_id, p.seller_id, p.price_cents, p.deliver
 export async function createRequest(ctx: Ctx, buyer: { id: string; kyc_tier: number; status: string }, input: RequestInput) {
   if (buyer.status !== 'active') throw forbidden('suspended', 'Account suspended');
   if (buyer.kyc_tier < 1) throw forbidden('kyc_required', 'Verify your email and phone (Tier 1) before posting a request');
+  noContact(input.title, input.description);
   const cat = await maybeOne(ctx.db, 'SELECT slug FROM categories WHERE slug = $1', [input.categorySlug]);
   if (!cat) throw badRequest('unknown_category', 'Unknown category');
   const currency = (input.currency ?? ctx.cfg.SETTLEMENT_CURRENCY).toUpperCase();
@@ -139,6 +145,7 @@ export interface ProposalInput {
 /** Send or revise a proposal. One per seller per request; revising a withdrawn one re-sends it. */
 export async function propose(ctx: Ctx, seller: { id: string; kyc_tier: number; status: string; display_name?: string }, requestId: string, input: ProposalInput) {
   requireSeller(seller);
+  noContact(input.message);
   return withTx(ctx.db, async (tx) => {
     const r = await maybeOne(tx, `SELECT buyer_id, status, expires_at, title, currency FROM buyer_requests WHERE id = $1 FOR UPDATE`, [requestId]);
     if (!r) throw notFound('Request');

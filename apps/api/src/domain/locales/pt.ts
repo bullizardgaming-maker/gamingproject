@@ -158,6 +158,18 @@ const pt: LocalePack = {
       subject: (d) => `Proposta aceita: ${d.title}`,
       body: (d, link, h) => `O comprador aceitou sua proposta de ${h.money(d.price_cents, d.currency)}. Criamos um anúncio privado para ele; você recebe o aviso de novo pedido assim que ele pagar.\n\n${link(`/requests/${d.request_id}`)}`,
     },
+    listing_review: {
+      subject: () => 'Seu anúncio está em análise',
+      body: (d, link) => `${d.title ? `“${d.title}”` : 'Seu anúncio'} menciona algo que nossas regras pedem para verificar (itens proibidos ou dados de contato), então ele fica oculto até um moderador analisar, geralmente em poucas horas. Você será avisado em qualquer caso.\n\n${link('/sell')}`,
+    },
+    listing_approved: {
+      subject: (d) => `Anúncio aprovado: ${d.title}`,
+      body: (d, link) => `Um moderador aprovou “${d.title}” e ele está no ar de novo.\n\n${link(`/offers/${d.offer_id}`)}`,
+    },
+    listing_rejected: {
+      subject: (d) => `Anúncio removido: ${d.title}`,
+      body: (d, link) => `Um moderador removeu “${d.title}”: ${d.note}\n\nVocê pode publicar um novo anúncio que siga as regras. Fale com o suporte se achar que foi um engano.\n\n${link('/support/new?category=selling')}`,
+    },
     support_received: {
       subject: (d) => `Recebemos sua solicitação nº ${d.number}`,
       body: (d, link) => `Obrigado por falar com a gente sobre “${d.subject}”. Nosso suporte costuma responder em poucas horas; você receberá um e-mail quando responderem.\n\n${link(`/support/${d.ticket_id}`)}`,

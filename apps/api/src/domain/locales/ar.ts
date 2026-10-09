@@ -157,6 +157,18 @@ const ar: LocalePack = {
       subject: (d) => `قُبل عرضك: ${d.title}`,
       body: (d, link, h) => `قبل المشتري عرضك بقيمة ${h.money(d.price_cents, d.currency)}. أنشأنا له عرضًا خاصًا، وسيصلك إشعار الطلب الجديد المعتاد فور دفعه.\n\n${link(`/requests/${d.request_id}`)}`,
     },
+    listing_review: {
+      subject: () => 'عرضك قيد المراجعة',
+      body: (d, link) => `يذكر ${d.title ? `«${d.title}»` : 'عرضك'} شيئًا تطلب قواعدنا التحقق منه (سلع محظورة أو بيانات تواصل)، لذا أُخفي حتى يراجعه مشرف، عادةً خلال ساعات قليلة. سنبلغك بالنتيجة في الحالتين.\n\n${link('/sell')}`,
+    },
+    listing_approved: {
+      subject: (d) => `تمت الموافقة على العرض: ${d.title}`,
+      body: (d, link) => `وافق مشرف على «${d.title}» وأصبح متاحًا من جديد.\n\n${link(`/offers/${d.offer_id}`)}`,
+    },
+    listing_rejected: {
+      subject: (d) => `أُزيل العرض: ${d.title}`,
+      body: (d, link) => `أزال مشرف «${d.title}»: ${d.note}\n\nيمكنك نشر عرض جديد يلتزم بالقواعد. راسل الدعم إن كنت ترى أن هذا خطأ.\n\n${link('/support/new?category=selling')}`,
+    },
     support_received: {
       subject: (d) => `استلمنا طلبك رقم ${d.number}`,
       body: (d, link) => `شكرًا لتواصلك بخصوص «${d.subject}». يرد فريق الدعم عادة خلال ساعات قليلة، وستصلك رسالة عند الرد.\n\n${link(`/support/${d.ticket_id}`)}`,

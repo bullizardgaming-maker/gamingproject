@@ -454,5 +454,19 @@ const ar: Messages = {
   "tier.sellHint": "سعر وحدة أقل للطلبات الأكبر",
   "tier.fromQty": "من (وحدات)",
   "tier.each": "سعر الوحدة",
+  // Chat and moderation
+  "chat.title": "محادثة الطلب",
+  "chat.recorded": "مسجّلة للتحكيم",
+  "chat.erased": "حُذفت الرسالة بطلب من كاتبها",
+  "chat.user": "مستخدم",
+  "chat.system": "السوق",
+  "chat.flagged": "مُعلَّمة",
+  "chat.placeholder": "اكتب رسالة",
+  "chat.message": "الرسالة",
+  "chat.send": "أرسل",
+  "chat.sendAnyway": "أرسل على أي حال",
+  "chat.offPlatform": "يبدو أن هذه بيانات تواصل أو وسيلة دفع خارج Bullizard. إرسالها يُحتسب تحذيرًا، وتكرار التحذيرات يوقف الحساب، والصفقات خارج المنصة لا يشملها الضمان.",
+  "mod.inReview": "قيد المراجعة",
+  "mod.inReviewHint": "مخفي حتى يراجعه مشرف، عادةً خلال ساعات قليلة.",
 };
 export default ar;

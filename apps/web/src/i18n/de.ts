@@ -428,5 +428,19 @@ const de: Messages = {
   "tier.sellHint": "günstigerer Stückpreis bei größeren Bestellungen",
   "tier.fromQty": "Ab (Stück)",
   "tier.each": "Stückpreis",
+  // Chat and moderation
+  "chat.title": "Bestell-Chat",
+  "chat.recorded": "für Schlichtung aufgezeichnet",
+  "chat.erased": "Nachricht auf Wunsch des Verfassers gelöscht",
+  "chat.user": "Nutzer",
+  "chat.system": "Marktplatz",
+  "chat.flagged": "markiert",
+  "chat.placeholder": "Nachricht schreiben",
+  "chat.message": "Nachricht",
+  "chat.send": "Senden",
+  "chat.sendAnyway": "Trotzdem senden",
+  "chat.offPlatform": "Das sieht nach Kontaktdaten oder einer Zahlungsart außerhalb von Bullizard aus. Das Senden zählt als Verwarnung, wiederholte Verwarnungen sperren das Konto, und Geschäfte außerhalb sind nicht durch die Treuhand geschützt.",
+  "mod.inReview": "In Prüfung",
+  "mod.inReviewHint": "Ausgeblendet, bis ein Moderator es prüft, meist innerhalb weniger Stunden.",
 };
 export default de;

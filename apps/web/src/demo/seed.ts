@@ -3,6 +3,8 @@
  * every page works: three demo accounts, a market of listings, and a few orders in different
  * states so escrow, chat, disputes and the operations console all have something to show.
  */
+import { DEFAULT_TERMS } from '../../../api/src/domain/safety';
+
 export const DEMO_PASSWORD = 'demo-password-123';
 export const DEMO_CODE = '123456';
 
@@ -230,6 +232,7 @@ export function seed() {
       owner_proof_status: kind === 'account' ? proof ?? 'none' : 'none',
       attributes: ATTRS[title] ?? {},
       price_tiers: TIERS[title] ?? [],
+      review_reasons: [] as string[],
       // Set on listings made from an accepted buyer request.
       reserved_for: null as string | null,
       request_id: null as string | null,
@@ -237,13 +240,29 @@ export function seed() {
       created_at: ago((LISTINGS.length - i) * 3_600_000 * 7),
     };
   });
+  // Moderation samples: a listing held for review and a pre-sale chat flagged for off-platform contact.
+  const template = offers.find((o) => o.title.startsWith('Premier 10k'))!;
+  offers.push({
+    ...template, id: 'offer-review-1', seller_id: users[5]!.id, category_slug: 'items', category_kind: 'item', title: 'CS2 rage config with aimbot settings, undetected',
+    description: 'Works on Premier. Add me on discord for the loader and updates.', price_cents: 14_99, stock: 50, attributes: {}, status: 'review', review_reasons: ['term:aimbot', 'contact:discord'], created_at: ago(3 * 3_600_000),
+  });
+  const flagRoom = { id: 'room-flag-1', order_id: null, offer_id: 'offer-10', buyer_id: 'u-req-zed', seller_id: users[3]!.id, last_seq: 3 };
+  const flagMsgs = [
+    ['u-req-zed', 'Hi, is the Immortal 2 account still available?'],
+    [users[3]!.id, 'Yes, it has 34 skins and the original email.'],
+    ['u-req-zed', 'Can I pay you with PayPal friends and family? Cheaper for both of us. My whatsapp is +44 7700 900456'],
+  ].map(([sender, body], k) => ({ id: `fm-${k}`, room_id: flagRoom.id, seq: k + 1, sender_id: sender, kind: 'text', body, flags: k === 2 ? ['offplatform:whatsapp'] : [], hash: `seed-${k}`, created_at: ago((40 - k * 5) * 60_000) }));
 
   return {
     users,
     offers,
     orders: [] as any[],
-    rooms: [] as any[],
-    messages: [] as any[],
+    rooms: [flagRoom] as any[],
+    messages: flagMsgs as any[],
+    modTerms: DEFAULT_TERMS.map((t, k) => ({ id: `term-${k}`, ...t, created_at: ago(30 * day) })),
+    chatFlags: [
+      { id: 'cf-1', room_id: flagRoom.id, seq: 3, user_id: 'u-req-zed', user_name: 'zed.plays', user_email: 'zed@example.test', reasons: ['whatsapp', 'external_payment', 'phone_number'], status: 'open', note: null, created_at: ago(30 * 60_000) },
+    ] as any[],
     reviews: [
       { id: 'r1', order_id: 'seed-1', seller_id: users[1]!.id, rating: 5, comment: 'Key worked instantly.', seller_reply: null, created_at: ago(20 * day) },
       { id: 'r2', order_id: 'seed-2', seller_id: users[1]!.id, rating: 5, comment: 'Gold arrived in 20 minutes.', seller_reply: 'Thanks!', created_at: ago(12 * day) },

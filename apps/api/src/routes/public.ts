@@ -409,7 +409,15 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const offer = await getOffer(ctx.dbRead, id);
     // A listing agreed on a buyer request is only visible to that buyer, its seller and staff.
-    if (offer.reserved_for && ![offer.reserved_for, offer.seller_id].includes(req.user?.id) && !(req.user && isStaffUser(req.user as any))) throw notFound('Offer');
+    const staffViewer = !!req.user && isStaffUser(req.user as any);
+    if (offer.reserved_for && ![offer.reserved_for, offer.seller_id].includes(req.user?.id) && !staffViewer) throw notFound('Offer');
+    // Listings waiting for moderation are only for their seller and staff, and only they see why.
+    const insider = offer.seller_id === req.user?.id || staffViewer;
+    if (offer.status === 'review' && !insider) throw notFound('Offer');
+    if (!insider) {
+      delete offer.review_reasons;
+      delete offer.review_note;
+    }
     recordView(ctx.db, offer.id, offer.seller_id, { userId: req.user?.id, ip: req.ip });
     return offer;
   });

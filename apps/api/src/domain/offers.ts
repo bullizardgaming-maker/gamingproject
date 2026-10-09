@@ -6,6 +6,8 @@ import { addInventory, parseBulkUpload } from './inventory.js';
 import { getRate } from './fx.js';
 import { cleanAttributes } from './attributeSets.js';
 import { checkTiers, type PriceTier } from './priceTiers.js';
+import { listingStatusFor } from './moderation.js';
+import { notify } from './notifications.js';
 export { unitPriceFor, type PriceTier } from './priceTiers.js';
 
 export interface OfferInput {
@@ -34,7 +36,7 @@ export function cleanTiers(basePriceCents: number, tiers: PriceTier[] | undefine
 
 export const OFFER_LIST_SQL = `
   SELECT f.id, f.seller_id, f.category_slug, f.game, f.title, f.description, f.price_cents, f.currency, f.price_settlement_cents, f.delivery_mode,
-         f.status, f.owner_proof_status, f.version, f.attributes, f.price_tiers, f.reserved_for, f.request_id, f.created_at, f.updated_at, f.low_stock_threshold,
+         f.status, f.owner_proof_status, f.version, f.attributes, f.price_tiers, f.reserved_for, f.request_id, f.review_reasons, f.review_note, f.created_at, f.updated_at, f.low_stock_threshold,
          c.kind AS category_kind, c.risk_class, u.display_name AS seller_name, f.delivery_hours,
          (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now())) AS shop_paused,
          u.shop_paused_until, u.shop_pause_message,
@@ -65,13 +67,17 @@ export async function createOffer(ctx: Ctx, seller: { id: string; kyc_tier: numb
   if (!attrs.ok) throw badRequest('invalid_attributes', attrs.error);
   const stock = input.deliveryMode === 'manual' ? (cat.kind === 'account' ? 1 : input.stock ?? 1) : 0;
   const tiers = cleanTiers(input.priceCents, input.priceTiers, cat.kind);
+  const screen = await listingStatusFor(ctx.db, input.title, input.description ?? '');
   const offer = await one(
     ctx.db,
-    `INSERT INTO offers (seller_id, category_slug, game, title, description, price_cents, currency, delivery_mode, stock, low_stock_threshold, delivery_hours, attributes, price_tiers)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
+    `INSERT INTO offers (seller_id, category_slug, game, title, description, price_cents, currency, delivery_mode, stock, low_stock_threshold, delivery_hours, attributes, price_tiers,
+                         status, review_reasons)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING id`,
     [seller.id, input.categorySlug, input.game, input.title, input.description ?? '', input.priceCents, (input.currency ?? ctx.cfg.SETTLEMENT_CURRENCY).toUpperCase(),
-     input.deliveryMode, stock, input.lowStockThreshold ?? 5, input.deliveryHours ?? 24, JSON.stringify(attrs.value), JSON.stringify(tiers)],
+     input.deliveryMode, stock, input.lowStockThreshold ?? 5, input.deliveryHours ?? 24, JSON.stringify(attrs.value), JSON.stringify(tiers),
+     screen.review ? 'review' : 'active', screen.reasons],
   );
+  if (screen.review) await notify(ctx.db, seller.id, 'listing_review', { offer_id: offer.id, title: input.title }, `listing:${offer.id}:review:${Date.now()}`);
   return getOffer(ctx.db, offer.id);
 }
 
@@ -105,6 +111,13 @@ export async function updateOffer(
     if (!cur || cur.seller_id !== sellerId) throw notFound('Offer');
     tiers = JSON.stringify(cleanTiers(patch.priceCents ?? cur.price_cents, patch.priceTiers, cur.kind));
   }
+  // Edited text is screened again; a listing in review can only be removed until staff decide.
+  let screen: { review: boolean; reasons: string[] } = { review: false, reasons: [] };
+  if (patch.title != null || patch.description != null) {
+    const cur = await maybeOne(ctx.db, 'SELECT seller_id, title, description FROM offers WHERE id = $1', [offerId]);
+    if (!cur || cur.seller_id !== sellerId) throw notFound('Offer');
+    screen = await listingStatusFor(ctx.db, patch.title ?? cur.title, patch.description ?? cur.description);
+  }
   if (patch.attributes) {
     const cur = await maybeOne(ctx.db, 'SELECT seller_id, game, category_slug FROM offers WHERE id = $1', [offerId]);
     if (!cur || cur.seller_id !== sellerId) throw notFound('Offer');
@@ -116,17 +129,20 @@ export async function updateOffer(
     `UPDATE offers SET
         title = COALESCE($4, title), description = COALESCE($5, description), price_cents = COALESCE($6, price_cents),
         stock = CASE WHEN delivery_mode = 'manual' THEN COALESCE($7, stock) ELSE stock END,
-        low_stock_threshold = COALESCE($8, low_stock_threshold), status = COALESCE($9, status),
+        low_stock_threshold = COALESCE($8, low_stock_threshold),
+        status = CASE WHEN $13::boolean THEN 'review' WHEN status = 'review' AND $9 IS DISTINCT FROM 'removed' THEN 'review' ELSE COALESCE($9, status) END,
+        review_reasons = CASE WHEN $13::boolean THEN $14::text[] ELSE review_reasons END,
         delivery_hours = COALESCE($10, delivery_hours), attributes = COALESCE($11::jsonb, attributes), price_tiers = COALESCE($12::jsonb, price_tiers),
         version = version + 1, updated_at = now()
       WHERE id = $1 AND seller_id = $2 AND version = $3 RETURNING id`,
-    [offerId, sellerId, version, patch.title, patch.description, patch.priceCents, patch.stock, patch.lowStockThreshold, patch.status, patch.deliveryHours, attributes, tiers],
+    [offerId, sellerId, version, patch.title, patch.description, patch.priceCents, patch.stock, patch.lowStockThreshold, patch.status, patch.deliveryHours, attributes, tiers, screen.review, screen.reasons],
   );
   if (res.rowCount === 0) {
     const cur = await maybeOne(ctx.db, 'SELECT seller_id, version FROM offers WHERE id = $1', [offerId]);
     if (!cur || cur.seller_id !== sellerId) throw notFound('Offer');
     throw conflict('version_conflict', `Offer was modified concurrently (current version ${cur.version})`);
   }
+  if (screen.review) await notify(ctx.db, sellerId, 'listing_review', { offer_id: offerId, title: patch.title ?? '' }, `listing:${offerId}:review:${Date.now()}`);
   return getOffer(ctx.db, offerId);
 }
 

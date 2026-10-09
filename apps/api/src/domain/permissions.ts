@@ -30,6 +30,7 @@ export const PERMISSIONS = [
   'staff.manage',
   'status.manage', // incidents and maintenance on the public status page
   'support.manage', // help-centre ticket queue
+  'moderation.manage', // listing review queue, flagged chats, banned terms
   'analytics.view', // business dashboard: GMV, take rate, dispute and chargeback rates
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
@@ -38,8 +39,8 @@ export const STAFF_ROLES = ['arbiter', 'support', 'finance', 'compliance', 'admi
 export type StaffRole = (typeof STAFF_ROLES)[number];
 
 export const ROLE_PERMISSIONS: Record<StaffRole, readonly Permission[]> = {
-  arbiter: ['orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'orders.refund_after_release'],
-  support: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage', 'support.manage'],
+  arbiter: ['orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'orders.refund_after_release', 'moderation.manage'],
+  support: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage', 'support.manage', 'moderation.manage'],
   finance: [
     'chargebacks.manage', 'orders.refund_after_release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view', 'ledger.adjust',
     'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'analytics.view',

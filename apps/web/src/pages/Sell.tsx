@@ -221,6 +221,9 @@ function OfferRow({ offer, onChange }: { offer: SellerOffer; onChange: () => voi
         <td>
           <b>{offer.title}</b>
           <div className="small muted">{offer.game} · {categoryLabel(offer.category_slug)}</div>
+          {offer.status === 'review' && (
+            <div className="small" title={t('mod.inReviewHint')}><span className="chip held">{t('mod.inReview')}</span> <span className="muted">{t('mod.inReviewHint')}</span></div>
+          )}
           {offer.category_slug === 'accounts' && offer.owner_proof_status !== 'verified' && (
             <div className="small" style={{ color: 'var(--disputed)' }}>{t('sell.ownerProof', { status: offer.owner_proof_status })}</div>
           )}

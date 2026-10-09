@@ -36,22 +36,9 @@ export interface ChatMessage {
   created_at: string;
 }
 
-// ---------------------------------------------------------------------------
-// Off-platform contact detection. All negotiation must stay in the recorded chat:
-// it is the evidence base for arbitration and chargeback representment.
-// ---------------------------------------------------------------------------
-const OFFPLATFORM_PATTERNS: Array<[string, RegExp]> = [
-  ['discord', /\bdiscord(?:app)?(?:\.gg|\.com)?\b/i],
-  ['telegram', /\btelegram\b|\bt\.me\/|\btg\s*:\s*@?\w+/i],
-  ['whatsapp', /\bwhats\s?app\b|\bwa\.me\//i],
-  ['other_messenger', /\b(?:skype|viber|wechat|signal\s+app|kik|snapchat)\b/i],
-  ['external_payment', /\b(?:paypal\.me|cash\s?app|venmo|zelle|western\s+union)\b/i],
-  ['phone_number', /(?:\+|\b00)\d[\d\s().-]{7,}\d\b/],
-];
-
-export function detectOffPlatform(body: string): string[] {
-  return OFFPLATFORM_PATTERNS.filter(([, re]) => re.test(body)).map(([name]) => name);
-}
+// Off-platform contact detection lives in safety.ts (shared with the web app).
+export { detectOffPlatform } from './safety.js';
+import { detectOffPlatform } from './safety.js';
 
 /** v1 (messages written before per-user keys): the chain covers the text itself. */
 export function messageHash(prevHash: string, seq: number, senderId: string | null, kind: string, body: string, createdAt: string) {
@@ -194,6 +181,8 @@ export async function postUserMessage(ctx: Ctx, roomId: string, user: { id: stri
     const msg = await appendMessage(s, roomId, user.id, 'text', body, flags, ctx.keyring);
 
     if (violations.length && user.role === 'user') {
+      // Into the staff queue (Admin → Moderation) to confirm or dismiss.
+      await s.tx.query(`INSERT INTO chat_flags (room_id, seq, user_id, reasons) VALUES ($1, $2, $3, $4) ON CONFLICT (room_id, seq) DO NOTHING`, [roomId, msg.seq, user.id, violations]);
       const { offplatform_strikes } = await one<{ offplatform_strikes: number }>(
         s.tx,
         'UPDATE users SET offplatform_strikes = offplatform_strikes + 1 WHERE id = $1 RETURNING offplatform_strikes',

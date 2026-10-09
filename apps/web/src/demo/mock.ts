@@ -8,8 +8,9 @@
 import { CATEGORIES, DEMO_CODE, seed, type DemoState, type DemoUser } from './seed';
 import { CATEGORY_DEFAULTS, GAME_SETS, attributesFor, cleanAttributes } from '../../../api/src/domain/attributeSets';
 import { checkTiers, unitPriceFor } from '../../../api/src/domain/priceTiers';
+import { detectOffPlatform, matchTerms } from '../../../api/src/domain/safety';
 
-const KEY = 'bz.demo.v7';
+const KEY = 'bz.demo.v8';
 const day = 86_400_000;
 const now = () => new Date().toISOString();
 const rid = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2) + Date.now().toString(16));
@@ -149,7 +150,6 @@ function scheduleReply(roomId: string, fromId: string) {
   }, 1600);
 }
 
-const OFF_PLATFORM = /(discord|telegram|whatsapp|skype|paypal|venmo|cash ?app|\+?\d[\d\s-]{8,}\d)/i;
 
 const CHECKLIST = [
   ['password', 'Changed the account password'],
@@ -489,7 +489,8 @@ route('GET', '/sellers/:id', ({ params, query }) => {
 });
 route('GET', '/offers/:id', ({ me, params }) => {
   const o = state.offers.find((x) => x.id === params[0]);
-  // A listing agreed on a buyer request is only for that buyer (and its seller and staff).
+  // A listing agreed on a buyer request is only for that buyer (and its seller and staff); one in review only for its seller and staff.
+  if (o && o.status === 'review' && o.seller_id !== me?.id && (!me || (me.role === 'user' && !me.staff_roles?.length))) fail(404, 'not_found', 'Listing not found');
   if (!o || (o.reserved_for && ![o.reserved_for, o.seller_id].includes(me?.id ?? '') && (!me || (me.role === 'user' && !me.staff_roles?.length)))) fail(404, 'not_found', 'Listing not found');
   return offerView(o);
 });
@@ -610,9 +611,11 @@ route('POST', '/chat/rooms/:id/messages', ({ me, params, body }) => {
   const r = roomFor(u, params[0]!);
   const text = String(body.body ?? '').trim();
   if (!text) fail(400, 'validation_error', 'Write a message');
-  const flagged = OFF_PLATFORM.test(text);
-  const m = appendMessage(r.id, u.id, 'text', text, flagged ? ['off_platform'] : []);
+  const reasons = detectOffPlatform(text);
+  const flagged = reasons.length > 0;
+  const m = appendMessage(r.id, u.id, 'text', text, reasons.map((x) => `offplatform:${x}`));
   if (flagged) {
+    state.chatFlags.unshift({ id: rid(), room_id: r.id, seq: m.seq, user_id: u.id, reasons, status: 'open', note: null, created_at: now() });
     live(appendMessage(r.id, null, 'warning', 'Contact details or outside payment apps were detected. Trades moved off the platform lose escrow protection, and repeated attempts suspend accounts.'));
   }
   scheduleReply(r.id, u.id === r.buyer_id ? r.seller_id : r.buyer_id);
@@ -662,13 +665,19 @@ route('POST', '/offers', ({ me, body }) => {
   if (!attrs.ok) fail(400, 'invalid_attributes', attrs.error);
   const tiers = checkTiers(Number(body.priceCents), body.priceTiers, cat.kind);
   if (!tiers.ok) fail(400, 'invalid_tiers', tiers.error);
+  // Same screening as the API: block terms refuse, review terms and contact details hold for a moderator.
+  const text = `${body.title}\n${body.description ?? ''}`;
+  const hits = matchTerms(text, state.modTerms);
+  if (hits.some((h) => h.action === 'block')) fail(400, 'listing_blocked', 'This listing breaks the rules on prohibited goods and can’t be published');
+  const reviewReasons = [...hits.map((h) => `term:${h.term}`), ...detectOffPlatform(text).map((x) => `contact:${x}`)];
   const o = {
     id: `offer-${rid().slice(0, 8)}`, seller_id: u.id, category_slug: cat.slug, category_kind: cat.kind, game: body.game, title: body.title,
     description: body.description ?? '', price_cents: body.priceCents, currency: 'USD', delivery_mode: body.deliveryMode, delivery_hours: body.deliveryMode === 'auto' ? 0 : Number(body.deliveryHours ?? 2),
-    stock: body.deliveryMode === 'manual' ? Number(body.stock ?? 1) : 0, inventory: [] as string[], status: 'active', owner_proof_status: 'none', version: 1, created_at: now(),
+    stock: body.deliveryMode === 'manual' ? Number(body.stock ?? 1) : 0, inventory: [] as string[], status: reviewReasons.length ? 'review' : 'active', review_reasons: reviewReasons, owner_proof_status: 'none', version: 1, created_at: now(),
     attributes: attrs.ok ? attrs.value : {}, reserved_for: null, request_id: null, price_tiers: tiers.ok ? tiers.value : [],
   };
   state.offers.unshift(o);
+  if (reviewReasons.length) notify(u.id, 'selling', 'listing_review', 'Your listing is being reviewed', 'It mentions something our rules ask us to check, so it’s hidden until a moderator looks at it.', '/sell');
   return offerView(o);
 });
 route('POST', '/offers/:id/inventory', ({ me, params, body }) => {
@@ -776,6 +785,66 @@ route('POST', '/me/notifications/:id/read', ({ me, params }) => {
   if (n) n.read_at ??= now();
   return { unread: unreadOf(u.id) };
 });
+// --- Moderation ----------------------------------------------------------------------------
+route('GET', '/admin/moderation/summary', ({ me }) => (needPerm(me, 'moderation.manage'), {
+  listings: state.offers.filter((o) => o.status === 'review').length, chats: state.chatFlags.filter((f) => f.status === 'open').length,
+}));
+route('GET', '/admin/moderation/listings', ({ me }) => {
+  needPerm(me, 'moderation.manage');
+  return state.offers
+    .filter((o) => o.status === 'review')
+    .map((o) => ({ ...o, inventory: undefined, seller_name: userById(o.seller_id)?.display_name, seller_email: userById(o.seller_id)?.email, seller_completed_orders: sellerStats(o.seller_id).completed, updated_at: o.created_at }));
+});
+route('POST', '/admin/moderation/listings/:id', ({ me, params, body }) => {
+  needPerm(me, 'moderation.manage');
+  const o = state.offers.find((x) => x.id === params[0]) ?? fail(404, 'not_found', 'Listing not found');
+  if (o.status !== 'review') fail(409, 'not_in_review', 'This listing is not waiting for review');
+  const note = String(body.note ?? '').trim();
+  if (!body.approve && !note) fail(400, 'note_required', 'Tell the seller why the listing was rejected');
+  o.status = body.approve ? 'active' : 'removed';
+  (o as any).review_note = note || null;
+  notify(o.seller_id, 'selling', body.approve ? 'listing_approved' : 'listing_rejected', body.approve ? `Listing approved: ${o.title}` : `Listing removed: ${o.title}`, body.approve ? 'A moderator approved it and it’s live again.' : `A moderator removed it: ${note}`, body.approve ? `/offers/${o.id}` : '/sell');
+  return { id: o.id, status: o.status };
+});
+route('GET', '/admin/moderation/chats', ({ me, query }) => {
+  needPerm(me, 'moderation.manage');
+  const status = query.get('status') ?? 'open';
+  return state.chatFlags
+    .filter((f) => f.status === status)
+    .map((f) => {
+      const room = state.rooms.find((r) => r.id === f.room_id);
+      const u = userById(f.user_id);
+      return {
+        ...f, user_name: u?.display_name ?? f.user_name ?? 'User', user_email: u?.email ?? f.user_email ?? '', offplatform_strikes: state.chatFlags.filter((x) => x.user_id === f.user_id && x.status !== 'dismissed').length,
+        user_status: 'active', order_id: room?.order_id ?? null, offer_id: room?.offer_id, role: room?.seller_id === f.user_id ? 'seller' : 'buyer',
+        confirmed_before: state.chatFlags.filter((x) => x.user_id === f.user_id && x.status === 'confirmed' && x.id !== f.id).length,
+        context: state.messages.filter((m) => m.room_id === f.room_id && m.seq <= f.seq && m.seq >= f.seq - 2).sort((a, b) => a.seq - b.seq).map((m) => ({ ...m, erased: false })),
+      };
+    });
+});
+route('POST', '/admin/moderation/chats/:id', ({ me, params, body }) => {
+  const u = needPerm(me, 'moderation.manage');
+  const f = state.chatFlags.find((x) => x.id === params[0] && x.status === 'open') ?? fail(404, 'not_found', 'Open flag not found');
+  Object.assign(f, { status: body.confirm ? 'confirmed' : 'dismissed', note: body.note ?? null, reviewed_by: u.id });
+  return { id: f.id, status: f.status, user_id: f.user_id };
+});
+route('GET', '/admin/moderation/terms', ({ me }) => (needPerm(me, 'moderation.manage'), [...state.modTerms].sort((a, b) => a.action.localeCompare(b.action) || a.term.localeCompare(b.term))));
+route('POST', '/admin/moderation/terms', ({ me, body }) => {
+  needPerm(me, 'moderation.manage');
+  const term = String(body.term ?? '').trim();
+  if (term.length < 2) fail(400, 'validation_error', 'Enter a word or phrase');
+  if (state.modTerms.some((x) => x.term.toLowerCase() === term.toLowerCase())) fail(409, 'duplicate_term', 'That term is already on the list');
+  const t = { id: rid(), term, action: body.action === 'block' ? 'block' as const : 'review' as const, created_at: now() };
+  state.modTerms.push(t);
+  return t;
+});
+route('DELETE', '/admin/moderation/terms/:id', ({ me, params }) => {
+  needPerm(me, 'moderation.manage');
+  const i = state.modTerms.findIndex((x) => x.id === params[0]);
+  if (i < 0) fail(404, 'not_found', 'Term not found');
+  state.modTerms.splice(i, 1);
+});
+
 // --- Buyer requests board ----------------------------------------------------------------
 const reqOpen = (r: any) => r.status === 'open' && r.expires_at > now();
 const propView = (p: any) => {
@@ -887,7 +956,7 @@ route('POST', '/requests/:id/proposals/:pid/accept', ({ me, params }) => {
   const offer = {
     id: `offer-r-${rid().slice(0, 8)}`, seller_id: p.seller_id, category_slug: r.category_slug, category_kind: CATEGORIES.find((c) => c.slug === r.category_slug)!.kind, game: r.game,
     title: r.title, description: [r.description, p.message].filter(Boolean).join('\n\n'), price_cents: p.price_cents, currency: r.currency, delivery_mode: 'manual' as const,
-    delivery_hours: p.delivery_hours, stock: 1, inventory: [] as string[], price_tiers: [], status: 'active', owner_proof_status: 'none', attributes: r.attributes ?? {}, version: 1, created_at: now(),
+    delivery_hours: p.delivery_hours, stock: 1, inventory: [] as string[], price_tiers: [], review_reasons: [] as string[], status: 'active', owner_proof_status: 'none', attributes: r.attributes ?? {}, version: 1, created_at: now(),
     reserved_for: u.id, request_id: r.id,
   };
   state.offers.push(offer);
@@ -1435,11 +1504,11 @@ const ALL_PERMS = [
   'orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'risk.review', 'users.suspend', 'aml.review', 'aml.sar',
   'chargebacks.manage', 'orders.refund_after_release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view',
   'ledger.adjust', 'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'keys.manage', 'retention.manage', 'audit.view', 'staff.manage', 'status.manage',
-  'analytics.view', 'support.manage',
+  'analytics.view', 'support.manage', 'moderation.manage',
 ];
 const ROLE_PERMS: Record<string, string[]> = {
-  arbiter: ['orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'orders.refund_after_release'],
-  support: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage', 'support.manage'],
+  arbiter: ['orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'orders.refund_after_release', 'moderation.manage'],
+  support: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage', 'support.manage', 'moderation.manage'],
   finance: ['chargebacks.manage', 'orders.refund_after_release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view', 'ledger.adjust', 'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'analytics.view'],
   compliance: ['orders.view_any', 'risk.review', 'users.suspend', 'aml.review', 'aml.sar', 'payout_holds.set', 'ledger.view', 'audit.view', 'retention.manage', 'analytics.view'],
   admin: ALL_PERMS,

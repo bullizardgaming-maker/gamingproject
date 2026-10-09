@@ -157,6 +157,18 @@ const de: LocalePack = {
       subject: (d) => `Angebot angenommen: ${d.title}`,
       body: (d, link, h) => `Der Käufer hat dein Angebot über ${h.money(d.price_cents, d.currency)} angenommen. Wir haben ein privates Angebot für ihn erstellt; sobald er bezahlt, bekommst du die übliche Benachrichtigung über die neue Bestellung.\n\n${link(`/requests/${d.request_id}`)}`,
     },
+    listing_review: {
+      subject: () => 'Dein Angebot wird geprüft',
+      body: (d, link) => `${d.title ? `„${d.title}“` : 'Dein Angebot'} enthält etwas, das wir laut unseren Regeln prüfen müssen (verbotene Waren oder Kontaktdaten). Es ist daher ausgeblendet, bis ein Moderator es ansieht, meist innerhalb weniger Stunden. Du hörst in jedem Fall von uns.\n\n${link('/sell')}`,
+    },
+    listing_approved: {
+      subject: (d) => `Angebot freigegeben: ${d.title}`,
+      body: (d, link) => `Ein Moderator hat „${d.title}“ freigegeben, es ist wieder online.\n\n${link(`/offers/${d.offer_id}`)}`,
+    },
+    listing_rejected: {
+      subject: (d) => `Angebot entfernt: ${d.title}`,
+      body: (d, link) => `Ein Moderator hat „${d.title}“ entfernt: ${d.note}\n\nDu kannst ein neues Angebot einstellen, das den Regeln entspricht. Schreib dem Support, wenn du das für einen Fehler hältst.\n\n${link('/support/new?category=selling')}`,
+    },
     support_received: {
       subject: (d) => `Wir haben deine Anfrage #${d.number} erhalten`,
       body: (d, link) => `Danke für deine Nachricht zu „${d.subject}“. Unser Support antwortet meist innerhalb weniger Stunden; du bekommst eine E-Mail, sobald er antwortet.\n\n${link(`/support/${d.ticket_id}`)}`,

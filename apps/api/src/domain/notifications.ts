@@ -250,6 +250,22 @@ export const TEMPLATES = {
     body: (d, link) =>
       `The buyer accepted your ${money(d.price_cents, d.currency)} proposal. We've made a private listing for them; you'll get the usual new-order notice as soon as they pay.\n\n${link(`/requests/${d.request_id}`)}`,
   },
+  listing_review: {
+    category: 'selling',
+    subject: () => 'Your listing is being reviewed',
+    body: (d, link) =>
+      `${d.title ? `"${d.title}"` : 'Your listing'} mentions something our rules ask us to check (prohibited goods or contact details), so it's hidden until a moderator looks at it, usually within a few hours. You'll hear back either way.\n\n${link('/sell')}`,
+  },
+  listing_approved: {
+    category: 'selling',
+    subject: (d) => `Listing approved: ${d.title}`,
+    body: (d, link) => `A moderator approved "${d.title}" and it's live again.\n\n${link(`/offers/${d.offer_id}`)}`,
+  },
+  listing_rejected: {
+    category: 'selling',
+    subject: (d) => `Listing removed: ${d.title}`,
+    body: (d, link) => `A moderator removed "${d.title}": ${d.note}\n\nYou can post a new listing that follows the rules. Reply to support if you think this is a mistake.\n\n${link('/support/new?category=selling')}`,
+  },
   support_received: {
     category: 'support',
     subject: (d) => `We got your request #${d.number}`,

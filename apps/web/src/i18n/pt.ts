@@ -429,5 +429,19 @@ const pt: Messages = {
   "tier.sellHint": "preço unitário menor em pedidos maiores",
   "tier.fromQty": "A partir de (unidades)",
   "tier.each": "Preço cada",
+  // Chat and moderation
+  "chat.title": "Chat do pedido",
+  "chat.recorded": "gravado para arbitragem",
+  "chat.erased": "Mensagem apagada a pedido do autor",
+  "chat.user": "Usuário",
+  "chat.system": "Marketplace",
+  "chat.flagged": "sinalizada",
+  "chat.placeholder": "Escreva uma mensagem",
+  "chat.message": "Mensagem",
+  "chat.send": "Enviar",
+  "chat.sendAnyway": "Enviar mesmo assim",
+  "chat.offPlatform": "Isso parece um contato ou meio de pagamento fora da Bullizard. Enviar conta como advertência, advertências repetidas suspendem a conta e acordos feitos fora não têm a proteção da custódia.",
+  "mod.inReview": "Em análise",
+  "mod.inReviewHint": "Oculto até um moderador analisar, geralmente em poucas horas.",
 };
 export default pt;

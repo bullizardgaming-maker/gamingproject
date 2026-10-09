@@ -603,6 +603,21 @@ const en = {
   "tier.fromQty": "From (units)",
   "tier.each": "Price each",
 
+  // Chat and moderation
+  "chat.title": "Order chat",
+  "chat.recorded": "recorded for arbitration",
+  "chat.erased": "Message erased at the author’s request",
+  "chat.user": "User",
+  "chat.system": "Marketplace",
+  "chat.flagged": "flagged",
+  "chat.placeholder": "Write a message",
+  "chat.message": "Message",
+  "chat.send": "Send",
+  "chat.sendAnyway": "Send anyway",
+  "chat.offPlatform": "This looks like contact details or a payment method outside Bullizard. Sending it counts as a warning, repeated warnings suspend the account, and deals made elsewhere aren’t covered by escrow.",
+  "mod.inReview": "In review",
+  "mod.inReviewHint": "Hidden until a moderator checks it, usually within a few hours.",
+
   // Generic
   'common.notFound': 'Page not found',
   'common.englishOnly': 'This section is in English.',

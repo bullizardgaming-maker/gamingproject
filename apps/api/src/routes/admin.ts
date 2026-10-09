@@ -20,6 +20,7 @@ import { decideTopUp, listTopUps, planTopUps } from '../domain/fxtopups.js';
 import { chatLegalHold, shredUserChatKey } from '../domain/chatkeys.js';
 import { businessMetrics } from '../domain/analytics.js';
 import { getTicket, staffReply, ticketQueue, updateTicket } from '../domain/support.js';
+import { addTerm, chatFlagQueue, decideChatFlag, decideListing, listTerms, moderationCounts, removeTerm, reviewQueue } from '../domain/moderation.js';
 import { requirePermission } from '../server.js';
 import { audit, listAudit } from '../domain/audit.js';
 import { createPromo, listPromos, setPromoActive } from '../domain/promos.js';
@@ -357,6 +358,49 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return { positions: await fxPosition(ctx), conversions: await many(ctx.db, 'SELECT * FROM fx_conversions ORDER BY created_at DESC LIMIT 50') };
   });
   // --- Support queue ------------------------------------------------------------------------
+  // ---- Moderation: listing review queue, flagged chats, banned terms ----
+  app.get('/admin/moderation/summary', async (req) => (requirePermission(req, 'moderation.manage'), moderationCounts(ctx.db)));
+  app.get('/admin/moderation/listings', async (req) => (requirePermission(req, 'moderation.manage'), reviewQueue(ctx.db)));
+  app.post('/admin/moderation/listings/:id', async (req) => {
+    const staff = requirePermission(req, 'moderation.manage');
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ approve: z.boolean(), note: z.string().trim().max(1_000).optional() }).parse(req.body);
+    const res = await decideListing(ctx, id, staff.id, body.approve, body.note);
+    await audit(ctx.db, req, body.approve ? 'moderation.listing_approved' : 'moderation.listing_rejected', { type: 'offer', id }, { note: body.note });
+    return res;
+  });
+  app.get('/admin/moderation/chats', async (req) => {
+    requirePermission(req, 'moderation.manage');
+    const { status } = z.object({ status: z.enum(['open', 'confirmed', 'dismissed']).default('open') }).parse(req.query);
+    const flags = await chatFlagQueue(ctx, status);
+    // Staff reading chat excerpts is logged, as for opening an order's chat.
+    if (flags.length) await audit(ctx.db, req, 'moderation.chats_viewed', { type: 'chat_flags', id: status }, { count: flags.length });
+    return flags;
+  });
+  app.post('/admin/moderation/chats/:id', async (req) => {
+    const staff = requirePermission(req, 'moderation.manage');
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ confirm: z.boolean(), note: z.string().trim().max(1_000).optional() }).parse(req.body);
+    const res = await decideChatFlag(ctx, id, staff.id, body.confirm, body.note);
+    await audit(ctx.db, req, body.confirm ? 'moderation.chat_confirmed' : 'moderation.chat_dismissed', { type: 'chat_flag', id }, { note: body.note });
+    return res;
+  });
+  app.get('/admin/moderation/terms', async (req) => (requirePermission(req, 'moderation.manage'), listTerms(ctx.db)));
+  app.post('/admin/moderation/terms', async (req, reply) => {
+    const staff = requirePermission(req, 'moderation.manage');
+    const body = z.object({ term: z.string().trim().min(2).max(60), action: z.enum(['block', 'review']) }).parse(req.body);
+    const t = await addTerm(ctx.db, body.term, body.action, staff.id);
+    await audit(ctx.db, req, 'moderation.term_added', { type: 'moderation_term', id: t.id }, body);
+    return reply.status(201).send(t);
+  });
+  app.delete('/admin/moderation/terms/:id', async (req, reply) => {
+    requirePermission(req, 'moderation.manage');
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    await removeTerm(ctx.db, id);
+    await audit(ctx.db, req, 'moderation.term_removed', { type: 'moderation_term', id });
+    return reply.status(204).send();
+  });
+
   app.get('/admin/support/tickets', async (req) => {
     const staff = requirePermission(req, 'support.manage');
     const f = z.object({ status: z.enum(['active', 'open', 'pending', 'resolved']).optional(), mine: z.enum(['true', 'false']).optional() }).parse(req.query);

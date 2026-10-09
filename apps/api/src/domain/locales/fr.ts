@@ -157,6 +157,18 @@ const fr: LocalePack = {
       subject: (d) => `Proposition acceptée : ${d.title}`,
       body: (d, link, h) => `L’acheteur a accepté votre proposition de ${h.money(d.price_cents, d.currency)}. Nous avons créé une offre privée pour lui ; vous recevrez l’avis habituel de nouvelle commande dès son paiement.\n\n${link(`/requests/${d.request_id}`)}`,
     },
+    listing_review: {
+      subject: () => 'Votre offre est en cours de vérification',
+      body: (d, link) => `${d.title ? `« ${d.title} »` : 'Votre offre'} mentionne un élément que nos règles nous demandent de vérifier (produits interdits ou coordonnées), elle est donc masquée jusqu’à l’examen d’un modérateur, en général sous quelques heures. Vous serez prévenu dans tous les cas.\n\n${link('/sell')}`,
+    },
+    listing_approved: {
+      subject: (d) => `Offre approuvée : ${d.title}`,
+      body: (d, link) => `Un modérateur a approuvé « ${d.title} », elle est de nouveau en ligne.\n\n${link(`/offers/${d.offer_id}`)}`,
+    },
+    listing_rejected: {
+      subject: (d) => `Offre retirée : ${d.title}`,
+      body: (d, link) => `Un modérateur a retiré « ${d.title} » : ${d.note}\n\nVous pouvez publier une nouvelle offre conforme aux règles. Contactez le support si vous pensez qu’il s’agit d’une erreur.\n\n${link('/support/new?category=selling')}`,
+    },
     support_received: {
       subject: (d) => `Nous avons bien reçu votre demande n° ${d.number}`,
       body: (d, link) => `Merci de nous avoir écrit au sujet de « ${d.subject} ». Notre équipe répond généralement en quelques heures ; vous recevrez un e-mail à sa réponse.\n\n${link(`/support/${d.ticket_id}`)}`,
