@@ -106,7 +106,7 @@ export function NotificationBell() {
               initial={{ scale: 0.4, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.4, opacity: 0 }}
-              className="absolute -end-1.5 -top-1.5 grid h-5 min-w-5 place-items-center rounded-full bg-disputed px-1 font-mono text-[11px] font-semibold text-white"
+              className="absolute -end-1.5 -top-1.5 grid h-5 min-w-5 place-items-center rounded-full bg-disputed px-1 font-mono text-[11px] font-semibold text-[color:var(--frost)]"
             >
               {unread > 99 ? '99+' : unread}
             </motion.span>

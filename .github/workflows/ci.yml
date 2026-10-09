@@ -43,10 +43,45 @@ jobs:
       - run: npx playwright install --with-deps chromium
         working-directory: apps/web
       - run: VITE_DEMO=true npm run build -w apps/web   # the demo build runs every flow against the in-browser mock
-      - run: npm run e2e -w apps/web
+      - run: npm run e2e -w apps/web   # includes axe accessibility scans (e2e/a11y.spec.ts)
       - if: failure()
         uses: actions/upload-artifact@v4
         with: { name: playwright-report, path: apps/web/playwright-report, retention-days: 7 }
+
+  # Load: a smaller flash sale (correctness + latency budget) and market search over 5,000
+  # listings, against the real API over HTTP. Budgets are loose; they catch large regressions.
+  load:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_USER: market, POSTGRES_PASSWORD: market, POSTGRES_DB: market }
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 3s --health-retries 20
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+    env:
+      DATABASE_URL: postgres://market:market@localhost:5432/market
+      REDIS_URL: redis://localhost:6379
+    defaults: { run: { working-directory: apps/api } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+        working-directory: .
+      - run: npm run build && npm run migrate
+      - name: Start the API
+        run: |
+          RATE_LIMIT_PER_MINUTE=10000000 AUTH_RATE_LIMIT_PER_MINUTE=10000000 RUN_WORKER_IN_PROCESS=false LOG_LEVEL=warn node dist/index.js > api.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf localhost:4000/readyz && exit 0; sleep 1; done; cat api.log; exit 1
+      - run: npm run loadtest
+        env: { BUYERS: "300", STOCK: "50", CONCURRENCY: "50", MAX_ORDER_P95_MS: "3000", MAX_PAY_P95_MS: "3000" }
+      - run: npm run loadtest:search
+        env: { LISTINGS: "5000", REQUESTS: "1000", CONCURRENCY: "20", MAX_SEARCH_P95_MS: "1500" }
+      - if: failure()
+        run: cat api.log
 
   contracts:
     runs-on: ubuntu-latest

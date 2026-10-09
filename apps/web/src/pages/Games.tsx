@@ -75,7 +75,7 @@ export function Games() {
               <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
                 {list.map((g) => (
                   <div key={g.game} className="flex gap-3">
-                    <Link to={`/games/${slugify(g.game)}`} className="shrink-0" tabIndex={-1}>
+                    <Link to={`/games/${slugify(g.game)}`} className="shrink-0" tabIndex={-1} aria-hidden="true">
                       <GameArt game={g.game} size="sm" className="h-11 w-16 rounded-lg" />
                     </Link>
                     <div className="min-w-0">

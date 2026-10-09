@@ -78,14 +78,15 @@ theme tokens mapped to the Bullizard palette in `src/tailwind.css`), so registry
 ## Tests
 
 ```bash
-npm test -w apps/api          # 199 tests, needs Postgres (TEST_DATABASE_URL, default market_test) and Redis for the multi-node and view-count tests
+npm test -w apps/api          # 213 tests, needs Postgres (TEST_DATABASE_URL, default market_test) and Redis for the multi-node and view-count tests
 npm test -w contracts         # 10 Hardhat tests
 cd services/fraud-gnn && pip install -r requirements.txt && pytest -q   # 9 tests
 npm run build -w apps/web     # includes the payment-page script inventory check
-VITE_DEMO=true npm run build -w apps/web && npm run e2e -w apps/web   # 52 Playwright browser tests (desktop + phone) against the demo build
+VITE_DEMO=true npm run build -w apps/web && npm run e2e -w apps/web   # 78 Playwright browser tests (desktop + phone) against the demo build, including axe accessibility scans
+npm run loadtest -w apps/api && npm run loadtest:search -w apps/api   # load checks against a running API (CI runs both)
 ```
 
-The browser tests cover browsing and filters, buying and chatting, price alerts, support requests, buyer requests, quantity prices, listing moderation, staff tools, languages (including Arabic right-to-left), the installable app and phone layouts. CI runs them on every push and uploads the report when one fails.
+The browser tests cover browsing and filters, buying and chatting, price alerts, support requests, buyer requests, quantity prices, the cart, sales and shop codes, bundles, trust badges, saved searches, dispute case files, listing moderation, staff tools, accessibility (axe), languages (including Arabic right-to-left), the installable app and phone layouts. CI runs them on every push and uploads the report when one fails.
 
 Highlights of what the tests prove: exactly one of 25 simultaneous buyers gets a single-stock item; chat sequence numbers stay gapless under 30 concurrent writers; a message sent to one API node reaches a socket on another node through Redis; webhook signatures verify with the merchant's secret and retries keep the same idempotency key; a buyer cluster sharing one device freezes a new seller's escrows and withdrawals; chargebacks produce reason-code-specific PDF packets and move money through the ledger correctly; the escrow contract rejects buyer-tampered terms and executes a commit-reveal validator verdict.
 
@@ -99,6 +100,12 @@ Highlights of what the tests prove: exactly one of 25 simultaneous buyers gets a
 - `POST /v1/orders/quote` (currency, promo code, store credit and quantity-price breakdown)
 - Buyer requests: `GET /v1/requests` (public board), `POST /v1/requests`, `GET /v1/requests/:id`, `POST /v1/requests/:id/close`, `POST /v1/requests/:id/proposals`, `DELETE /v1/requests/:id/proposals/mine`, `POST /v1/requests/:id/proposals/:pid/accept` (returns the reserved listing to check out)
 - Quantity prices: `priceTiers` on `POST /v1/offers` and `PATCH /v1/offers/:id`
+- Cart: `POST /v1/orders/cart` (several listings, one payment, one order per line), `GET /v1/checkouts/:id`
+- Seller sales and codes: `PUT|DELETE /v1/offers/:id/sale`, `GET|POST /v1/seller/codes`, `PATCH /v1/seller/codes/:id`; `sellerCode` on `POST /v1/orders` and `/v1/orders/quote`
+- Bundles: `bundle: [{ offerId, quantity }]` on `POST /v1/offers`; `bundle` on the listing
+- Trust levels: `seller_trust_level` on listings, `sort=trust`; `GET /v1/seller/trust` (progress to the next level)
+- Disputes: `POST /v1/orders/:id/dispute/statements`; staff `GET /v1/admin/disputes/:id/case`
+- Saved searches: `GET|POST /v1/me/saved-searches`, `PATCH|DELETE /v1/me/saved-searches/:id`
 - Moderation (staff, `moderation.manage`): `GET /v1/admin/moderation/{summary,listings,chats,terms}`, `POST /v1/admin/moderation/listings/:id`, `POST /v1/admin/moderation/chats/:id`, `POST|DELETE /v1/admin/moderation/terms`
 - Presence: `seller_online` / `seller_response_minutes` on listings, `online` / `response_minutes` on seller profiles; `PUT /v1/seller/presence`
 - Language: `PUT /v1/me/locale` (emails and notifications follow it)
@@ -126,6 +133,8 @@ Backups: `deploy/backup/` (WAL-G archiving, daily base backups, `restore-drill.s
 
 Failover drill and incident playbooks: `docs/RUNBOOK.md` (`npx tsx apps/api/scripts/failover-drill.ts`).
 
-Load test: `npm run loadtest -w apps/api` (see the header of `apps/api/scripts/loadtest-flash-sale.ts`; run against a throwaway database with raised rate limits).
+Load tests: `npm run loadtest -w apps/api` (flash sale) and `npm run loadtest:search -w apps/api` (market search); see the headers of the scripts in `apps/api/scripts/`. Run against a throwaway database with raised rate limits.
+
+Staging (real API, sandbox payments): `render.yaml` and [docs/STAGING.md](docs/STAGING.md).
 
 See `docs/ARCHITECTURE.md` for the rest.

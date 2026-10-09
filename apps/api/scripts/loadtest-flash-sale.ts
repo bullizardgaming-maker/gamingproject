@@ -11,7 +11,9 @@
  * latency and outcomes, and checks the database afterwards:
  *   - no item sold twice and no more orders paid than stock
  *   - every ledger transaction balances, escrow matches order states
- * Run against a disposable database: it creates users and orders.
+ *   - the listing's stored stock counter matches the live count
+ * MAX_ORDER_P95_MS / MAX_PAY_P95_MS (optional) fail the run when p95 latency goes over budget;
+ * CI sets them for a smaller run. Run against a disposable database: it creates users and orders.
  */
 import { performance } from 'node:perf_hooks';
 import { Agent, setGlobalDispatcher } from 'undici';
@@ -25,6 +27,8 @@ const BASE = process.env.BASE_URL ?? 'http://localhost:4000';
 const BUYERS = Number(process.env.BUYERS ?? 300);
 const STOCK = Number(process.env.STOCK ?? 50);
 const CONCURRENCY = Number(process.env.CONCURRENCY ?? 100);
+const MAX_ORDER_P95_MS = Number(process.env.MAX_ORDER_P95_MS ?? Infinity);
+const MAX_PAY_P95_MS = Number(process.env.MAX_PAY_P95_MS ?? Infinity);
 setGlobalDispatcher(new Agent({ connections: CONCURRENCY * 2, pipelining: 1 }));
 
 const cfg = loadConfig();
@@ -130,6 +134,7 @@ async function main() {
     [offer.id],
   );
   const { rows: [paidOrders] } = await ctx.db.query(`SELECT count(*)::int AS n FROM orders WHERE offer_id = $1 AND status IN ('paid', 'delivered')`, [offer.id]);
+  const { rows: [counter] } = await ctx.db.query('SELECT available, offer_available(id) AS live FROM offers WHERE id = $1', [offer.id]);
   const recon = await runReconciliation(ctx);
   const ledgerIssues = recon.report.issues.filter((i) => i.check !== 'psp_balance_mismatch');
 
@@ -145,6 +150,9 @@ async function main() {
   if (paidOrders.n > STOCK) failures.push(`${paidOrders.n} orders paid for ${STOCK} items`);
   if (ledgerIssues.length) failures.push(`reconciliation: ${JSON.stringify(ledgerIssues).slice(0, 500)}`);
   if (Object.keys(outcomes).some((k) => /^5\d\d/.test(k))) failures.push('server errors during the sale');
+  if (counter.available !== counter.live) failures.push(`stock counter ${counter.available} but ${counter.live} available`);
+  if (Number(pct(orderLatency, 95)) > MAX_ORDER_P95_MS) failures.push(`create order p95 ${pct(orderLatency, 95)}ms over ${MAX_ORDER_P95_MS}ms`);
+  if (Number(pct(payLatency, 95)) > MAX_PAY_P95_MS) failures.push(`payment p95 ${pct(payLatency, 95)}ms over ${MAX_PAY_P95_MS}ms`);
   console.log(failures.length ? `\nFAILED:\n - ${failures.join('\n - ')}` : '\nPASSED: no oversell, no double delivery, books balanced');
   await ctx.db.end();
   await ctx.pubsub.close();

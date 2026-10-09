@@ -21,17 +21,17 @@
   --secondary: #e2e7ee;
   --secondary-foreground: #16202e;
   --muted: #e2e7ee;
-  --muted-foreground: #5b6b82;
+  --muted-foreground: #4f5e75; /* 4.5:1 on secondary and tinted panels */
   --accent: #d8f0ec;
-  --accent-foreground: #0f8b7e;
-  --destructive: #b8326a;
+  --accent-foreground: #0b7166;
+  --destructive: #a82d61;
   --border: #cfd6e0;
   --input: #cfd6e0;
   --ring: #16202e;
-  --chart-1: #0f8b7e;
+  --chart-1: #0b7166;
   --chart-2: #d98e04;
-  --chart-3: #b8326a;
-  --chart-4: #5b6b82;
+  --chart-3: #a82d61;
+  --chart-4: #536279;
   --chart-5: #16202e;
   /* --radius (10px) is already defined in styles.css and shared. */
 }
@@ -82,9 +82,10 @@
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
   /* Money-state colours, usable as bg-held, text-released, border-disputed, ... */
-  --color-held: #d98e04;
-  --color-released: #0f8b7e;
-  --color-disputed: #b8326a;
+  /* They follow the theme: lighter shades in dark mode keep text readable. */
+  --color-held: var(--held);
+  --color-released: var(--released);
+  --color-disputed: var(--disputed);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);

@@ -3,13 +3,13 @@
   --frost: #eef1f5;
   --paper: #f8fafc;
   --ink: #16202e;
-  --steel: #5b6b82;
+  --steel: #536279;
   --rule: #cfd6e0;
   --held: #d98e04;      /* funds locked in escrow */
   --held-soft: #fbefd6;
-  --released: #0f8b7e;  /* funds released / goods delivered */
+  --released: #0b7166;  /* funds released / goods delivered (4.5:1 on frost) */
   --released-soft: #d8f0ec;
-  --disputed: #b8326a;  /* frozen by dispute or risk review */
+  --disputed: #a82d61;  /* frozen by dispute or risk review */
   --disputed-soft: #f6dde8;
   --held-ink: #8a5a00;      /* text on held-soft */
   --released-ink: #075e55;  /* text on released-soft */
@@ -119,18 +119,18 @@ table.data td { padding: 12px 8px; border-bottom: 1px solid var(--rule); vertica
 .coin {
   position: absolute; top: -20px; width: 56px; height: 44px; margin-inline-start: -28px;
   display: grid; place-items: center; border-radius: 22px;
-  background: var(--held); color: #fff; font: 600 13px/1 var(--mono);
+  background: var(--held); color: #16202e; font: 600 13px/1 var(--mono);
   box-shadow: 0 0 0 5px var(--frost), 0 6px 18px rgba(22, 32, 46, .18);
   transition: left 900ms cubic-bezier(.6,.05,.3,1), background 300ms;
 }
-.track[data-variant='released'] .coin { background: var(--released); }
-.track[data-variant='disputed'] .coin { background: var(--disputed); }
-.track[data-variant='refunded'] .coin { background: var(--steel); }
+.track[data-variant='released'] .coin { background: var(--released); color: var(--frost); }
+.track[data-variant='disputed'] .coin { background: var(--disputed); color: var(--frost); }
+.track[data-variant='refunded'] .coin { background: var(--steel); color: var(--frost); }
 .track-clock { position: absolute; inset-inline-end: 0; top: 10px; font: 500 13px/1 var(--mono); color: var(--steel); }
 
 /* ---------- Home ---------- */
 .hero { display: grid; grid-template-columns: 1.05fr 1fr; gap: clamp(24px, 5vw, 64px); align-items: center; padding: 24px 0 56px; }
-.hero h1 em { font-style: normal; color: var(--held); }
+.hero h1 em { font-style: normal; color: var(--held-ink); }
 .hero-panel { background: var(--paper); border: 1px solid var(--rule); border-radius: 14px; padding: 22px 22px 18px; }
 .hero-panel .receipt { display: flex; justify-content: space-between; font: 500 13px/1.4 var(--mono); color: var(--steel); border-bottom: 1px dashed var(--rule); padding-bottom: 12px; }
 .hero-panel .log { font: 13px/1.6 var(--mono); color: var(--steel); border-top: 1px dashed var(--rule); margin-top: 14px; padding-top: 12px; min-height: 64px; }
@@ -140,7 +140,7 @@ table.data td { padding: 12px 8px; border-bottom: 1px solid var(--rule); vertica
 .section { padding: 48px 0; border-top: 1px solid var(--rule); }
 .windows { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .window-card .big { font: 700 clamp(44px, 6vw, 72px)/1 var(--display); letter-spacing: -0.04em; }
-.window-card.held .big { color: var(--held); }
+.window-card.held .big { color: var(--held-ink); }
 .window-card.ins .big { color: var(--released); }
 
 /* Fee ladder: bar height = fee, so the descent is literal */
@@ -174,6 +174,7 @@ table.data td { padding: 12px 8px; border-bottom: 1px solid var(--rule); vertica
 .msg.delivery { border-color: var(--released); color: var(--released-ink); }
 .msg.warning { border-color: var(--disputed); color: var(--disputed); }
 .msg .meta { display: block; font: 11px/1.4 var(--mono); opacity: .65; margin-top: 3px; }
+.msg.system .meta, .msg.delivery .meta, .msg.warning .meta { opacity: 1; }
 .chat form { display: flex; gap: 8px; border-top: 1px solid var(--rule); padding-top: 12px; }
 .secret { white-space: pre-wrap; font: 14px/1.5 var(--mono); background: var(--ink); color: #e5ecf5; padding: 10px 12px; border-radius: 8px; word-break: break-all; }
 .checklist label { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--rule); cursor: pointer; }
@@ -223,7 +224,7 @@ table.data td { padding: 12px 8px; border-bottom: 1px solid var(--rule); vertica
 
 .home-hero { display: grid; grid-template-columns: 1.15fr 1fr; gap: clamp(24px, 5vw, 56px); align-items: center; padding: 8px 0 0; }
 .home-hero h1 { font-size: clamp(34px, 4.6vw, 56px); }
-.home-hero h1 em { font-style: normal; color: var(--held); }
+.home-hero h1 em { font-style: normal; color: var(--held-ink); }
 .home-hero > * { min-width: 0; }
 .cat-tile { display: flex; gap: 12px; align-items: center; padding: 14px; border: 1px solid var(--rule); border-radius: 12px; background: var(--paper); text-decoration: none; transition: border-color .15s, transform .15s; }
 .cat-tile:hover { border-color: var(--ink); transform: translateY(-1px); }

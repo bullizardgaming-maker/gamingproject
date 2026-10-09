@@ -14,6 +14,7 @@
     "test": "vitest run",
     "seed": "tsx src/seed.ts",
     "loadtest": "tsx scripts/loadtest-flash-sale.ts",
+    "loadtest:search": "tsx scripts/loadtest-search.ts",
     "verify-restore": "tsx scripts/verify-restore.ts"
   },
   "dependencies": {

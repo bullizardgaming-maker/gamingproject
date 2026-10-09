@@ -212,7 +212,7 @@ export function Sell() {
           <p className="small muted">
             {t('sell.fees', { fee: (dash.tier.otherRateBps / 100).toFixed(2), accounts: (dash.tier.accountRateBps / 100).toFixed(2) })}
           </p>
-          <div className="progress" aria-label={t('sell.progress')}><div style={{ width: `${Math.min(100, progress * 100)}%` }} /></div>
+          <div className="progress" role="progressbar" aria-label={t('sell.progress')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.min(100, progress * 100))}><div style={{ width: `${Math.min(100, progress * 100)}%` }} /></div>
           <p className="small muted">
             {dash.next ? t('sell.nextLevel', { amount: money(dash.next.remainingCents), level: dash.next.tier.name }) : t('sell.topLevel')}
           </p>
