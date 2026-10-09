@@ -212,7 +212,9 @@ table.data td { padding: 12px 8px; border-bottom: 1px solid var(--rule); vertica
 /* ---------- Marketplace structure: header, home, directory, game pages ---------- */
 .site-header .header-main { height: 64px; gap: 20px; }
 .header-search { flex: 1 1 420px; max-width: 520px; min-width: 0; }
-.header-links { flex: 0 1 auto; }
+.header-links { flex: 0 0 auto; white-space: nowrap; }
+/* Long display names give way to the nav before it clips. */
+@media (max-width: 1360px) { .who .email { display: none; } }
 .site-header .header-cats { border-top: 1px solid var(--rule); background: var(--paper); }
 .site-header .header-cats .shell { display: block; height: auto; }
 .cat-link { display: inline-flex; align-items: center; gap: 7px; padding: 10px 12px; font-size: 14px; color: var(--steel); text-decoration: none; white-space: nowrap; border-bottom: 2px solid transparent; }

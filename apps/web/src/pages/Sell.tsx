@@ -4,6 +4,7 @@ import { api, money } from '../api';
 import { FeeLadder } from '../components/FeeLadder';
 import { useSession } from '../session';
 import { SellerMoney } from './SellerMoney';
+import { SellerAnalytics } from './SellerAnalytics';
 import { usePageMeta } from '@/lib/seo';
 import { attributesFor } from '@/lib/attributes';
 import { useGames } from '@/lib/catalog';
@@ -34,7 +35,9 @@ interface SellerOffer {
 export function Sell() {
   usePageMeta({ title: 'Sell on Bullizard', description: 'Open a shop: fees fall as your sales grow, instant delivery for codes, Chargeback Shield and payouts in USD, EUR or GBP.' });
   const { user, refresh } = useSession();
-  const moneyTab = useLocation().pathname.startsWith('/sell/money');
+  const { pathname } = useLocation();
+  const moneyTab = pathname.startsWith('/sell/money');
+  const analyticsTab = pathname.startsWith('/sell/analytics');
   const [dash, setDash] = useState<Dashboard | null>(null);
   const [offers, setOffers] = useState<SellerOffer[]>([]);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'alert'; text: string } | null>(null);
@@ -70,15 +73,16 @@ export function Sell() {
   const tabs = (
     <nav className="filters" aria-label="Seller sections">
       <NavLink end to="/sell">Shop</NavLink>
+      <NavLink to="/sell/analytics">Analytics</NavLink>
       <NavLink to="/sell/money">Money &amp; tax</NavLink>
     </nav>
   );
-  if (moneyTab) {
+  if (moneyTab || analyticsTab) {
     return (
       <div className="stack">
         <h1 style={{ fontSize: 40 }}>Your shop</h1>
         {tabs}
-        <SellerMoney />
+        {moneyTab ? <SellerMoney /> : <SellerAnalytics />}
       </div>
     );
   }

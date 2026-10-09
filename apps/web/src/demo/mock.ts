@@ -1068,17 +1068,153 @@ route('POST', '/admin/users/:id/erase-chat', ({ me, params, body }) => {
   return { erased: true, alreadyErased: n === 0 };
 });
 
+// --- Analytics -------------------------------------------------------------------------------
+/** Deterministic pseudo-random numbers, so the demo charts look the same on every visit. */
+function rng(seedText: string) {
+  let h = 2166136261;
+  for (const c of seedText) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
+  return () => {
+    h ^= h << 13;
+    h ^= h >>> 17;
+    h ^= h << 5;
+    return ((h >>> 0) % 100_000) / 100_000;
+  };
+}
+const ANALYTICS_DAYS = [7, 30, 90, 365];
+const dayKey = (t: number) => new Date(t).toISOString().slice(0, 10);
+/** Daily history for the current and previous period, ending today (UTC). */
+function history(days: number, seedText: string, perDay: (r: () => number, i: number, date: string) => Record<string, number>) {
+  const today = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate());
+  const r = rng(seedText);
+  return Array.from({ length: days * 2 }, (_, k) => {
+    const t = today - (days * 2 - 1 - k) * day;
+    const date = dayKey(t);
+    return { date, ...perDay(r, k, date) };
+  });
+}
+/** Sum days into buckets (weeks for a year, else days). */
+function bucketed<T extends { date: string }>(rows: T[], days: number, keys: string[]) {
+  if (days <= 90) return rows;
+  const out: any[] = [];
+  for (let i = 0; i < rows.length; i += 7) {
+    const chunk = rows.slice(i, i + 7);
+    out.push({ date: chunk[0]!.date, ...Object.fromEntries(keys.map((k) => [k, chunk.reduce((s, x: any) => s + (x[k] ?? 0), 0)])) });
+  }
+  return out;
+}
+const pctOf = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 10_000) / 100 : null);
+const wave = (i: number) => 1 + 0.18 * Math.sin((i / 7) * 2 * Math.PI) + 0.002 * i;
+
+route('GET', '/seller/analytics', ({ me, query }) => {
+  const u = needSeller(me);
+  const days = Number(query.get('days') ?? 30);
+  if (!ANALYTICS_DAYS.includes(days)) fail(400, 'validation_error', 'days must be 7, 30, 90 or 365');
+  const mine = state.offers.filter((o) => o.seller_id === u.id);
+  const avg = mine.length ? mine.reduce((s, o) => s + o.price_cents, 0) / mine.length : 30_00;
+  const real = state.orders.filter((o) => o.seller_id === u.id && o.paid_at);
+  const rows = history(days, `seller:${u.id}`, (r, i, date) => {
+    const views = Math.round((60 + r() * 50) * wave(i));
+    const orders = Math.round(views * (0.035 + r() * 0.03));
+    const returning = Math.round(orders * (0.3 + r() * 0.15));
+    const gross = Math.round(orders * avg * (0.7 + r() * 0.6));
+    const extra = real.filter((o) => o.paid_at.slice(0, 10) === date);
+    return {
+      views: views + extra.length * 3,
+      orders: orders + extra.length,
+      gross_cents: gross + extra.reduce((s, o) => s + o.amount_cents, 0),
+      net_cents: Math.round(gross * 0.9) + extra.reduce((s, o) => s + o.seller_net_cents, 0),
+      new_buyers: orders - returning + extra.length,
+      returning_buyers: returning,
+      refunded: r() < 0.25 ? 1 : 0,
+      disputed: r() < 0.12 ? 1 : 0,
+    };
+  });
+  const totals = (xs: any[]) => {
+    const sum = (k: string) => xs.reduce((s, x) => s + x[k], 0);
+    const buyers = sum('new_buyers') + sum('returning_buyers');
+    return {
+      orders: sum('orders'), grossCents: sum('gross_cents'), netCents: sum('net_cents'), avgOrderCents: sum('orders') ? Math.round(sum('gross_cents') / sum('orders')) : null,
+      views: sum('views'), conversionPct: pctOf(sum('orders'), sum('views')), buyers, repeatBuyers: sum('returning_buyers'), repeatBuyerPct: pctOf(sum('returning_buyers'), buyers),
+      refundRatePct: pctOf(sum('refunded'), sum('orders')), disputeRatePct: pctOf(sum('disputed'), sum('orders')),
+    };
+  };
+  const cur = rows.slice(days);
+  const t = totals(cur);
+  const weights = mine.map((o, k) => ({ o, w: rng(o.id)() + (k < 3 ? 1 : 0.2) }));
+  const wsum = weights.reduce((s, x) => s + x.w, 0) || 1;
+  const offers = weights
+    .map(({ o, w }) => {
+      const views = Math.round((t.views * w) / wsum);
+      const orders = Math.round((t.orders * w) / wsum);
+      return { id: o.id, title: o.title, game: o.game, category_slug: o.category_slug, status: o.status, views, orders, gross_cents: orders * o.price_cents, conversion_pct: pctOf(orders, views) };
+    })
+    .filter((o) => o.views > 0 || o.orders > 0)
+    .sort((a, b) => b.gross_cents - a.gross_cents)
+    .slice(0, 20);
+  return {
+    days, bucket: days > 90 ? 'week' : 'day', totals: t, previous: totals(rows.slice(0, days)),
+    series: bucketed(cur, days, ['views', 'orders', 'gross_cents', 'net_cents', 'new_buyers', 'returning_buyers']),
+    offers,
+  };
+});
+
+route('GET', '/admin/analytics', ({ me, query }) => {
+  needPerm(me, 'analytics.view');
+  const days = Number(query.get('days') ?? 30);
+  if (!ANALYTICS_DAYS.includes(days)) fail(400, 'validation_error', 'days must be 7, 30, 90 or 365');
+  const rows = history(days, 'business', (r, i) => {
+    const orders = Math.round((340 + r() * 120) * wave(i));
+    const gmv = Math.round(orders * (38_00 + r() * 14_00));
+    const card = Math.round(orders * 0.86);
+    return {
+      orders, gmv_cents: gmv, take_cents: Math.round(gmv * (0.088 + r() * 0.014)), card_orders: card,
+      disputes: Math.round(orders * (0.009 + r() * 0.009)), chargebacks: Math.round(card * (0.002 + r() * 0.004)),
+      refunds: Math.round(orders * (0.012 + r() * 0.01)), new_buyers: Math.round(orders * 0.22), new_sellers: Math.round(2 + r() * 5),
+    };
+  });
+  const totals = (xs: any[]) => {
+    const sum = (k: string) => xs.reduce((s, x) => s + x[k], 0);
+    return {
+      orders: sum('orders'), gmvCents: sum('gmv_cents'), takeCents: sum('take_cents'), takeRatePct: pctOf(sum('take_cents'), sum('gmv_cents')),
+      avgOrderCents: Math.round(sum('gmv_cents') / Math.max(1, sum('orders'))), refunds: sum('refunds'), refundedCents: Math.round(sum('refunds') * 41_00),
+      refundRatePct: pctOf(sum('refunds'), sum('orders')), disputes: sum('disputes'), disputeRatePct: pctOf(sum('disputes'), sum('orders')),
+      chargebacks: sum('chargebacks'), chargebackRatePct: pctOf(sum('chargebacks'), sum('card_orders')),
+      buyers: Math.round(sum('orders') * 0.61), sellers: Math.min(4_800, Math.round(sum('orders') * 0.09)), newBuyers: sum('new_buyers'), newSellers: sum('new_sellers'),
+    };
+  };
+  const cur = rows.slice(days);
+  const t = totals(cur);
+  const series = bucketed(cur, days, ['orders', 'gmv_cents', 'take_cents', 'disputes', 'chargebacks', 'card_orders']).map((x: any) => ({
+    date: x.date, orders: x.orders, gmv_cents: x.gmv_cents, take_cents: x.take_cents, take_rate_pct: pctOf(x.take_cents, x.gmv_cents),
+    dispute_rate_pct: pctOf(x.disputes, x.orders), chargeback_rate_pct: pctOf(x.chargebacks, x.card_orders),
+  }));
+  const share: Record<string, [number, number, number]> = {
+    accounts: [0.24, 0.112, 0.021], currency: [0.2, 0.099, 0.012], items: [0.15, 0.099, 0.014], keys: [0.13, 0.08, 0.006], boosting: [0.1, 0.099, 0.017],
+    'gift-cards': [0.09, 0.0499, 0.004], 'top-ups': [0.06, 0.0499, 0.005], 'video-games': [0.03, 0.0499, 0.004],
+  };
+  const games = [...new Set(state.offers.map((o) => o.game))].map((g) => ({ g, w: rng(g)() })).sort((a, b) => b.w - a.w).slice(0, 10);
+  const gw = games.reduce((s, x) => s + x.w, 0);
+  return {
+    days, bucket: days > 90 ? 'week' : 'day', totals: t, previous: totals(rows.slice(0, days)), series,
+    categories: Object.entries(share).map(([slug, [w, tr, dr]]) => ({
+      category_slug: slug, orders: Math.round(t.orders * w), gmv_cents: Math.round(t.gmvCents * w), take_cents: Math.round(t.gmvCents * w * tr), take_rate_pct: tr * 100, dispute_rate_pct: dr * 100,
+    })),
+    games: games.map(({ g, w }) => ({ game: g, orders: Math.round((t.orders * 0.7 * w) / gw), gmv_cents: Math.round((t.gmvCents * 0.7 * w) / gw) })),
+  };
+});
+
 // --- Staff permissions, compliance, treasury, tax, staff ------------------------------------
 const ALL_PERMS = [
   'orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'risk.review', 'users.suspend', 'aml.review', 'aml.sar',
   'chargebacks.manage', 'orders.refund_after_release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view',
   'ledger.adjust', 'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'keys.manage', 'retention.manage', 'audit.view', 'staff.manage', 'status.manage',
+  'analytics.view',
 ];
 const ROLE_PERMS: Record<string, string[]> = {
   arbiter: ['orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'orders.refund_after_release'],
-  support: ['orders.view_any', 'reviews.moderate', 'ledger.view'],
-  finance: ['chargebacks.manage', 'orders.refund_after_release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view', 'ledger.adjust', 'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage'],
-  compliance: ['orders.view_any', 'risk.review', 'users.suspend', 'aml.review', 'aml.sar', 'payout_holds.set', 'ledger.view', 'audit.view', 'retention.manage'],
+  support: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage'],
+  finance: ['chargebacks.manage', 'orders.refund_after_release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view', 'ledger.adjust', 'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'analytics.view'],
+  compliance: ['orders.view_any', 'risk.review', 'users.suspend', 'aml.review', 'aml.sar', 'payout_holds.set', 'ledger.view', 'audit.view', 'retention.manage', 'analytics.view'],
   admin: ALL_PERMS,
 };
 const permsOf = (u: DemoUser) => new Set([u.role, ...(u.staff_roles ?? [])].flatMap((r) => ROLE_PERMS[r] ?? []));

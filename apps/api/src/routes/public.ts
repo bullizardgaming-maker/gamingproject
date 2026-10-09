@@ -19,6 +19,7 @@ import { isStaff as isStaffUser, permissionsOf } from '../domain/permissions.js'
 import {
   getPushPreferences, listInbox, listPushSubscriptions, markAllRead, markRead, removePushSubscription, setPushPreferences, subscribePush, unreadCount, unsubscribePush,
 } from '../domain/inbox.js';
+import { recordView } from '../domain/analytics.js';
 import { createWatch, deleteWatch, listWatches, updateWatch } from '../domain/watches.js';
 import { confirmSubscription, getIncident, statusSummary, subscribe, unsubscribe } from '../domain/status.js';
 import { me, requestMeta } from '../server.js';
@@ -376,6 +377,8 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.get('/offers/:id', async (req) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
-    return getOffer(ctx.dbRead, id);
+    const offer = await getOffer(ctx.dbRead, id);
+    recordView(ctx.db, offer.id, offer.seller_id, { userId: req.user?.id, ip: req.ip });
+    return offer;
   });
 }

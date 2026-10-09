@@ -55,6 +55,7 @@ function App() {
           <Route path="/chat/:id" element={<InquiryChat />} />
           <Route path="/sell" element={<Sell />} />
           <Route path="/sell/money" element={<Sell />} />
+          <Route path="/sell/analytics" element={<Sell />} />
           <Route path="/sell/invoices" element={<Navigate to="/sell/money" replace />} />
           <Route path="/developers" element={<Developers />} />
           <Route path="/login" element={<Login />} />

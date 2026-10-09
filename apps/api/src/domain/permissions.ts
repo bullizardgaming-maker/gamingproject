@@ -29,6 +29,7 @@ export const PERMISSIONS = [
   'audit.view',
   'staff.manage',
   'status.manage', // incidents and maintenance on the public status page
+  'analytics.view', // business dashboard: GMV, take rate, dispute and chargeback rates
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -40,9 +41,9 @@ export const ROLE_PERMISSIONS: Record<StaffRole, readonly Permission[]> = {
   support: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage'],
   finance: [
     'chargebacks.manage', 'orders.refund_after_release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view', 'ledger.adjust',
-    'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage',
+    'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'analytics.view',
   ],
-  compliance: ['orders.view_any', 'risk.review', 'users.suspend', 'aml.review', 'aml.sar', 'payout_holds.set', 'ledger.view', 'audit.view', 'retention.manage'],
+  compliance: ['orders.view_any', 'risk.review', 'users.suspend', 'aml.review', 'aml.sar', 'payout_holds.set', 'ledger.view', 'audit.view', 'retention.manage', 'analytics.view'],
   admin: PERMISSIONS,
 };
 

@@ -18,6 +18,7 @@ import { payoutCurrency, sellerBalances, setPayoutCurrency } from '../domain/sel
 import { getTaxProfile, setTaxProfile } from '../domain/tax.js';
 import { getInvoice, invoicePdf, listInvoices } from '../domain/invoices.js';
 import { listCreditNotes } from '../domain/clawback.js';
+import { sellerAnalytics } from '../domain/analytics.js';
 import { sellerDebts, shopHeldForDebt, startDebtPayment } from '../domain/debts.js';
 import { DELIVERY_FILTERS, WEBHOOK_EVENTS, createEndpoint, listDeliveries, redeliver, replayDead, rotateSecret, setEndpointActive } from '../domain/webhooks.js';
 import { AppError, badRequest, notFound } from '../lib/errors.js';
@@ -82,6 +83,13 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
       ),
       stats,
     };
+  });
+
+  app.get('/seller/analytics', async (req) => {
+    const user = me(req);
+    requireSeller(user);
+    const { days } = z.object({ days: z.coerce.number().pipe(z.union([z.literal(7), z.literal(30), z.literal(90), z.literal(365)])).default(30) }).parse(req.query);
+    return sellerAnalytics(ctx.dbRead, user.id, days);
   });
 
   // --- Offers & inventory ------------------------------------------------------------

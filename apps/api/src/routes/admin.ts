@@ -18,6 +18,7 @@ import { fraudModelReport } from '../domain/fraud.js';
 import { COMPONENTS, COMPONENT_IDS, createIncident, listIncidents, updateIncident } from '../domain/status.js';
 import { decideTopUp, listTopUps, planTopUps } from '../domain/fxtopups.js';
 import { chatLegalHold, shredUserChatKey } from '../domain/chatkeys.js';
+import { businessMetrics } from '../domain/analytics.js';
 import { requirePermission } from '../server.js';
 import { audit, listAudit } from '../domain/audit.js';
 import { createPromo, listPromos, setPromoActive } from '../domain/promos.js';
@@ -354,6 +355,12 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     requirePermission(req, 'fx.manage');
     return { positions: await fxPosition(ctx), conversions: await many(ctx.db, 'SELECT * FROM fx_conversions ORDER BY created_at DESC LIMIT 50') };
   });
+  app.get('/admin/analytics', async (req) => {
+    requirePermission(req, 'analytics.view');
+    const { days } = z.object({ days: z.coerce.number().pipe(z.union([z.literal(7), z.literal(30), z.literal(90), z.literal(365)])).default(30) }).parse(req.query);
+    return businessMetrics(ctx.dbRead, days);
+  });
+
   app.get('/admin/fx/topups', async (req) => {
     requirePermission(req, 'fx.manage');
     return { provider: ctx.fxExchange?.name ?? null, autoApproveCents: ctx.cfg.FX_TOPUP_AUTO_APPROVE_CENTS, topups: await listTopUps(ctx) };
