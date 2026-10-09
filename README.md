@@ -88,7 +88,10 @@ Highlights of what the tests prove: exactly one of 25 simultaneous buyers gets a
 ## Key API surfaces
 
 - `POST /v1/orders` → hosted checkout URL (card) or EIP-712 escrow terms (`GET /v1/orders/:id/crypto-terms`, USDC/USDT)
-- Catalogue: `GET /v1/catalog/games` (game directory with per-category counts), `GET /v1/offers?game=&category=&seller=&sort=`, `GET /v1/sellers/:id`
+- Catalogue: `GET /v1/catalog/games` (game directory with per-category counts), `GET /v1/offers?game=&category=&seller=&sort=&attr.<key>=`, `GET /v1/catalog/attributes` (game-specific fields), `GET /v1/sellers/:id`
+- Watchlist and price alerts: `GET|POST /v1/me/watches`, `PATCH|DELETE /v1/me/watches/:id`
+- Analytics: seller `GET /v1/seller/analytics?days=7|30|90|365`; staff `GET /v1/admin/analytics` (GMV, take rate, dispute and chargeback rates)
+- Support: `GET|POST /v1/support/tickets`, `POST /v1/support/tickets/:id/{messages,resolve}`; staff `GET /v1/admin/support/tickets`, `POST /v1/admin/support/tickets/:id/messages`, `PATCH /v1/admin/support/tickets/:id`
 - `POST /v1/orders/quote` (currency, promo code, store credit breakdown)
 - `POST /v1/orders/:id/{deliver,confirm,dispute,cancel,cancel-late}`, `PATCH /v1/orders/:id/checklist`
 - Chat erasure (per-user keys): staff `POST /v1/admin/users/:id/erase-chat`
