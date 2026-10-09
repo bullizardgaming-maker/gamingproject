@@ -600,5 +600,22 @@ const pt: Messages = {
   "shop.noListings": "Você ainda não tem anúncios ativos para destacar.",
   "shop.save": "Salvar página da loja",
   "shop.saved": "Página da loja salva.",
+  // Bulk listings
+  "bulk.title": "Editar anúncios numa planilha",
+  "bulk.lede": "Baixe seus anúncios em CSV, altere preços, estoque ou textos em qualquer planilha e importe o arquivo. Você vê cada mudança antes de aplicar.",
+  "bulk.download": "Baixar CSV",
+  "bulk.choose": "Importar CSV…",
+  "bulk.columnsHint": "Linhas com id atualizam aquele anúncio; linhas sem id criam um (jogo, categoria, título, preço e entrega obrigatórios). Até 500 linhas.",
+  "bulk.preview": "Prévia: {create} novos, {update} atualizados, {unchanged} sem mudança, {error} com erros. Nada foi salvo ainda.",
+  "bulk.applied": "Pronto: {create} criados, {update} atualizados, {error} com erros.",
+  "bulk.apply_one": "Aplicar {count} mudança",
+  "bulk.apply_other": "Aplicar {count} mudanças",
+  "bulk.col.row": "Linha",
+  "bulk.col.listing": "Anúncio",
+  "bulk.col.result": "Resultado",
+  "bulk.create": "Novo anúncio",
+  "bulk.update": "Atualizar: {changes}",
+  "bulk.unchanged": "Sem mudança",
+  "bulk.review": "em análise",
 };
 export default pt;

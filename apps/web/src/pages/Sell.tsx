@@ -12,6 +12,7 @@ import { categoryLabel, useGames } from '@/lib/catalog';
 import { replyLabel } from '@/lib/presence';
 import { TrustBadge } from '../components/CatalogUi';
 import { StorefrontEditor } from '../components/StorefrontEditor';
+import { BulkListings } from '../components/BulkListings';
 
 interface Dashboard {
   tier: { name: string; accountRateBps: number; otherRateBps: number };
@@ -263,6 +264,7 @@ export function Sell() {
 
       <DiscountCodes />
       <NewOffer onCreated={load} offers={offers} />
+      <BulkListings onApplied={load} />
     </div>
   );
 }

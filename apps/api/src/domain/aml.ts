@@ -4,6 +4,8 @@ import type { Queryable } from '../db.js';
 import { many, maybeOne, one, withTx } from '../db.js';
 import { AppError, badRequest, conflict, notFound } from '../lib/errors.js';
 import { notify } from './notifications.js';
+import { parseCsv } from './csv.js';
+export { parseCsv };
 
 /**
  * Anti-money-laundering controls.
@@ -45,36 +47,6 @@ export interface SanctionsEntry {
   program?: string | null;
 }
 
-/** RFC 4180 CSV (quoted fields, doubled quotes, newlines in quotes). */
-export function parseCsv(text: string): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let field = '';
-  let quoted = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i]!;
-    if (quoted) {
-      if (c === '"' && text[i + 1] === '"') {
-        field += '"';
-        i++;
-      } else if (c === '"') quoted = false;
-      else field += c;
-    } else if (c === '"') quoted = true;
-    else if (c === ',') {
-      row.push(field);
-      field = '';
-    } else if (c === '\n' || c === '\r') {
-      if (c === '\r' && text[i + 1] === '\n') i++;
-      row.push(field);
-      if (row.some((f) => f !== '')) rows.push(row);
-      row = [];
-      field = '';
-    } else field += c;
-  }
-  row.push(field);
-  if (row.some((f) => f !== '')) rows.push(row);
-  return rows;
-}
 
 const blank = (v: string | undefined) => (!v || v.trim() === '-0-' ? null : v.trim());
 

@@ -599,5 +599,22 @@ const es: Messages = {
   "shop.noListings": "Aún no tienes anuncios activos para destacar.",
   "shop.save": "Guardar página de tienda",
   "shop.saved": "Página de tienda guardada.",
+  // Bulk listings
+  "bulk.title": "Editar anuncios en una hoja de cálculo",
+  "bulk.lede": "Descarga tus anuncios en CSV, cambia precios, stock o textos en cualquier hoja de cálculo e importa el archivo. Verás cada cambio antes de aplicarlo.",
+  "bulk.download": "Descargar CSV",
+  "bulk.choose": "Importar CSV…",
+  "bulk.columnsHint": "Las filas con id actualizan ese anuncio; las filas sin id crean uno (juego, categoría, título, precio y entrega obligatorios). Hasta 500 filas.",
+  "bulk.preview": "Vista previa: {create} nuevos, {update} actualizados, {unchanged} sin cambios, {error} con errores. Aún no se guarda nada.",
+  "bulk.applied": "Hecho: {create} creados, {update} actualizados, {error} con errores.",
+  "bulk.apply_one": "Aplicar {count} cambio",
+  "bulk.apply_other": "Aplicar {count} cambios",
+  "bulk.col.row": "Fila",
+  "bulk.col.listing": "Anuncio",
+  "bulk.col.result": "Resultado",
+  "bulk.create": "Anuncio nuevo",
+  "bulk.update": "Actualizar: {changes}",
+  "bulk.unchanged": "Sin cambios",
+  "bulk.review": "en revisión",
 };
 export default es;

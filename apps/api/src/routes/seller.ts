@@ -10,6 +10,7 @@ import { sellerAvailable } from '../domain/ledger.js';
 import { createOffer, getOffer, requireSeller, submitOwnerProof, updateOffer, uploadInventory } from '../domain/offers.js';
 import { createSellerCode, endSale, listSellerCodes, setSale, setSellerCodeActive } from '../domain/discounts.js';
 import { trustSummary } from '../domain/trust.js';
+import { exportListings, importListings } from '../domain/bulkListings.js';
 import { ACCENTS, MAX_INTRO, MAX_PINNED, deleteBanner, storefront, updateStorefront, uploadBanner } from '../domain/storefront.js';
 import { requestWithdrawal } from '../domain/users.js';
 import { payoutStatus, startPayoutOnboarding } from '../domain/payouts.js';
@@ -103,6 +104,18 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
 
   /** The seller's trust level, the numbers behind it and what the next level needs. */
   app.get('/seller/trust', async (req) => trustSummary(ctx.db, me(req).id));
+
+  // --- Bulk listings: CSV export and import (preview first) ---------------------------------
+  app.get('/seller/listings/export.csv', async (req, reply) => {
+    const csv = await exportListings(ctx.db, me(req).id);
+    return reply.header('Content-Type', 'text/csv; charset=utf-8').header('Content-Disposition', 'attachment; filename="bullizard-listings.csv"').send(csv);
+  });
+  app.post('/seller/listings/import', async (req) => {
+    const user = me(req);
+    requireSeller(user);
+    const body = z.object({ csv: z.string().min(1).max(2_000_000), dryRun: z.boolean().default(true) }).parse(req.body);
+    return importListings(ctx, user, body.csv, { dryRun: body.dryRun });
+  });
 
   // --- Storefront: banner, intro, accent, pinned listings ----------------------------------
   app.get('/seller/storefront', async (req) => storefront(ctx.db, me(req).id));

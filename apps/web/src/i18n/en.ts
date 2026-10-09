@@ -786,6 +786,24 @@ const en = {
   "shop.save": "Save shop page",
   "shop.saved": "Shop page saved.",
 
+  // Bulk listings
+  "bulk.title": "Edit listings in a spreadsheet",
+  "bulk.lede": "Download your listings as CSV, change prices, stock or text in any spreadsheet, and import the file back. You see every change before it’s applied.",
+  "bulk.download": "Download CSV",
+  "bulk.choose": "Import CSV…",
+  "bulk.columnsHint": "Rows with an id update that listing; rows without one create a listing (game, category, title, price and delivery needed). Up to 500 rows.",
+  "bulk.preview": "Preview: {create} new, {update} updated, {unchanged} unchanged, {error} with errors. Nothing is saved yet.",
+  "bulk.applied": "Done: {create} created, {update} updated, {error} with errors.",
+  "bulk.apply_one": "Apply {count} change",
+  "bulk.apply_other": "Apply {count} changes",
+  "bulk.col.row": "Row",
+  "bulk.col.listing": "Listing",
+  "bulk.col.result": "Result",
+  "bulk.create": "New listing",
+  "bulk.update": "Update: {changes}",
+  "bulk.unchanged": "No change",
+  "bulk.review": "held for review",
+
   // Generic
   'common.notFound': 'Page not found',
   'common.englishOnly': 'This section is in English.',

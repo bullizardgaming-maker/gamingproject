@@ -599,5 +599,22 @@ const fr: Messages = {
   "shop.noListings": "Vous n’avez pas encore d’offre active à mettre en avant.",
   "shop.save": "Enregistrer la page boutique",
   "shop.saved": "Page boutique enregistrée.",
+  // Bulk listings
+  "bulk.title": "Modifier vos offres dans un tableur",
+  "bulk.lede": "Téléchargez vos offres en CSV, modifiez prix, stock ou textes dans n’importe quel tableur, puis importez le fichier. Chaque changement est montré avant d’être appliqué.",
+  "bulk.download": "Télécharger le CSV",
+  "bulk.choose": "Importer un CSV…",
+  "bulk.columnsHint": "Les lignes avec un id mettent à jour cette offre ; sans id, elles en créent une (jeu, catégorie, titre, prix et livraison requis). Jusqu’à 500 lignes.",
+  "bulk.preview": "Aperçu : {create} nouvelles, {update} modifiées, {unchanged} inchangées, {error} en erreur. Rien n’est encore enregistré.",
+  "bulk.applied": "Terminé : {create} créées, {update} modifiées, {error} en erreur.",
+  "bulk.apply_one": "Appliquer {count} changement",
+  "bulk.apply_other": "Appliquer {count} changements",
+  "bulk.col.row": "Ligne",
+  "bulk.col.listing": "Offre",
+  "bulk.col.result": "Résultat",
+  "bulk.create": "Nouvelle offre",
+  "bulk.update": "Mise à jour : {changes}",
+  "bulk.unchanged": "Aucun changement",
+  "bulk.review": "en vérification",
 };
 export default fr;

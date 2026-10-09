@@ -599,5 +599,22 @@ const de: Messages = {
   "shop.noListings": "Du hast noch keine aktiven Angebote zum Hervorheben.",
   "shop.save": "Shopseite speichern",
   "shop.saved": "Shopseite gespeichert.",
+  // Bulk listings
+  "bulk.title": "Angebote in einer Tabelle bearbeiten",
+  "bulk.lede": "Lade deine Angebote als CSV herunter, ändere Preise, Bestand oder Texte in einer Tabellenkalkulation und importiere die Datei. Du siehst jede Änderung, bevor sie gilt.",
+  "bulk.download": "CSV herunterladen",
+  "bulk.choose": "CSV importieren…",
+  "bulk.columnsHint": "Zeilen mit id aktualisieren dieses Angebot; Zeilen ohne id legen eines an (Spiel, Kategorie, Titel, Preis und Lieferung nötig). Bis zu 500 Zeilen.",
+  "bulk.preview": "Vorschau: {create} neu, {update} geändert, {unchanged} unverändert, {error} mit Fehlern. Noch ist nichts gespeichert.",
+  "bulk.applied": "Fertig: {create} angelegt, {update} geändert, {error} mit Fehlern.",
+  "bulk.apply_one": "{count} Änderung übernehmen",
+  "bulk.apply_other": "{count} Änderungen übernehmen",
+  "bulk.col.row": "Zeile",
+  "bulk.col.listing": "Angebot",
+  "bulk.col.result": "Ergebnis",
+  "bulk.create": "Neues Angebot",
+  "bulk.update": "Ändern: {changes}",
+  "bulk.unchanged": "Keine Änderung",
+  "bulk.review": "wird geprüft",
 };
 export default de;

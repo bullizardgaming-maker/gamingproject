@@ -9,6 +9,7 @@ import { CATEGORIES, DEMO_CODE, seed, type DemoState, type DemoUser } from './se
 import { CATEGORY_DEFAULTS, GAME_SETS, attributesFor, cleanAttributes } from '../../../api/src/domain/attributeSets';
 import { checkTiers, effectivePrice, unitPriceFor } from '../../../api/src/domain/priceTiers';
 import { detectOffPlatform, matchTerms } from '../../../api/src/domain/safety';
+import { parseCsv } from '../../../api/src/domain/csv';
 
 const KEY = 'bz.demo.v16';
 const day = 86_400_000;
@@ -1044,6 +1045,54 @@ route('POST', '/offers', ({ me, body }) => {
   state.offers.unshift(o);
   if (reviewReasons.length) notify(u.id, 'selling', 'listing_review', 'Your listing is being reviewed', 'It mentions something our rules ask us to check, so it’s hidden until a moderator looks at it.', '/sell');
   return offerView(o);
+});
+// Bulk listings from CSV (simplified checks; the real API runs the full listing validation).
+route('POST', '/seller/listings/import', ({ me, body }) => {
+  const u = needSeller(me);
+  const [head, ...rows] = parseCsv(String(body.csv ?? '').replace(/^\uFEFF/, ''));
+  const header = (head ?? []).map((h) => h.trim().toLowerCase());
+  if (rows.length > 500) fail(400, 'too_many_rows', 'Import up to 500 rows at a time');
+  const results = rows.map((fields, i) => {
+    const get = (k: string) => (header.includes(k) ? (fields[header.indexOf(k)] ?? '').trim().replace(/^'(?=[=+\-@])/, '') : '');
+    const r: any = { row: i + 1, id: get('id') || null, title: get('title'), action: 'error' };
+    const price = get('price') ? Math.round(Number(get('price')) * 100) : undefined;
+    if (price !== undefined && !(price > 0)) return { ...r, error: 'Price must be between 0.01 and 100000' };
+    if (r.id) {
+      const o = state.offers.find((x) => x.id === r.id && x.seller_id === u.id && x.status !== 'removed');
+      if (!o) return { ...r, error: 'No listing of yours with this id' };
+      const patch: Record<string, unknown> = {};
+      if (price !== undefined && price !== o.price_cents) patch.price_cents = price;
+      if (get('stock') && o.delivery_mode === 'manual' && Number(get('stock')) !== o.stock) patch.stock = Number(get('stock'));
+      if (r.title && r.title !== o.title) patch.title = r.title;
+      if (get('status') && get('status') !== o.status) patch.status = get('status');
+      const changes = Object.keys(patch).map((k) => ({ price_cents: 'price', stock: 'stock', title: 'title', status: 'status' })[k]);
+      return changes.length ? { ...r, title: o.title, action: 'update', changes, patch } : { ...r, title: o.title, action: 'unchanged' };
+    }
+    for (const k of ['game', 'category', 'title', 'price', 'delivery']) if (!get(k)) return { ...r, error: `${k} is required for a new listing` };
+    const cat = CATEGORIES.find((c) => c.slug === get('category')) ?? null;
+    if (!cat) return { ...r, error: `Unknown category "${get('category')}"` };
+    const text = `${r.title}\n${get('description')}`;
+    return { ...r, action: 'create', review: detectOffPlatform(text).length > 0 || matchTerms(text, state.modTerms).length > 0, cat, price };
+  });
+  if (!body.dryRun) {
+    for (const r of results) {
+      if (r.action === 'update') Object.assign(state.offers.find((o) => o.id === r.id)!, r.patch, { version: (state.offers.find((o) => o.id === r.id)!.version ?? 1) + 1 });
+      if (r.action === 'create') {
+        const get = (k: string) => { const f = rows[r.row - 1]!; return header.includes(k) ? (f[header.indexOf(k)] ?? '').trim() : ''; };
+        const id = `offer-${rid().slice(0, 8)}`;
+        state.offers.unshift({
+          ...state.offers.find((o) => o.seller_id === u.id)!, id, bundle: null, category_slug: r.cat.slug, category_kind: r.cat.kind, game: get('game'), title: r.title, description: get('description'),
+          price_cents: r.price, currency: 'USD', delivery_mode: get('delivery') === 'instant' ? 'auto' : 'manual', delivery_hours: 2, stock: Number(get('stock') || 1), inventory: [],
+          status: r.review ? 'review' : 'active', review_reasons: [], owner_proof_status: 'none', version: 1, created_at: now(), attributes: {}, reserved_for: null, request_id: null,
+          price_tiers: [], sale_price_cents: null, sale_starts_at: null, sale_ends_at: null, warranty_days: 0,
+        });
+        r.id = id;
+      }
+    }
+  }
+  const out = results.map(({ patch: _p, cat: _c, price: _pr, ...r }) => r);
+  const count = (a: string) => out.filter((r) => r.action === a).length;
+  return { rows: out, summary: { create: count('create'), update: count('update'), unchanged: count('unchanged'), error: count('error') } };
 });
 route('POST', '/offers/:id/inventory', ({ me, params, body }) => {
   const u = needSeller(me);
@@ -2126,6 +2175,15 @@ function blobRoute(me: DemoUser | null, path: string, query: URLSearchParams): B
     const u = needSeller(me);
     const i = state.invoices.find((x) => x.id === m![1] && x.seller_id === u.id) ?? fail(404, 'not_found', 'Invoice not found');
     return pdf([`Bullizard commission invoice ${i.number}`, `Seller: ${u.display_name}`, `Period from ${i.period_start.slice(0, 10)}`, `Commission: $${(i.gross_cents / 100).toFixed(2)} ${i.currency}`, `Tax: $${(i.tax_cents / 100).toFixed(2)}`, 'Demo document - not a real invoice.']);
+  }
+  if (path === '/seller/listings/export.csv') {
+    const u = needSeller(me);
+    const rows = state.offers.filter((o) => o.seller_id === u.id && o.status !== 'removed' && !o.reserved_for).map((o) => ({
+      id: o.id, game: o.game, category: o.category_slug, title: o.title, description: o.description, price: (o.price_cents / 100).toFixed(2), currency: o.currency,
+      delivery: o.delivery_mode === 'auto' ? 'instant' : 'manual', stock: o.delivery_mode === 'manual' ? o.stock : '', delivery_hours: o.delivery_hours ?? '', status: o.status,
+      attributes: Object.entries(o.attributes ?? {}).map(([k, v]) => `${k}=${v}`).join('; '), warranty_days: o.warranty_days ?? 0,
+    }));
+    return new Blob([csv(rows)], { type: 'text/csv' });
   }
   m = /^\/seller\/exports\/([a-z_]+)$/.exec(path);
   if (m) {
