@@ -27,6 +27,36 @@ export interface OfferInput {
   attributes?: Record<string, string>;
   /** Cheaper unit prices for larger orders. */
   priceTiers?: PriceTier[];
+  /** A bundle of the seller's own instant-delivery listings sold together at this price. */
+  bundle?: Array<{ offerId: string; quantity: number }>;
+}
+
+export const MAX_BUNDLE_PARTS = 10;
+
+/** Check a bundle's parts: 2–10 of the seller's own active instant listings, none of them a bundle. */
+async function checkBundle(q: Queryable, sellerId: string, parts: Array<{ offerId: string; quantity: number }>) {
+  if (parts.length < 2 || parts.length > MAX_BUNDLE_PARTS) throw badRequest('invalid_bundle', `A bundle has 2 to ${MAX_BUNDLE_PARTS} listings`);
+  if (new Set(parts.map((p) => p.offerId)).size !== parts.length) throw badRequest('invalid_bundle', 'Each listing can appear once in a bundle; set its quantity instead');
+  const rows = await many<{ id: string; seller_id: string; delivery_mode: string; status: string; is_bundle: boolean; reserved_for: string | null }>(
+    q,
+    'SELECT id, seller_id, delivery_mode, status, is_bundle, reserved_for FROM offers WHERE id = ANY($1)',
+    [parts.map((p) => p.offerId)],
+  );
+  for (const p of parts) {
+    const r = rows.find((x) => x.id === p.offerId);
+    if (!r || r.seller_id !== sellerId || r.status !== 'active' || r.reserved_for) throw badRequest('invalid_bundle', 'A bundle can only include your own active listings');
+    if (r.delivery_mode !== 'auto' || r.is_bundle) throw badRequest('invalid_bundle', 'Bundles combine instant-delivery listings (not other bundles)');
+  }
+}
+
+/** A bundle's parts as buyers see them: what's inside and what it would cost separately. */
+export async function bundleParts(q: Queryable, offerId: string) {
+  return many(
+    q,
+    `SELECT b.component_offer_id AS offer_id, b.quantity, f.title, f.game, f.currency, ${EFFECTIVE_PRICE_SQL} AS price_cents
+       FROM bundle_items b JOIN offers f ON f.id = b.component_offer_id WHERE b.bundle_offer_id = $1 ORDER BY b.position`,
+    [offerId],
+  );
 }
 
 /** Validates tiers, as a 400 error. */
@@ -43,9 +73,7 @@ export const OFFER_LIST_SQL = `
          c.kind AS category_kind, c.risk_class, u.display_name AS seller_name, f.delivery_hours,
          (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now())) AS shop_paused,
          u.shop_paused_until, u.shop_pause_message, ${ONLINE_SQL} AS seller_online, u.response_minutes AS seller_response_minutes,
-         CASE WHEN f.delivery_mode = 'auto'
-              THEN (SELECT count(*)::int FROM inventory_items i WHERE i.offer_id = f.id AND i.status = 'available')
-              ELSE f.stock END AS stock,
+         offer_available(f.id) AS stock, f.is_bundle,
          (c.kind = 'account' AND f.owner_proof_status <> 'verified') AS high_risk_secondary,
          (SELECT count(*)::int FROM orders o WHERE o.seller_id = f.seller_id AND o.status = 'completed') AS seller_completed_orders,
          (SELECT round(avg(rating)::numeric, 2) FROM reviews r WHERE r.seller_id = f.seller_id AND NOT r.hidden) AS seller_rating,
@@ -66,6 +94,11 @@ export async function createOffer(ctx: Ctx, seller: { id: string; kyc_tier: numb
   if (cat.kind === 'account' && input.deliveryMode === 'auto' && (input.stock ?? 0) > 0) {
     throw badRequest('invalid_stock', 'Account listings with auto-delivery take stock from uploaded inventory');
   }
+  if (input.bundle) {
+    if (cat.kind === 'account') throw badRequest('invalid_bundle', 'Accounts are sold one at a time and can’t be bundled');
+    if (input.deliveryMode !== 'auto') throw badRequest('invalid_bundle', 'A bundle is delivered instantly from its parts’ stock');
+    await checkBundle(ctx.db, seller.id, input.bundle);
+  }
   const attrs = cleanAttributes(input.game, input.categorySlug, input.attributes);
   if (!attrs.ok) throw badRequest('invalid_attributes', attrs.error);
   const stock = input.deliveryMode === 'manual' ? (cat.kind === 'account' ? 1 : input.stock ?? 1) : 0;
@@ -80,6 +113,12 @@ export async function createOffer(ctx: Ctx, seller: { id: string; kyc_tier: numb
      input.deliveryMode, stock, input.lowStockThreshold ?? 5, input.deliveryHours ?? 24, JSON.stringify(attrs.value), JSON.stringify(tiers),
      screen.review ? 'review' : 'active', screen.reasons],
   );
+  if (input.bundle) {
+    await ctx.db.query('UPDATE offers SET is_bundle = true WHERE id = $1', [offer.id]);
+    for (const [i, p] of input.bundle.entries()) {
+      await ctx.db.query('INSERT INTO bundle_items (bundle_offer_id, component_offer_id, quantity, position) VALUES ($1, $2, $3, $4)', [offer.id, p.offerId, p.quantity, i]);
+    }
+  }
   if (screen.review) await notify(ctx.db, seller.id, 'listing_review', { offer_id: offer.id, title: input.title }, `listing:${offer.id}:review:${Date.now()}`);
   return getOffer(ctx.db, offer.id);
 }
@@ -87,6 +126,7 @@ export async function createOffer(ctx: Ctx, seller: { id: string; kyc_tier: numb
 export async function getOffer(q: Queryable, id: string) {
   const offer = await maybeOne(q, `${OFFER_LIST_SQL} WHERE f.id = $1`, [id]);
   if (!offer) throw notFound('Offer');
+  if (offer.is_bundle) offer.bundle = await bundleParts(q, id);
   return offer;
 }
 
@@ -166,9 +206,10 @@ export async function bulkUpdatePrices(ctx: Ctx, sellerId: string, updates: Arra
 }
 
 export async function uploadInventory(ctx: Ctx, sellerId: string, offerId: string, format: 'txt' | 'json', content: string) {
-  const offer = await maybeOne(ctx.db, 'SELECT seller_id, delivery_mode FROM offers WHERE id = $1', [offerId]);
+  const offer = await maybeOne(ctx.db, 'SELECT seller_id, delivery_mode, is_bundle FROM offers WHERE id = $1', [offerId]);
   if (!offer || offer.seller_id !== sellerId) throw notFound('Offer');
   if (offer.delivery_mode !== 'auto') throw badRequest('not_auto_delivery', 'Inventory uploads are only for auto-delivery offers');
+  if (offer.is_bundle) throw badRequest('bundle_inventory', 'A bundle uses its parts’ stock; add stock to those listings instead');
   const items = parseBulkUpload(format, content);
   return withTx(ctx.db, (tx) => addInventory(ctx, tx, sellerId, offerId, items));
 }

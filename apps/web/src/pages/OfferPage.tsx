@@ -110,6 +110,25 @@ export function OfferPage() {
           </dl>
         )}
         <p style={{ whiteSpace: 'pre-wrap' }}>{offer.description || <span className="muted">{t('offer.noDescription')}</span>}</p>
+        {offer.bundle && offer.bundle.length > 0 && (() => {
+          const separately = offer.bundle.reduce((s, p) => s + p.price_cents * p.quantity, 0);
+          return (
+            <div className="card stack" style={{ gap: 8 }}>
+              <b>{t('bundle.inside')}</b>
+              <ul className="m-0 list-none p-0">
+                {offer.bundle.map((p) => (
+                  <li key={p.offer_id} className="flex items-center justify-between gap-3 border-b border-border py-2 last:border-b-0">
+                    <span className="min-w-0 truncate"><span className="font-mono">{p.quantity}×</span> <Link to={`/offers/${p.offer_id}`}>{p.title}</Link></span>
+                    <span className="font-mono text-sm text-muted-foreground">{money(p.price_cents * p.quantity, p.currency)}</span>
+                  </li>
+                ))}
+              </ul>
+              {separately > offer.price_cents && (
+                <div className="small text-released">{t('bundle.saving', { separately: money(separately, offer.currency), amount: money(separately - offer.price_cents, offer.currency) })}</div>
+              )}
+            </div>
+          );
+        })()}
         <Link to={`/sellers/${offer.seller_id}`} className="card flex items-center gap-3 no-underline hover:border-foreground" style={{ padding: 14 }}>
           <Avatar name={offer.seller_name} className="size-11" />
           <div className="min-w-0 flex-1">

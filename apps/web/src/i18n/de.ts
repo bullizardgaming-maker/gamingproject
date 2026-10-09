@@ -507,5 +507,12 @@ const de: Messages = {
   "code.apply": "Einlösen",
   "code.applied": "{code} eingelöst: {amount} Rabatt",
   "code.reapply": "Menge geändert: Löse den Code erneut ein, um den Rabatt zu sehen.",
+  // Bundles
+  "bundle.chip": "Bundle",
+  "bundle.inside": "In diesem Bundle",
+  "bundle.saving": "Einzeln {separately}: du sparst {amount}",
+  "bundle.make": "Als Bundle meiner Sofort-Angebote anbieten",
+  "bundle.makeHint": "Wähle 2–10 deiner Angebote mit Sofortlieferung. Käufer bekommen alle auf einmal aus deren Bestand, zum oben gesetzten Preis.",
+  "bundle.qtyOf": "Wie viele von {title}",
 };
 export default de;

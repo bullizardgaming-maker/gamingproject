@@ -55,7 +55,7 @@ export async function addInventory(ctx: Ctx, q: Queryable, sellerId: string, off
 }
 
 export async function availableCount(q: Queryable, offerId: string): Promise<number> {
-  const row = await one<{ n: number }>(q, `SELECT count(*)::int AS n FROM inventory_items WHERE offer_id = $1 AND status = 'available'`, [offerId]);
+  const row = await one<{ n: number }>(q, `SELECT COALESCE(offer_available($1), 0) AS n`, [offerId]);
   return row.n;
 }
 

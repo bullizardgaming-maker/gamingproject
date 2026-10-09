@@ -37,6 +37,7 @@ interface SellerOffer {
   sale_starts_at?: string | null;
   sale_ends_at?: string | null;
   reserved_for?: string | null;
+  is_bundle?: boolean;
 }
 
 const TIER_ROWS = [0, 1, 2];
@@ -207,7 +208,7 @@ export function Sell() {
       </div>
 
       <DiscountCodes />
-      <NewOffer onCreated={load} />
+      <NewOffer onCreated={load} offers={offers} />
     </div>
   );
 }
@@ -350,7 +351,7 @@ function OfferRow({ offer, onChange }: { offer: SellerOffer; onChange: () => voi
     <>
       <tr>
         <td>
-          <b>{offer.title}</b>
+          <b>{offer.title}</b>{offer.is_bundle && <span className="chip" style={{ marginInlineStart: 6 }}>{t('bundle.chip')}</span>}
           <div className="small muted">{offer.game} · {categoryLabel(offer.category_slug)}</div>
           {offer.status === 'review' && (
             <div className="small" title={t('mod.inReviewHint')}><span className="chip held">{t('mod.inReview')}</span> <span className="muted">{t('mod.inReviewHint')}</span></div>
@@ -368,7 +369,7 @@ function OfferRow({ offer, onChange }: { offer: SellerOffer; onChange: () => voi
         <td className="mono">{offer.available}</td>
         <td>{offer.delivery_mode === 'auto' ? t('delivery.instant') : t('sell.manual')}</td>
         <td>
-          {offer.delivery_mode === 'auto' && <button className="btn ghost" onClick={() => setOpen(!open)}>{t('sell.addStock')}</button>}
+          {offer.delivery_mode === 'auto' && !offer.is_bundle && <button className="btn ghost" onClick={() => setOpen(!open)}>{t('sell.addStock')}</button>}
           {needsProof && <button className="btn ghost" onClick={() => setProofOpen(!proofOpen)}>{t('sell.addProof')}</button>}
           {!offer.reserved_for && <button className="btn ghost" onClick={() => setSaleOpen(!saleOpen)}>{t('sale.button')}</button>}
         </td>
@@ -419,8 +420,11 @@ function OfferRow({ offer, onChange }: { offer: SellerOffer; onChange: () => voi
   );
 }
 
-function NewOffer({ onCreated }: { onCreated: () => void }) {
+function NewOffer({ onCreated, offers }: { onCreated: () => void; offers: SellerOffer[] }) {
   const [error, setError] = useState('');
+  const [bundleOn, setBundleOn] = useState(false);
+  const [parts, setParts] = useState<Record<string, number>>({});
+  const bundleable = offers.filter((o) => o.delivery_mode === 'auto' && o.status === 'active' && !o.is_bundle && !o.reserved_for);
   const [category, setCategory] = useState('keys');
   const [game, setGame] = useState('');
   const fields = attributesFor(game, category);
@@ -442,10 +446,13 @@ function NewOffer({ onCreated }: { onCreated: () => void }) {
           attributes: Object.fromEntries(fields.map((d) => [d.key, f[`attr.${d.key}`] ?? '']).filter(([, v]) => v)),
           priceTiers: category === 'accounts' ? undefined : TIER_ROWS.filter((i) => f[`tierQty${i}`] && f[`tierPrice${i}`]).map((i) => ({ minQty: Number(f[`tierQty${i}`]), priceCents: Math.round(Number(f[`tierPrice${i}`]) * 100) })),
           ...(f.deliveryMode === 'manual' && f.categorySlug !== 'accounts' ? { stock: Number(f.stock || 1) } : {}),
+          ...(bundleOn ? { bundle: Object.entries(parts).map(([offerId, quantity]) => ({ offerId, quantity })) } : {}),
         },
       });
       form.reset();
       setGame('');
+      setBundleOn(false);
+      setParts({});
       onCreated();
     } catch (err: any) {
       setError(err.message);
@@ -509,6 +516,40 @@ function NewOffer({ onCreated }: { onCreated: () => void }) {
               </div>
             ))}
           </div>
+        </fieldset>
+      )}
+      {category !== 'accounts' && bundleable.length >= 2 && (
+        <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0, gap: 8 }}>
+          <label className="row small" style={{ gap: 8 }}>
+            <input type="checkbox" style={{ width: 'auto' }} checked={bundleOn} onChange={(e) => setBundleOn(e.target.checked)} />
+            {t('bundle.make')}
+          </label>
+          {bundleOn && (
+            <>
+              <p className="small muted" style={{ margin: 0 }}>{t('bundle.makeHint')}</p>
+              <div className="grid two">
+                {bundleable.map((o) => (
+                  <label key={o.id} className="row small" style={{ gap: 8, flexWrap: 'nowrap' }}>
+                    <input
+                      type="checkbox"
+                      style={{ width: 'auto' }}
+                      checked={o.id in parts}
+                      onChange={(e) => setParts((p) => {
+                        const next = { ...p };
+                        if (e.target.checked) next[o.id] = 1;
+                        else delete next[o.id];
+                        return next;
+                      })}
+                    />
+                    <span className="min-w-0 flex-1 truncate">{o.title}</span>
+                    {o.id in parts && (
+                      <input type="number" min={1} max={20} value={parts[o.id]} aria-label={t('bundle.qtyOf', { title: o.title })} onChange={(e) => setParts((p) => ({ ...p, [o.id]: Math.max(1, Number(e.target.value)) }))} style={{ width: 64, height: 30, padding: '2px 6px' }} />
+                    )}
+                  </label>
+                ))}
+              </div>
+            </>
+          )}
         </fieldset>
       )}
       <label className="field">{t('sell.f.description')}<textarea name="description" maxLength={5000} /></label>

@@ -239,6 +239,7 @@ export function seed() {
       attributes: ATTRS[title] ?? {},
       price_tiers: TIERS[title] ?? [],
       review_reasons: [] as string[],
+      bundle: null as Array<{ offer_id: string; quantity: number }> | null,
       sale_price_cents: (SALES[title]?.[0] ?? null) as number | null,
       sale_starts_at: (SALES[title] ? ago(day) : null) as string | null,
       sale_ends_at: (SALES[title] ? ago(-SALES[title]![1] * day) : null) as string | null,
@@ -248,6 +249,13 @@ export function seed() {
       version: 1,
       created_at: ago((LISTINGS.length - i) * 3_600_000 * 7),
     };
+  });
+  // A bundle: two of NorthWind's instant listings at one price, delivered from their stock.
+  offers.push({
+    ...offers.find((o) => o.title.startsWith('Elden Ring'))!, id: 'offer-bundle-1', title: 'Elden Ring + $50 Steam Wallet bundle',
+    description: 'The game key plus a $50 US Steam Wallet card, delivered together the moment you pay.', price_cents: 72_00, stock: 0, inventory: [],
+    attributes: {}, price_tiers: [], sale_price_cents: null, sale_starts_at: null, sale_ends_at: null, created_at: ago(5 * 3_600_000),
+    bundle: [{ offer_id: offers.find((o) => o.title.startsWith('Elden Ring'))!.id, quantity: 1 }, { offer_id: offers.find((o) => o.title.startsWith('Steam Wallet'))!.id, quantity: 1 }],
   });
   // Moderation samples: a listing held for review and a pre-sale chat flagged for off-platform contact.
   const template = offers.find((o) => o.title.startsWith('Premier 10k'))!;

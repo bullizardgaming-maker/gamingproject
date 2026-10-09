@@ -303,10 +303,7 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
   // (Not a guarantee — reservation below is still the source of truth.)
   const hasStock = await maybeOne(
     ctx.db,
-    `SELECT CASE WHEN f.delivery_mode = 'auto'
-                 THEN EXISTS (SELECT 1 FROM inventory_items i WHERE i.offer_id = f.id AND i.status = 'available' OFFSET $2 - 1 LIMIT 1)
-                 ELSE f.stock >= $2 END AS ok
-       FROM offers f WHERE f.id = $1`,
+    `SELECT offer_available(f.id) >= $2 AS ok FROM offers f WHERE f.id = $1`,
     [input.offerId, input.quantity],
   );
   if (hasStock && !hasStock.ok) throw conflict('out_of_stock', 'Not enough stock for this order');
@@ -369,7 +366,11 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
       Object.assign(order, { seller_code_id: price.sellerCodeId, seller_discount_cents: price.sellerDiscountCents });
     }
 
-    if (offer.delivery_mode === 'auto') await reserveInventory(s.tx, offer.id, order.id, input.quantity);
+    if (offer.is_bundle) {
+      // A bundle reserves its parts' items against this order; delivery and release work by order.
+      const parts = await many<{ component_offer_id: string; quantity: number }>(s.tx, 'SELECT component_offer_id, quantity FROM bundle_items WHERE bundle_offer_id = $1', [offer.id]);
+      for (const p of parts) await reserveInventory(s.tx, p.component_offer_id, order.id, input.quantity * p.quantity);
+    } else if (offer.delivery_mode === 'auto') await reserveInventory(s.tx, offer.id, order.id, input.quantity);
     else await reserveManualStock(s.tx, offer.id, input.quantity);
 
     const snapshot = {

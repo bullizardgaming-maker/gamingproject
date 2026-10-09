@@ -152,6 +152,7 @@ export function OfferTable({ offers, showGame = false, showSeller = true, empty 
                 </Link>
                 <AttributeLine offer={o} />
                 <ProtectionTag offer={o} />
+                {o.is_bundle && <span className="chip" style={{ marginInlineStart: 6 }}>{t('bundle.chip')}</span>}
               </div>
               {showSeller && (
                 <div className="relative z-[1] order-1 flex min-w-0 items-center gap-2.5 md:order-none">

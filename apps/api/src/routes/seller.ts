@@ -39,6 +39,12 @@ export const OfferBody = z.object({
   lowStockThreshold: z.number().int().min(0).max(100_000).optional(),
   deliveryHours: z.number().int().min(1).max(168).optional().describe('Promised delivery time for manual orders, in hours'),
   attributes: z.record(z.string().max(30), z.string().max(60)).optional().describe('Game-specific fields such as server, region, platform or rank (GET /v1/catalog/attributes)'),
+  bundle: z
+    .array(z.object({ offerId: z.string().uuid(), quantity: z.number().int().min(1).max(20) }))
+    .min(2)
+    .max(10)
+    .optional()
+    .describe('Make this listing a bundle of your own instant-delivery listings (2–10), delivered from their stock'),
   priceTiers: z
     .array(z.object({ minQty: z.number().int().min(2).max(100_000), priceCents: z.number().int().positive().max(100_000_00) }))
     .max(5)
@@ -103,9 +109,7 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/seller/offers', async (req) =>
     many(
       ctx.db,
-      `SELECT f.*, CASE WHEN f.delivery_mode = 'auto'
-                    THEN (SELECT count(*)::int FROM inventory_items i WHERE i.offer_id = f.id AND i.status = 'available')
-                    ELSE f.stock END AS available
+      `SELECT f.*, offer_available(f.id) AS available
          FROM offers f WHERE seller_id = $1 AND status <> 'removed' ORDER BY created_at DESC`,
       [me(req).id],
     ),

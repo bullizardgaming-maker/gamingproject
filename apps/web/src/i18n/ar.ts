@@ -545,5 +545,12 @@ const ar: Messages = {
   "code.apply": "تطبيق",
   "code.applied": "طُبّق {code}: خصم {amount}",
   "code.reapply": "تغيّرت الكمية: طبّق الرمز من جديد لترى الخصم.",
+  // Bundles
+  "bundle.chip": "حزمة",
+  "bundle.inside": "محتوى هذه الحزمة",
+  "bundle.saving": "منفصلة {separately}: توفّر {amount}",
+  "bundle.make": "اجعل هذا العرض حزمة من عروضي الفورية",
+  "bundle.makeHint": "اختر من 2 إلى 10 من عروضك ذات التسليم الفوري. يحصل المشتري عليها كلها دفعة واحدة من مخزون تلك العروض، بالسعر الذي حددته أعلاه.",
+  "bundle.qtyOf": "كم وحدة من {title}",
 };
 export default ar;

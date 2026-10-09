@@ -10,7 +10,7 @@ import { CATEGORY_DEFAULTS, GAME_SETS, attributesFor, cleanAttributes } from '..
 import { checkTiers, effectivePrice, unitPriceFor } from '../../../api/src/domain/priceTiers';
 import { detectOffPlatform, matchTerms } from '../../../api/src/domain/safety';
 
-const KEY = 'bz.demo.v11';
+const KEY = 'bz.demo.v12';
 const day = 86_400_000;
 const now = () => new Date().toISOString();
 const rid = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2) + Date.now().toString(16));
@@ -109,6 +109,15 @@ function presenceOf(id: string) {
   const shown = state.showOnline[id] ?? true;
   return { online: shown && (id === viewer || !!p?.online), last_seen_at: shown ? (id === viewer ? now() : p?.last_seen_at ?? null) : null, response_minutes: p?.response_minutes ?? null };
 }
+/** Units buyable now: manual stock, instant inventory, or a bundle's complete sets (0 if a part isn't active). */
+function availableOf(o: any): number {
+  if (o.bundle?.length) {
+    const parts = o.bundle.map((b: any) => ({ b, f: state.offers.find((x) => x.id === b.offer_id) }));
+    if (parts.some((p: any) => !p.f || p.f.status !== 'active')) return 0;
+    return Math.min(...parts.map((p: any) => Math.floor(p.f.inventory.length / p.b.quantity)));
+  }
+  return o.delivery_mode === 'auto' ? o.inventory.length : o.stock;
+}
 function offerView(o: any) {
   const s = sellerStats(o.seller_id);
   const pr = presenceOf(o.seller_id);
@@ -121,7 +130,12 @@ function offerView(o: any) {
     seller_online: pr.online,
     seller_response_minutes: pr.response_minutes,
     inventory: undefined,
-    stock: o.delivery_mode === 'auto' ? o.inventory.length : o.stock,
+    stock: availableOf(o),
+    is_bundle: !!o.bundle?.length,
+    bundle: o.bundle?.map((b: any) => {
+      const f = state.offers.find((x) => x.id === b.offer_id);
+      return { offer_id: b.offer_id, quantity: b.quantity, title: f?.title, game: f?.game, currency: f?.currency, price_cents: f ? effectivePrice(f) : 0 };
+    }),
     seller_name: userById(o.seller_id)?.display_name ?? 'Seller',
     high_risk_secondary: o.category_kind === 'account' && o.owner_proof_status !== 'verified',
     seller_completed_orders: s.completed,
@@ -180,7 +194,8 @@ function transition(o: any, to: string, reason: string) {
 
 function deliverOrder(o: any, payload?: string) {
   const offer = state.offers.find((f) => f.id === o.offer_id)!;
-  if (offer.delivery_mode === 'auto') o.items = offer.inventory.splice(0, o.quantity);
+  if (offer.bundle?.length) o.items = offer.bundle.flatMap((b: any) => state.offers.find((x) => x.id === b.offer_id)!.inventory.splice(0, o.quantity * b.quantity));
+  else if (offer.delivery_mode === 'auto') o.items = offer.inventory.splice(0, o.quantity);
   else if (payload) o.items = [payload];
   o.delivered_at = now();
   o.protection_ends_at = new Date(Date.now() + (o.protection === 'insurance_14d' ? 14 * day : 3 * day)).toISOString();
@@ -517,7 +532,7 @@ route('POST', '/orders', ({ me, body }) => {
   const offer = state.offers.find((x) => x.id === body.offerId && (!x.reserved_for || x.reserved_for === u.id)) ?? fail(404, 'not_found', 'Listing not found');
   if (offer.seller_id === u.id) fail(400, 'own_listing', 'You can’t buy your own listing');
   const qty = Number(body.quantity ?? 1);
-  const available = offer.delivery_mode === 'auto' ? offer.inventory.length : offer.stock;
+  const available = availableOf(offer);
   if (available < qty) fail(409, 'out_of_stock', 'Not enough stock for this order');
   const code = body.sellerCode ? sellerCodeQuote(offer, u, qty, body.sellerCode) : null;
   const o = createOrderRecord(u, offer, qty, body.rail ?? 'fiat', code?.discount ?? 0);
@@ -596,7 +611,7 @@ route('POST', '/orders/cart', ({ me, body }) => {
     const offer = state.offers.find((x) => x.id === i.offerId && (!x.reserved_for || x.reserved_for === u.id) && x.status === 'active') ?? fail(404, 'not_found', 'Listing not found');
     if (offer.seller_id === u.id) fail(403, 'own_offer', 'You cannot buy your own offer');
     const qty = Number(i.quantity ?? 1);
-    if ((offer.delivery_mode === 'auto' ? offer.inventory.length : offer.stock) < qty) fail(409, 'out_of_stock', `Not enough stock for "${offer.title}"`);
+    if (availableOf(offer) < qty) fail(409, 'out_of_stock', `Not enough stock for "${offer.title}"`);
     return { offer, qty };
   });
   const checkout = { id: `cart-${rid().slice(0, 8)}`, buyer_id: u.id, order_ids: lines.map(({ offer, qty }) => createOrderRecord(u, offer, qty, 'fiat').id), created_at: now() };
@@ -768,7 +783,7 @@ route('GET', '/seller/offers', ({ me }) => {
   const u = needSeller(me);
   return state.offers
     .filter((o) => o.seller_id === u.id)
-    .map((o) => ({ ...offerView(o), available: o.delivery_mode === 'auto' ? o.inventory.length : o.stock }));
+    .map((o) => ({ ...offerView(o), available: availableOf(o) }));
 });
 route('POST', '/offers', ({ me, body }) => {
   const u = needSeller(me);
@@ -784,7 +799,18 @@ route('POST', '/offers', ({ me, body }) => {
   const hits = matchTerms(text, state.modTerms);
   if (hits.some((h) => h.action === 'block')) fail(400, 'listing_blocked', 'This listing breaks the rules on prohibited goods and can’t be published');
   const reviewReasons = [...hits.map((h) => `term:${h.term}`), ...detectOffPlatform(text).map((x) => `contact:${x}`)];
+  let bundle: Array<{ offer_id: string; quantity: number }> | null = null;
+  if (body.bundle) {
+    if (cat.kind === 'account') fail(400, 'invalid_bundle', 'Accounts are sold one at a time and can’t be bundled');
+    if (body.bundle.length < 2 || body.bundle.length > 10) fail(400, 'invalid_bundle', 'A bundle has 2 to 10 listings');
+    for (const p of body.bundle) {
+      const f = state.offers.find((x) => x.id === p.offerId);
+      if (!f || f.seller_id !== u.id || f.status !== 'active' || f.delivery_mode !== 'auto' || (f as any).bundle?.length) fail(400, 'invalid_bundle', 'Bundles combine your own active instant-delivery listings');
+    }
+    bundle = body.bundle.map((p: any) => ({ offer_id: p.offerId, quantity: Number(p.quantity) }));
+  }
   const o = {
+    bundle,
     id: `offer-${rid().slice(0, 8)}`, seller_id: u.id, category_slug: cat.slug, category_kind: cat.kind, game: body.game, title: body.title,
     description: body.description ?? '', price_cents: body.priceCents, currency: 'USD', delivery_mode: body.deliveryMode, delivery_hours: body.deliveryMode === 'auto' ? 0 : Number(body.deliveryHours ?? 2),
     stock: body.deliveryMode === 'manual' ? Number(body.stock ?? 1) : 0, inventory: [] as string[], status: reviewReasons.length ? 'review' : 'active', review_reasons: reviewReasons, owner_proof_status: 'none', version: 1, created_at: now(),
@@ -1070,7 +1096,7 @@ route('POST', '/requests/:id/proposals/:pid/accept', ({ me, params }) => {
   const offer = {
     id: `offer-r-${rid().slice(0, 8)}`, seller_id: p.seller_id, category_slug: r.category_slug, category_kind: CATEGORIES.find((c) => c.slug === r.category_slug)!.kind, game: r.game,
     title: r.title, description: [r.description, p.message].filter(Boolean).join('\n\n'), price_cents: p.price_cents, currency: r.currency, delivery_mode: 'manual' as const,
-    delivery_hours: p.delivery_hours, stock: 1, inventory: [] as string[], price_tiers: [], review_reasons: [] as string[], sale_price_cents: null, sale_starts_at: null, sale_ends_at: null, status: 'active', owner_proof_status: 'none', attributes: r.attributes ?? {}, version: 1, created_at: now(),
+    delivery_hours: p.delivery_hours, stock: 1, inventory: [] as string[], price_tiers: [], review_reasons: [] as string[], bundle: null, sale_price_cents: null, sale_starts_at: null, sale_ends_at: null, status: 'active', owner_proof_status: 'none', attributes: r.attributes ?? {}, version: 1, created_at: now(),
     reserved_for: u.id, request_id: r.id,
   };
   state.offers.push(offer);
@@ -1082,7 +1108,7 @@ route('POST', '/requests/:id/proposals/:pid/accept', ({ me, params }) => {
 });
 // --- Watchlist & price alerts ------------------------------------------------------------
 const RATES: Record<string, number> = { USD: 1, EUR: 0.92, GBP: 0.79 };
-const onSale = (o: any) => listed(o) && (o.delivery_mode === 'auto' ? o.inventory.length : o.stock) > 0;
+const onSale = (o: any) => listed(o) && availableOf(o) > 0;
 const cheapestFor = (w: any) =>
   state.offers
     .filter((o) => onSale(o) && o.game.toLowerCase() === w.game.toLowerCase() && (!w.category || o.category_slug === w.category))

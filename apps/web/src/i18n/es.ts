@@ -507,5 +507,12 @@ const es: Messages = {
   "code.apply": "Aplicar",
   "code.applied": "{code} aplicado: {amount} de descuento",
   "code.reapply": "Cambió la cantidad: vuelve a aplicar el código para ver el descuento.",
+  // Bundles
+  "bundle.chip": "Pack",
+  "bundle.inside": "En este pack",
+  "bundle.saving": "Por separado {separately}: ahorras {amount}",
+  "bundle.make": "Convertir en un pack de mis ofertas instantáneas",
+  "bundle.makeHint": "Elige de 2 a 10 de tus ofertas con entrega instantánea. El comprador las recibe todas a la vez, del stock de esas ofertas, al precio que pusiste arriba.",
+  "bundle.qtyOf": "Cuántas de {title}",
 };
 export default es;

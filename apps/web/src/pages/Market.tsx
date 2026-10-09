@@ -19,6 +19,9 @@ export interface Offer {
   /** Set on a listing agreed on a buyer request: only that buyer can see and buy it. */
   reserved_for?: string | null;
   status?: string;
+  is_bundle?: boolean;
+  /** A bundle's parts: what's inside and what each costs on its own. */
+  bundle?: Array<{ offer_id: string; quantity: number; title: string; game: string; currency: string; price_cents: number }>;
   /** Set while a sale runs: the price before the sale (price_cents is the sale price). */
   regular_price_cents?: number;
   sale_ends_at?: string | null;

@@ -507,5 +507,12 @@ const fr: Messages = {
   "code.apply": "Appliquer",
   "code.applied": "{code} appliqué : {amount} de réduction",
   "code.reapply": "La quantité a changé : appliquez à nouveau le code pour voir la réduction.",
+  // Bundles
+  "bundle.chip": "Pack",
+  "bundle.inside": "Dans ce pack",
+  "bundle.saving": "Séparément {separately} : vous économisez {amount}",
+  "bundle.make": "En faire un pack de mes offres instantanées",
+  "bundle.makeHint": "Choisissez 2 à 10 de vos offres à livraison instantanée. L’acheteur les reçoit toutes en même temps, depuis le stock de ces offres, au prix indiqué plus haut.",
+  "bundle.qtyOf": "Combien de {title}",
 };
 export default fr;

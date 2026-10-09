@@ -166,9 +166,7 @@ export async function gameDirectory(q: Queryable) {
          FROM offers f JOIN users u ON u.id = f.seller_id
         WHERE f.status = 'active' AND f.reserved_for IS NULL AND u.status = 'active' AND u.deleted_at IS NULL
           AND NOT (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now()))
-          AND (CASE WHEN f.delivery_mode = 'auto'
-                    THEN EXISTS (SELECT 1 FROM inventory_items i WHERE i.offer_id = f.id AND i.status = 'available')
-                    ELSE f.stock > 0 END)
+          AND offer_available(f.id) > 0
      ), per_cat AS (
        SELECT game, category_slug, count(*)::int AS n FROM live GROUP BY game, category_slug
      )

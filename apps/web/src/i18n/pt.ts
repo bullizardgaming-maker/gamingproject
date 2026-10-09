@@ -508,5 +508,12 @@ const pt: Messages = {
   "code.apply": "Aplicar",
   "code.applied": "{code} aplicado: {amount} de desconto",
   "code.reapply": "A quantidade mudou: aplique o cupom de novo para ver o desconto.",
+  // Bundles
+  "bundle.chip": "Pacote",
+  "bundle.inside": "Neste pacote",
+  "bundle.saving": "Separado {separately}: você economiza {amount}",
+  "bundle.make": "Transformar em um pacote dos meus anúncios instantâneos",
+  "bundle.makeHint": "Escolha de 2 a 10 anúncios com entrega instantânea. O comprador recebe tudo de uma vez, do estoque desses anúncios, pelo preço definido acima.",
+  "bundle.qtyOf": "Quantos de {title}",
 };
 export default pt;

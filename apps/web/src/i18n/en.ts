@@ -686,6 +686,14 @@ const en = {
   "code.applied": "{code} applied: {amount} off",
   "code.reapply": "Quantity changed: apply the code again to see the discount.",
 
+  // Bundles
+  "bundle.chip": "Bundle",
+  "bundle.inside": "In this bundle",
+  "bundle.saving": "Separately {separately}: you save {amount}",
+  "bundle.make": "Make this a bundle of my instant listings",
+  "bundle.makeHint": "Pick 2–10 of your instant-delivery listings. Buyers get them all at once, delivered from those listings’ stock, at the price you set above.",
+  "bundle.qtyOf": "How many of {title}",
+
   // Generic
   'common.notFound': 'Page not found',
   'common.englishOnly': 'This section is in English.',
