@@ -20,6 +20,7 @@ import { decideTopUp, listTopUps, planTopUps } from '../domain/fxtopups.js';
 import { chatLegalHold, shredUserChatKey } from '../domain/chatkeys.js';
 import { businessMetrics } from '../domain/analytics.js';
 import { getTicket, staffReply, ticketQueue, updateTicket } from '../domain/support.js';
+import { caseFile } from '../domain/disputes.js';
 import { addTerm, chatFlagQueue, decideChatFlag, decideListing, listTerms, moderationCounts, removeTerm, reviewQueue } from '../domain/moderation.js';
 import { requirePermission } from '../server.js';
 import { audit, listAudit } from '../domain/audit.js';
@@ -41,10 +42,19 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     requirePermission(req, 'disputes.manage');
     return many(
       ctx.db,
-      `SELECT d.*, o.amount_cents, o.currency, o.buyer_id, o.seller_id, r.id AS room_id
-         FROM disputes d JOIN orders o ON o.id = d.order_id JOIN chat_rooms r ON r.order_id = o.id
+      `SELECT d.*, o.amount_cents, o.currency, o.buyer_id, o.seller_id, r.id AS room_id, f.title AS offer_title,
+              (SELECT count(*)::int FROM dispute_statements s WHERE s.dispute_id = d.id) AS statements
+         FROM disputes d JOIN orders o ON o.id = d.order_id JOIN chat_rooms r ON r.order_id = o.id JOIN offers f ON f.id = o.offer_id
         WHERE d.status = 'open' ORDER BY d.created_at LIMIT 200`,
     );
+  });
+  /** The arbiter's case file: one timeline, the listing as bought, payment checks, both sides' records. */
+  app.get('/admin/disputes/:id/case', async (req) => {
+    requirePermission(req, 'disputes.manage');
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const file = await caseFile(ctx, id);
+    await audit(ctx.db, req, 'dispute.case_viewed', { type: 'dispute', id });
+    return file;
   });
 
   app.post('/admin/disputes/:id/resolve', async (req) => {

@@ -62,6 +62,10 @@ const de: LocalePack = {
       subject: (d) => `Streitfall zu ${d.title} eröffnet`,
       body: (d, link) => `Ein Streitfall wurde eröffnet: „${d.reason}“. Die Zahlung ist eingefroren, bis ein Schlichter den Bestell-Chat prüft. Füge jetzt Nachweise im Chat hinzu.\n\n${link(`/orders/${d.order_id}`)}`,
     },
+    dispute_statement: {
+      subject: () => 'Neue Stellungnahme in deinem Streitfall',
+      body: (d, link) => `Der ${d.role === 'buyer' ? 'Käufer' : 'Verkäufer'} hat eine Stellungnahme zum Streitfall hinzugefügt. Lies sie und antworte im Bestell-Chat oder mit deiner eigenen Stellungnahme, bevor der Schlichter entscheidet.\n\n${link(`/orders/${d.order_id}`)}`,
+    },
     dispute_resolved: {
       subject: (d) => `Streitfall entschieden: ${d.title}`,
       body: (d, link) => `Der Schlichter hat zugunsten des ${d.outcome === 'buyer' ? 'Käufers' : 'Verkäufers'} entschieden. Hinweis: „${d.note}“\n\n${link(`/orders/${d.order_id}`)}`,

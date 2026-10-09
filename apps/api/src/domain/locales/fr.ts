@@ -62,6 +62,10 @@ const fr: LocalePack = {
       subject: (d) => `Litige ouvert sur ${d.title}`,
       body: (d, link) => `Un litige a été ouvert : « ${d.reason} ». Le paiement est gelé jusqu’à ce qu’un arbitre examine le chat de la commande. Ajoutez vos preuves au chat dès maintenant.\n\n${link(`/orders/${d.order_id}`)}`,
     },
+    dispute_statement: {
+      subject: () => 'Nouvelle déclaration dans votre litige',
+      body: (d, link) => `${d.role === 'buyer' ? 'L’acheteur' : 'Le vendeur'} a ajouté une déclaration au litige. Lisez-la et répondez dans la discussion de la commande ou par votre propre déclaration avant la décision de l’arbitre.\n\n${link(`/orders/${d.order_id}`)}`,
+    },
     dispute_resolved: {
       subject: (d) => `Litige tranché : ${d.title}`,
       body: (d, link) => `L’arbitre a tranché en faveur de ${d.outcome === 'buyer' ? 'l’acheteur' : 'du vendeur'}. Note : « ${d.note} »\n\n${link(`/orders/${d.order_id}`)}`,

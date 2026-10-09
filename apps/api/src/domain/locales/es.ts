@@ -62,6 +62,10 @@ const es: LocalePack = {
       subject: (d) => `Disputa abierta en ${d.title}`,
       body: (d, link) => `Se ha abierto una disputa: «${d.reason}». El pago queda congelado hasta que un árbitro revise el chat del pedido. Añade ya tus pruebas al chat.\n\n${link(`/orders/${d.order_id}`)}`,
     },
+    dispute_statement: {
+      subject: () => 'Nueva declaración en tu disputa',
+      body: (d, link) => `El ${d.role === 'buyer' ? 'comprador' : 'vendedor'} añadió una declaración a la disputa. Léela y responde en el chat del pedido o con tu propia declaración antes de que decida el árbitro.\n\n${link(`/orders/${d.order_id}`)}`,
+    },
     dispute_resolved: {
       subject: (d) => `Disputa resuelta: ${d.title}`,
       body: (d, link) => `El árbitro falló a favor del ${d.outcome === 'buyer' ? 'comprador' : 'vendedor'}. Nota: «${d.note}»\n\n${link(`/orders/${d.order_id}`)}`,

@@ -62,6 +62,10 @@ const ar: LocalePack = {
       subject: (d) => `فُتح نزاع على ${d.title}`,
       body: (d, link) => `فُتح نزاع: «${d.reason}». المبلغ مجمّد حتى يراجع المحكّم محادثة الطلب. أضف أي أدلة إلى المحادثة الآن.\n\n${link(`/orders/${d.order_id}`)}`,
     },
+    dispute_statement: {
+      subject: () => 'بيان جديد في نزاعك',
+      body: (d, link) => `أضاف ${d.role === 'buyer' ? 'المشتري' : 'البائع'} بيانًا إلى النزاع. اقرأه ورُدّ في محادثة الطلب أو ببيانك قبل أن يقرر المحكّم.\n\n${link(`/orders/${d.order_id}`)}`,
+    },
     dispute_resolved: {
       subject: (d) => `حُسم النزاع: ${d.title}`,
       body: (d, link) => `قرر المحكّم لصالح ${d.outcome === 'buyer' ? 'المشتري' : 'البائع'}. ملاحظة: «${d.note}»\n\n${link(`/orders/${d.order_id}`)}`,

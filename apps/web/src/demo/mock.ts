@@ -677,10 +677,32 @@ route('POST', '/orders/:id/dispute', ({ me, params, body }) => {
   const u = need(me);
   const o = orderFor(u, params[0]!);
   if (!['paid', 'delivered'].includes(o.status)) fail(409, 'invalid_state', `Cannot dispute an order that is ${o.status}`);
-  o.dispute = { id: rid(), reason: body.reason, status: 'open', opened_by: u.id, created_at: now() };
+  const role = u.id === o.buyer_id ? 'buyer' : 'seller';
+  o.dispute = { id: rid(), reason: body.reason, category: body.category ?? 'other', status: 'open', opened_by: u.id, created_at: now(),
+    statements: [{ id: rid(), role, body: body.reason, author_name: u.display_name, created_at: now() }] };
   transition(o, 'disputed', 'dispute_opened');
   live(appendMessage(o.room_id, null, 'system', 'A dispute was opened. Escrow is frozen until an arbiter reviews this chat.'));
-  return orderDetail(o);
+  return o.dispute;
+});
+route('POST', '/orders/:id/dispute/statements', ({ me, params, body }) => {
+  const u = need(me);
+  const o = orderFor(u, params[0]!);
+  if (!o.dispute) fail(404, 'not_found', 'Dispute not found');
+  if (o.dispute.status !== 'open') fail(409, 'dispute_closed', 'This dispute has been decided');
+  const role = u.id === o.buyer_id ? 'buyer' : 'seller';
+  o.dispute.statements ??= [];
+  if (o.dispute.statements.filter((s: any) => s.role === role).length >= 5) fail(409, 'too_many_statements', 'Each side can add up to 5 statements; add anything else in the chat');
+  if (String(body.body ?? '').trim().length < 10) fail(400, 'validation_error', 'Write at least 10 characters');
+  o.dispute.statements.push({ id: rid(), role, body: String(body.body).trim(), author_name: u.display_name, created_at: now() });
+  live(appendMessage(o.room_id, null, 'system', `The ${role} added a statement to the dispute.`));
+  // Stand-in for the other side answering, so the demo shows both cases.
+  if (role === 'buyer' && !o.dispute.statements.some((s: any) => s.role === 'seller')) {
+    setTimeout(() => {
+      o.dispute.statements.push({ id: rid(), role: 'seller', body: 'I delivered what the listing describes; the delivery message in the chat shows it. (Demo: simulated reply.)', author_name: userById(o.seller_id)?.display_name, created_at: now() });
+      save();
+    }, 4000);
+  }
+  return o.dispute.statements;
 });
 route('POST', '/orders/:id/cancel', ({ me, params }) => {
   const o = orderFor(need(me), params[0]!);
@@ -1276,7 +1298,36 @@ route('GET', '/admin/disputes', ({ me }) => {
   needStaff(me);
   return state.orders
     .filter((o) => o.dispute?.status === 'open')
-    .map((o) => ({ id: o.dispute.id, order_id: o.id, reason: o.dispute.reason, amount_cents: o.amount_cents, currency: o.currency, created_at: o.dispute.created_at, title: o.offer_title }));
+    .map((o) => ({ id: o.dispute.id, order_id: o.id, reason: o.dispute.reason, category: o.dispute.category ?? 'other', statements: o.dispute.statements?.length ?? 0, amount_cents: o.amount_cents, currency: o.currency, created_at: o.dispute.created_at, title: o.offer_title, offer_title: o.offer_title }));
+});
+route('GET', '/admin/disputes/:id/case', ({ me, params }) => {
+  needPerm(me, 'disputes.manage');
+  const o = state.orders.find((x) => x.dispute?.id === params[0]) ?? fail(404, 'not_found', 'Dispute not found');
+  const who = (id: string | null) => (!id ? 'system' : id === o.buyer_id ? 'buyer' : id === o.seller_id ? 'seller' : 'staff');
+  const msgs = state.messages.filter((m) => m.room_id === o.room_id);
+  const party = (id: string) => {
+    const u = userById(id);
+    return { id, display_name: u?.display_name ?? 'User', created_at: u?.created_at, kyc_tier: u?.kyc_tier, trust_level: state.trust[id] ?? 'new', offplatform_strikes: state.chatFlags.filter((f) => f.user_id === id && f.status !== 'dismissed').length,
+      orders_as_buyer: state.orders.filter((x) => x.buyer_id === id && x.status !== 'awaiting_payment').length, completed_sales: sellerStats(id).completed,
+      disputes_opened: state.orders.filter((x) => x.dispute?.opened_by === id).length, disputes_against_as_seller: state.orders.filter((x) => x.dispute && x.seller_id === id).length, disputes_lost_as_seller: 0, chargebacks_filed: 0 };
+  };
+  const timeline = [
+    ...o.events.map((e: any) => ({ at: e.created_at, type: 'status', who: 'system', text: `${e.from_status ?? 'created'} → ${e.to_status}`, meta: { reason: e.reason } })),
+    ...msgs.map((m) => ({ at: m.created_at, type: 'message', who: m.kind === 'text' ? who(m.sender_id) : 'system', text: m.body, meta: { seq: m.seq, kind: m.kind } })),
+    ...(o.dispute.statements ?? []).map((s: any) => ({ at: s.created_at, type: 'statement', who: s.role, text: s.body, meta: {} })),
+  ].sort((a, b) => a.at.localeCompare(b.at));
+  const lastSeller = msgs.filter((m) => m.sender_id === o.seller_id).at(-1);
+  return {
+    dispute: { id: o.dispute.id, status: o.dispute.status, category: o.dispute.category ?? 'other', reason: o.dispute.reason, opened_by: who(o.dispute.opened_by), created_at: o.dispute.created_at },
+    order: { id: o.id, status: o.status, title: o.offer_title, quantity: o.quantity, amount_cents: o.amount_cents, currency: o.currency, protection: o.protection, created_at: o.created_at, paid_at: o.paid_at, delivered_at: o.delivered_at, protection_ends_at: o.protection_ends_at },
+    snapshot: { offer: { title: o.offer_title }, captured_at: o.created_at },
+    payment: { avs_result: 'pass/pass', cvv_result: 'pass', card_brand: 'visa', card_last4: '4242', billing_country: 'US', ip_country: 'US' },
+    risk: [], checklist: null, buyer: party(o.buyer_id), seller: { ...party(o.seller_id), rates: { onTimePct: 96, disputePct: 0.8, chargebackPct: 0.1 } },
+    statements: o.dispute.statements ?? [],
+    facts: { deliveredLate: false, sellerLastMessageAt: lastSeller?.created_at ?? null, sellerRepliedAfterDispute: msgs.some((m) => m.sender_id === o.seller_id && m.created_at > o.dispute.created_at), listingChangedSincePurchase: false, cardCountryMatchesIp: true, chatChainIntact: true, checklistCompleted: null },
+    chain: { valid: true, messages: msgs.length },
+    timeline,
+  };
 });
 route('POST', '/admin/disputes/:id/resolve', ({ me, params, body }) => {
   const staff = needStaff(me);

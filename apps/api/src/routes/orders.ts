@@ -9,6 +9,7 @@ import {
 } from '../domain/orders.js';
 import { buildEscrowTerms } from '../domain/web3.js';
 import { MAX_CART_ITEMS, cartView, createCartCheckout } from '../domain/cart.js';
+import { DISPUTE_CATEGORIES, addStatement } from '../domain/disputes.js';
 import { createReview, replyToReview, sellerProfile } from '../domain/reviews.js';
 import { badRequest, forbidden, notFound } from '../lib/errors.js';
 import { readAttachment, uploadAttachment } from '../domain/attachments.js';
@@ -122,8 +123,13 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/orders/:id/cancel-late', async (req) => cancelLateOrder(ctx, Id.parse(req.params).id, me(req).id));
 
   app.post('/orders/:id/dispute', async (req) => {
-    const { reason } = z.object({ reason: z.string().trim().min(10).max(2_000) }).parse(req.body);
-    return openDispute(ctx, Id.parse(req.params).id, me(req).id, reason);
+    const { reason, category } = z.object({ reason: z.string().trim().min(10).max(2_000), category: z.enum(DISPUTE_CATEGORIES).default('other') }).parse(req.body);
+    return openDispute(ctx, Id.parse(req.params).id, me(req).id, reason, category);
+  });
+  /** Either side adds a written statement to an open dispute (up to five each). */
+  app.post('/orders/:id/dispute/statements', async (req, reply) => {
+    const { body } = z.object({ body: z.string().trim().min(10).max(2_000) }).parse(req.body);
+    return reply.status(201).send(await addStatement(ctx, Id.parse(req.params).id, me(req).id, body));
   });
 
   app.patch('/orders/:id/checklist', async (req) => {

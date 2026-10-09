@@ -8,6 +8,8 @@ import { usePageMeta } from '@/lib/seo';
 import { currentLocale, t } from '../i18n';
 import { BusinessPanel } from './BusinessPanel';
 import { SupportPanel } from './SupportPanel';
+import { DisputeCase } from './DisputeCase';
+import { DISPUTE_CATEGORY } from './OrderPage';
 import { ModerationPanel } from './ModerationPanel';
 
 type ListTab = 'disputes' | 'risk' | 'proofs' | 'chargebacks' | 'ledger' | 'recon' | 'audit';
@@ -256,14 +258,26 @@ export function Admin() {
 
 function DisputeCard({ d, onResolve }: { d: any; onResolve: (outcome: 'buyer' | 'seller', note: string) => void }) {
   const [note, setNote] = useState('');
+  const [open, setOpen] = useState(false);
+  if (open)
+    return (
+      <div className="stack">
+        <button className="cursor-pointer self-start border-0 bg-transparent p-0 underline" onClick={() => setOpen(false)}>← All disputes</button>
+        <DisputeCase id={d.id} onResolve={onResolve} />
+      </div>
+    );
   return (
     <div className="card stack">
       <div className="row spread">
         <div>
           <b>{money(d.amount_cents, d.currency)}</b> <span className="muted small">opened {fmt(d.created_at)}</span>
         </div>
-        <Link to={`/orders/${d.order_id}`}>Read order and chat</Link>
+        <span className="row" style={{ gap: 12 }}>
+          <button className="btn" onClick={() => setOpen(true)}>Open case file</button>
+          <Link to={`/orders/${d.order_id}`}>Read order and chat</Link>
+        </span>
       </div>
+      <div className="small muted">{d.offer_title ? `${d.offer_title} · ` : ''}{DISPUTE_CATEGORY[d.category] ?? d.category ?? ''}{d.statements ? ` · ${d.statements} statement${d.statements === 1 ? '' : 's'}` : ''}</div>
       <p>“{d.reason}”</p>
       <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Decision note (shared in the order record)" style={{ minHeight: 70 }} />
       <div className="row">

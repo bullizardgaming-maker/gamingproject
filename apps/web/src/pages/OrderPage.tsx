@@ -32,7 +32,7 @@ interface OrderDetail {
   seller_protected: boolean;
   room_id: string;
   checklist: { items: Array<{ key: string; label: string; done: boolean }>; completed_at: string | null } | null;
-  dispute: { reason: string; status: string } | null;
+  dispute: { reason: string; status: string; category?: string; statements?: Array<{ id: string; role: 'buyer' | 'seller'; body: string; author_name: string; created_at: string }> } | null;
   review: { rating: number; comment: string; seller_reply: string | null } | null;
   events: Array<{ from_status: string | null; to_status: string; reason: string; created_at: string }>;
 }
@@ -48,6 +48,14 @@ const STATUS_TEXT: Record<string, string> = {
   charged_back: 'Charged back',
 };
 
+export const DISPUTE_CATEGORY: Record<string, string> = {
+  not_delivered: 'Not delivered',
+  not_as_described: 'Not as described',
+  not_working: 'Doesn’t work (code invalid, item missing)',
+  account_recovered: 'Account taken back by a previous owner',
+  other: 'Something else',
+};
+
 export function OrderPage() {
   usePageMeta({ title: 'Order', noindex: true });
   const { id } = useParams();
@@ -57,6 +65,8 @@ export function OrderPage() {
   const [error, setError] = useState('');
   const [payload, setPayload] = useState('');
   const [reason, setReason] = useState('');
+  const [category, setCategory] = useState('not_delivered');
+  const [statement, setStatement] = useState('');
   const [now, setNow] = useState(Date.now());
 
   const load = useCallback(async () => {
@@ -189,8 +199,14 @@ export function OrderPage() {
               <summary style={{ cursor: 'pointer' }}><b>Open a dispute</b></summary>
               <div className="stack" style={{ marginTop: 12 }}>
                 <p className="small muted">Escrow freezes and an arbiter reviews this order's chat. Describe what happened and add any proof in the chat.</p>
-                <textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="What went wrong?" />
-                <button className="btn dispute" disabled={reason.trim().length < 10} onClick={() => act('dispute', { reason })}>Open dispute</button>
+                <label className="field">
+                  What's the problem?
+                  <select value={category} onChange={(e) => setCategory(e.target.value)}>
+                    {Object.entries(DISPUTE_CATEGORY).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  </select>
+                </label>
+                <textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="What happened? Be specific: what you expected, what you got, and when." />
+                <button className="btn dispute" disabled={reason.trim().length < 10} onClick={() => act('dispute', { reason, category })}>Open dispute</button>
               </div>
             </details>
           )}
@@ -205,8 +221,24 @@ export function OrderPage() {
           )}
 
           {order.dispute && (
-            <div className="alert">
-              <b>Dispute ({order.dispute.status.replace('_', ' ')}):</b> {order.dispute.reason}
+            <div className="card stack">
+              <div className="row spread">
+                <h3 style={{ margin: 0 }}>Dispute</h3>
+                <span className={`chip ${order.dispute.status === 'open' ? 'disputed' : 'released'}`}>{order.dispute.status.replace('_', ' ')}</span>
+              </div>
+              {order.dispute.category && <div className="small muted">{DISPUTE_CATEGORY[order.dispute.category] ?? order.dispute.category}</div>}
+              {(order.dispute.statements ?? []).map((s) => (
+                <div key={s.id} className="small" style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid var(--rule)', background: s.role === 'buyer' ? 'var(--paper)' : 'var(--held-soft)' }}>
+                  <b>{s.role === 'buyer' ? 'Buyer' : 'Seller'} statement</b> <span className="muted">· {s.author_name} · {new Date(s.created_at).toLocaleString()}</span>
+                  <div style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>{s.body}</div>
+                </div>
+              ))}
+              {order.dispute.status === 'open' && (isBuyer || isSeller) && (
+                <div className="stack" style={{ gap: 8 }}>
+                  <textarea value={statement} onChange={(e) => setStatement(e.target.value)} placeholder="Add your statement for the arbiter (up to 5). Put screenshots in the chat." />
+                  <button className="btn ghost" disabled={statement.trim().length < 10} onClick={async () => (await act('dispute/statements', { body: statement }), setStatement(''))}>Add statement</button>
+                </div>
+              )}
             </div>
           )}
 

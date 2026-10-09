@@ -23,6 +23,7 @@ import { quotePromo, reserveRedemption, setRedemptionStatus } from './promos.js'
 import { availableCredit, maybeGrantReferral } from './referrals.js';
 import { unitPriceFor, type PriceTier } from './offers.js';
 import { effectivePrice, quoteSellerCode, type SaleFields } from './discounts.js';
+import { listStatements, type DisputeCategory } from './disputes.js';
 
 export type OrderStatus = 'awaiting_payment' | 'paid' | 'delivered' | 'completed' | 'disputed' | 'refunded' | 'cancelled' | 'charged_back';
 
@@ -816,7 +817,7 @@ export async function cancelUnpaidExpired(ctx: Ctx, limit = 200): Promise<number
   return n;
 }
 
-export async function openDispute(ctx: Ctx, orderId: string, userId: string, reason: string) {
+export async function openDispute(ctx: Ctx, orderId: string, userId: string, reason: string, category: DisputeCategory = 'other') {
   return withScope(ctx, async (s) => {
     const order = await lockOrder(s.tx, orderId);
     if (order.buyer_id !== userId && order.seller_id !== userId) throw forbidden('not_participant', 'Not a participant of this order');
@@ -826,7 +827,9 @@ export async function openDispute(ctx: Ctx, orderId: string, userId: string, rea
       throw conflict('window_closed', 'The protection window for this order has ended');
     }
     await transition(s.tx, order, 'disputed', userId, 'dispute_opened', '', [], { reason });
-    const dispute = await one(s.tx, 'INSERT INTO disputes (order_id, opened_by, reason) VALUES ($1, $2, $3) RETURNING *', [orderId, userId, reason]);
+    const dispute = await one(s.tx, 'INSERT INTO disputes (order_id, opened_by, reason, category) VALUES ($1, $2, $3, $4) RETURNING *', [orderId, userId, reason, category]);
+    // The opening reason is also the opener's first statement.
+    await s.tx.query('INSERT INTO dispute_statements (dispute_id, user_id, role, body) VALUES ($1, $2, $3, $4)', [dispute.id, userId, userId === order.buyer_id ? 'buyer' : 'seller', reason]);
     const room = await roomOf(s.tx, orderId);
     await appendMessage(s, room.id, null, 'system', `Dispute opened: "${reason}". Escrow is frozen. An arbitration specialist will review this chat log — keep all evidence here.`);
     await enqueueWebhook(s.tx, order.seller_id, 'order.disputed', { ...orderSummary(order), reason });
@@ -940,7 +943,7 @@ export async function getOrderFor(q: Queryable, orderId: string, user: { id: str
   if (!staff && order.buyer_id !== user.id && order.seller_id !== user.id) throw notFound('Order');
   const [checklist, dispute, events, review] = await Promise.all([
     maybeOne(q, 'SELECT items, completed_at FROM security_checklists WHERE order_id = $1', [orderId]),
-    maybeOne(q, 'SELECT * FROM disputes WHERE order_id = $1', [orderId]),
+    maybeOne<any>(q, 'SELECT * FROM disputes WHERE order_id = $1', [orderId]).then(async (d) => d && { ...d, statements: await listStatements(q, d.id) }),
     many(q, 'SELECT from_status, to_status, reason, created_at FROM order_events WHERE order_id = $1 ORDER BY id', [orderId]),
     maybeOne(q, 'SELECT id, rating, comment, seller_reply, created_at FROM reviews WHERE order_id = $1', [orderId]),
   ]);

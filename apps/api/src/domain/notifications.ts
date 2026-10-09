@@ -105,6 +105,11 @@ export const TEMPLATES = {
     subject: (d) => `Dispute opened on ${d.title}`,
     body: (d, link) => `A dispute was opened: "${d.reason}". The payment is frozen until an arbiter reviews the order chat. Add any evidence to the chat now.\n\n${link(`/orders/${d.order_id}`)}`,
   },
+  dispute_statement: {
+    category: 'disputes',
+    subject: (d) => `New statement in your dispute`,
+    body: (d, link) => `The ${d.role} added a statement to the dispute. Read it and reply in the order chat or with your own statement before the arbiter decides.\n\n${link(`/orders/${d.order_id}`)}`,
+  },
   dispute_resolved: {
     category: 'disputes',
     subject: (d) => `Dispute resolved: ${d.title}`,
