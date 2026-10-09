@@ -10,7 +10,7 @@ import { CATEGORY_DEFAULTS, GAME_SETS, attributesFor, cleanAttributes } from '..
 import { checkTiers, unitPriceFor } from '../../../api/src/domain/priceTiers';
 import { detectOffPlatform, matchTerms } from '../../../api/src/domain/safety';
 
-const KEY = 'bz.demo.v9';
+const KEY = 'bz.demo.v10';
 const day = 86_400_000;
 const now = () => new Date().toISOString();
 const rid = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2) + Date.now().toString(16));
@@ -251,6 +251,7 @@ function seedOrdersFor(buyer: DemoUser) {
 
 function createOrderRecord(buyer: DemoUser, offer: any, quantity: number, rail: 'fiat' | 'crypto') {
   const amount = unitPriceFor(offer, quantity) * quantity;
+  // (a cart sets checkout_id on the orders it creates)
   const bps = rateFor(offer);
   const commission = Math.round((amount * bps) / 10_000);
   const isAccount = offer.category_kind === 'account';
@@ -516,6 +517,37 @@ route('POST', '/orders', ({ me, body }) => {
   if (available < qty) fail(409, 'out_of_stock', 'Not enough stock for this order');
   const o = createOrderRecord(u, offer, qty, body.rail ?? 'fiat');
   return { order: orderDetail(o), checkoutUrl: o.rail === 'fiat' ? `/demo-checkout/${o.id}` : null };
+});
+// Cart: one demo payment for several orders (one per listing, each in its own escrow).
+route('POST', '/orders/cart', ({ me, body }) => {
+  const u = need(me);
+  if (u.kyc_tier < 1) fail(403, 'kyc_required', 'Verify your email and phone before purchasing');
+  const items: Array<{ offerId: string; quantity: number }> = body.items ?? [];
+  if (!items.length || items.length > 20) fail(400, 'invalid_cart', 'A cart holds 1 to 20 listings');
+  if (new Set(items.map((i) => i.offerId)).size !== items.length) fail(400, 'invalid_cart', 'Each listing can appear once; change its quantity instead');
+  // Check everything first so a cart either fully goes through or not at all.
+  const lines = items.map((i) => {
+    const offer = state.offers.find((x) => x.id === i.offerId && (!x.reserved_for || x.reserved_for === u.id) && x.status === 'active') ?? fail(404, 'not_found', 'Listing not found');
+    if (offer.seller_id === u.id) fail(403, 'own_offer', 'You cannot buy your own offer');
+    const qty = Number(i.quantity ?? 1);
+    if ((offer.delivery_mode === 'auto' ? offer.inventory.length : offer.stock) < qty) fail(409, 'out_of_stock', `Not enough stock for "${offer.title}"`);
+    return { offer, qty };
+  });
+  const checkout = { id: `cart-${rid().slice(0, 8)}`, buyer_id: u.id, order_ids: lines.map(({ offer, qty }) => createOrderRecord(u, offer, qty, 'fiat').id), created_at: now() };
+  for (const id of checkout.order_ids) state.orders.find((o) => o.id === id)!.checkout_id = checkout.id;
+  state.checkouts.push(checkout);
+  return { ...checkoutView(checkout), checkoutUrl: `/demo-checkout/${checkout.id}`, replayed: false };
+});
+const checkoutView = (c: any) => {
+  const orders = c.order_ids.map((id: string) => state.orders.find((o) => o.id === id)!);
+  return {
+    checkout: { id: c.id, status: orders.every((o: any) => o.status !== 'awaiting_payment') ? 'paid' : 'awaiting_payment', presentment_amount_cents: orders.reduce((s: number, o: any) => s + o.amount_cents, 0), presentment_currency: 'USD', created_at: c.created_at },
+    orders: orders.map((o: any) => ({ id: o.id, status: o.status, seller_id: o.seller_id, offer_id: o.offer_id, offer_title: o.offer_title, quantity: o.quantity, amount_cents: o.amount_cents, currency: o.currency, seller_name: userById(o.seller_id)?.display_name })),
+  };
+};
+route('GET', '/checkouts/:id', ({ me, params }) => {
+  const u = need(me);
+  return checkoutView(state.checkouts.find((c) => c.id === params[0] && c.buyer_id === u.id) ?? fail(404, 'not_found', 'Checkout not found'));
 });
 route('GET', '/orders', ({ me, query }) => {
   const u = need(me);

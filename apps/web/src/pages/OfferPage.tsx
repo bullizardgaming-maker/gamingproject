@@ -11,6 +11,8 @@ import { attributePairs } from '@/lib/attributes';
 import { WatchButton } from '../components/WatchButton';
 import { unitPriceFor } from '@/lib/tiers';
 import { OnlineDot, replyLabel } from '@/lib/presence';
+import { addToCart } from '@/lib/cart';
+import { ShoppingCart } from 'lucide-react';
 import { t } from '../i18n';
 
 export function OfferPage() {
@@ -25,6 +27,7 @@ export function OfferPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [similar, setSimilar] = useState<Offer[]>([]);
+  const [added, setAdded] = useState<'' | 'ok' | 'full'>('');
   const price = usePrice();
   usePageMeta({ title: offer?.title, description: offer ? `${offer.title} — ${offer.game}. Paid into escrow, released only after delivery checks out.` : undefined });
 
@@ -176,9 +179,16 @@ export function OfferPage() {
           <input type="checkbox" style={{ width: 'auto' }} checked={tos} onChange={(e) => setTos(e.target.checked)} />
           {t('offer.tos')}
         </label>
+        {added === 'ok' && <div className="notice small" role="status">{t('cart.added')} <Link to="/cart">{t('cart.view')}</Link></div>}
+        {added === 'full' && <div className="alert small">{t('cart.full')}</div>}
         {error && <div className="alert">{error} {error === t('offer.verifyFirst') && <Link to="/account">{t('offer.verifyNow')}</Link>}</div>}
         {!user ? (
-          <Link className="btn" to={`/login?next=/offers/${offer.id}`}>{t('offer.signInToBuy')}</Link>
+          <div className="row">
+            <Link className="btn" to={`/login?next=/offers/${offer.id}`}>{t('offer.signInToBuy')}</Link>
+            <button className="btn ghost" disabled={offer.stock < qty} onClick={() => setAdded(addToCart(offer.id, isAccount ? 1 : qty) ? 'ok' : 'full')}>
+              <ShoppingCart className="size-4" /> {t('cart.add')}
+            </button>
+          </div>
         ) : own ? (
           <p className="muted small">{t('offer.yours')}</p>
         ) : (
@@ -186,6 +196,15 @@ export function OfferPage() {
             <button className="btn" disabled={!tos || busy || offer.stock < qty || (rail === 'crypto' && !/^0x[0-9a-fA-F]{40}$/.test(wallet))} onClick={buy}>
               {busy ? t('offer.opening') : t('offer.pay', { amount: money(total, offer.currency) })}
             </button>
+            {rail === 'fiat' && (
+              <button
+                className="btn ghost"
+                disabled={offer.stock < qty}
+                onClick={() => setAdded(addToCart(offer.id, isAccount ? 1 : qty) ? 'ok' : 'full')}
+              >
+                <ShoppingCart className="size-4" /> {t('cart.add')}
+              </button>
+            )}
             <button className="btn ghost" onClick={ask}>{t('offer.ask')}</button>
           </div>
         )}

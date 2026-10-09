@@ -8,6 +8,7 @@ import {
   cancelLateOrder, cancelOrder, confirmOrder, createOrder, quoteOrder, deliverManually, getOrderFor, listOrders, openDispute, updateChecklist,
 } from '../domain/orders.js';
 import { buildEscrowTerms } from '../domain/web3.js';
+import { MAX_CART_ITEMS, cartView, createCartCheckout } from '../domain/cart.js';
 import { createReview, replyToReview, sellerProfile } from '../domain/reviews.js';
 import { badRequest, forbidden, notFound } from '../lib/errors.js';
 import { readAttachment, uploadAttachment } from '../domain/attachments.js';
@@ -41,6 +42,31 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
       device: m.device,
     });
     return reply.status(res.replayed ? 200 : 201).send(res);
+  });
+
+  /** Cart: several listings in one card payment; each listing becomes its own escrow order. */
+  app.post('/orders/cart', async (req, reply) => {
+    const body = z
+      .object({
+        items: z.array(z.object({ offerId: z.string().uuid(), quantity: z.number().int().positive().max(1000).default(1) })).min(1).max(MAX_CART_ITEMS),
+        acceptTos: z.literal(true),
+        currency: z.string().length(3).toUpperCase().optional(),
+      })
+      .parse(req.body);
+    const idem = req.headers['idempotency-key'];
+    const m = requestMeta(req);
+    const res = await createCartCheckout(ctx, {
+      buyer: me(req), ...body, rail: 'fiat',
+      idempotencyKey: typeof idem === 'string' ? idem.slice(0, 100) : undefined,
+      ip: m.ip, ipCountry: m.ipCountry, device: m.device,
+    });
+    return reply.status(res.replayed ? 200 : 201).send(res);
+  });
+  app.get('/checkouts/:id', async (req) => {
+    const { id } = Id.parse(req.params);
+    const c = await maybeOne(ctx.db, 'SELECT buyer_id FROM checkouts WHERE id = $1', [id]);
+    if (!c || c.buyer_id !== me(req).id) throw notFound('Checkout');
+    return cartView(ctx.db, id);
   });
 
   /** Price breakdown before paying: FX conversion, promo discount, store credit, card amount. */

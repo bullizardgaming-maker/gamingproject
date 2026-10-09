@@ -7,6 +7,7 @@ import { handleChainEvent, handlePaymentCaptured, type ChainEvent } from '../dom
 import { applyKycResult } from '../domain/users.js';
 import { applyPayoutAccountUpdate } from '../domain/payouts.js';
 import { debtPaymentByRef, handleDebtPaymentCaptured } from '../domain/debts.js';
+import { checkoutByRef, closeCheckoutChargeback, handleCheckoutCaptured, receiveCheckoutChargeback } from '../domain/cart.js';
 import { hmacSha256, safeEqual } from '../lib/crypto.js';
 import { badRequest, notFound, unauthorized } from '../lib/errors.js';
 import { MockPaymentProvider } from '../providers/payments/mock.js';
@@ -17,11 +18,16 @@ export async function processPaymentEvent(ctx: Ctx, ev: PaymentEvent) {
     case 'payment.captured':
       // The same PSP checkout also takes sellers' debt repayments.
       if (await debtPaymentByRef(ctx.db, ev.ref)) return handleDebtPaymentCaptured(ctx, ev);
+      // ...and carts: one payment for several orders.
+      if (await checkoutByRef(ctx.db, ev.ref)) return handleCheckoutCaptured(ctx, ev);
       return handlePaymentCaptured(ctx, ev);
-    case 'chargeback.created':
+    case 'chargeback.created': {
+      const checkout = await checkoutByRef(ctx.db, ev.paymentRef);
+      if (checkout) return receiveCheckoutChargeback(ctx, checkout, ev);
       return receiveChargeback(ctx, { paymentRef: ev.paymentRef, disputeRef: ev.disputeRef, network: ev.network, reasonCode: ev.reasonCode, amountCents: ev.amountCents });
+    }
     case 'chargeback.closed':
-      return closeChargeback(ctx, ev.disputeRef, ev.won);
+      return (await closeCheckoutChargeback(ctx, ev.disputeRef, ev.won)) ?? closeChargeback(ctx, ev.disputeRef, ev.won);
     case 'payout_account.updated':
       return applyPayoutAccountUpdate(ctx, ev.accountRef, ev.payoutsEnabled);
     default:
@@ -52,7 +58,15 @@ export async function integrationRoutes(app: FastifyInstance, ctx: Ctx) {
     const mock = ctx.payments;
     // A checkout is for an order or for a seller repaying a negative balance; both look alike here.
     const orderByRef = async (ref: string) =>
-      (await maybeOne(ctx.db, `SELECT o.*, f.title FROM orders o JOIN offers f ON f.id = o.offer_id WHERE o.payment_provider = 'mock' AND o.payment_ref = $1`, [ref])) ??
+      (await maybeOne(
+        ctx.db,
+        `SELECT c.id, c.buyer_id, c.presentment_amount_cents, c.presentment_currency, 1 AS quantity, true AS is_cart,
+                (SELECT count(*) || ' items' FROM orders o WHERE o.checkout_id = c.id) AS title,
+                (SELECT o.buyer_ip_country FROM orders o WHERE o.checkout_id = c.id LIMIT 1) AS buyer_ip_country
+           FROM checkouts c WHERE c.payment_provider = 'mock' AND c.payment_ref = $1`,
+        [ref],
+      )) ??
+      (await maybeOne(ctx.db, `SELECT o.*, f.title FROM orders o JOIN offers f ON f.id = o.offer_id WHERE o.payment_provider = 'mock' AND o.payment_ref = $1 AND o.checkout_id IS NULL`, [ref])) ??
       (await maybeOne(
         ctx.db,
         `SELECT id, seller_id AS buyer_id, amount_cents AS presentment_amount_cents, currency AS presentment_currency, 1 AS quantity,
@@ -118,7 +132,8 @@ small{color:#8b93a7}</style></head><body><form method="post" action="/v1/payment
       const parsed = await mock.parseWebhook(Buffer.from(raw), { 'x-mock-signature': mock.sign(raw) });
       await processPaymentEvent(ctx, parsed);
       if ((req.headers.accept ?? '').includes('application/json')) return { paid: true, orderId: order.id };
-      return reply.redirect(order.is_debt ? `${ctx.cfg.PUBLIC_WEB_URL}/sell/money?repaid=1` : `${ctx.cfg.PUBLIC_WEB_URL}/orders/${order.id}?checkout=success`, 303);
+      const back = order.is_debt ? '/sell/money?repaid=1' : order.is_cart ? '/orders?checkout=success' : `/orders/${order.id}?checkout=success`;
+      return reply.redirect(`${ctx.cfg.PUBLIC_WEB_URL}${back}`, 303);
     });
   }
 

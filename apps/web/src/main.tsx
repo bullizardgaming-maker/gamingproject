@@ -16,6 +16,7 @@ import { SellerPage } from './pages/SellerPage';
 import { Watchlist } from './pages/Watchlist';
 import { HelpArticlePage, HelpCentre, SupportList, SupportNew, SupportTicket } from './pages/Help';
 import { StatusPage } from './pages/StatusPage';
+import { CartPage } from './pages/Cart';
 import { MyProposals, MyRequests, RequestNew, RequestPage, RequestsBoard } from './pages/Requests';
 import { SiteHeader } from './components/SiteHeader';
 import { SiteFooter } from './components/SiteFooter';
@@ -55,6 +56,7 @@ function App() {
           <Route path="/sellers/:id" element={<SellerPage />} />
           <Route path="/status" element={<StatusPage />} />
           <Route path="/watchlist" element={<Watchlist />} />
+          <Route path="/cart" element={<CartPage />} />
           <Route path="/requests" element={<RequestsBoard />} />
           <Route path="/requests/new" element={<RequestNew />} />
           <Route path="/requests/mine" element={<MyRequests />} />

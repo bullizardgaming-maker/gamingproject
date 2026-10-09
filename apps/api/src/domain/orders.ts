@@ -31,6 +31,7 @@ export interface Order {
   seller_id: string;
   offer_id: string;
   quantity: number;
+  checkout_id?: string | null;
   unit_price_cents: number;
   amount_cents: number;
   currency: string;
@@ -169,6 +170,8 @@ export interface CreateOrderInput {
   useCredit?: boolean;
   /** Currency the buyer pays in. Defaults to the listing's currency. */
   currency?: string;
+  /** Part of a cart checkout (domain/cart.ts): the cart creates one payment for all its orders. */
+  checkoutId?: string;
 }
 
 /** Smallest card charge the PSP accepts, in settlement minor units. Orders fully covered by credit/promo skip the card. */
@@ -340,6 +343,10 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
       ],
     );
     if (price.promoId) await reserveRedemption(s.tx, price.promoId, order.id, buyer.id, price.discountCents);
+    if (input.checkoutId) {
+      await s.tx.query('UPDATE orders SET checkout_id = $2 WHERE id = $1', [order.id, input.checkoutId]);
+      order.checkout_id = input.checkoutId;
+    }
 
     if (offer.delivery_mode === 'auto') await reserveInventory(s.tx, offer.id, order.id, input.quantity);
     else await reserveManualStock(s.tx, offer.id, input.quantity);
@@ -374,6 +381,8 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
     await recordSignals(s.tx, buyer.id, { device: input.device, ip_subnet: subnetOf(input.ip), wallet: input.walletAddress?.toLowerCase() });
     return order;
   });
+
+  if (input.checkoutId) return { order, checkoutUrl: null, replayed: false }; // the cart creates the payment
 
   if (input.rail === 'crypto') {
     // payment_ref holds the bytes32 order id used on-chain, so the indexer can map events back.
@@ -446,7 +455,8 @@ export async function handlePaymentCaptured(ctx: Ctx, ev: Extract<PaymentEvent, 
 
   if (refundNeeded) {
     const o = refundNeeded as Order;
-    const r = await ctx.payments.refund(o.payment_ref!, o.presentment_amount_cents, o.presentment_currency);
+    // Keyed by order: orders in one cart checkout share the payment reference.
+    const r = await ctx.payments.refund(o.payment_ref!, o.presentment_amount_cents, o.presentment_currency, `refund_order_${o.id}`);
     await withScope(ctx, async (s) => {
       const cur = await lockOrder(s.tx, o.id);
       await postRefund(s.tx, cur, r.settledAmountCents);
@@ -832,7 +842,7 @@ async function refundOrder(ctx: Ctx, s: TxScope, order: Order & { delivery_mode:
   // transaction is safe: on rollback a retry re-uses the same refund.
   let settledBack: number | undefined;
   if (order.rail === 'fiat' && order.payment_ref && order.charged_cents > 0 && order.payment_provider !== 'none') {
-    settledBack = (await ctx.payments.refund(order.payment_ref, order.presentment_amount_cents, order.presentment_currency)).settledAmountCents;
+    settledBack = (await ctx.payments.refund(order.payment_ref, order.presentment_amount_cents, order.presentment_currency, `refund_order_${order.id}`)).settledAmountCents;
   }
   await postRefund(s.tx, order, settledBack);
   await setRedemptionStatus(s.tx, order.id, 'released');

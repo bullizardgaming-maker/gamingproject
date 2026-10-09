@@ -18,6 +18,8 @@ interface Category {
 export interface Offer {
   /** Set on a listing agreed on a buyer request: only that buyer can see and buy it. */
   reserved_for?: string | null;
+  status?: string;
+  shop_paused?: boolean;
   request_id?: string | null;
   /** Cheaper unit prices for larger orders, ascending by quantity. */
   price_tiers?: PriceTier[];

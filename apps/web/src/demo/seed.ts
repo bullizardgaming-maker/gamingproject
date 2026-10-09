@@ -298,6 +298,7 @@ export function seed() {
     apiKeys: [] as any[],
     watches: [] as any[],
     tickets: [] as any[],
+    checkouts: [] as Array<{ id: string; buyer_id: string; order_ids: string[]; created_at: string }>,
     // "Online now" and typical reply time per seller (minutes).
     presence: {
       [users[1]!.id]: { online: false, last_seen_at: ago(40 * 60_000), response_minutes: 12 },

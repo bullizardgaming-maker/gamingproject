@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { Heart, LayoutGrid, Moon, Search, ShieldCheck, Sun } from 'lucide-react';
+import { Heart, LayoutGrid, Moon, Search, ShieldCheck, ShoppingCart, Sun } from 'lucide-react';
+import { cartCount, useCart } from '@/lib/cart';
 import { useSession } from '../session';
 import { NotificationBell } from './NotificationBell';
 import { CATEGORY_ICON, GameArt } from './CatalogUi';
@@ -131,6 +132,17 @@ function ViewPrefs() {
   );
 }
 
+/** Cart icon with its item count (the cart lives in this browser, so it shows signed out too). */
+function CartLink() {
+  const n = cartCount(useCart());
+  return (
+    <Link to="/cart" aria-label={t('cart.linkLabel', { count: n })} title={t('cart.title')} className="relative grid size-10 place-items-center rounded-lg border border-border text-foreground no-underline transition-colors hover:border-foreground">
+      <ShoppingCart className="size-[18px]" strokeWidth={1.8} />
+      {n > 0 && <span className="absolute -end-1.5 -top-1.5 grid min-w-5 place-items-center rounded-full bg-foreground px-1 font-mono text-[11px] font-semibold text-background">{n > 99 ? '99+' : n}</span>}
+    </Link>
+  );
+}
+
 export function SiteHeader() {
   const { user, signOut } = useSession();
   const { pathname, search } = useLocation();
@@ -149,6 +161,7 @@ export function SiteHeader() {
         </nav>
         <div className="who">
           <ViewPrefs />
+          <CartLink />
           {user ? (
             <>
               <Link to="/watchlist" aria-label={t('nav.watchlist')} title={t('nav.watchlist')} className="grid size-10 place-items-center rounded-lg border border-border text-foreground no-underline transition-colors hover:border-foreground">
