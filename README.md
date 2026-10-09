@@ -50,7 +50,8 @@ To point a deployment at a real API instead, set these Vercel environment variab
 | `VITE_DEMO` | `false` |
 | `VITE_API_URL` | the API origin, e.g. `https://api.yourdomain.com` (it's added to the page's CSP) |
 
-…and set the API's `PUBLIC_WEB_URL` to the Vercel domain so CORS and the refresh cookie work.
+…and set the API's `PUBLIC_WEB_URL` to the Vercel domain so CORS and the refresh cookie work. A ready-made staging
+setup (Render blueprint in `render.yaml`, sandbox payments) is described in [docs/STAGING.md](docs/STAGING.md).
 
 Site structure: home (search, categories, popular games, instant-delivery and owner-verified rails, A–Z index) →
 `/games` (A–Z directory) → `/games/:game[/:category]` (category tabs and a seller/delivery/stock/price comparison table) →

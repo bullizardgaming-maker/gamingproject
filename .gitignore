@@ -24,3 +24,6 @@ apps/api/data/
 # Playwright
 apps/web/test-results/
 apps/web/playwright-report/
+
+# local Redis snapshots
+dump.rdb

@@ -1,0 +1,87 @@
+# Staging blueprint for Render (https://render.com/docs/blueprint-spec).
+# Runs the real API against mock payments and mock KYC (SANDBOX_MODE), so nothing here moves money.
+# Setup and the web side (Vercel): docs/STAGING.md.
+envVarGroups:
+  - name: bullizard-staging
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SANDBOX_MODE
+        value: "true"
+      - key: PAYMENT_PROVIDER
+        value: mock
+      - key: KYC_PROVIDER
+        value: mock
+      - key: EMAIL_PROVIDER
+        value: console
+      - key: SMS_PROVIDER
+        value: console
+      - key: MALWARE_SCANNER
+        value: clamd
+      - key: CLAMD_PORT
+        value: "3310"
+      - key: TRUST_PROXY
+        value: "1" # Render's load balancer
+      - key: JWT_SECRET
+        generateValue: true
+      - key: FINGERPRINT_KEY
+        generateValue: true
+      - key: CRYPTO_INDEXER_SECRET
+        generateValue: true
+      # "v1:" + 32 random bytes in base64: openssl rand -base64 32 (see docs/STAGING.md)
+      - key: DATA_ENCRYPTION_KEYS
+        sync: false
+      # The staging web origin, e.g. https://staging.example.com (CORS allows only this origin)
+      - key: PUBLIC_WEB_URL
+        sync: false
+      # This API's public URL, e.g. https://api-staging.example.com (payment return links)
+      - key: PUBLIC_API_URL
+        sync: false
+
+services:
+  - type: web
+    name: bullizard-api-staging
+    runtime: docker
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    plan: starter
+    healthCheckPath: /readyz
+    preDeployCommand: node dist/migrate.js
+    disk:
+      name: uploads
+      mountPath: /data/uploads
+      sizeGB: 1
+    envVars:
+      - fromGroup: bullizard-staging
+      # Background jobs run inside the API: one instance, one uploads disk. For more
+      # instances, add a worker (node dist/worker.js) and move uploads to S3.
+      - key: RUN_WORKER_IN_PROCESS
+        value: "true"
+      - key: STORAGE_DIR
+        value: /data/uploads
+      - key: DATABASE_URL
+        fromDatabase: { name: bullizard-staging-db, property: connectionString }
+      - key: REDIS_URL
+        fromService: { type: keyvalue, name: bullizard-staging-redis, property: connectionString }
+      - key: CLAMD_HOST
+        fromService: { type: pserv, name: bullizard-clamav-staging, property: host }
+
+  # ClamAV for upload scanning; private, reachable only from the API.
+  - type: pserv
+    name: bullizard-clamav-staging
+    runtime: image
+    image:
+      url: docker.io/clamav/clamav:stable
+    plan: standard # the signature database needs ~2 GB of memory
+
+  - type: keyvalue
+    name: bullizard-staging-redis
+    plan: starter
+    ipAllowList: [] # private network only
+
+databases:
+  - name: bullizard-staging-db
+    databaseName: market
+    plan: basic-256mb
+    postgresMajorVersion: "16"
+    ipAllowList: []
