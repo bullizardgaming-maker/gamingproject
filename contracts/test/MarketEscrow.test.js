@@ -27,7 +27,7 @@ async function deploy() {
   const Token = await ethers.getContractFactory('MockStablecoin');
   const usdc = await Token.deploy('USD Coin', 'USDC');
   const Escrow = await ethers.getContractFactory('MarketEscrow');
-  const escrow = await Escrow.deploy(platformSigner.address, treasury.address, await usdc.getAddress(), USDC(500), [await usdc.getAddress()]);
+  const escrow = await Escrow.deploy(platformSigner.address, treasury.address, await usdc.getAddress(), USDC(500), [await usdc.getAddress()], ethers.ZeroAddress);
   await usdc.mint(buyer.address, USDC(10_000));
   await usdc.connect(buyer).approve(await escrow.getAddress(), ethers.MaxUint256);
   return { owner, platformSigner, treasury, buyer, seller, validators: rest, usdc, escrow };
@@ -230,6 +230,92 @@ describe('MarketEscrow', () => {
       await env.escrow.connect(env.buyer).openDispute(terms.orderId, ethers.ZeroHash);
       await mine(2);
       await expect(env.escrow.drawPanel(terms.orderId)).to.be.revertedWithCustomError(env.escrow, 'NotEnoughValidators');
+    });
+  });
+
+  describe('panel draw with Chainlink VRF', () => {
+    const KEY_HASH = ethers.id('gas-lane');
+    async function deployVrf(validatorCount = 10) {
+      const [owner, platformSigner, treasury, buyer, seller, outsider, ...validators] = await ethers.getSigners();
+      const usdc = await (await ethers.getContractFactory('MockStablecoin')).deploy('USD Coin', 'USDC');
+      const vrf = await (await ethers.getContractFactory('MockVRFCoordinator')).deploy();
+      const Escrow = await ethers.getContractFactory('MarketEscrow');
+      const escrow = await Escrow.deploy(platformSigner.address, treasury.address, await usdc.getAddress(), USDC(500), [await usdc.getAddress()], await vrf.getAddress());
+      await usdc.mint(buyer.address, USDC(10_000));
+      await usdc.connect(buyer).approve(await escrow.getAddress(), ethers.MaxUint256);
+      for (const v of validators.slice(0, validatorCount)) {
+        await usdc.mint(v.address, USDC(1_000));
+        await usdc.connect(v).approve(await escrow.getAddress(), ethers.MaxUint256);
+        await escrow.connect(v).bond(USDC(1_000));
+      }
+      return { owner, platformSigner, treasury, buyer, seller, outsider, validators, usdc, vrf, escrow };
+    }
+    async function dispute(env) {
+      const { terms, signature } = await signedTerms(env);
+      await env.escrow.connect(env.buyer).createEscrow(terms, signature);
+      await env.escrow.connect(env.seller).markDelivered(terms.orderId, 1);
+      const tx = env.escrow.connect(env.buyer).openDispute(terms.orderId, ethers.id('chat-log-hash'));
+      return { orderId: terms.orderId, tx };
+    }
+
+    it('fixes the coordinator at deployment and needs a subscription before disputes', async () => {
+      const env = await deployVrf();
+      expect(await env.escrow.vrfCoordinator()).to.equal(await env.vrf.getAddress());
+      const { tx } = await dispute(env);
+      await expect(tx).to.be.revertedWithCustomError(env.escrow, 'VrfNotConfigured');
+      await expect(env.escrow.connect(env.outsider).setVrfConfig(KEY_HASH, 1, 3, 100_000)).to.be.revertedWithCustomError(env.escrow, 'OwnableUnauthorizedAccount');
+    });
+
+    it('draws the panel from the VRF answer, and only the coordinator can answer', async () => {
+      const env = await deployVrf();
+      await env.escrow.setVrfConfig(KEY_HASH, 42, 3, 100_000);
+      const { orderId, tx } = await dispute(env);
+      await expect(tx).to.emit(env.escrow, 'RandomnessRequested').withArgs(orderId, 1n);
+      const [consumer, keyHash, subId, numWords, extraArgs] = await env.vrf.requestOf(1);
+      expect([consumer, keyHash, subId, numWords]).to.deep.equal([await env.escrow.getAddress(), KEY_HASH, 42n, 1n]);
+      // Chainlink's ExtraArgsV1 tag followed by nativePayment = false.
+      expect(extraArgs).to.equal(ethers.dataSlice(ethers.id('VRF ExtraArgsV1'), 0, 4) + '0'.repeat(64));
+
+      await expect(env.escrow.drawPanel(orderId)).to.be.revertedWithCustomError(env.escrow, 'TooEarly');
+      await expect(env.escrow.connect(env.outsider).rawFulfillRandomWords(1, [123])).to.be.revertedWithCustomError(env.escrow, 'OnlyCoordinator');
+      await expect(env.vrf.fulfill(1, 123)).to.emit(env.escrow, 'RandomnessFulfilled').withArgs(orderId, 1n);
+      await expect(env.escrow.drawPanel(orderId)).to.emit(env.escrow, 'PanelDrawn');
+      const [panel] = await env.escrow.getPanel(orderId);
+      expect(panel).to.have.length(5);
+      expect(panel).to.not.include(env.buyer.address);
+      expect(panel).to.not.include(env.seller.address);
+      // A second answer to the same request changes nothing.
+      await env.vrf.fulfill(1, 999);
+      expect(await env.escrow.getPanel(orderId).then((r) => r[0])).to.deep.equal(panel);
+    });
+
+    it('different random words draw different panels', async () => {
+      const env = await deployVrf();
+      await env.escrow.setVrfConfig(KEY_HASH, 42, 3, 100_000);
+      const panels = [];
+      for (const word of [1n, 2n ** 200n + 7n]) {
+        const { orderId, tx } = await dispute(env);
+        await tx;
+        await env.vrf.fulfill(await env.vrf.lastRequestId(), word);
+        await env.escrow.drawPanel(orderId);
+        panels.push([...(await env.escrow.getPanel(orderId))[0]].sort().join());
+      }
+      expect(panels[0]).to.not.equal(panels[1]);
+    });
+
+    it('lets anyone re-request after an hour without an answer, ignoring the stale request', async () => {
+      const env = await deployVrf();
+      await env.escrow.setVrfConfig(KEY_HASH, 42, 3, 100_000);
+      const { orderId, tx } = await dispute(env);
+      await tx;
+      await expect(env.escrow.connect(env.outsider).retryRandomness(orderId)).to.be.revertedWithCustomError(env.escrow, 'TooEarly');
+      await time.increase(3601);
+      await expect(env.escrow.connect(env.outsider).retryRandomness(orderId)).to.emit(env.escrow, 'RandomnessRequested').withArgs(orderId, 2n);
+      await expect(env.vrf.fulfill(1, 5)).to.not.emit(env.escrow, 'RandomnessFulfilled'); // superseded
+      await expect(env.escrow.drawPanel(orderId)).to.be.revertedWithCustomError(env.escrow, 'TooEarly');
+      await expect(env.vrf.fulfill(2, 6)).to.emit(env.escrow, 'RandomnessFulfilled').withArgs(orderId, 2n);
+      await env.escrow.drawPanel(orderId);
+      await expect(env.escrow.retryRandomness(orderId)).to.be.revertedWithCustomError(env.escrow, 'WrongPhase');
     });
   });
 });

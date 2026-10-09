@@ -8,6 +8,20 @@ import {Ownable, Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
+/// @dev The part of Chainlink's VRF v2.5 coordinator this contract uses.
+interface IVRFCoordinatorV2Plus {
+    struct RandomWordsRequest {
+        bytes32 keyHash;
+        uint256 subId;
+        uint16 requestConfirmations;
+        uint32 callbackGasLimit;
+        uint32 numWords;
+        bytes extraArgs;
+    }
+
+    function requestRandomWords(RandomWordsRequest calldata req) external returns (uint256 requestId);
+}
+
 /**
  * @title MarketEscrow
  * @notice Non-custodial stablecoin escrow for the marketplace's Web3 rail.
@@ -18,14 +32,18 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
  *    claim it once its inspection delay passes; the buyer may approve early.
  *    e.g. accounts: 30% on credential delivery, 70% after a 14-day window.
  *  - Either party can dispute unreleased funds. A panel of bonded validators is
- *    drawn pseudo-randomly, votes with commit-reveal, and the majority outcome is
+ *    drawn at random, votes with commit-reveal, and the majority outcome is
  *    executed by the contract. Majority voters share an arbitration fee;
  *    validators who fail to reveal are slashed. No platform key can move
  *    disputed funds.
  *
- * Randomness note: the panel seed is the hash of a future block. That is
- * adequate against the dispute parties but can be biased by block proposers;
- * production deployments should swap `_seed` for a VRF (e.g. Chainlink VRF).
+ * Randomness: with a VRF coordinator (Chainlink VRF v2.5, fixed at deployment so no key
+ * can later swap in a source it controls), opening a dispute requests a random word; the
+ * callback only stores the seed, and anyone then calls drawPanel. Neither the parties, the
+ * platform nor block proposers can steer who is drawn. If a request is never fulfilled
+ * (e.g. an unfunded subscription) anyone may re-request after VRF_RETRY_AFTER. Without a
+ * coordinator (local development and tests) the seed is the hash of a future block, which
+ * block proposers could bias.
  */
 contract MarketEscrow is EIP712, ReentrancyGuard, Ownable2Step {
     using SafeERC20 for IERC20;
@@ -83,6 +101,9 @@ contract MarketEscrow is EIP712, ReentrancyGuard, Ownable2Step {
         address[] panel;
         uint8 buyerVotes;
         uint8 sellerVotes;
+        uint256 vrfRequestId;
+        uint64 vrfRequestedAt;
+        bytes32 seed;
         mapping(address => bytes32) commits;
         mapping(address => Vote) votes;
     }
@@ -97,6 +118,9 @@ contract MarketEscrow is EIP712, ReentrancyGuard, Ownable2Step {
     uint16 public constant SLASH_BPS = 1_000; // 10% of bond for failing to reveal
     uint64 public constant COMMIT_PERIOD = 2 days;
     uint64 public constant REVEAL_PERIOD = 1 days;
+    uint64 public constant VRF_RETRY_AFTER = 1 hours;
+    /// @dev Chainlink VRF v2.5 extra args: tag "VRF ExtraArgsV1", pay in LINK (nativePayment = false).
+    bytes4 internal constant VRF_EXTRA_ARGS_V1_TAG = bytes4(keccak256("VRF ExtraArgsV1"));
 
     // ------------------------------------------------------------------
     // State
@@ -115,6 +139,14 @@ contract MarketEscrow is EIP712, ReentrancyGuard, Ownable2Step {
     address[] internal _pool;
     mapping(address => uint256) internal _poolIndexPlusOne;
 
+    /// @notice The randomness source for panel draws; zero means block-hash mode (development only).
+    address public immutable vrfCoordinator;
+    bytes32 public vrfKeyHash;
+    uint256 public vrfSubId;
+    uint16 public vrfConfirmations = 3;
+    uint32 public vrfCallbackGas = 100_000;
+    mapping(uint256 => bytes32) public vrfRequestOrder;
+
     // ------------------------------------------------------------------
     // Events (consumed by the off-chain indexer)
     // ------------------------------------------------------------------
@@ -130,6 +162,8 @@ contract MarketEscrow is EIP712, ReentrancyGuard, Ownable2Step {
     event ValidatorBonded(address indexed validator, uint256 total);
     event ValidatorUnbonded(address indexed validator, uint256 total);
     event ValidatorSlashed(address indexed validator, uint256 amount);
+    event RandomnessRequested(bytes32 indexed orderId, uint256 requestId);
+    event RandomnessFulfilled(bytes32 indexed orderId, uint256 requestId);
 
     // ------------------------------------------------------------------
     // Errors
@@ -150,11 +184,14 @@ contract MarketEscrow is EIP712, ReentrancyGuard, Ownable2Step {
     error NotEnoughValidators();
     error BondLocked();
     error TokenNotAllowed();
+    error OnlyCoordinator();
+    error VrfNotConfigured();
 
-    constructor(address signer_, address treasury_, IERC20 bondToken_, uint256 minBond_, address[] memory tokens)
+    constructor(address signer_, address treasury_, IERC20 bondToken_, uint256 minBond_, address[] memory tokens, address vrfCoordinator_)
         EIP712("MarketEscrow", "1")
         Ownable(msg.sender)
     {
+        vrfCoordinator = vrfCoordinator_;
         signer = signer_;
         treasury = treasury_;
         bondToken = bondToken_;
@@ -165,6 +202,15 @@ contract MarketEscrow is EIP712, ReentrancyGuard, Ownable2Step {
     // ------------------------------------------------------------------
     // Admin (cannot touch escrowed funds)
     // ------------------------------------------------------------------
+    /// @notice Subscription and gas lane. These affect billing and speed, not the randomness: the
+    /// coordinator (which proves it) is fixed at deployment.
+    function setVrfConfig(bytes32 keyHash, uint256 subId, uint16 confirmations, uint32 callbackGas) external onlyOwner {
+        vrfKeyHash = keyHash;
+        vrfSubId = subId;
+        vrfConfirmations = confirmations;
+        vrfCallbackGas = callbackGas;
+    }
+
     function setSigner(address s) external onlyOwner {
         signer = s;
     }
@@ -349,8 +395,50 @@ contract MarketEscrow is EIP712, ReentrancyGuard, Ownable2Step {
         Dispute storage d = _disputes[orderId];
         d.openedBy = msg.sender;
         d.evidenceHash = evidenceHash;
-        d.drawBlock = uint64(block.number + 1);
+        if (vrfCoordinator != address(0)) _requestRandomness(orderId, d);
+        else d.drawBlock = uint64(block.number + 1);
         emit DisputeOpened(orderId, msg.sender, evidenceHash, d.drawBlock);
+    }
+
+    function _requestRandomness(bytes32 orderId, Dispute storage d) internal {
+        if (vrfKeyHash == bytes32(0) || vrfSubId == 0) revert VrfNotConfigured();
+        uint256 requestId = IVRFCoordinatorV2Plus(vrfCoordinator).requestRandomWords(
+            IVRFCoordinatorV2Plus.RandomWordsRequest({
+                keyHash: vrfKeyHash,
+                subId: vrfSubId,
+                requestConfirmations: vrfConfirmations,
+                callbackGasLimit: vrfCallbackGas,
+                numWords: 1,
+                extraArgs: abi.encodeWithSelector(VRF_EXTRA_ARGS_V1_TAG, false)
+            })
+        );
+        if (d.vrfRequestId != 0) delete vrfRequestOrder[d.vrfRequestId]; // a late answer to the old request is ignored
+        d.vrfRequestId = requestId;
+        d.vrfRequestedAt = uint64(block.timestamp);
+        vrfRequestOrder[requestId] = orderId;
+        emit RandomnessRequested(orderId, requestId);
+    }
+
+    /// @notice Called by the VRF coordinator. Only stores the seed (cheap and can't run out of
+    /// callback gas); the panel is drawn by a separate drawPanel call.
+    function rawFulfillRandomWords(uint256 requestId, uint256[] calldata randomWords) external {
+        if (msg.sender != vrfCoordinator) revert OnlyCoordinator();
+        bytes32 orderId = vrfRequestOrder[requestId];
+        if (orderId == bytes32(0)) return; // superseded or unknown: ignore rather than revert
+        delete vrfRequestOrder[requestId];
+        Dispute storage d = _disputes[orderId];
+        if (d.seed != bytes32(0) || d.panel.length != 0) return;
+        d.seed = keccak256(abi.encode(randomWords[0], orderId));
+        emit RandomnessFulfilled(orderId, requestId);
+    }
+
+    /// @notice Anyone may re-request randomness if the coordinator hasn't answered in time.
+    function retryRandomness(bytes32 orderId) external {
+        Escrow storage e = _escrows[orderId];
+        Dispute storage d = _disputes[orderId];
+        if (vrfCoordinator == address(0) || e.status != Status.Disputed || d.panel.length != 0 || d.seed != bytes32(0)) revert WrongPhase();
+        if (block.timestamp < d.vrfRequestedAt + VRF_RETRY_AFTER) revert TooEarly();
+        _requestRandomness(orderId, d);
     }
 
     /// @notice Anyone may trigger the panel draw once the committed draw block is mined.
@@ -358,14 +446,20 @@ contract MarketEscrow is EIP712, ReentrancyGuard, Ownable2Step {
         Escrow storage e = _escrows[orderId];
         Dispute storage d = _disputes[orderId];
         if (e.status != Status.Disputed || d.panel.length != 0) revert WrongPhase();
-        if (block.number <= d.drawBlock) revert TooEarly();
-        bytes32 bh = blockhash(d.drawBlock);
-        if (bh == bytes32(0)) {
-            // Draw block fell out of the 256-block window: commit to a new one.
-            d.drawBlock = uint64(block.number + 1);
-            return;
+        bytes32 seed;
+        if (vrfCoordinator != address(0)) {
+            if (d.seed == bytes32(0)) revert TooEarly(); // waiting for the VRF answer
+            seed = d.seed;
+        } else {
+            if (block.number <= d.drawBlock) revert TooEarly();
+            bytes32 bh = blockhash(d.drawBlock);
+            if (bh == bytes32(0)) {
+                // Draw block fell out of the 256-block window: commit to a new one.
+                d.drawBlock = uint64(block.number + 1);
+                return;
+            }
+            seed = keccak256(abi.encode(bh, orderId));
         }
-        bytes32 seed = keccak256(abi.encode(bh, orderId));
 
         // Partial Fisher-Yates over a memory copy of the pool, skipping the parties.
         address[] memory pool = _pool;
