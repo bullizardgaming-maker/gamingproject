@@ -1,3 +1,5 @@
+import { helpPack, onLocaleChange } from '../i18n';
+
 /**
  * Help-centre articles. Plain data so it ships with the app and works offline; each article is a
  * list of paragraphs (a paragraph starting with "- " lines renders as a list).
@@ -13,7 +15,7 @@ export interface HelpArticle {
 }
 export type HelpTopic = 'buying' | 'protection' | 'payments' | 'selling' | 'account';
 
-export const HELP_TOPICS: Record<HelpTopic, { title: string; blurb: string }> = {
+const BASE_TOPICS: Record<HelpTopic, { title: string; blurb: string }> = {
   buying: { title: 'Buying', blurb: 'Finding offers, ordering and receiving what you bought.' },
   protection: { title: 'Disputes & protection', blurb: 'Escrow, the inspection window, insurance and refunds.' },
   payments: { title: 'Payments', blurb: 'Cards, crypto, currencies and store credit.' },
@@ -21,7 +23,7 @@ export const HELP_TOPICS: Record<HelpTopic, { title: string; blurb: string }> = 
   account: { title: 'Account & security', blurb: 'Verification, two-factor login and your data.' },
 };
 
-export const HELP_ARTICLES: HelpArticle[] = [
+const BASE_ARTICLES: HelpArticle[] = [
   {
     slug: 'how-escrow-works',
     topic: 'protection',
@@ -181,11 +183,34 @@ export const HELP_ARTICLES: HelpArticle[] = [
   },
 ];
 
+const BASE_TICKET_LABELS: Record<string, string> = {
+  order: 'A problem with an order',
+  payment: 'Payments and refunds',
+  account: 'My account or verification',
+  selling: 'Selling and payouts',
+  report: 'Report a user',
+  other: 'Something else',
+};
+
+// The exports below are live bindings: they are rebuilt in the active language whenever it changes
+// (falling back to English for anything a translation leaves out).
+export let HELP_TOPICS = BASE_TOPICS;
+export let HELP_ARTICLES = BASE_ARTICLES;
+export let TICKET_CATEGORY_LABEL = BASE_TICKET_LABELS;
+function localize() {
+  const pack = helpPack();
+  HELP_TOPICS = pack ? (Object.fromEntries(Object.entries(BASE_TOPICS).map(([k, v]) => [k, pack.topics[k] ?? v])) as typeof BASE_TOPICS) : BASE_TOPICS;
+  HELP_ARTICLES = pack ? BASE_ARTICLES.map((a) => ({ ...a, ...pack.articles[a.slug] })) : BASE_ARTICLES;
+  TICKET_CATEGORY_LABEL = pack ? { ...BASE_TICKET_LABELS, ...pack.ticketCategories } : BASE_TICKET_LABELS;
+}
+localize();
+onLocaleChange(localize);
+
 export const articleBySlug = (slug: string) => HELP_ARTICLES.find((a) => a.slug === slug);
 
 /** Simple ranked search over titles, summaries and bodies. */
 export function searchHelp(q: string) {
-  const words = q.toLowerCase().split(/\W+/).filter((w) => w.length > 1);
+  const words = q.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 1);
   if (!words.length) return [];
   return HELP_ARTICLES.map((a) => {
     const title = a.title.toLowerCase();
@@ -198,11 +223,3 @@ export function searchHelp(q: string) {
     .map((x) => x.a);
 }
 
-export const TICKET_CATEGORY_LABEL: Record<string, string> = {
-  order: 'A problem with an order',
-  payment: 'Payments and refunds',
-  account: 'My account or verification',
-  selling: 'Selling and payouts',
-  report: 'Report a user',
-  other: 'Something else',
-};

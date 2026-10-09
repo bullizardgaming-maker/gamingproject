@@ -47,7 +47,6 @@ export function HelpCentre() {
       <div className="stack" style={{ gap: 10 }}>
         <div className="eyebrow">{t('help.eyebrow')}</div>
         <h1 style={{ fontSize: 40, margin: 0 }}>{t('help.title')}</h1>
-        {currentLocale() !== 'en' && <p className="small muted" style={{ margin: 0 }}>{t('help.englishOnly')}</p>}
         <label className="relative block">
           <Search className="pointer-events-none absolute start-4 top-1/2 size-5 -translate-y-1/2 text-muted-foreground" />
           <input
@@ -146,34 +145,34 @@ export interface Ticket {
 }
 
 export const TICKET_STATUS: Record<Ticket['status'], { label: string; chip: string }> = {
-  open: { label: 'Waiting on support', chip: 'held' },
-  pending: { label: 'Waiting on you', chip: 'disputed' },
-  resolved: { label: 'Resolved', chip: 'released' },
+  open: { get label() { return t('sup.status.open'); }, chip: 'held' },
+  pending: { get label() { return t('sup.status.pending'); }, chip: 'disputed' },
+  resolved: { get label() { return t('sup.status.resolved'); }, chip: 'released' },
 };
 export const when = (iso: string) => new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 /** /support: the customer's requests. */
 export function SupportList() {
-  usePageMeta({ title: 'My requests', noindex: true });
+  usePageMeta({ title: t('sup.mine'), noindex: true });
   const { user } = useSession();
   const [list, setList] = useState<Ticket[] | null>(null);
   useEffect(() => {
     if (user) api<Ticket[]>('/support/tickets').then(setList).catch(() => setList([]));
   }, [user]);
-  if (!user) return <p className="muted"><Link to="/login?next=/support">Sign in</Link> to see your requests.</p>;
+  if (!user) return <p className="muted"><Link to="/login?next=/support">{t('sup.signInList')}</Link></p>;
   return (
     <div className="stack" style={{ maxWidth: 860 }}>
       <div className="row spread">
         <div>
-          <div className="eyebrow">Support</div>
-          <h1 style={{ fontSize: 40, margin: 0 }}>My requests</h1>
+          <div className="eyebrow">{t('sup.eyebrow')}</div>
+          <h1 style={{ fontSize: 40, margin: 0 }}>{t('sup.mine')}</h1>
         </div>
-        <Link className="btn" to="/support/new">New request</Link>
+        <Link className="btn" to="/support/new">{t('sup.new')}</Link>
       </div>
       {list === null ? (
         <p className="muted">Loading…</p>
       ) : list.length === 0 ? (
-        <div className="card muted">No requests yet. Most answers are in the <Link to="/help">help centre</Link>.</div>
+        <div className="card muted"><Link to="/help">{t('sup.none')}</Link></div>
       ) : (
         <ul className="m-0 list-none overflow-hidden rounded-xl border border-border bg-card p-0">
           {list.map((t) => (
@@ -194,7 +193,7 @@ export function SupportList() {
 
 /** /support/new?category=…&order=… */
 export function SupportNew() {
-  usePageMeta({ title: 'Contact support', noindex: true });
+  usePageMeta({ title: t('sup.contact'), noindex: true });
   const { user } = useSession();
   const nav = useNavigate();
   const [params] = useSearchParams();
@@ -212,7 +211,7 @@ export function SupportNew() {
   }, [user]);
   const suggestions = useMemo(() => HELP_ARTICLES.filter((a) => a.ticket === category).slice(0, 3), [category]);
 
-  if (!user) return <p className="muted"><Link to={`/login?next=${encodeURIComponent('/support/new?' + params)}`}>Sign in</Link> to contact support, or browse the <Link to="/help">help centre</Link>.</p>;
+  if (!user) return <p className="muted"><Link to={`/login?next=${encodeURIComponent('/support/new?' + params)}`}>{t('sup.signInNew')}</Link></p>;
   const submit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>;
@@ -229,39 +228,39 @@ export function SupportNew() {
   return (
     <form className="stack" style={{ maxWidth: 720 }} onSubmit={submit}>
       <div>
-        <div className="eyebrow">Support</div>
-        <h1 style={{ fontSize: 40, margin: 0 }}>Contact support</h1>
+        <div className="eyebrow">{t('sup.eyebrow')}</div>
+        <h1 style={{ fontSize: 40, margin: 0 }}>{t('sup.contact')}</h1>
       </div>
       <label className="field">
-        What do you need help with?
+        {t('sup.topic')}
         <select required value={category} onChange={(e) => setCategory(e.target.value)}>
-          <option value="" disabled>Choose a topic…</option>
+          <option value="" disabled>{t('sup.chooseTopic')}</option>
           {Object.entries(TICKET_CATEGORY_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </select>
       </label>
       {suggestions.length > 0 && (
         <div className="notice small">
-          These may answer it straight away: {suggestions.map((a, i) => <span key={a.slug}>{i ? ' · ' : ''}<Link to={`/help/${a.slug}`}>{a.title}</Link></span>)}
+          {t('sup.mayAnswer')} {suggestions.map((a, i) => <span key={a.slug}>{i ? ' · ' : ''}<Link to={`/help/${a.slug}`}>{a.title}</Link></span>)}
         </div>
       )}
       <label className="field">
-        Order (optional)
+        {t('sup.order')}
         <select value={orderId} onChange={(e) => setOrderId(e.target.value)}>
-          <option value="">Not about a specific order</option>
+          <option value="">{t('sup.noOrder')}</option>
           {orders.map((o) => <option key={o.id} value={o.id}>{o.offer_title} · {money(o.amount_cents, o.currency)} · {new Date(o.created_at).toLocaleDateString()}</option>)}
-          {orderId && !orders.some((o) => o.id === orderId) && <option value={orderId}>Order {orderId.slice(0, 8)}</option>}
+          {orderId && !orders.some((o) => o.id === orderId) && <option value={orderId}>{t('sup.orderShort', { id: orderId.slice(0, 8) })}</option>}
         </select>
       </label>
-      <label className="field">Subject<input name="subject" required minLength={3} maxLength={140} placeholder="e.g. Key says already redeemed" /></label>
+      <label className="field">{t('sup.subject')}<input name="subject" required minLength={3} maxLength={140} placeholder={t('sup.subjectHint')} /></label>
       <label className="field">
-        Details
-        <textarea name="body" required minLength={2} maxLength={5000} rows={6} placeholder="What happened, what you expected, and anything you’ve already tried." />
+        {t('sup.details')}
+        <textarea name="body" required minLength={2} maxLength={5000} rows={6} placeholder={t('sup.detailsHint')} />
       </label>
-      <p className="small muted" style={{ margin: 0 }}>Never include passwords or full card numbers. For order problems, screenshots in the order chat help us most.</p>
+      <p className="small muted" style={{ margin: 0 }}>{t('sup.privacy')}</p>
       {error && <div className="alert">{error}</div>}
       <div className="row">
-        <button className="btn" disabled={busy}>Send request</button>
-        <Link to="/help" className="btn ghost">Back to help</Link>
+        <button className="btn" disabled={busy}>{t('sup.send')}</button>
+        <Link to="/help" className="btn ghost">{t('sup.backHelp')}</Link>
       </div>
     </form>
   );
@@ -271,16 +270,16 @@ export function SupportNew() {
 export function SupportTicket() {
   const { id = '' } = useParams();
   const { user } = useSession();
-  const [t, setT] = useState<Ticket | null>(null);
+  const [tk, setT] = useState<Ticket | null>(null);
   const [error, setError] = useState('');
   const [reply, setReply] = useState('');
   const [busy, setBusy] = useState(false);
-  usePageMeta({ title: t ? `Request #${t.number}` : 'Request', noindex: true });
+  usePageMeta({ title: tk ? t('sup.request', { number: tk.number }) : t('sup.eyebrow'), noindex: true });
   useEffect(() => {
     if (user) api<Ticket>(`/support/tickets/${id}`).then(setT).catch((e) => setError(e.message));
   }, [user, id]);
-  if (!user) return <p className="muted"><Link to={`/login?next=/support/${id}`}>Sign in</Link> to see this request.</p>;
-  if (!t) return <p className="muted">{error || 'Loading…'}</p>;
+  if (!user) return <p className="muted"><Link to={`/login?next=/support/${id}`}>{t('sup.signInTicket')}</Link></p>;
+  if (!tk) return <p className="muted">{error || t('common.loading')}</p>;
   const send = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
@@ -296,26 +295,26 @@ export function SupportTicket() {
   const resolve = async () => setT(await api<Ticket>(`/support/tickets/${id}/resolve`, { body: {} }));
   return (
     <div className="stack" style={{ maxWidth: 820 }}>
-      <nav className="crumbs" aria-label="Breadcrumb"><Link to="/support">My requests</Link><span>/</span><span>#{t.number}</span></nav>
+      <nav className="crumbs" aria-label="Breadcrumb"><Link to="/support">My requests</Link><span>/</span><span>#{tk.number}</span></nav>
       <div className="row spread" style={{ alignItems: 'start' }}>
         <div>
-          <h1 style={{ fontSize: 32, margin: 0 }}>{t.subject}</h1>
-          <div className="small muted">{TICKET_CATEGORY_LABEL[t.category]} · opened {when(t.created_at)}</div>
+          <h1 style={{ fontSize: 32, margin: 0 }}>{tk.subject}</h1>
+          <div className="small muted">{t('sup.opened', { category: TICKET_CATEGORY_LABEL[tk.category] ?? tk.category, date: when(tk.created_at) })}</div>
         </div>
-        <span className={cn('chip', TICKET_STATUS[t.status].chip)}>{TICKET_STATUS[t.status].label}</span>
+        <span className={cn('chip', TICKET_STATUS[tk.status].chip)}>{TICKET_STATUS[tk.status].label}</span>
       </div>
-      {t.order && (
-        <Link to={`/orders/${t.order.id}`} className="card row no-underline hover:border-foreground" style={{ padding: 14 }}>
-          <span className="eyebrow" style={{ margin: 0 }}>Order</span>
-          <span style={{ flex: 1 }}>{t.order.offer_title}</span>
-          <span className="mono small">{money(t.order.amount_cents, t.order.currency)} · {t.order.status}</span>
+      {tk.order && (
+        <Link to={`/orders/${tk.order.id}`} className="card row no-underline hover:border-foreground" style={{ padding: 14 }}>
+          <span className="eyebrow" style={{ margin: 0 }}>{t('sup.orderLabel')}</span>
+          <span style={{ flex: 1 }}>{tk.order.offer_title}</span>
+          <span className="mono small">{money(tk.order.amount_cents, tk.order.currency)} · {tk.order.status}</span>
         </Link>
       )}
       <ol className="m-0 grid list-none gap-3 p-0">
-        {t.messages!.map((m) => (
+        {tk.messages!.map((m) => (
           <li key={m.id} className={cn('rounded-xl border p-4', m.staff ? 'border-released/30 bg-released/5' : 'border-border bg-card')}>
             <div className="mb-1 flex items-center justify-between gap-3 text-sm">
-              <b>{m.staff ? m.author_name : 'You'}</b>
+              <b>{m.staff ? m.author_name : t('sup.you')}</b>
               <span className="text-xs text-muted-foreground">{when(m.created_at)}</span>
             </div>
             <p className="m-0" style={{ whiteSpace: 'pre-wrap' }}>{m.body}</p>
@@ -324,13 +323,13 @@ export function SupportTicket() {
       </ol>
       <form className="card stack" onSubmit={send}>
         <label className="field">
-          {t.status === 'resolved' ? 'Reply to reopen this request' : 'Reply'}
+          {tk.status === 'resolved' ? t('sup.replyReopen') : t('sup.reply')}
           <textarea required minLength={2} maxLength={5000} rows={4} value={reply} onChange={(e) => setReply(e.target.value)} />
         </label>
         {error && <div className="alert">{error}</div>}
         <div className="row">
-          <button className="btn" disabled={busy || reply.trim().length < 2}>Send reply</button>
-          {t.status !== 'resolved' && <button type="button" className="btn ghost" onClick={resolve}>My problem is solved</button>}
+          <button className="btn" disabled={busy || reply.trim().length < 2}>{t('sup.sendReply')}</button>
+          {tk.status !== 'resolved' && <button type="button" className="btn ghost" onClick={resolve}>{t('sup.solved')}</button>}
         </div>
       </form>
     </div>

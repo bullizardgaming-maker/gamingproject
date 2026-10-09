@@ -14,6 +14,7 @@ export interface DemoUser {
   id: string;
   email: string;
   password: string;
+  locale?: string;
   display_name: string;
   role: 'user' | 'arbiter' | 'support' | 'finance' | 'compliance' | 'admin';
   staff_roles?: string[];

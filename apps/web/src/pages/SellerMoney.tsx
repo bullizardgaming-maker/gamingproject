@@ -3,6 +3,7 @@ import { Download, FileText, Lock, ReceiptText } from 'lucide-react';
 import { api, download, money } from '../api';
 import { useSession } from '../session';
 import { cn } from '@/lib/utils';
+import { t, type MessageKey } from '../i18n';
 
 interface Hold {
   level: string;
@@ -23,13 +24,7 @@ interface TaxProfile {
 }
 
 const CURRENCIES = ['USD', 'EUR', 'GBP'];
-const HOLD_LABEL: Record<string, string> = {
-  new: 'New seller',
-  established: 'Established seller',
-  trusted: 'Trusted seller',
-  watch: 'Under review after chargebacks',
-  custom: 'Set by our team',
-};
+const holdLabel = (level: string) => (['new', 'established', 'trusted', 'watch', 'custom'].includes(level) ? t(`money.hold.${level}` as MessageKey) : level);
 const COUNTRIES: Array<[string, string]> = [
   ['AT', 'Austria'], ['BE', 'Belgium'], ['BG', 'Bulgaria'], ['HR', 'Croatia'], ['CY', 'Cyprus'], ['CZ', 'Czechia'], ['DK', 'Denmark'],
   ['EE', 'Estonia'], ['FI', 'Finland'], ['FR', 'France'], ['DE', 'Germany'], ['GR', 'Greece'], ['HU', 'Hungary'], ['IE', 'Ireland'],
@@ -40,9 +35,9 @@ const COUNTRIES: Array<[string, string]> = [
   ['EG', 'Egypt'], ['IN', 'India'], ['JP', 'Japan'], ['KR', 'South Korea'], ['SG', 'Singapore'], ['PH', 'Philippines'], ['ZA', 'South Africa'],
 ];
 const TREATMENT_TEXT = {
-  standard: (rate: number, c: string) => `Our commission includes ${(rate / 100).toFixed(2)}% VAT for ${c}. Your payouts don't change.`,
-  reverse_charge: () => 'Reverse charge: we don’t add VAT to our commission; you account for it in your own VAT return.',
-  outside_scope: () => 'Outside the scope of our VAT: no tax is added to our commission.',
+  standard: (rate: number, c: string) => t('money.tax.standard', { rate: (rate / 100).toFixed(2), country: c }),
+  reverse_charge: () => t('money.tax.reverse'),
+  outside_scope: () => t('money.tax.outside'),
 };
 
 const first = () => {
@@ -79,7 +74,7 @@ export function SellerMoney() {
     load().catch((e) => setMsg({ kind: 'alert', text: e.message }));
   }, [load]);
 
-  if (!dash || !hold || !tax) return <p className="muted">{msg?.text ?? 'Loading your money…'}</p>;
+  if (!dash || !hold || !tax) return <p className="muted">{msg?.text ?? t('money.loading')}</p>;
   const currency: string = dash.payoutCurrency ?? 'USD';
   const others = (dash.allBalances ?? []).filter((b: any) => b.currency !== currency);
 
@@ -105,34 +100,34 @@ export function SellerMoney() {
         {/* Balance & payouts */}
         <div className="card stack">
           <div className="row spread">
-            <div className="eyebrow" style={{ marginBottom: 0 }}>Balance</div>
+            <div className="eyebrow" style={{ marginBottom: 0 }}>{t('money.balance')}</div>
             <label className="row small" style={{ gap: 8 }}>
-              Paid out in
+              {t('money.paidOutIn')}
               <select
-                aria-label="Payout currency"
+                aria-label={t('money.payoutCurrency')}
                 value={currency}
                 style={{ width: 90 }}
-                onChange={(e) => run(() => api('/seller/payout-currency', { method: 'PUT', body: { currency: e.target.value } }), `New sales will be credited and paid out in ${e.target.value}.`)}
+                onChange={(e) => run(() => api('/seller/payout-currency', { method: 'PUT', body: { currency: e.target.value } }), t('money.currencyChanged', { currency: e.target.value }))}
               >
                 {CURRENCIES.map((c) => <option key={c}>{c}</option>)}
               </select>
             </label>
           </div>
           <div className="grid grid-cols-3 gap-3">
-            <Stat label="Withdraw now" value={money(hold.withdrawableCents, currency)} tone="released" />
-            <Stat label="On hold" value={money(hold.heldCents, currency)} tone="held" icon={<Lock className="size-3.5" />} />
-            <Stat label="In escrow" value={money(dash.balances.pendingEscrowCents, 'USD')} />
+            <Stat label={t('money.withdrawNow')} value={money(hold.withdrawableCents, currency)} tone="released" />
+            <Stat label={t('money.onHold')} value={money(hold.heldCents, currency)} tone="held" icon={<Lock className="size-3.5" />} />
+            <Stat label={t('money.inEscrow')} value={money(dash.balances.pendingEscrowCents, 'USD')} />
           </div>
           <p className="small muted" style={{ margin: 0 }}>
             {hold.holdDays > 0
-              ? `${HOLD_LABEL[hold.level] ?? hold.level}: money from a completed sale can be withdrawn ${hold.holdDays} day${hold.holdDays === 1 ? '' : 's'} after release. The hold gets shorter as you build a track record.`
-              : 'No payout hold: completed sales can be withdrawn straight away.'}
+              ? t('money.holdText', { level: holdLabel(hold.level), count: hold.holdDays })
+              : t('money.noHold')}
           </p>
           {hold.upcoming.length > 0 && (
             <div className="small">
               {hold.upcoming.slice(0, 4).map((u) => (
                 <div key={u.unlocksAt} className="row spread" style={{ borderTop: '1px solid var(--rule)', padding: '6px 0' }}>
-                  <span className="muted">Unlocks {fmtDate(u.unlocksAt)}</span>
+                  <span className="muted">{t('money.unlocks', { date: fmtDate(u.unlocksAt) })}</span>
                   <span className="mono">{money(u.cents, currency)}</span>
                 </div>
               ))}
@@ -142,16 +137,16 @@ export function SellerMoney() {
             currency={currency}
             max={hold.withdrawableCents}
             disabled={!user?.payouts_enabled || dash.withdrawalsFrozen}
-            onWithdraw={(cents) => run(() => api('/seller/withdrawals', { body: { amountCents: cents, currency } }), `${money(cents, currency)} is on its way to your bank.`)}
+            onWithdraw={(cents) => run(() => api('/seller/withdrawals', { body: { amountCents: cents, currency } }), t('money.onItsWay', { amount: money(cents, currency) }))}
           />
-          {!user?.payouts_enabled && <p className="small muted" style={{ margin: 0 }}>Set up payouts on the Shop tab first.</p>}
-          {dash.withdrawalsFrozen && <p className="small muted" style={{ margin: 0 }}>Withdrawals are paused while a routine review runs.</p>}
+          {!user?.payouts_enabled && <p className="small muted" style={{ margin: 0 }}>{t('money.setUpFirst')}</p>}
+          {dash.withdrawalsFrozen && <p className="small muted" style={{ margin: 0 }}>{t('money.frozen')}</p>}
           {others.map((b: any) => (
             <div key={b.currency} className="notice row spread">
-              <span>You also hold <b className="mono">{money(b.cents, b.currency)}</b> from earlier sales.</span>
+              <span>{t('money.alsoHold', { amount: money(b.cents, b.currency) })}</span>
               {b.cents > 0 && (
-                <button className="btn ghost" disabled={!user?.payouts_enabled} onClick={() => run(() => api('/seller/withdrawals', { body: { amountCents: b.cents, currency: b.currency } }), `${money(b.cents, b.currency)} is on its way.`)}>
-                  Withdraw
+                <button className="btn ghost" disabled={!user?.payouts_enabled} onClick={() => run(() => api('/seller/withdrawals', { body: { amountCents: b.cents, currency: b.currency } }), t('money.onItsWayShort', { amount: money(b.cents, b.currency) }))}>
+                  {t('money.withdraw')}
                 </button>
               )}
             </div>
@@ -159,21 +154,21 @@ export function SellerMoney() {
         </div>
 
         {/* Tax profile */}
-        <TaxForm tax={tax} onSaved={(t) => (setTax(t), setMsg({ kind: 'ok', text: 'Tax details saved.' }))} onError={(text) => setMsg({ kind: 'alert', text })} />
+        <TaxForm tax={tax} onSaved={(next) => (setTax(next), setMsg({ kind: 'ok', text: t('money.taxSaved') }))} onError={(text) => setMsg({ kind: 'alert', text })} />
       </div>
 
       {/* Invoices & credit notes */}
       <div className="card stack">
         <div className="row spread">
-          <h3 style={{ margin: 0 }} className="inline-flex items-center gap-2"><ReceiptText className="size-5" strokeWidth={1.8} /> Commission invoices</h3>
-          <span className="small muted">Issued on the 1st of each month for the previous month</span>
+          <h3 style={{ margin: 0 }} className="inline-flex items-center gap-2"><ReceiptText className="size-5" strokeWidth={1.8} /> {t('money.invoices')}</h3>
+          <span className="small muted">{t('money.invoices.when')}</span>
         </div>
         {invoices.length === 0 ? (
-          <p className="muted small" style={{ margin: 0 }}>No invoices yet. Your first one arrives after a month with completed sales.</p>
+          <p className="muted small" style={{ margin: 0 }}>{t('money.invoices.none')}</p>
         ) : (
           <div className="table-wrap">
             <table className="data">
-              <thead><tr><th>Number</th><th>Period</th><th>Commission</th><th>of which tax</th><th /></tr></thead>
+              <thead><tr><th>{t('money.col.number')}</th><th>{t('money.col.period')}</th><th>{t('money.col.commission')}</th><th>{t('money.col.tax')}</th><th /></tr></thead>
               <tbody>
                 {invoices.map((i) => (
                   <tr key={i.id}>
@@ -190,10 +185,10 @@ export function SellerMoney() {
         )}
         {credits.length > 0 && (
           <>
-            <h4 style={{ margin: '8px 0 0' }}>Credit notes</h4>
+            <h4 style={{ margin: '8px 0 0' }}>{t('money.credits')}</h4>
             <div className="table-wrap">
               <table className="data">
-                <thead><tr><th>Number</th><th>Issued</th><th>Commission returned</th><th>Reason</th></tr></thead>
+                <thead><tr><th>{t('money.col.number')}</th><th>{t('money.col.issued')}</th><th>{t('money.col.returned')}</th><th>{t('money.col.reason')}</th></tr></thead>
                 <tbody>
                   {credits.map((c) => (
                     <tr key={c.id}>
@@ -232,18 +227,14 @@ function DebtCard({ debt, onError }: { debt: { id: string; currency: string; owe
     <div className="card stack" style={{ borderColor: 'var(--disputed)' }}>
       <div className="row spread">
         <div>
-          <div className="eyebrow" style={{ marginBottom: 4, color: 'var(--disputed)' }}>Balance below zero</div>
+          <div className="eyebrow" style={{ marginBottom: 4, color: 'var(--disputed)' }}>{t('money.debt.title')}</div>
           <div className="font-mono text-2xl font-semibold">−{money(debt.owedCents, debt.currency)}</div>
         </div>
-        <button className="btn" disabled={busy} onClick={pay}>{busy ? 'Opening checkout…' : `Pay ${money(debt.owedCents, debt.currency)} now`}</button>
+        <button className="btn" disabled={busy} onClick={pay}>{busy ? t('offer.opening') : t('money.debt.pay', { amount: money(debt.owedCents, debt.currency) })}</button>
       </div>
       <p className="small" style={{ margin: 0 }}>
-        A refund or chargeback took more than your balance held. New sales pay it down automatically; withdrawals are paused until it’s settled.{' '}
-        {debt.shopPausedAt
-          ? 'Your shop is paused and reopens as soon as this is paid.'
-          : debt.pausesAt
-            ? `If it’s still unpaid on ${fmtDate(debt.pausesAt)}, your shop will be paused.`
-            : ''}
+        {t('money.debt.text')}{' '}
+        {debt.shopPausedAt ? t('money.debt.paused') : debt.pausesAt ? t('money.debt.pausesAt', { date: fmtDate(debt.pausesAt) }) : ''}
       </p>
     </div>
   );
@@ -267,14 +258,14 @@ function Withdraw({ currency, max, disabled, onWithdraw }: { currency: string; m
         type="number"
         min={0}
         step="0.01"
-        aria-label={`Amount in ${currency}`}
-        placeholder={`${(max / 100).toFixed(2)} (all)`}
+        aria-label={t('money.amountIn', { currency })}
+        placeholder={t('money.all', { amount: (max / 100).toFixed(2) })}
         value={amount}
         onChange={(e) => setAmount(e.target.value)}
         style={{ maxWidth: 170 }}
       />
       <button className="btn" disabled={disabled || cents <= 0 || cents > max} onClick={() => (onWithdraw(cents), setAmount(''))}>
-        Withdraw {money(cents, currency)}
+        {t('money.withdrawAmount', { amount: money(cents, currency) })}
       </button>
     </div>
   );
@@ -295,42 +286,42 @@ function TaxForm({ tax, onSaved, onError }: { tax: TaxProfile; onSaved: (t: TaxP
       setSaving(false);
     }
   };
-  const t = tax.commissionTax;
+  const ct = tax.commissionTax;
   return (
     <form className="card stack" onSubmit={submit}>
-      <div className="eyebrow" style={{ marginBottom: 0 }}>Tax details</div>
-      <p className="small muted" style={{ margin: 0 }}>Used for VAT/GST on our commission and printed on your invoices.</p>
+      <div className="eyebrow" style={{ marginBottom: 0 }}>{t('money.taxDetails')}</div>
+      <p className="small muted" style={{ margin: 0 }}>{t('money.taxDetails.text')}</p>
       <label className="field">
-        Country
+        {t('money.country')}
         <select name="country" defaultValue={tax.country ?? ''} required>
-          <option value="" disabled>Choose…</option>
+          <option value="" disabled>{t('sell.f.choose')}</option>
           {COUNTRIES.map(([code, name]) => <option key={code} value={code}>{name}</option>)}
         </select>
       </label>
       <label className="row small">
         <input type="checkbox" style={{ width: 'auto' }} checked={business} onChange={(e) => setBusiness(e.target.checked)} />
-        I sell as a registered business
+        {t('money.business')}
       </label>
       {business && (
         <label className="field">
-          VAT / GST number
+          {t('money.vatNumber')}
           <input name="taxId" className="mono" defaultValue={tax.taxId ?? ''} placeholder="e.g. DE123456789" />
-          {tax.taxId && <span className={cn('small', tax.taxIdVerified ? 'text-released' : 'text-muted-foreground')}>{tax.taxIdVerified ? 'Verified with VIES' : 'Not verified yet'}</span>}
+          {tax.taxId && <span className={cn('small', tax.taxIdVerified ? 'text-released' : 'text-muted-foreground')}>{tax.taxIdVerified ? t('money.vies') : t('money.notVerified')}</span>}
         </label>
       )}
-      <label className="field">Billing address<textarea name="billingAddress" defaultValue={tax.billingAddress ?? ''} style={{ minHeight: 60 }} /></label>
-      <div className="notice small">{TREATMENT_TEXT[t.treatment](t.rateBps, t.country)}</div>
-      <button className="btn" disabled={saving} style={{ alignSelf: 'flex-start' }}>{saving ? 'Saving…' : 'Save tax details'}</button>
+      <label className="field">{t('money.billing')}<textarea name="billingAddress" defaultValue={tax.billingAddress ?? ''} style={{ minHeight: 60 }} /></label>
+      <div className="notice small">{TREATMENT_TEXT[ct.treatment](ct.rateBps, ct.country)}</div>
+      <button className="btn" disabled={saving} style={{ alignSelf: 'flex-start' }}>{saving ? t('money.saving') : t('money.saveTax')}</button>
     </form>
   );
 }
 
-const EXPORTS: Array<[string, string, string]> = [
-  ['sales', 'Sales', 'Every order with commission, tax and what you were credited'],
-  ['statement', 'Balance statement', 'Opening, every movement, closing balance'],
-  ['payouts', 'Payouts', 'Withdrawals to your bank'],
-  ['invoices', 'Invoices', 'Commission invoices issued'],
-  ['credit_notes', 'Credit notes', 'Commission returned on refunds'],
+const exportsList = (): Array<[string, string, string]> => [
+  ['sales', t('money.exp.sales'), t('money.exp.sales.hint')],
+  ['statement', t('money.exp.statement'), t('money.exp.statement.hint')],
+  ['payouts', t('money.exp.payouts'), t('money.exp.payouts.hint')],
+  ['invoices', t('money.exp.invoices'), t('money.exp.invoices.hint')],
+  ['credit_notes', t('money.exp.credits'), t('money.exp.credits.hint')],
 ];
 
 function Exports() {
@@ -340,14 +331,14 @@ function Exports() {
   return (
     <div className="card stack">
       <div className="row spread">
-        <h3 style={{ margin: 0 }} className="inline-flex items-center gap-2"><Download className="size-5" strokeWidth={1.8} /> Accounting exports</h3>
+        <h3 style={{ margin: 0 }} className="inline-flex items-center gap-2"><Download className="size-5" strokeWidth={1.8} /> {t('money.exports')}</h3>
         <div className="row small">
-          <label className="row" style={{ gap: 6 }}>From <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} style={{ width: 150 }} /></label>
-          <label className="row" style={{ gap: 6 }}>To <input type="date" value={to} onChange={(e) => setTo(e.target.value)} style={{ width: 150 }} /></label>
+          <label className="row" style={{ gap: 6 }}>{t('money.from')} <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} style={{ width: 150 }} /></label>
+          <label className="row" style={{ gap: 6 }}>{t('money.to')} <input type="date" value={to} onChange={(e) => setTo(e.target.value)} style={{ width: 150 }} /></label>
         </div>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        {EXPORTS.map(([kind, label, hint]) => (
+        {exportsList().map(([kind, label, hint]) => (
           <button
             key={kind}
             type="button"
@@ -366,7 +357,7 @@ function Exports() {
           </button>
         ))}
       </div>
-      <p className="small muted" style={{ margin: 0 }}>CSV files open in Excel, Google Sheets and most bookkeeping tools. Amounts are in cents.</p>
+      <p className="small muted" style={{ margin: 0 }}>{t('money.csv')}</p>
       {error && <div className="alert">{error}</div>}
     </div>
   );

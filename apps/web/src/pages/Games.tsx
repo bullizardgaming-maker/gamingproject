@@ -137,9 +137,11 @@ export function GamePage() {
     if (!query) return;
     setOffers(null);
     setPage(1);
+    let stale = false; // a slower earlier request must not overwrite newer filters
     api<{ items: Offer[]; total: number; hasMore: boolean; facets?: { attributes?: AttrFacet[] } }>(`/offers?${query}`)
-      .then((r) => (setOffers(r.items), setTotal(r.total), setHasMore(r.hasMore), setFacets(r.facets?.attributes ?? [])))
-      .catch((e) => setError(e.message));
+      .then((r) => { if (!stale) (setOffers(r.items), setTotal(r.total), setHasMore(r.hasMore), setFacets(r.facets?.attributes ?? [])); })
+      .catch((e) => { if (!stale) setError(e.message); });
+    return () => { stale = true; };
   }, [query]);
 
   const more = async () => {

@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { api, session, signOut, type User } from './api';
+import { chosenLocale, currentLocale, isLocale, setLocale } from './i18n';
 
 interface SessionState {
   user: User | null;
@@ -26,6 +27,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
     try {
       const u = (await api<{ user: User }>('/me')).user;
+      // Keep the account's language (used for emails and notifications) and this browser's in step:
+      // a language picked here wins; otherwise this browser adopts the account's.
+      if (chosenLocale() && u.locale !== currentLocale()) api('/me/locale', { method: 'PUT', body: { locale: currentLocale() } }).catch(() => {});
+      else if (!chosenLocale() && isLocale(u.locale) && u.locale !== currentLocale()) void setLocale(u.locale);
       setUser(u);
       setPermissions(
         u.role === 'user' ? new Set() : new Set((await api<{ permissions: string[] }>('/me/permissions').catch(() => ({ permissions: [] }))).permissions),

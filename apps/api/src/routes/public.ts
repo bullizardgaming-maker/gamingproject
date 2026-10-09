@@ -20,6 +20,7 @@ import {
   getPushPreferences, listInbox, listPushSubscriptions, markAllRead, markRead, removePushSubscription, setPushPreferences, subscribePush, unreadCount, unsubscribePush,
 } from '../domain/inbox.js';
 import { recordView } from '../domain/analytics.js';
+import { LOCALES } from '../domain/locales/index.js';
 import { TICKET_CATEGORIES, createTicket, customerReply, customerResolve, getTicket, listMyTickets } from '../domain/support.js';
 import { createWatch, deleteWatch, listWatches, updateWatch } from '../domain/watches.js';
 import { confirmSubscription, getIncident, statusSummary, subscribe, unsubscribe } from '../domain/status.js';
@@ -64,7 +65,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   }));
 
   app.post('/auth/register', strict, async (req, reply) => {
-    const body = Credentials.extend({ displayName: z.string().trim().min(2).max(40), referralCode: z.string().trim().max(20).optional() }).parse(req.body);
+    const body = Credentials.extend({ displayName: z.string().trim().min(2).max(40), referralCode: z.string().trim().max(20).optional(), locale: z.enum(LOCALES).optional() }).parse(req.body);
     await requireCaptcha(req, body.captchaToken);
     const res = await register(ctx, { ...body, ...meta(req) });
     return reply.status(201).send(deliver(req, reply, res));
@@ -123,6 +124,12 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   app.get('/me', async (req) => ({ user: me(req) }));
+  // Emails, notifications and SMS go out in this language; the web app sets it when the user switches.
+  app.put('/me/locale', async (req) => {
+    const { locale } = z.object({ locale: z.enum(LOCALES) }).parse(req.body);
+    await ctx.db.query('UPDATE users SET locale = $2 WHERE id = $1', [me(req).id, locale]);
+    return { locale };
+  });
   app.get('/me/permissions', async (req) => ({ permissions: [...permissionsOf(me(req))].sort() }));
 
   app.post('/me/password', strict, async (req) => {

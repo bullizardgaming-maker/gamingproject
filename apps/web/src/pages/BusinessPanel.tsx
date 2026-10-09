@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, money } from '../api';
 import { BarChart, Kpi, Legend, LineChart } from '../components/Charts';
 import { categoryLabel } from '@/lib/catalog';
-import { PERIODS, pctText } from './SellerAnalytics';
+import { PERIODS, pctText, periodLabel } from './SellerAnalytics';
 
 interface Totals {
   orders: number;
@@ -54,7 +54,7 @@ export function BusinessPanel() {
       <div className="row spread">
         <p className="muted small" style={{ margin: 0 }}>Paid orders, in the settlement currency. Take is commission on orders not refunded or charged back. Compared with the {days} days before.</p>
         <div className="filters" role="group" aria-label="Period" style={{ margin: 0 }}>
-          {PERIODS.map(([d, l]) => <button key={d} aria-pressed={days === d} onClick={() => setDays(d)}>{l}</button>)}
+          {PERIODS.map((d) => <button key={d} aria-pressed={days === d} onClick={() => setDays(d)}>{periodLabel(d)}</button>)}
         </div>
       </div>
       {error && <div className="alert">{error}</div>}

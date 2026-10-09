@@ -18,13 +18,24 @@ export type Locale = keyof typeof LOCALES;
 export type { MessageKey };
 type Dict = Messages;
 
-const loaders: Record<Exclude<Locale, 'en'>, () => Promise<{ default: Dict }>> = {
-  ar: () => import('./ar'),
-  es: () => import('./es'),
-  fr: () => import('./fr'),
-  de: () => import('./de'),
-  pt: () => import('./pt'),
+/** Help-centre articles in one language, keyed by article slug (see lib/help.ts). */
+export interface HelpPack {
+  topics: Record<string, { title: string; blurb: string }>;
+  articles: Record<string, { title: string; summary: string; body: string[] }>;
+  ticketCategories: Record<string, string>;
+}
+type Loaded = [{ default: Dict }, { default: Dict }, { default: HelpPack }];
+// Each language is three chunks: the site, the seller hub and the help centre.
+const loaders: Record<Exclude<Locale, 'en'>, () => Promise<Loaded>> = {
+  ar: () => Promise.all([import('./ar'), import('./ar.seller'), import('./ar.help')]),
+  es: () => Promise.all([import('./es'), import('./es.seller'), import('./es.help')]),
+  fr: () => Promise.all([import('./fr'), import('./fr.seller'), import('./fr.help')]),
+  de: () => Promise.all([import('./de'), import('./de.seller'), import('./de.help')]),
+  pt: () => Promise.all([import('./pt'), import('./pt.seller'), import('./pt.help')]),
 };
+let help: HelpPack | null = null;
+/** The help centre in the active language, or null for English. */
+export const helpPack = () => help;
 
 const KEY = 'bz.lang';
 let locale: Locale = 'en';
@@ -55,7 +66,14 @@ function apply() {
 }
 
 async function load(l: Locale) {
-  dict = l === 'en' ? en : { ...en, ...(await loaders[l]()).default };
+  if (l === 'en') {
+    dict = en;
+    help = null;
+  } else {
+    const [site, seller, helpModule] = await loaders[l]();
+    dict = { ...en, ...site.default, ...seller.default };
+    help = helpModule.default;
+  }
   locale = l;
   apply();
   listeners.forEach((fn) => fn());
@@ -81,6 +99,9 @@ export async function setLocale(l: Locale) {
 }
 
 export const currentLocale = () => locale;
+/** The language the person picked in this browser, or null if it was only detected. */
+export const chosenLocale = () => stored();
+export const isLocale = (v: unknown): v is Locale => typeof v === 'string' && v in LOCALES;
 export const intlLocale = () => LOCALES[locale].intl;
 /** Prices: Arabic interfaces in gaming marketplaces show Latin "$29.00", which also reads cleanly inside RTL text. */
 export const moneyLocale = () => (locale === 'ar' ? 'en-US' : LOCALES[locale].intl);
@@ -101,3 +122,5 @@ export function t(key: MessageKey | PluralBase, vars?: Record<string, string | n
 
 /** Re-renders the caller when the language changes; returns the active locale. */
 export const useLocale = () => useSyncExternalStore(subscribe, () => locale);
+/** Run a callback after every language change (and keep it registered). */
+export const onLocaleChange = (fn: () => void) => subscribe(fn);

@@ -1,4 +1,5 @@
 import { SignJWT, jwtVerify } from 'jose';
+import { PACKS, isLocale } from './locales/index.js';
 import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { maybeOne, one, withTx } from '../db.js';
@@ -32,6 +33,8 @@ export interface User {
   created_at: string;
   totp_enabled: boolean;
   payouts_enabled: boolean;
+  /** Interface and message language (en, ar, es, fr, de, pt). */
+  locale: string;
   /** True when the current session was established with a second factor. */
   session_mfa?: boolean;
   session_id?: string;
@@ -39,7 +42,7 @@ export interface User {
 }
 
 export const PUBLIC_USER_COLUMNS =
-  'id, email, display_name, role, kyc_tier, status, email_verified_at, phone, phone_verified_at, withdrawals_frozen, stripe_account_id, legal_name, created_at, (totp_enabled_at IS NOT NULL) AS totp_enabled, payouts_enabled, staff_roles';
+  'id, email, display_name, role, kyc_tier, status, email_verified_at, phone, phone_verified_at, withdrawals_frozen, stripe_account_id, legal_name, created_at, (totp_enabled_at IS NOT NULL) AS totp_enabled, payouts_enabled, staff_roles, locale';
 
 // ---------------------------------------------------------------------------
 // Authentication. Sessions live in ./sessions.ts (15-minute access tokens +
@@ -87,14 +90,14 @@ function sessionResponse(user: User, s: IssuedSession) {
   return { user, token: s.accessToken, refreshToken: s.refreshToken, expiresIn: s.expiresIn };
 }
 
-export async function register(ctx: Ctx, input: { email: string; password: string; displayName: string; referralCode?: string } & AuthMeta) {
+export async function register(ctx: Ctx, input: { email: string; password: string; displayName: string; referralCode?: string; locale?: string } & AuthMeta) {
   const hash = await hashPassword(input.password);
   const referrer = await referrerForCode(ctx.db, input.referralCode);
   try {
     const user = await one<User>(
       ctx.db,
-      `INSERT INTO users (email, password_hash, display_name, referred_by) VALUES ($1, $2, $3, $4) RETURNING ${PUBLIC_USER_COLUMNS}`,
-      [input.email, hash, input.displayName, referrer],
+      `INSERT INTO users (email, password_hash, display_name, referred_by, locale) VALUES ($1, $2, $3, $4, $5) RETURNING ${PUBLIC_USER_COLUMNS}`,
+      [input.email, hash, input.displayName, referrer, isLocale(input.locale) ? input.locale : 'en'],
     );
     await recordSignals(ctx.db, user.id, { device: input.device, ip_subnet: subnetOf(input.ip) });
     return sessionResponse(user, await createSession(ctx, user.id, { mfa: false, userAgent: input.userAgent, ip: input.ip }));
@@ -272,7 +275,9 @@ export async function sendVerificationCode(ctx: Ctx, user: User, channel: 'email
     `INSERT INTO verification_codes (user_id, channel, target, code_hash, expires_at) VALUES ($1, $2, $3, $4, now() + make_interval(mins => $5))`,
     [user.id, channel, target, hmacSha256(ctx.cfg.FINGERPRINT_KEY, `${user.id}:${channel}:${code}`), CODE_TTL_MINUTES],
   );
-  await ctx.messenger.send({ channel, to: target, body: `Your verification code is ${code}. It expires in ${CODE_TTL_MINUTES} minutes.` });
+  const pack = isLocale(user.locale) && user.locale !== 'en' ? PACKS[user.locale] : null;
+  const body = pack ? pack.verifyCode(code, CODE_TTL_MINUTES) : `Your verification code is ${code}. It expires in ${CODE_TTL_MINUTES} minutes.`;
+  await ctx.messenger.send({ channel, to: target, body });
   return { sent: true, target };
 }
 

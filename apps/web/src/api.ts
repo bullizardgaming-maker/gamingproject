@@ -22,6 +22,8 @@ export interface User {
   withdrawals_frozen: boolean;
   totp_enabled: boolean;
   payouts_enabled: boolean;
+  /** Language for emails and notifications. */
+  locale?: string;
   session_mfa?: boolean;
 }
 

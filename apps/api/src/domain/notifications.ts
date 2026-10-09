@@ -2,6 +2,7 @@ import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { many, maybeOne, withTx } from '../db.js';
 import { badRequest } from '../lib/errors.js';
+import { PACKS, helpers, isLocale, type Locale } from './locales/index.js';
 
 /**
  * Notifications. Business code calls notify() (alias enqueueEmail) inside its own transaction
@@ -256,13 +257,30 @@ export const TEMPLATES = {
 
 export type TemplateName = keyof typeof TEMPLATES;
 
+/**
+ * A template in the reader's language. Customer-facing messages are translated (./locales);
+ * staff alerts and anything not yet translated fall back to English.
+ */
+export function templateFor(name: TemplateName, locale: Locale = 'en'): Template {
+  const base = TEMPLATES[name] as Template;
+  const t = locale === 'en' ? undefined : PACKS[locale].templates[name];
+  if (!t) return base;
+  const h = helpers(locale);
+  return { ...base, subject: (d) => t.subject(d, h), body: (d, link) => t.body(d, link, h) };
+}
+
+async function localeOf(q: Queryable, userId: string): Promise<Locale> {
+  const row = await maybeOne<{ locale: string }>(q, 'SELECT locale FROM users WHERE id = $1', [userId]);
+  return isLocale(row?.locale) ? row.locale : 'en';
+}
+
 export async function enqueueEmail(q: Queryable, userId: string, template: TemplateName, data: Data, dedupeKey?: string) {
   const { rowCount } = await q.query(
     `INSERT INTO notifications (user_id, template, data, dedupe_key) VALUES ($1, $2, $3, $4) ON CONFLICT (dedupe_key) DO NOTHING RETURNING id`,
     [userId, template, JSON.stringify(data), dedupeKey ?? null],
   );
   if (!rowCount) return; // duplicate (dedupe key): already notified
-  const t = TEMPLATES[template] as Template;
+  const t = templateFor(template, await localeOf(q, userId));
   if (t.inbox === false) return;
   const item = inboxText(t, data);
   await q.query(
@@ -312,12 +330,13 @@ export async function setPreferences(q: Queryable, userId: string, changes: Reco
 // ---------------------------------------------------------------------------
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-export function render(ctx: Ctx, name: TemplateName, data: Data) {
-  const t = TEMPLATES[name] as Template;
+export function render(ctx: Ctx, name: TemplateName, data: Data, locale: Locale = 'en') {
+  const t = templateFor(name, locale);
   const link = (path: string) => `${ctx.cfg.PUBLIC_WEB_URL}${path}`;
-  const text = `${t.body(data, link)}\n\n— Bullizard\nManage emails: ${link('/account')}`;
+  const pack = locale === 'en' ? null : PACKS[locale];
+  const text = `${t.body(data, link)}\n\n${pack?.signoff ?? '— Bullizard'}\n${pack?.manage ?? 'Manage emails'}: ${link('/account')}`;
   const html =
-    `<div style="font:15px/1.55 system-ui,sans-serif;color:#16202e;max-width:560px">` +
+    `<div dir="${locale === 'ar' ? 'rtl' : 'ltr'}" style="font:15px/1.55 system-ui,sans-serif;color:#16202e;max-width:560px">` +
     escapeHtml(text)
       .split('\n')
       .map((l) => l.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1">$1</a>'))
@@ -337,7 +356,7 @@ export async function dispatchEmails(ctx: Ctx, limit = 50): Promise<number> {
         WHERE u.id = n.user_id AND n.id IN (
           SELECT id FROM notifications WHERE status = 'pending' AND next_attempt_at <= now()
            ORDER BY created_at LIMIT $1 FOR UPDATE SKIP LOCKED)
-        RETURNING n.id, n.template, n.data, n.attempts, u.email, u.email_preferences`,
+        RETURNING n.id, n.template, n.data, n.attempts, u.email, u.email_preferences, u.locale`,
       [limit],
     ),
   );
@@ -352,7 +371,7 @@ export async function dispatchEmails(ctx: Ctx, limit = 50): Promise<number> {
       continue;
     }
     try {
-      const msg = render(ctx, n.template as TemplateName, n.data);
+      const msg = render(ctx, n.template as TemplateName, n.data, isLocale(n.locale) ? n.locale : 'en');
       await ctx.messenger.send({ channel: 'email', to: n.email, subject: msg.subject, body: msg.text, html: msg.html });
       await ctx.db.query(`UPDATE notifications SET status = 'sent', sent_at = now(), last_error = NULL WHERE id = $1`, [n.id]);
     } catch (err) {

@@ -5,6 +5,7 @@ import { DEMO, api, session } from '../api';
 import { DemoSignIn } from '../demo/DemoUi';
 import { PushSettings } from '../components/NotificationSettings';
 import { useSession } from '../session';
+import { currentLocale } from '../i18n';
 import { usePageMeta } from '@/lib/seo';
 
 export function Login() {
@@ -25,7 +26,7 @@ export function Login() {
     const f = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>;
     setError('');
     try {
-      const res = await api<{ token?: string; mfaRequired?: boolean; mfaToken?: string }>(mode === 'login' ? '/auth/login' : '/auth/register', { body: f });
+      const res = await api<{ token?: string; mfaRequired?: boolean; mfaToken?: string }>(mode === 'login' ? '/auth/login' : '/auth/register', { body: mode === 'login' ? f : { ...f, locale: currentLocale() } });
       if (res.mfaRequired && res.mfaToken) setMfaToken(res.mfaToken);
       else finish(res.token!, mode === 'register');
     } catch (err: any) {

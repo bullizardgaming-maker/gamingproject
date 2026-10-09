@@ -302,11 +302,18 @@ route('POST', '/auth/register', ({ body }) => {
   const u: DemoUser = {
     id: rid(), email: body.email, password: body.password, display_name: body.displayName ?? 'New user', role: 'user', kyc_tier: 0, status: 'active',
     email_verified_at: null, phone_verified_at: null, withdrawals_frozen: false, totp_enabled: false, payouts_enabled: false, legal_name: null, created_at: now(),
+    locale: ['ar', 'es', 'fr', 'de', 'pt'].includes(body.locale) ? body.locale : 'en',
   };
   state.users.push(u);
   return { token: `demo:${u.id}`, user: publicUser(u) };
 });
 route('POST', '/auth/logout', () => undefined);
+route('PUT', '/me/locale', ({ me, body }) => {
+  const u = need(me);
+  if (!['en', 'ar', 'es', 'fr', 'de', 'pt'].includes(body.locale)) fail(400, 'validation_error', 'Unknown language');
+  u.locale = body.locale;
+  return { locale: body.locale };
+});
 route('POST', '/auth/refresh', () => fail(401, 'unauthorized', 'Sign in again'));
 route('POST', '/auth/password/forgot', () => ({ message: 'If an account uses this email, a reset link is on its way.' }));
 route('POST', '/auth/password/reset', () => fail(400, 'invalid_reset_link', 'Reset links are emailed in the real app; this demo has no email.'));
