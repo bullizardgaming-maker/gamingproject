@@ -265,8 +265,31 @@ function orderSummary(o: any, as: 'buyer' | 'seller') {
   };
 }
 
-function orderDetail(o: any) {
+const GOOD_BUYER_TAGS = ['clear_communication', 'quick_confirmation', 'patient'];
+function buyerRepOf(buyerId: string) {
+  const u = userById(buyerId);
+  const mine = state.orders.filter((o) => o.buyer_id === buyerId);
+  const ratings = state.buyerRatings.filter((r) => r.buyer_id === buyerId);
+  const positive = ratings.filter((r) => r.positive).length;
+  const negative = ratings.length - positive;
+  const opened = mine.filter((o) => o.dispute?.opened_by === buyerId);
+  const disputesLost = opened.filter((o) => o.dispute.status === 'resolved_seller').length;
+  const chargebacks = mine.filter((o) => o.status === 'charged_back').length;
+  const completed = (state.buyerCompletedBefore[buyerId] ?? 0) + mine.filter((o) => o.status === 'completed').length;
+  const counts = new Map<string, number>();
+  for (const r of ratings) for (const t of r.tags) counts.set(t, (counts.get(t) ?? 0) + 1);
+  const topTags = [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 3).map(([tag, count]) => ({ tag, count }));
+  const caution = chargebacks > 0 || disputesLost >= 2 || (ratings.length >= 3 && negative / ratings.length > 0.25);
+  return {
+    level: caution ? 'caution' : completed < 3 ? 'new' : 'good', memberSince: u?.created_at ?? now(), completedOrders: completed,
+    positive, negative, disputesOpened: opened.length, disputesLost, chargebacks, topTags,
+  };
+}
+
+function orderDetail(o: any, viewer?: DemoUser) {
   const review = state.reviews.find((r) => r.order_id === o.id);
+  const sellerView = !!viewer && (viewer.id === o.seller_id || viewer.role !== 'user');
+  const rating = state.buyerRatings.find((r) => r.order_id === o.id);
   return {
     ...o,
     items: undefined,
@@ -274,6 +297,9 @@ function orderDetail(o: any) {
     seller_name: userById(o.seller_id)?.display_name,
     review: review ? { rating: review.rating, comment: review.comment, seller_reply: review.seller_reply } : null,
     warranty_claims: state.warrantyClaims.filter((c) => c.order_id === o.id).sort((a, b) => b.created_at.localeCompare(a.created_at)),
+    progress: state.progress.filter((p) => p.order_id === o.id),
+    buyer_reputation: sellerView ? buyerRepOf(o.buyer_id) : null,
+    buyer_rating: sellerView && rating ? { positive: rating.positive, tags: rating.tags, created_at: rating.created_at } : null,
   };
 }
 
@@ -291,6 +317,10 @@ function seedOrdersFor(buyer: DemoUser) {
   releaseOrder(done, 'buyer_confirmed');
   state.reviews.push({ id: rid(), order_id: done.id, seller_id: done.seller_id, rating: 5, comment: 'Instant and worked first try.', seller_reply: null, created_at: now() });
   make(pick('Steam Wallet'), 4 * 3_600_000);
+  // A boosting order from the demo seller, part-way through.
+  const boost = make(pick('Gold IV → Platinum IV'), 2 * day);
+  state.progress.push({ id: rid(), order_id: boost.id, percent: 35, note: 'Gold II now, 9 wins from 14 games', attachment_id: null, created_at: new Date(Date.now() - 20 * 3_600_000).toISOString() });
+  appendMessage(boost.room_id, null, 'system', 'Progress: 35% · Gold II now, 9 wins from 14 games');
   const acct = make(pick('Lvl 80 Warrior'), day);
   deliverOrder(acct, 'Login: arthas-2009@example.com\nPassword: ••••••••• (change it now)\nOriginal registration email included.');
   save();
@@ -761,7 +791,20 @@ route('GET', '/orders', ({ me, query }) => {
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
     .map((o) => orderSummary(o, as));
 });
-route('GET', '/orders/:id', ({ me, params }) => orderDetail(orderFor(need(me), params[0]!)));
+route('GET', '/orders/:id', ({ me, params }) => orderDetail(orderFor(need(me), params[0]!), me!));
+route('GET', '/me/buyer-reputation', ({ me }) => buyerRepOf(need(me).id));
+route('POST', '/orders/:id/buyer-rating', ({ me, params, body }) => {
+  const u = need(me);
+  const o = orderFor(u, params[0]!);
+  if (o.seller_id !== u.id) fail(403, 'not_seller', 'Only the seller rates the buyer');
+  if (o.status !== 'completed') fail(409, 'not_rateable', 'Rate the buyer once the order is complete');
+  const tags: string[] = [...new Set<string>(body.tags ?? [])];
+  if (!tags.every((t) => GOOD_BUYER_TAGS.includes(t) === !!body.positive)) fail(409, 'tags_mismatch', body.positive ? 'Pick tags that describe a good buyer' : 'Pick tags that describe what went wrong');
+  if (state.buyerRatings.some((r) => r.order_id === o.id)) fail(409, 'already_rated', 'You already rated this buyer for this order');
+  const row = { id: rid(), order_id: o.id, seller_id: u.id, buyer_id: o.buyer_id, positive: !!body.positive, tags, created_at: now() };
+  state.buyerRatings.push(row);
+  return { positive: row.positive, tags: row.tags, created_at: row.created_at };
+});
 route('GET', '/orders/:id/items', ({ me, params }) => {
   const u = need(me);
   const o = orderFor(u, params[0]!);
@@ -777,6 +820,41 @@ route('POST', '/orders/:id/deliver', ({ me, params, body }) => {
   notifyOrder(o.id);
   return orderDetail(o);
 });
+// --- Boosting progress and chat screenshots ----------------------------------------------
+route('POST', '/chat/rooms/:id/attachments', ({ me, params, body }) => {
+  const u = need(me);
+  const room = state.rooms.find((x) => x.id === params[0]) ?? fail(404, 'not_found', 'Chat not found');
+  if (room.buyer_id !== u.id && room.seller_id !== u.id) fail(403, 'not_participant', 'Only the buyer and seller can add evidence');
+  if (!/^image\/(png|jpeg|webp)$/.test(body.type ?? '')) fail(400, 'unsupported_file', 'Only PNG, JPEG and WebP images can be attached');
+  // The demo keeps images in this browser's storage, so they have to stay small.
+  if (body.size > 600_000) fail(413, 'file_too_large', 'In the demo, screenshots can be up to 600 KB');
+  const att = { id: rid(), room_id: room.id, uploader_id: u.id, data_url: body.dataUrl, mime: body.type, created_at: now() };
+  state.attachments.push(att);
+  const m = appendMessage(room.id, u.id, 'attachment', '📎 screenshot');
+  return { id: att.id, mime: att.mime, created_at: att.created_at, seq: m.seq };
+});
+route('POST', '/orders/:id/progress', ({ me, params, body }) => {
+  const u = need(me);
+  const o = orderFor(u, params[0]!);
+  if (o.seller_id !== u.id) fail(403, 'not_seller', 'Only the seller posts progress');
+  if (o.category_kind !== 'boosting') fail(400, 'not_boosting', 'Progress updates are for boosting orders');
+  if (o.status !== 'paid') fail(409, 'invalid_state', 'Progress can be posted while the order is in progress');
+  const percent = Number(body.percent);
+  if (!Number.isInteger(percent) || percent < 0 || percent > 100) fail(400, 'validation_error', 'Percent must be 0 to 100');
+  const last = state.progress.filter((p) => p.order_id === o.id).at(-1);
+  if (last && percent < last.percent) fail(400, 'progress_backwards', `Progress can’t go below the last update (${last.percent}%)`);
+  if (body.attachmentId && !state.attachments.some((a) => a.id === body.attachmentId && a.room_id === o.room_id && a.uploader_id === u.id)) {
+    fail(400, 'invalid_attachment', 'Attach a screenshot you uploaded to this order’s chat');
+  }
+  const note = String(body.note ?? '').trim().slice(0, 500);
+  const row = { id: rid(), order_id: o.id, percent, note, attachment_id: body.attachmentId ?? null, created_at: now() };
+  state.progress.push(row);
+  live(appendMessage(o.room_id, null, 'system', `Progress: ${percent}%${note ? ` · ${note}` : ''}${row.attachment_id ? ' (screenshot attached)' : ''}`));
+  notify(o.buyer_id, 'orders', 'order_progress', `${percent}% done: ${o.offer_title}`, note || 'The seller posted progress on your order.', `/orders/${o.id}`);
+  notifyOrder(o.id);
+  return row;
+});
+
 // --- Account warranty claims (after release) ---------------------------------------------
 const CLAIM_OPEN = ['open', 'seller_fixed', 'escalated'];
 const REASON_TEXT: Record<string, string> = { recovered: 'the account was taken back by its original owner', banned: 'the account was banned', locked: 'the account is locked', other: 'the account stopped working' };
@@ -2230,6 +2308,15 @@ function blobRoute(me: DemoUser | null, path: string, query: URLSearchParams): B
     const u = needSeller(me);
     const i = state.invoices.find((x) => x.id === m![1] && x.seller_id === u.id) ?? fail(404, 'not_found', 'Invoice not found');
     return pdf([`Bullizard commission invoice ${i.number}`, `Seller: ${u.display_name}`, `Period from ${i.period_start.slice(0, 10)}`, `Commission: $${(i.gross_cents / 100).toFixed(2)} ${i.currency}`, `Tax: $${(i.tax_cents / 100).toFixed(2)}`, 'Demo document - not a real invoice.']);
+  }
+  m = /^\/chat\/attachments\/([^/]+)$/.exec(path);
+  if (m) {
+    const u = need(me);
+    const a = state.attachments.find((x) => x.id === m![1]) ?? fail(404, 'not_found', 'Attachment not found');
+    const room = state.rooms.find((x) => x.id === a.room_id)!;
+    if (room.buyer_id !== u.id && room.seller_id !== u.id && u.role === 'user') fail(403, 'not_participant', 'Not your order');
+    const bin = atob(a.data_url.slice(a.data_url.indexOf(',') + 1));
+    return new Blob([Uint8Array.from(bin, (c) => c.charCodeAt(0))], { type: a.mime });
   }
   if (path === '/seller/listings/export.csv') {
     const u = needSeller(me);

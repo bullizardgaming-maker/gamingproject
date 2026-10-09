@@ -81,6 +81,10 @@ const ar: LocalePack = {
         return `${m[d.status as string] ?? "حُدّثت المطالبة."}\n\n${link(`/orders/${d.order_id}`)}`;
       },
     },
+    order_progress: {
+      subject: (d) => `اكتمل ${d.percent}%: ${d.title}`,
+      body: (d, link) => `نشر البائع تقدّمًا في «${d.title}»: ${d.percent}%${d.note ? `. «${d.note}»` : '.'}\n\n${link(`/orders/${d.order_id}`)}`,
+    },
     dispute_resolved: {
       subject: (d) => `حُسم النزاع: ${d.title}`,
       body: (d, link) => `قرر المحكّم لصالح ${d.outcome === 'buyer' ? 'المشتري' : 'البائع'}. ملاحظة: «${d.note}»\n\n${link(`/orders/${d.order_id}`)}`,

@@ -82,6 +82,10 @@ const pt: LocalePack = {
         return `${m[d.status as string] ?? "A reclamação foi atualizada."}\n\n${link(`/orders/${d.order_id}`)}`;
       },
     },
+    order_progress: {
+      subject: (d) => `${d.percent}% concluído: ${d.title}`,
+      body: (d, link) => `O vendedor publicou o progresso de “${d.title}”: ${d.percent}%${d.note ? `. “${d.note}”` : '.'}\n\n${link(`/orders/${d.order_id}`)}`,
+    },
     dispute_resolved: {
       subject: (d) => `Disputa resolvida: ${d.title}`,
       body: (d, link) => `O árbitro decidiu a favor do ${d.outcome === 'buyer' ? 'comprador' : 'vendedor'}. Observação: “${d.note}”\n\n${link(`/orders/${d.order_id}`)}`,

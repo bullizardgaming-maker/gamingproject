@@ -130,6 +130,11 @@ export const TEMPLATES = {
         withdrawn: 'The buyer withdrew the claim.',
       } as Record<string, string>)[d.status as string] ?? 'The claim was updated.'}\n\n${link(`/orders/${d.order_id}`)}`,
   },
+  order_progress: {
+    category: 'orders',
+    subject: (d) => `${d.percent}% done: ${d.title}`,
+    body: (d, link) => `The seller posted progress on "${d.title}": ${d.percent}%${d.note ? `. "${d.note}"` : '.'}\n\n${link(`/orders/${d.order_id}`)}`,
+  },
   dispute_resolved: {
     category: 'disputes',
     subject: (d) => `Dispute resolved: ${d.title}`,

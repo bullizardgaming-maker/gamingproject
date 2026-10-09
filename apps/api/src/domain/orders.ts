@@ -25,6 +25,8 @@ import { unitPriceFor, type PriceTier } from './offers.js';
 import { effectivePrice, quoteSellerCode, type SaleFields } from './discounts.js';
 import { listStatements, type DisputeCategory } from './disputes.js';
 import { claimsForOrder } from './warranty.js';
+import { progressFor } from './progress.js';
+import { buyerReputation, ratingForOrder } from './buyerReputation.js';
 
 export type OrderStatus = 'awaiting_payment' | 'paid' | 'delivered' | 'completed' | 'disputed' | 'refunded' | 'cancelled' | 'charged_back';
 
@@ -942,14 +944,19 @@ export async function getOrderFor(q: Queryable, orderId: string, user: { id: str
   if (!order) throw notFound('Order');
   const staff = hasPermission(user, 'orders.view_any');
   if (!staff && order.buyer_id !== user.id && order.seller_id !== user.id) throw notFound('Order');
-  const [checklist, dispute, events, review, warrantyClaims] = await Promise.all([
+  // Sellers (and staff) see the buyer's reputation and their own rating of this order.
+  const sellerView = staff || order.seller_id === user.id;
+  const [checklist, dispute, events, review, warrantyClaims, progress, buyerRep, buyerRating] = await Promise.all([
     maybeOne(q, 'SELECT items, completed_at FROM security_checklists WHERE order_id = $1', [orderId]),
     maybeOne<any>(q, 'SELECT * FROM disputes WHERE order_id = $1', [orderId]).then(async (d) => d && { ...d, statements: await listStatements(q, d.id) }),
     many(q, 'SELECT from_status, to_status, reason, created_at FROM order_events WHERE order_id = $1 ORDER BY id', [orderId]),
     maybeOne(q, 'SELECT id, rating, comment, seller_reply, created_at FROM reviews WHERE order_id = $1', [orderId]),
     claimsForOrder(q, orderId),
+    order.category_kind === 'boosting' ? progressFor(q, orderId) : Promise.resolve([]),
+    sellerView ? buyerReputation(q, order.buyer_id) : Promise.resolve(null),
+    sellerView ? ratingForOrder(q, orderId) : Promise.resolve(null),
   ]);
-  return { ...order, checklist, dispute, events, review, warranty_claims: warrantyClaims };
+  return { ...order, checklist, dispute, events, review, warranty_claims: warrantyClaims, progress, buyer_reputation: buyerRep, buyer_rating: buyerRating };
 }
 
 export async function listOrders(q: Queryable, userId: string, role: 'buyer' | 'seller', status?: string, limit = 50) {

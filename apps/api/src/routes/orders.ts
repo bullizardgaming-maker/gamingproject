@@ -11,6 +11,8 @@ import { buildEscrowTerms } from '../domain/web3.js';
 import { MAX_CART_ITEMS, cartView, createCartCheckout } from '../domain/cart.js';
 import { DISPUTE_CATEGORIES, addStatement } from '../domain/disputes.js';
 import { CLAIM_REASONS, buyerRespond, openClaim, sellerRespond } from '../domain/warranty.js';
+import { postProgress } from '../domain/progress.js';
+import { BUYER_TAGS, buyerReputation, rateBuyer } from '../domain/buyerReputation.js';
 import { createReview, replyToReview, sellerProfile } from '../domain/reviews.js';
 import { badRequest, forbidden, notFound } from '../lib/errors.js';
 import { readAttachment, uploadAttachment } from '../domain/attachments.js';
@@ -132,6 +134,20 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/orders/:id/dispute/statements', async (req, reply) => {
     const { body } = z.object({ body: z.string().trim().min(10).max(2_000) }).parse(req.body);
     return reply.status(201).send(await addStatement(ctx, Id.parse(req.params).id, me(req).id, body));
+  });
+
+  /** The seller rates the buyer once the order is complete (positive/negative, tags from a fixed list). */
+  app.post('/orders/:id/buyer-rating', async (req, reply) => {
+    const body = z.object({ positive: z.boolean(), tags: z.array(z.enum(BUYER_TAGS)).max(4).default([]) }).parse(req.body);
+    return reply.status(201).send(await rateBuyer(ctx, me(req).id, Id.parse(req.params).id, body));
+  });
+  /** A buyer's own reputation, as sellers see it. */
+  app.get('/me/buyer-reputation', async (req) => buyerReputation(ctx.db, me(req).id));
+
+  /** Boosting orders: the seller posts a progress milestone (percent, note, optional chat screenshot). */
+  app.post('/orders/:id/progress', async (req, reply) => {
+    const body = z.object({ percent: z.number().int().min(0).max(100), note: z.string().trim().max(500).default(''), attachmentId: z.string().uuid().optional() }).parse(req.body);
+    return reply.status(201).send(await postProgress(ctx, me(req).id, Id.parse(req.params).id, body));
   });
 
   // Account warranty claims (after release, while the order's warranty runs).

@@ -4,6 +4,7 @@ import QRCode from 'qrcode';
 import { DEMO, api, session } from '../api';
 import { DemoSignIn } from '../demo/DemoUi';
 import { PushSettings } from '../components/NotificationSettings';
+import { MyBuyerReputation } from '../components/BuyerReputation';
 import { useSession } from '../session';
 import { currentLocale } from '../i18n';
 import { usePageMeta } from '@/lib/seo';
@@ -262,6 +263,7 @@ export function Account() {
         {kyc && <div className="notice">{kyc}</div>}
       </div>
 
+      <MyBuyerReputation />
       <TwoFactor />
       <Devices />
       <PasswordChange />

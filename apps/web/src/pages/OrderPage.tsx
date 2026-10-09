@@ -3,6 +3,8 @@ import { Link, useParams } from 'react-router-dom';
 import { api, money, realtime } from '../api';
 import { Chat } from '../components/Chat';
 import { AlsoBought } from '../components/AlsoBought';
+import { BoostProgress, type ProgressUpdate } from '../components/BoostProgress';
+import { BuyerCard, type BuyerRep, type BuyerTag } from '../components/BuyerReputation';
 import { EscrowTrack, formatRemaining, type TrackVariant } from '../components/EscrowTrack';
 import { useSession } from '../session';
 import { usePageMeta } from '@/lib/seo';
@@ -39,6 +41,10 @@ interface OrderDetail {
   warranty_days?: number;
   warranty_ends_at?: string | null;
   warranty_claims?: WarrantyClaim[];
+  progress?: ProgressUpdate[];
+  /** Seller and staff only. */
+  buyer_reputation?: BuyerRep | null;
+  buyer_rating?: { positive: boolean; tags: BuyerTag[] } | null;
 }
 
 interface WarrantyClaim {
@@ -292,6 +298,11 @@ export function OrderPage() {
               </div>
             </div>
           )}
+
+          {order.buyer_reputation && (
+            <BuyerCard orderId={order.id} name={order.buyer_name} rep={order.buyer_reputation} rating={order.buyer_rating ?? null} canRate={isSeller && order.status === 'completed'} onDone={load} />
+          )}
+          <BoostProgress order={order} isSeller={isSeller} onDone={load} />
 
           {isSeller && order.status === 'paid' && order.delivery_mode === 'manual' && (
             <div className="card stack">

@@ -287,6 +287,15 @@ export function seed() {
     linkedAccounts: linkedAccounts as any[],
     orders: [] as any[],
     warrantyClaims: [] as any[],
+    // Ratings sellers gave buyers; the demo buyer has some history from before the demo.
+    buyerRatings: [
+      ...[0, 1, 2, 3, 4, 5, 6, 7, 8].map((k) => ({ id: `br-${k}`, order_id: null as string | null, seller_id: users[3 + (k % 4)]!.id, buyer_id: users[0]!.id, positive: true, tags: k % 3 === 0 ? ['clear_communication', 'quick_confirmation'] : k % 3 === 1 ? ['quick_confirmation'] : [], created_at: ago((20 + k * 9) * day) })),
+      { id: 'br-9', order_id: null as string | null, seller_id: users[4]!.id, buyer_id: users[0]!.id, positive: false, tags: ['unresponsive'], created_at: ago(140 * day) },
+    ],
+    buyerCompletedBefore: { [users[0]!.id]: 11 } as Record<string, number>,
+    // Boosting milestones and chat screenshots (data: URLs in the demo).
+    progress: [] as Array<{ id: string; order_id: string; percent: number; note: string; attachment_id: string | null; created_at: string }>,
+    attachments: [] as Array<{ id: string; room_id: string; uploader_id: string; data_url: string; mime: string; created_at: string }>,
     rooms: [flagRoom] as any[],
     messages: flagMsgs as any[],
     modTerms: DEFAULT_TERMS.map((t, k) => ({ id: `term-${k}`, ...t, created_at: ago(30 * day) })),
