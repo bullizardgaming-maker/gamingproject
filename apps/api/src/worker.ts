@@ -10,6 +10,14 @@ import { maybeRotateKeys } from './domain/keyrotation.js';
 import { maybeIssueInvoices } from './domain/invoices.js';
 import { dispatchInbox } from './domain/inbox.js';
 import { maybeRunAml } from './domain/aml.js';
+import { maybeCollectDebts } from './domain/debts.js';
+import { maybeLabelFraudOutcomes } from './domain/fraud.js';
+import { dispatchStatusEmails } from './domain/status.js';
+import { maybePlanTopUps } from './domain/fxtopups.js';
+import { maybeCheckWatches } from './domain/watches.js';
+import { autoResolveTickets } from './domain/support.js';
+import { expireRequests } from './domain/requests.js';
+import { maybeRefreshResponseTimes } from './domain/presence.js';
 
 /**
  * Background jobs. Every job is safe to run on several worker processes at
@@ -37,14 +45,22 @@ export async function runJobsOnce(ctx: Ctx) {
     job(ctx, 'protection_reminders', () => queueProtectionReminders(ctx), 0),
     job(ctx, 'late_deliveries', () => handleLateDeliveries(ctx), { notified: 0, refunded: 0 }),
     job(ctx, 'fx_rates', () => maybeRefreshRates(ctx), 0),
+    job(ctx, 'support_auto_resolve', () => autoResolveTickets(ctx), 0),
+    job(ctx, 'requests_expire', () => expireRequests(ctx), 0),
+    job(ctx, 'response_times', () => maybeRefreshResponseTimes(ctx), null),
   ]);
   const reconciled = await job(ctx, 'reconciliation_scheduler', () => maybeRunScheduledReconciliation(ctx), false);
   await job(ctx, 'retention', () => maybeRunScheduledRetention(ctx), false);
   await job(ctx, 'key_rotation', () => maybeRotateKeys(ctx), null);
   await job(ctx, 'invoices', () => maybeIssueInvoices(ctx), null);
+  await job(ctx, 'debt_collection', () => maybeCollectDebts(ctx), null);
+  await job(ctx, 'fraud_labels', () => maybeLabelFraudOutcomes(ctx), null);
+  await job(ctx, 'fx_topups', () => maybePlanTopUps(ctx), null);
+  await job(ctx, 'price_alerts', () => maybeCheckWatches(ctx), null);
   // Send after the jobs above so emails they queued go out in the same tick.
   const emails = await job(ctx, 'emails', () => dispatchEmails(ctx), 0);
   await job(ctx, 'inbox', () => dispatchInbox(ctx), 0);
+  await job(ctx, 'status_emails', () => dispatchStatusEmails(ctx), 0);
   await job(ctx, 'aml', () => maybeRunAml(ctx), null);
   return { released, expired, webhooks, reminders, late, reconciled, emails };
 }

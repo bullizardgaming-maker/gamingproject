@@ -21,6 +21,7 @@ import { enqueueEmail } from './notifications.js';
 import { assertSupported, getRate } from './fx.js';
 import { quotePromo, reserveRedemption, setRedemptionStatus } from './promos.js';
 import { availableCredit, maybeGrantReferral } from './referrals.js';
+import { unitPriceFor, type PriceTier } from './offers.js';
 
 export type OrderStatus = 'awaiting_payment' | 'paid' | 'delivered' | 'completed' | 'disputed' | 'refunded' | 'cancelled' | 'charged_back';
 
@@ -176,6 +177,8 @@ export const MIN_CARD_CHARGE_CENTS = 50;
 export interface PriceBreakdown {
   listingCurrency: string;
   listingTotalCents: number;
+  /** Unit price in the listing currency after any quantity tier. */
+  listingUnitPriceCents: number;
   amountCents: number;
   unitPriceCents: number;
   discountCents: number;
@@ -195,13 +198,14 @@ export interface PriceBreakdown {
 export async function priceOrder(
   ctx: Ctx,
   tx: Tx,
-  offer: { price_cents: number; currency: string; category_slug: string },
+  offer: { price_cents: number; currency: string; category_slug: string; price_tiers?: PriceTier[] | null },
   buyerId: string,
   input: Pick<CreateOrderInput, 'quantity' | 'rail' | 'promoCode' | 'useCredit' | 'currency'>,
 ): Promise<PriceBreakdown> {
   const settlement = ctx.cfg.SETTLEMENT_CURRENCY;
   const listingRate = await getRate(ctx, tx, offer.currency);
-  const listingTotal = offer.price_cents * input.quantity;
+  const listingUnit = unitPriceFor(offer, input.quantity);
+  const listingTotal = listingUnit * input.quantity;
   const amount = Math.round(listingTotal / listingRate);
   if (amount < MIN_CARD_CHARGE_CENTS) throw badRequest('amount_too_small', 'Order total is below the minimum');
 
@@ -239,6 +243,7 @@ export async function priceOrder(
   return {
     listingCurrency: offer.currency,
     listingTotalCents: listingTotal,
+    listingUnitPriceCents: listingUnit,
     amountCents: amount,
     unitPriceCents: Math.round(amount / input.quantity),
     discountCents: discount,
@@ -254,8 +259,8 @@ export async function priceOrder(
 
 export async function quoteOrder(ctx: Ctx, buyerId: string, input: Pick<CreateOrderInput, 'offerId' | 'quantity' | 'rail' | 'promoCode' | 'useCredit' | 'currency'>) {
   return withTx(ctx.db, async (tx) => {
-    const offer = await maybeOne(tx, `SELECT price_cents, currency, category_slug FROM offers WHERE id = $1 AND status = 'active'`, [input.offerId]);
-    if (!offer) throw notFound('Offer');
+    const offer = await maybeOne(tx, `SELECT price_cents, currency, category_slug, price_tiers, reserved_for FROM offers WHERE id = $1 AND status = 'active'`, [input.offerId]);
+    if (!offer || (offer.reserved_for && offer.reserved_for !== buyerId)) throw notFound('Offer');
     return priceOrder(ctx, tx, offer, buyerId, input);
   });
 }
@@ -296,6 +301,8 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
       [input.offerId],
     );
     if (!offer || offer.status !== 'active' || offer.seller_status !== 'active') throw notFound('Offer');
+    // Listings made from an accepted buyer request can only be bought by that buyer.
+    if (offer.reserved_for && offer.reserved_for !== buyer.id) throw notFound('Offer');
     if (offer.shop_paused) throw conflict('shop_paused', offer.shop_pause_message || 'This seller is away and not taking orders right now');
     if (offer.seller_id === buyer.id) throw forbidden('own_offer', 'You cannot buy your own offer');
     if (offer.category_kind === 'account' && input.quantity !== 1) throw badRequest('invalid_quantity', 'Accounts are sold one at a time');
@@ -328,7 +335,7 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
         ctx.cfg.ORDER_PAYMENT_TTL_MINUTES, ctx.cfg.TOS_VERSION, input.ip ?? null, input.ipCountry ?? null,
         input.device ?? null, input.idempotencyKey ?? null,
         price.discountCents, price.creditCents, price.chargedCents, price.presentmentCurrency,
-        price.presentmentAmountCents, price.fxRate, price.listingCurrency, offer.price_cents, price.promoId,
+        price.presentmentAmountCents, price.fxRate, price.listingCurrency, price.listingUnitPriceCents, price.promoId,
         sellerFx.currency, sellerFx.rate,
       ],
     );
@@ -340,7 +347,7 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
     const snapshot = {
       offer: {
         id: offer.id, title: offer.title, description: offer.description, game: offer.game, category: offer.category_name,
-        price_cents: offer.price_cents, currency: offer.currency, delivery_mode: offer.delivery_mode,
+        price_cents: offer.price_cents, price_tiers: offer.price_tiers, currency: offer.currency, delivery_mode: offer.delivery_mode,
         owner_proof_status: offer.owner_proof_status, version: offer.version,
       },
       terms: { protection, tos_version: ctx.cfg.TOS_VERSION, commission_bps: rate },

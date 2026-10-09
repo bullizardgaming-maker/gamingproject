@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { BadgeCheck, CalendarDays, PackageCheck, Star, Timer } from 'lucide-react';
+import { BadgeCheck, CalendarDays, MessageCircle, PackageCheck, Star, Timer } from 'lucide-react';
 import { api } from '../api';
 import { Avatar, OfferTable } from '../components/CatalogUi';
 import { cn } from '@/lib/utils';
 import type { Offer } from './Market';
+import { usePageMeta } from '@/lib/seo';
+import { OnlineDot, lastSeenLabel, replyLabel } from '@/lib/presence';
+import { t } from '../i18n';
 
 interface Profile {
   id: string;
@@ -14,6 +17,9 @@ interface Profile {
   completed_orders: number;
   active_listings: number;
   on_time_delivery_pct: number | string | null;
+  online?: boolean;
+  last_seen_at?: string | null;
+  response_minutes?: number | null;
   shop_paused: boolean;
   shop_paused_until: string | null;
   shop_pause_message: string | null;
@@ -43,6 +49,10 @@ export function SellerPage() {
     api<{ items: Offer[] }>(`/offers?seller=${id}&pageSize=60&sort=best_selling`).then((r) => setOffers(r.items)).catch(() => setOffers([]));
   }, [id]);
 
+  usePageMeta({
+    title: profile ? `${profile.display_name} — seller` : undefined,
+    description: profile ? `${profile.display_name} on Bullizard: ${profile.completed_orders} completed orders, ${profile.active_listings} live offers.` : undefined,
+  });
   const games = useMemo(() => {
     const m = new Map<string, number>();
     for (const o of offers ?? []) m.set(o.game, (m.get(o.game) ?? 0) + 1);
@@ -68,6 +78,12 @@ export function SellerPage() {
             <span className="inline-flex items-center gap-1.5"><CalendarDays className="size-4" /> Selling since {since(profile.member_since)}</span>
             <span className="inline-flex items-center gap-1.5"><PackageCheck className="size-4" /> {profile.completed_orders.toLocaleString()} completed orders</span>
             {profile.on_time_delivery_pct != null && <span className="inline-flex items-center gap-1.5"><Timer className="size-4" /> {Number(profile.on_time_delivery_pct)}% delivered on time</span>}
+            {replyLabel(profile.response_minutes) && <span className="inline-flex items-center gap-1.5"><MessageCircle className="size-4" /> {replyLabel(profile.response_minutes)}</span>}
+            {profile.online ? (
+              <span className="inline-flex items-center gap-1.5 font-medium text-released"><OnlineDot /> {t('presence.online')}</span>
+            ) : (
+              lastSeenLabel(profile.last_seen_at) && <span>{lastSeenLabel(profile.last_seen_at)}</span>
+            )}
           </div>
           {profile.shop_paused && <div className="notice" style={{ marginTop: 12 }}>{profile.shop_pause_message || 'This shop is taking a short break.'}</div>}
         </div>
@@ -129,7 +145,7 @@ export function SellerPage() {
                 </div>
                 {rv.comment && <p style={{ margin: '6px 0 0' }}>{rv.comment}</p>}
                 {rv.seller_reply && (
-                  <div className="mt-2 border-l-2 border-border pl-3 text-sm text-muted-foreground">
+                  <div className="mt-2 border-s-2 border-border ps-3 text-sm text-muted-foreground">
                     <b className="text-foreground">{profile.display_name}:</b> {rv.seller_reply}
                   </div>
                 )}

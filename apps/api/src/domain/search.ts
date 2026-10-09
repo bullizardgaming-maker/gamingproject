@@ -16,6 +16,8 @@ export interface SearchParams {
   minRating?: number;
   inStock?: boolean;
   sellerId?: string;
+  /** Exact (case-insensitive) matches on game-specific fields, e.g. {server: 'EUW', rank: 'Gold'}. */
+  attributes?: Record<string, string>;
   sort?: Sort;
   page?: number;
   pageSize?: number;
@@ -28,6 +30,9 @@ export interface SearchParams {
  *  - Filters: category, game, price range, instant delivery, verified-owner
  *    accounts, minimum seller rating, in stock, seller.
  *  - Sorts: relevance (default when searching), newest, price, rating, best-selling.
+ *  - Game-specific fields (server, region, rank…): exact filters, and per-value counts when a
+ *    game is chosen. Each field's counts ignore that field's own filter so a picker can show
+ *    what switching to another value would give.
  *  - Page-based pagination with a total and per-category facet counts.
  * Stock and rating are computed per row; if listings grow past ~100k, move them
  * into counters maintained on write.
@@ -40,6 +45,7 @@ export async function searchOffers(q: Queryable, p: SearchParams) {
   };
   const where: string[] = [
     `f.status = 'active'`,
+    `f.reserved_for IS NULL`,
     `u.status = 'active'`,
     `u.deleted_at IS NULL`,
     `NOT (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now()))`,
@@ -58,13 +64,17 @@ export async function searchOffers(q: Queryable, p: SearchParams) {
   if (p.delivery) where.push(`f.delivery_mode = ${arg(p.delivery === 'instant' ? 'auto' : 'manual')}`);
   if (p.ownerVerified) where.push(`f.owner_proof_status = 'verified'`);
   if (p.sellerId) where.push(`f.seller_id = ${arg(p.sellerId)}`);
+  const attrs = Object.entries(p.attributes ?? {});
 
   // Filters on computed columns apply to the wrapped query.
   const outer: string[] = [];
   if (p.inStock !== false) outer.push('stock > 0');
   if (p.minRating) outer.push(`seller_rating >= ${arg(p.minRating)}`);
 
-  const base = `${OFFER_LIST_SQL.replace('SELECT f.id,', `SELECT ${rank} AS rank, f.id,`)} WHERE ${where.join(' AND ')}`;
+  const select = OFFER_LIST_SQL.replace('SELECT f.id,', `SELECT ${rank} AS rank, f.id,`);
+  // Attribute filters are kept apart so the facet queries can relax them one field at a time.
+  const attrWhere = attrs.map(([k, v]) => ({ key: k, sql: `lower(f.attributes->>${arg(k)}) = lower(${arg(v)})` }));
+  const base = `${select} WHERE ${[...where, ...attrWhere.map((a) => a.sql)].join(' AND ')}`;
   const baseParams = [...params]; // everything up to here: shared by results, count and facets
 
   const sort: Sort = p.sort ?? (text ? 'relevance' : 'newest');
@@ -89,7 +99,34 @@ export async function searchOffers(q: Queryable, p: SearchParams) {
   const filteredWhere = filtered.length ? `WHERE ${filtered.join(' AND ')}` : '';
   const facetWhere = outer.length ? `WHERE ${outer.join(' AND ')}` : '';
 
-  const [rows, count, facets] = await Promise.all([
+  // Per-field value counts for one game, within the chosen category. Each field ignores its own
+  // filter (but keeps the others), so a picker shows what every option would return.
+  const attributeFacets = async () => {
+    if (!p.game) return [];
+    const keys = new Set<string>([...attrs.map(([k]) => k), '*']);
+    const out: Array<{ key: string; value: string; count: number }> = [];
+    for (const key of keys) {
+      const ps = [...params];
+      // The skipped filter stays in the SQL as a no-op so every placeholder is still used (Postgres
+      // can't type an unused one) and the numbering holds.
+      const conds = [...where, ...attrWhere.map((a) => (a.key === key ? `(${a.sql} OR true)` : a.sql))];
+      const cat = p.category ? ` AND category_slug = $${ps.push(p.category)}` : '';
+      const field = key === '*' ? '' : ` AND kv.key = $${ps.push(key)}`;
+      const rowsF = await many<{ key: string; value: string; count: number }>(
+        q,
+        `WITH base AS (${select} WHERE ${conds.join(' AND ')})
+         SELECT kv.key, kv.value, count(*)::int AS count FROM base, jsonb_each_text(base.attributes) kv
+          WHERE true ${outer.length ? `AND ${outer.join(' AND ')}` : ''}${cat}${field}
+          GROUP BY kv.key, kv.value ORDER BY kv.key, count DESC, kv.value LIMIT 300`,
+        ps,
+      );
+      // The unfiltered pass supplies every field except the filtered ones, which get their own pass.
+      out.push(...(key === '*' ? rowsF.filter((r) => !attrs.some(([k]) => k === r.key)) : rowsF));
+    }
+    return out;
+  };
+
+  const [rows, count, facets, attributes] = await Promise.all([
     many(
       q,
       `WITH base AS (${base}) SELECT * FROM base ${filteredWhere}
@@ -102,6 +139,7 @@ export async function searchOffers(q: Queryable, p: SearchParams) {
       `WITH base AS (${base}) SELECT category_slug, count(*)::int AS count FROM base ${facetWhere} GROUP BY category_slug ORDER BY count DESC`,
       baseParams,
     ),
+    attributeFacets(),
   ]);
   const total = count[0]?.n ?? 0;
   return {
@@ -111,7 +149,7 @@ export async function searchOffers(q: Queryable, p: SearchParams) {
     pageSize,
     hasMore: page * pageSize < total,
     sort,
-    facets: { categories: facets },
+    facets: { categories: facets, attributes },
   };
 }
 
@@ -126,7 +164,7 @@ export async function gameDirectory(q: Queryable) {
     `WITH live AS (
        SELECT f.game, f.category_slug, f.seller_id, f.price_settlement_cents, f.delivery_mode
          FROM offers f JOIN users u ON u.id = f.seller_id
-        WHERE f.status = 'active' AND u.status = 'active' AND u.deleted_at IS NULL
+        WHERE f.status = 'active' AND f.reserved_for IS NULL AND u.status = 'active' AND u.deleted_at IS NULL
           AND NOT (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now()))
           AND (CASE WHEN f.delivery_mode = 'auto'
                     THEN EXISTS (SELECT 1 FROM inventory_items i WHERE i.offer_id = f.id AND i.status = 'available')
@@ -148,7 +186,7 @@ export async function suggestGames(q: Queryable, prefix: string, limit = 8) {
   return many<{ game: string; offers: number }>(
     q,
     `SELECT f.game, count(*)::int AS offers FROM offers f
-      WHERE f.status = 'active' AND (lower(f.game) LIKE lower($3) || '%' OR lower($1) <% lower(f.game))
+      WHERE f.status = 'active' AND f.reserved_for IS NULL AND (lower(f.game) LIKE lower($3) || '%' OR lower($1) <% lower(f.game))
       GROUP BY f.game ORDER BY max(word_similarity(lower($1), lower(f.game))) DESC, offers DESC LIMIT $2`,
     [prefix, Math.min(limit, 20), prefix.replace(/[\\%_]/g, '\\$&')],
   );

@@ -1,3 +1,4 @@
+import { t, type MessageKey } from '../i18n';
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 
@@ -12,15 +13,24 @@ export interface GameEntry {
 }
 
 /** Display order, short labels and one-line hints for the catalogue's categories. */
+const cat = (slug: string, protection: '72h' | '14d') => ({
+  get label() {
+    return t(`cat.${slug}` as MessageKey);
+  },
+  get hint() {
+    return t(`cat.${slug}.hint` as MessageKey);
+  },
+  protection,
+});
 export const CATEGORY_META: Record<string, { label: string; hint: string; protection: '72h' | '14d' }> = {
-  accounts: { label: 'Accounts', hint: 'Owner-verified, with 14 days of insurance', protection: '14d' },
-  currency: { label: 'Currency', hint: 'Gold, coins and points, delivered in-game', protection: '72h' },
-  items: { label: 'Items', hint: 'Skins, gear and rare drops', protection: '72h' },
-  boosting: { label: 'Boosting', hint: 'Rank, raids and progression by pros', protection: '72h' },
-  'top-ups': { label: 'Top-ups', hint: 'Direct UID recharges for mobile games', protection: '72h' },
-  keys: { label: 'Keys', hint: 'Steam, GOG and console activation keys', protection: '72h' },
-  'gift-cards': { label: 'Gift cards', hint: 'Store credit for every platform', protection: '72h' },
-  'video-games': { label: 'Video games', hint: 'Digital console games', protection: '72h' },
+  accounts: cat('accounts', '14d'),
+  currency: cat('currency', '72h'),
+  items: cat('items', '72h'),
+  boosting: cat('boosting', '72h'),
+  'top-ups': cat('top-ups', '72h'),
+  keys: cat('keys', '72h'),
+  'gift-cards': cat('gift-cards', '72h'),
+  'video-games': cat('video-games', '72h'),
 };
 export const CATEGORY_ORDER = Object.keys(CATEGORY_META);
 export const categoryLabel = (slug: string) => CATEGORY_META[slug]?.label ?? slug;
@@ -52,11 +62,11 @@ export const initials = (name: string) =>
 
 /** "Instant", "~15 min", "~2 h", "~2 days": a listing's typical delivery time. */
 export function deliveryLabel(mode: string, hours: number | null | undefined) {
-  if (mode === 'auto') return 'Instant';
+  if (mode === 'auto') return t('delivery.instant');
   const h = Number(hours ?? 2);
-  if (h < 1) return `~${Math.max(5, Math.round(h * 60))} min`;
-  if (h < 48) return `~${Math.round(h)} h`;
-  return `~${Math.round(h / 24)} days`;
+  if (h < 1) return t('delivery.minutes', { n: Math.max(5, Math.round(h * 60)) });
+  if (h < 48) return t('delivery.hours', { n: Math.round(h) });
+  return t('delivery.days', { n: Math.round(h / 24) });
 }
 
 // The directory changes slowly: load it once per page view and share it between components.

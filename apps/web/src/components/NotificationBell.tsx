@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Bell, CheckCheck } from 'lucide-react';
@@ -92,7 +93,7 @@ export function NotificationBell() {
     <div className="relative" ref={ref}>
       <button
         type="button"
-        aria-label={unread ? `Notifications, ${unread} unread` : 'Notifications'}
+        aria-label={unread ? t('notif.unread', { n: unread }) : t('notif.title')}
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
         className="relative grid size-10 cursor-pointer place-items-center rounded-lg border border-border bg-transparent text-foreground transition-colors hover:border-foreground"
@@ -105,7 +106,7 @@ export function NotificationBell() {
               initial={{ scale: 0.4, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.4, opacity: 0 }}
-              className="absolute -right-1.5 -top-1.5 grid h-5 min-w-5 place-items-center rounded-full bg-disputed px-1 font-mono text-[11px] font-semibold text-white"
+              className="absolute -end-1.5 -top-1.5 grid h-5 min-w-5 place-items-center rounded-full bg-disputed px-1 font-mono text-[11px] font-semibold text-white"
             >
               {unread > 99 ? '99+' : unread}
             </motion.span>
@@ -117,26 +118,26 @@ export function NotificationBell() {
         {open && (
           <motion.div
             role="dialog"
-            aria-label="Notifications"
+            aria-label={t('notif.title')}
             initial={{ opacity: 0, y: -6, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -6, scale: 0.98 }}
             transition={{ duration: 0.16, ease: 'easeOut' }}
-            className="absolute right-0 top-12 z-50 w-[min(380px,calc(100vw-32px))] origin-top-right overflow-hidden rounded-xl border border-border bg-card shadow-[0_18px_50px_-12px_rgba(22,32,46,0.28)]"
+            className="absolute end-0 top-12 z-50 w-[min(380px,calc(100vw-32px))] origin-top-right overflow-hidden rounded-xl border border-border bg-card shadow-[0_18px_50px_-12px_rgba(22,32,46,0.28)]"
           >
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
-              <span className="font-semibold">Notifications</span>
+              <span className="font-semibold">{t('notif.title')}</span>
               {unread > 0 && (
                 <button type="button" onClick={markAll} className="inline-flex cursor-pointer items-center gap-1.5 border-0 bg-transparent text-sm text-muted-foreground hover:text-foreground">
-                  <CheckCheck className="size-4" /> Mark all read
+                  <CheckCheck className="size-4" /> {t('notif.markAll')}
                 </button>
               )}
             </div>
             <div className="max-h-[420px] overflow-y-auto">
               {items === null ? (
-                <p className="m-0 px-4 py-6 text-sm text-muted-foreground">Loading…</p>
+                <p className="m-0 px-4 py-6 text-sm text-muted-foreground">{t('common.loading')}</p>
               ) : items.length === 0 ? (
-                <p className="m-0 px-4 py-8 text-center text-sm text-muted-foreground">Nothing yet. Order updates, payouts and security alerts appear here.</p>
+                <p className="m-0 px-4 py-8 text-center text-sm text-muted-foreground">{t('notif.empty')}</p>
               ) : (
                 items.map((i) => {
                   const body = (
@@ -149,7 +150,7 @@ export function NotificationBell() {
                       <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{ago(i.created_at)}</span>
                     </>
                   );
-                  const cls = 'flex w-full gap-3 border-0 border-b border-border/60 bg-transparent px-4 py-3 text-left no-underline last:border-b-0 hover:bg-secondary/60';
+                  const cls = 'flex w-full gap-3 border-0 border-b border-border/60 bg-transparent px-4 py-3 text-start no-underline last:border-b-0 hover:bg-secondary/60';
                   return i.link ? (
                     <Link key={i.id} to={i.link} className={cls} onClick={() => (markRead(i), setOpen(false))}>{body}</Link>
                   ) : (

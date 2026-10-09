@@ -5,8 +5,11 @@ import { DEMO, api, session } from '../api';
 import { DemoSignIn } from '../demo/DemoUi';
 import { PushSettings } from '../components/NotificationSettings';
 import { useSession } from '../session';
+import { currentLocale } from '../i18n';
+import { usePageMeta } from '@/lib/seo';
 
 export function Login() {
+  usePageMeta({ title: 'Sign in', noindex: true });
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [error, setError] = useState('');
   const [mfaToken, setMfaToken] = useState<string | null>(null);
@@ -23,7 +26,7 @@ export function Login() {
     const f = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>;
     setError('');
     try {
-      const res = await api<{ token?: string; mfaRequired?: boolean; mfaToken?: string }>(mode === 'login' ? '/auth/login' : '/auth/register', { body: f });
+      const res = await api<{ token?: string; mfaRequired?: boolean; mfaToken?: string }>(mode === 'login' ? '/auth/login' : '/auth/register', { body: mode === 'login' ? f : { ...f, locale: currentLocale() } });
       if (res.mfaRequired && res.mfaToken) setMfaToken(res.mfaToken);
       else finish(res.token!, mode === 'register');
     } catch (err: any) {
@@ -215,6 +218,7 @@ function CodeStep({ channel, done, onDone }: { channel: 'email' | 'sms'; done: b
 }
 
 export function Account() {
+  usePageMeta({ title: 'Your account', noindex: true });
   const { user, refresh } = useSession();
   const [kyc, setKyc] = useState<string>('');
   if (!user) return <p className="muted">Sign in to manage your account. <Link to="/login">Sign in</Link></p>;
@@ -298,7 +302,7 @@ function Devices() {
         <div key={d.id} className="row spread small" style={{ borderTop: '1px solid var(--rule)', paddingTop: 10 }}>
           <span>
             <b>{d.device}</b>
-            {d.current && <span className="chip released" style={{ marginLeft: 8 }}>this device</span>}
+            {d.current && <span className="chip released" style={{ marginInlineStart: 8 }}>this device</span>}
             <div className="muted">
               {d.ip ?? 'unknown IP'} · last active {new Date(d.lastActiveAt).toLocaleString()}
             </div>
@@ -363,6 +367,7 @@ function EmailPreferences() {
 }
 
 export function ForgotPassword() {
+  usePageMeta({ title: 'Reset your password', noindex: true });
   const [sent, setSent] = useState(false);
   const submit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -385,6 +390,7 @@ export function ForgotPassword() {
 }
 
 export function ResetPassword() {
+  usePageMeta({ title: 'Choose a new password', noindex: true });
   const [params] = useSearchParams();
   const nav = useNavigate();
   const [error, setError] = useState('');

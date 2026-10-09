@@ -3,6 +3,7 @@ import type { Queryable } from '../db.js';
 import { many, maybeOne, one } from '../db.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { detectOffPlatform } from './chat.js';
+import { ONLINE_SQL } from './presence.js';
 import { withScope } from './events.js';
 import { enqueueEmail } from './notifications.js';
 
@@ -90,11 +91,13 @@ export async function sellerProfile(q: Queryable, sellerId: string, limit = 20, 
     q,
     `SELECT u.id, u.display_name, u.created_at AS member_since, u.kyc_tier >= 2 AS identity_verified,
             (SELECT count(*)::int FROM orders o WHERE o.seller_id = u.id AND o.status = 'completed') AS completed_orders,
-            (SELECT count(*)::int FROM offers f WHERE f.seller_id = u.id AND f.status = 'active') AS active_listings,
+            (SELECT count(*)::int FROM offers f WHERE f.seller_id = u.id AND f.status = 'active' AND f.reserved_for IS NULL) AS active_listings,
             (SELECT round(100.0 * count(*) FILTER (WHERE o.delivered_at <= o.delivery_due_at) / NULLIF(count(*), 0), 0)
                FROM orders o WHERE o.seller_id = u.id AND o.delivery_due_at IS NOT NULL AND o.delivery_due_at < now()
                 AND o.created_at > now() - interval '90 days' AND o.status NOT IN ('cancelled', 'awaiting_payment')) AS on_time_delivery_pct,
-            (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now())) AS shop_paused, u.shop_paused_until, u.shop_pause_message
+            (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now())) AS shop_paused, u.shop_paused_until, u.shop_pause_message,
+            ${ONLINE_SQL} AS online, u.response_minutes,
+            CASE WHEN u.show_online THEN u.last_seen_at END AS last_seen_at
        FROM users u WHERE u.id = $1 AND u.deleted_at IS NULL AND u.status = 'active'`,
     [sellerId],
   );

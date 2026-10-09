@@ -26,7 +26,7 @@ export function EscrowTrack({ amountCents, stage, variant, elapsed = 0, windowLa
       {clock && <div className="track-clock">{clock}</div>}
       <div className="track-rail">
         <div className="track-fill" style={{ width: `${fill}%` }} />
-        <div className="coin" style={{ left: `${coin}%` }}>
+        <div className="coin" style={{ insetInlineStart: `${coin}%` }}>
           {money(amountCents).replace('.00', '')}
         </div>
       </div>

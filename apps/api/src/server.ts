@@ -18,10 +18,12 @@ import { hasPermission, type Permission } from './domain/permissions.js';
 import { publicRoutes } from './routes/public.js';
 import { orderRoutes } from './routes/orders.js';
 import { sellerRoutes } from './routes/seller.js';
+import { requestRoutes } from './routes/requests.js';
 import { merchantRoutes } from './routes/merchant.js';
 import { integrationRoutes } from './routes/integrations.js';
 import { adminRoutes } from './routes/admin.js';
 import { registerGateway } from './ws/gateway.js';
+import { touchPresence } from './domain/presence.js';
 import { sandboxRoutes } from './routes/sandbox.js';
 import { buildOpenApi } from './openapi.js';
 import swagger from '@fastify/swagger';
@@ -80,6 +82,7 @@ export function requireScope(ctx: Ctx) {
     if (!scopes.includes(scope)) throw forbidden('missing_scope', `API key lacks scope ${scope}`);
     req.user = user;
     req.apiScopes = scopes;
+    touchPresence(ctx, user.id); // a seller's bot answering counts as the shop being online
   };
 }
 
@@ -156,6 +159,7 @@ export async function buildApp(ctx: Ctx, opts: { logger?: PinoLogger } = {}): Pr
     // /metrics uses its own scrape token, and mk_ keys are merchant API keys.
     if (header?.startsWith('Bearer ') && !header.startsWith('Bearer mk_') && req.url !== '/metrics') {
       req.user = await userFromToken(ctx, header.slice(7));
+      if (req.user) touchPresence(ctx, req.user.id);
     }
   });
 
@@ -215,6 +219,7 @@ export async function buildApp(ctx: Ctx, opts: { logger?: PinoLogger } = {}): Pr
     await publicRoutes(v1, ctx);
     await orderRoutes(v1, ctx);
     await sellerRoutes(v1, ctx);
+    await requestRoutes(v1, ctx);
     await merchantRoutes(v1, ctx);
     await integrationRoutes(v1, ctx);
     await adminRoutes(v1, ctx);

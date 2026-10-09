@@ -4,6 +4,12 @@ import { api, money } from '../api';
 import { FeeLadder } from '../components/FeeLadder';
 import { useSession } from '../session';
 import { SellerMoney } from './SellerMoney';
+import { SellerAnalytics } from './SellerAnalytics';
+import { usePageMeta } from '@/lib/seo';
+import { t } from '../i18n';
+import { attrLabel, attributesFor } from '@/lib/attributes';
+import { categoryLabel, useGames } from '@/lib/catalog';
+import { replyLabel } from '@/lib/presence';
 
 interface Dashboard {
   tier: { name: string; accountRateBps: number; otherRateBps: number };
@@ -12,6 +18,7 @@ interface Dashboard {
   payoutCurrency?: string;
   balances: { availableCents: number; pendingEscrowCents: number; withdrawableCents?: number; onHoldCents?: number; currency?: string };
   withdrawalsFrozen: boolean;
+  shop?: { showOnline?: boolean; responseMinutes?: number | null };
   stats: { completed: number; in_progress: number; disputed: number; charged_back: number };
 }
 
@@ -28,9 +35,41 @@ interface SellerOffer {
   version: number;
 }
 
+const TIER_ROWS = [0, 1, 2];
+
+/** "Online now" opt-out and the seller's own reply time, as buyers see it. */
+function PresenceSettings({ shop }: { shop?: Dashboard['shop'] }) {
+  const [show, setShow] = useState(shop?.showOnline ?? true);
+  const [saved, setSaved] = useState(false);
+  const reply = replyLabel(shop?.responseMinutes);
+  return (
+    <div className="card row" style={{ gap: 16, padding: '12px 16px' }}>
+      <label className="row small" style={{ flex: '1 1 280px', gap: 8 }} title={t('presence.showOnlineHint')}>
+        <input
+          type="checkbox"
+          style={{ width: 'auto' }}
+          checked={show}
+          onChange={async (e) => {
+            const next = e.target.checked;
+            setShow(next);
+            setSaved(false);
+            await api('/seller/presence', { method: 'PUT', body: { showOnline: next } }).then(() => setSaved(true), () => setShow(!next));
+          }}
+        />
+        {t('presence.showOnline')}
+        {saved && <span className="text-released" role="status">{t('presence.saved')}</span>}
+      </label>
+      <span className="small muted">{reply ? t('presence.yourReply', { time: reply }) : t('presence.noReplyYet')}</span>
+    </div>
+  );
+}
+
 export function Sell() {
+  usePageMeta({ title: 'Sell on Bullizard', description: 'Open a shop: fees fall as your sales grow, instant delivery for codes, Chargeback Shield and payouts in USD, EUR or GBP.' });
   const { user, refresh } = useSession();
-  const moneyTab = useLocation().pathname.startsWith('/sell/money');
+  const { pathname } = useLocation();
+  const moneyTab = pathname.startsWith('/sell/money');
+  const analyticsTab = pathname.startsWith('/sell/analytics');
   const [dash, setDash] = useState<Dashboard | null>(null);
   const [offers, setOffers] = useState<SellerOffer[]>([]);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'alert'; text: string } | null>(null);
@@ -52,33 +91,34 @@ export function Sell() {
     }
   }, [user, refresh]);
 
-  if (!user) return <p className="muted"><Link to="/login?next=/sell">Sign in</Link> to start selling.</p>;
+  if (!user) return <p className="muted"><Link to="/login?next=/sell">{t('sell.signIn')}</Link></p>;
   if (user.kyc_tier < 2) {
     return (
       <div className="stack" style={{ maxWidth: 720 }}>
-        <h1 style={{ fontSize: 40 }}>Sell on the marketplace</h1>
-        <p className="lede">Sellers verify their identity once. It keeps scammers out and lets us pay you out without holds.</p>
-        <Link className="btn" to="/account">Verify your identity</Link>
+        <h1 style={{ fontSize: 40 }}>{t('sell.kyc.title')}</h1>
+        <p className="lede">{t('sell.kyc.lede')}</p>
+        <Link className="btn" to="/account">{t('sell.kyc.verify')}</Link>
         <div className="card"><FeeLadder /></div>
       </div>
     );
   }
   const tabs = (
-    <nav className="filters" aria-label="Seller sections">
-      <NavLink end to="/sell">Shop</NavLink>
-      <NavLink to="/sell/money">Money &amp; tax</NavLink>
+    <nav className="filters" aria-label={t('sell.sections')}>
+      <NavLink end to="/sell">{t('sell.tab.shop')}</NavLink>
+      <NavLink to="/sell/analytics">{t('sell.tab.analytics')}</NavLink>
+      <NavLink to="/sell/money">{t('sell.tab.money')}</NavLink>
     </nav>
   );
-  if (moneyTab) {
+  if (moneyTab || analyticsTab) {
     return (
       <div className="stack">
-        <h1 style={{ fontSize: 40 }}>Your shop</h1>
+        <h1 style={{ fontSize: 40 }}>{t('sell.title')}</h1>
         {tabs}
-        <SellerMoney />
+        {moneyTab ? <SellerMoney /> : <SellerAnalytics />}
       </div>
     );
   }
-  if (!dash) return <p className="muted">Loading your shop…</p>;
+  if (!dash) return <p className="muted">{t('sell.loading')}</p>;
   const cur = dash.payoutCurrency ?? 'USD';
   const withdrawable = dash.balances.withdrawableCents ?? dash.balances.availableCents;
 
@@ -96,7 +136,7 @@ export function Sell() {
   const withdraw = async () => {
     try {
       await api('/seller/withdrawals', { body: { amountCents: withdrawable, currency: cur } });
-      setMsg({ kind: 'ok', text: `Withdrawal of ${money(withdrawable, cur)} sent.` });
+      setMsg({ kind: 'ok', text: t('sell.withdrawSent', { amount: money(withdrawable, cur) }) });
       load();
     } catch (e: any) {
       setMsg({ kind: 'alert', text: e.message });
@@ -105,54 +145,55 @@ export function Sell() {
 
   return (
     <div className="stack">
-      <h1 style={{ fontSize: 40 }}>Your shop</h1>
+      <h1 style={{ fontSize: 40 }}>{t('sell.title')}</h1>
       {tabs}
+      <PresenceSettings shop={dash.shop} />
       <div className="grid three">
         <div className="card stack">
-          <div className="eyebrow">Level</div>
+          <div className="eyebrow">{t('sell.level')}</div>
           <h2 style={{ margin: 0 }}>{dash.tier.name}</h2>
           <p className="small muted">
-            Fee {(dash.tier.otherRateBps / 100).toFixed(2)}% · accounts {(dash.tier.accountRateBps / 100).toFixed(2)}%
+            {t('sell.fees', { fee: (dash.tier.otherRateBps / 100).toFixed(2), accounts: (dash.tier.accountRateBps / 100).toFixed(2) })}
           </p>
-          <div className="progress" aria-label="Progress to next level"><div style={{ width: `${Math.min(100, progress * 100)}%` }} /></div>
+          <div className="progress" aria-label={t('sell.progress')}><div style={{ width: `${Math.min(100, progress * 100)}%` }} /></div>
           <p className="small muted">
-            {dash.next ? `${money(dash.next.remainingCents)} more in 30-day sales reaches ${dash.next.tier.name}.` : 'Top level reached.'}
+            {dash.next ? t('sell.nextLevel', { amount: money(dash.next.remainingCents), level: dash.next.tier.name }) : t('sell.topLevel')}
           </p>
         </div>
         <div className="card stack">
-          <div className="eyebrow">Balance</div>
+          <div className="eyebrow">{t('sell.balance')}</div>
           <h2 className="mono" style={{ margin: 0 }}>{money(withdrawable, cur)}</h2>
           <p className="small muted">
-            Ready to withdraw.{dash.balances.onHoldCents ? ` ${money(dash.balances.onHoldCents, cur)} on payout hold.` : ''} {money(dash.balances.pendingEscrowCents)} still in escrow on open orders.{' '}
-            <Link to="/sell/money">Details</Link>
+            {t('sell.ready')}{dash.balances.onHoldCents ? ` ${t('sell.onHold', { amount: money(dash.balances.onHoldCents, cur) })}` : ''} {t('sell.inEscrow', { amount: money(dash.balances.pendingEscrowCents) })}{' '}
+            <Link to="/sell/money">{t('sell.details')}</Link>
           </p>
           {user.payouts_enabled ? (
-            <button className="btn" disabled={dash.withdrawalsFrozen || withdrawable <= 0} onClick={withdraw}>Withdraw all</button>
+            <button className="btn" disabled={dash.withdrawalsFrozen || withdrawable <= 0} onClick={withdraw}>{t('sell.withdrawAll')}</button>
           ) : (
             <>
-              <button className="btn" onClick={setUpPayouts}>Set up payouts</button>
-              <p className="small muted">Add the bank account we pay you into. Our payment partner collects the details on their secure page.</p>
+              <button className="btn" onClick={setUpPayouts}>{t('sell.setUpPayouts')}</button>
+              <p className="small muted">{t('sell.setUpPayouts.text')}</p>
             </>
           )}
-          {dash.withdrawalsFrozen && <p className="small muted">Withdrawals are paused while a security review runs.</p>}
+          {dash.withdrawalsFrozen && <p className="small muted">{t('sell.frozen')}</p>}
         </div>
         <div className="card stack">
-          <div className="eyebrow">Orders</div>
-          <p className="mono">{dash.stats.completed} completed · {dash.stats.in_progress} open</p>
-          <p className="mono">{dash.stats.disputed} disputed · {dash.stats.charged_back} charged back</p>
-          <Link to="/orders?as=seller">Manage orders</Link>
+          <div className="eyebrow">{t('nav.orders')}</div>
+          <p className="mono">{t('sell.ordersLine1', { completed: dash.stats.completed, open: dash.stats.in_progress })}</p>
+          <p className="mono">{t('sell.ordersLine2', { disputed: dash.stats.disputed, chargedBack: dash.stats.charged_back })}</p>
+          <Link to="/orders?as=seller">{t('sell.manageOrders')}</Link>
         </div>
       </div>
       {msg && <div className={msg.kind}>{msg.text}</div>}
 
       <div className="card">
-        <h3>Listings</h3>
+        <h3>{t('sell.listings')}</h3>
         {offers.length === 0 ? (
-          <p className="muted">No listings yet. Create your first one below.</p>
+          <p className="muted">{t('sell.noListings')}</p>
         ) : (
           <div className="table-wrap">
             <table className="data">
-              <thead><tr><th>Listing</th><th>Price</th><th>Stock</th><th>Delivery</th><th /></tr></thead>
+              <thead><tr><th>{t('sell.col.listing')}</th><th>{t('table.price')}</th><th>{t('table.stock')}</th><th>{t('table.delivery')}</th><th /></tr></thead>
               <tbody>
                 {offers.map((o) => <OfferRow key={o.id} offer={o} onChange={load} />)}
               </tbody>
@@ -191,7 +232,7 @@ function OfferRow({ offer, onChange }: { offer: SellerOffer; onChange: () => voi
   const upload = async () => {
     try {
       const r = await api<{ added: number; duplicates: number; available: number }>(`/offers/${offer.id}/inventory`, { body: { format, content } });
-      setResult(`Added ${r.added}, skipped ${r.duplicates} duplicates. ${r.available} ready for instant delivery.`);
+      setResult(t('sell.uploaded', { added: r.added, duplicates: r.duplicates, available: r.available }));
       setContent('');
       onChange();
     } catch (e: any) {
@@ -209,31 +250,34 @@ function OfferRow({ offer, onChange }: { offer: SellerOffer; onChange: () => voi
       <tr>
         <td>
           <b>{offer.title}</b>
-          <div className="small muted">{offer.game} · {offer.category_slug}</div>
+          <div className="small muted">{offer.game} · {categoryLabel(offer.category_slug)}</div>
+          {offer.status === 'review' && (
+            <div className="small" title={t('mod.inReviewHint')}><span className="chip held">{t('mod.inReview')}</span> <span className="muted">{t('mod.inReviewHint')}</span></div>
+          )}
           {offer.category_slug === 'accounts' && offer.owner_proof_status !== 'verified' && (
-            <div className="small" style={{ color: 'var(--disputed)' }}>Owner proof: {offer.owner_proof_status}</div>
+            <div className="small" style={{ color: 'var(--disputed)' }}>{t('sell.ownerProof', { status: offer.owner_proof_status })}</div>
           )}
         </td>
         <td className="mono">{money(offer.price_cents)}</td>
         <td className="mono">{offer.available}</td>
-        <td>{offer.delivery_mode === 'auto' ? 'Instant' : 'Manual'}</td>
+        <td>{offer.delivery_mode === 'auto' ? t('delivery.instant') : t('sell.manual')}</td>
         <td>
-          {offer.delivery_mode === 'auto' && <button className="btn ghost" onClick={() => setOpen(!open)}>Add stock</button>}
-          {needsProof && <button className="btn ghost" onClick={() => setProofOpen(!proofOpen)}>Add owner proof</button>}
+          {offer.delivery_mode === 'auto' && <button className="btn ghost" onClick={() => setOpen(!open)}>{t('sell.addStock')}</button>}
+          {needsProof && <button className="btn ghost" onClick={() => setProofOpen(!proofOpen)}>{t('sell.addProof')}</button>}
         </td>
       </tr>
       {proofOpen && (
         <tr>
           <td colSpan={5}>
             <form className="stack" onSubmit={submitProof}>
-              <p className="small muted">Buyers see verified accounts as lower risk. The billing name must match the name on your verified ID.</p>
+              <p className="small muted">{t('sell.proof.text')}</p>
               <div className="grid three">
-                <label className="field">Original registration email<input name="registrationEmail" type="email" required /></label>
-                <label className="field">Registration date<input name="registrationDate" type="date" required /></label>
-                <label className="field">Billing name on early purchases<input name="billingName" /></label>
+                <label className="field">{t('sell.proof.email')}<input name="registrationEmail" type="email" required /></label>
+                <label className="field">{t('sell.proof.date')}<input name="registrationDate" type="date" required /></label>
+                <label className="field">{t('sell.proof.billing')}<input name="billingName" /></label>
               </div>
-              <label className="field">Evidence (links to screenshots of the registration email, early receipts, CD key)<textarea name="evidence" /></label>
-              <button className="btn">Submit for review</button>
+              <label className="field">{t('sell.proof.evidence')}<textarea name="evidence" /></label>
+              <button className="btn">{t('sell.proof.submit')}</button>
             </form>
           </td>
         </tr>
@@ -242,7 +286,7 @@ function OfferRow({ offer, onChange }: { offer: SellerOffer; onChange: () => voi
         <tr>
           <td colSpan={5}>
             <div className="stack">
-              <p className="small muted">One code per line (.txt) or a JSON array of strings or objects. Everything is encrypted as it's stored; duplicates are skipped.</p>
+              <p className="small muted">{t('sell.upload.text')}</p>
               <input type="file" accept=".txt,.json" onChange={(e) => e.target.files?.[0] && readFile(e.target.files[0])} />
               <textarea className="mono" value={content} onChange={(e) => setContent(e.target.value)} placeholder={format === 'txt' ? 'XXXX-XXXX-XXXX\nYYYY-YYYY-YYYY' : '["XXXX-XXXX", {"login": "…", "password": "…"}]'} />
               <div className="row">
@@ -250,7 +294,7 @@ function OfferRow({ offer, onChange }: { offer: SellerOffer; onChange: () => voi
                   <option value="txt">.txt</option>
                   <option value="json">JSON</option>
                 </select>
-                <button className="btn" disabled={!content.trim()} onClick={upload}>Upload stock</button>
+                <button className="btn" disabled={!content.trim()} onClick={upload}>{t('sell.upload')}</button>
               </div>
               {result && <div className="notice">{result}</div>}
             </div>
@@ -264,6 +308,9 @@ function OfferRow({ offer, onChange }: { offer: SellerOffer; onChange: () => voi
 function NewOffer({ onCreated }: { onCreated: () => void }) {
   const [error, setError] = useState('');
   const [category, setCategory] = useState('keys');
+  const [game, setGame] = useState('');
+  const fields = attributesFor(game, category);
+  const { games } = useGames();
   const submit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const form = e.currentTarget;
@@ -278,10 +325,13 @@ function NewOffer({ onCreated }: { onCreated: () => void }) {
           description: f.description,
           priceCents: Math.round(Number(f.price) * 100),
           deliveryMode: f.deliveryMode,
+          attributes: Object.fromEntries(fields.map((d) => [d.key, f[`attr.${d.key}`] ?? '']).filter(([, v]) => v)),
+          priceTiers: category === 'accounts' ? undefined : TIER_ROWS.filter((i) => f[`tierQty${i}`] && f[`tierPrice${i}`]).map((i) => ({ minQty: Number(f[`tierQty${i}`]), priceCents: Math.round(Number(f[`tierPrice${i}`]) * 100) })),
           ...(f.deliveryMode === 'manual' && f.categorySlug !== 'accounts' ? { stock: Number(f.stock || 1) } : {}),
         },
       });
       form.reset();
+      setGame('');
       onCreated();
     } catch (err: any) {
       setError(err.message);
@@ -289,39 +339,70 @@ function NewOffer({ onCreated }: { onCreated: () => void }) {
   };
   return (
     <form className="card stack" onSubmit={submit}>
-      <h3>New listing</h3>
+      <h3>{t('sell.new')}</h3>
       <div className="grid two">
         <label className="field">
-          Category
+          {t('market.category')}
           <select name="categorySlug" value={category} onChange={(e) => setCategory(e.target.value)}>
-            <option value="keys">Software & CD keys</option>
-            <option value="accounts">Game accounts</option>
-            <option value="currency">In-game currency</option>
-            <option value="items">In-game items</option>
-            <option value="boosting">Boosting</option>
-            <option value="gift-cards">Gift cards (4.99%)</option>
-            <option value="top-ups">Top-ups (4.99%)</option>
-            <option value="video-games">Video games (4.99%)</option>
+            {['keys', 'accounts', 'currency', 'items', 'boosting', 'gift-cards', 'top-ups', 'video-games'].map((c) => (
+              <option key={c} value={c}>{categoryLabel(c)}{['gift-cards', 'top-ups', 'video-games'].includes(c) ? ' (4.99%)' : ''}</option>
+            ))}
           </select>
         </label>
-        <label className="field">Game<input name="game" required maxLength={80} /></label>
-        <label className="field">Title<input name="title" required minLength={3} maxLength={140} /></label>
-        <label className="field">Price (USD)<input name="price" type="number" step="0.01" min="0.01" required /></label>
+        <label className="field">{t('sell.f.game')}<input name="game" required maxLength={80} value={game} onChange={(e) => setGame(e.target.value)} list="sell-games" /></label>
+        <datalist id="sell-games">{games?.map((g) => <option key={g.game} value={g.game} />)}</datalist>
+        <label className="field">{t('sell.f.title')}<input name="title" required minLength={3} maxLength={140} /></label>
+        <label className="field">{t('sell.f.price')}<input name="price" type="number" step="0.01" min="0.01" required /></label>
         <label className="field">
-          Delivery
+          {t('table.delivery')}
           <select name="deliveryMode" defaultValue="auto">
-            <option value="auto">Instant, from uploaded stock</option>
-            <option value="manual">I deliver each order myself</option>
+            <option value="auto">{t('sell.f.auto')}</option>
+            <option value="manual">{t('sell.f.manual')}</option>
           </select>
         </label>
-        {category !== 'accounts' && <label className="field">Stock (manual delivery)<input name="stock" type="number" min="1" defaultValue="1" /></label>}
+        {category !== 'accounts' && <label className="field">{t('sell.f.stock')}<input name="stock" type="number" min="1" defaultValue="1" /></label>}
       </div>
-      <label className="field">Description<textarea name="description" maxLength={5000} /></label>
+      {fields.length > 0 && (
+        <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0, gap: 8 }}>
+          <legend className="small muted" style={{ marginBottom: 8 }}>
+            {game.trim() ? t('sell.f.detailsFor', { game: game.trim() }) : t('sell.f.details')} · {t('sell.f.detailsHint')}
+          </legend>
+          <div className="grid three">
+            {fields.map((d) => (
+              <label key={`${category}-${game.trim().toLowerCase()}-${d.key}`} className="field">
+                {attrLabel(d.label)}{d.required ? '' : ` (${t('sell.f.optional')})`}
+                {d.type === 'select' ? (
+                  <select name={`attr.${d.key}`} required={d.required} defaultValue="">
+                    <option value="">{d.required ? t('sell.f.choose') : '—'}</option>
+                    {d.options!.map((o) => <option key={o}>{o}</option>)}
+                  </select>
+                ) : (
+                  <input name={`attr.${d.key}`} required={d.required} maxLength={60} />
+                )}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      )}
+      {category !== 'accounts' && (
+        <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0, gap: 8 }}>
+          <legend className="small muted" style={{ marginBottom: 8 }}>{t('tier.sellTitle')} · {t('tier.sellHint')}</legend>
+          <div className="grid three">
+            {TIER_ROWS.map((i) => (
+              <div key={i} className="row" style={{ gap: 8, flexWrap: 'nowrap' }}>
+                <label className="field" style={{ flex: 1 }}>{t('tier.fromQty')}<input name={`tierQty${i}`} type="number" min={2} placeholder={String([10, 50, 100][i])} /></label>
+                <label className="field" style={{ flex: 1 }}>{t('tier.each')}<input name={`tierPrice${i}`} type="number" step="0.01" min="0.01" /></label>
+              </div>
+            ))}
+          </div>
+        </fieldset>
+      )}
+      <label className="field">{t('sell.f.description')}<textarea name="description" maxLength={5000} /></label>
       {category === 'accounts' && (
-        <p className="small muted">After creating an account listing, submit Original Owner Proof so buyers see it as verified instead of high risk.</p>
+        <p className="small muted">{t('sell.f.accountHint')}</p>
       )}
       {error && <div className="alert">{error}</div>}
-      <button className="btn" type="submit">Create listing</button>
+      <button className="btn" type="submit">{t('sell.f.create')}</button>
     </form>
   );
 }

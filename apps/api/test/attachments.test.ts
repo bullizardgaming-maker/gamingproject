@@ -99,7 +99,7 @@ describe('image evidence in chat', () => {
     const up = await upload(buyer.api, roomId, png, 'image/png', 'receipt.png');
     const admin = await makeUser(h, { tier: 2, role: 'admin' });
     const cb = await admin.api.post('/v1/admin/chargebacks', { orderId: order.id, network: 'visa', reasonCode: '13.3', amountCents: 10_00 });
-    const ev = await collectEvidence(h.ctx.db, cb.body.id);
+    const ev = await collectEvidence(h.ctx.db, cb.body.id, h.ctx.keyring);
     expect(ev.chat.attachments).toEqual([expect.objectContaining({ original_name: 'receipt.png', sha256: up.body.sha256, uploaded_by: 'buyer' })]);
   });
 });

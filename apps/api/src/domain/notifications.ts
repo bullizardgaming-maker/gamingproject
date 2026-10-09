@@ -2,6 +2,7 @@ import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { many, maybeOne, withTx } from '../db.js';
 import { badRequest } from '../lib/errors.js';
+import { PACKS, helpers, isLocale, type Locale } from './locales/index.js';
 
 /**
  * Notifications. Business code calls notify() (alias enqueueEmail) inside its own transaction
@@ -9,13 +10,15 @@ import { badRequest } from '../lib/errors.js';
  * Each one lands in the user's in-app inbox, and the worker delivers it by email and Web Push
  * according to the user's per-category preferences for each channel, and live to open tabs.
  */
-export type EmailCategory = 'orders' | 'selling' | 'disputes' | 'reminders' | 'account' | 'security' | 'operations';
+export type EmailCategory = 'orders' | 'selling' | 'disputes' | 'reminders' | 'alerts' | 'support' | 'account' | 'security' | 'operations';
 
 export const EMAIL_CATEGORIES: Record<EmailCategory, { label: string; mandatory?: boolean; staffOnly?: boolean }> = {
   orders: { label: 'Purchases: payment received, delivery, refunds' },
   selling: { label: 'Sales: new orders to deliver, payouts' },
   disputes: { label: 'Disputes and chargebacks', mandatory: true },
   reminders: { label: 'Reminders before your protection window ends' },
+  alerts: { label: 'Price alerts and watchlist updates' },
+  support: { label: 'Replies to your help requests', mandatory: true },
   account: { label: 'Verification and payout account updates', mandatory: true },
   security: { label: 'Security alerts', mandatory: true },
   operations: { label: 'Staff alerts (reconciliation, operations)', mandatory: true, staffOnly: true },
@@ -183,6 +186,102 @@ export const TEMPLATES = {
     subject: () => 'Your staff access changed',
     body: (d, link) => `Your Bullizard staff roles are now: ${d.roles.length ? d.roles.join(', ') : 'none'} (changed by ${d.by}). If this is unexpected, contact security immediately. ${link('/account')}`,
   },
+  debt_reminder: {
+    category: 'account',
+    subject: (d) => (d.first ? `Your balance is ${money(-d.amount_cents, d.currency)}` : `Reminder: you owe ${money(d.amount_cents, d.currency)}`),
+    body: (d, link) =>
+      `Your Bullizard balance is below zero by ${money(d.amount_cents, d.currency)} after a refund or chargeback. New sales pay it down automatically, or you can pay it now by card. ` +
+      `Withdrawals are paused until it's settled, and if it's still unpaid on ${when(d.pause_at)} your shop will be paused.\n\n${link('/sell/money')}`,
+  },
+  debt_shop_paused: {
+    category: 'account',
+    subject: () => 'Your shop is paused until your balance is settled',
+    body: (d, link) =>
+      `Your balance is still below zero by ${money(d.amount_cents, d.currency)}, so your listings are hidden and can't be bought. ` +
+      `Orders already paid still need to be delivered. Pay the balance to reopen your shop straight away.\n\n${link('/sell/money')}`,
+  },
+  debt_cleared: {
+    category: 'selling',
+    subject: () => 'Your balance is settled',
+    body: (d, link) => `Your ${d.currency} balance is back above zero${d.reason === 'written_off' ? ' (we wrote off the remainder)' : ''}. ${d.resumed ? 'Your shop is open again. ' : ''}Withdrawals are available as usual.\n\n${link('/sell/money')}`,
+  },
+  fx_topup_proposed: {
+    category: 'operations',
+    subject: (d) => `Approve buying ${money(d.to_cents, d.currency)}`,
+    body: (d, link) => `Sellers are owed more ${d.currency} than the platform holds. Proposed: buy ${money(d.to_cents, d.currency)} for about ${money(d.est_from_cents, d.from_currency)}. Approve or reject it: ${link('/admin')}`,
+  },
+  debt_escalated: {
+    category: 'operations',
+    subject: (d) => `Seller debt unpaid: ${money(d.amount_cents, d.currency)}`,
+    body: (d, link) => `A seller has owed ${money(d.amount_cents, d.currency)} past the reminder period; their shop is now paused. Review it, or write it off with a ledger adjustment: ${link('/admin')}`,
+  },
+  watch_price_drop: {
+    category: 'alerts',
+    subject: (d) => `Price drop: ${d.title} is now ${money(d.price_cents, d.currency)}`,
+    body: (d, link) =>
+      `${d.title} is now ${money(d.price_cents, d.currency)}${d.target_cents ? `, at or below your target of ${money(d.target_cents, d.currency)}` : ', lower than when you started watching it'}.\n\n${link(`/offers/${d.offer_id}`)}`,
+  },
+  watch_back_in_stock: {
+    category: 'alerts',
+    subject: (d) => `Back in stock: ${d.title}`,
+    body: (d, link) => `${d.title} is available again at ${money(d.price_cents, d.currency)}.\n\n${link(`/offers/${d.offer_id}`)}`,
+  },
+  watch_game_low: {
+    category: 'alerts',
+    subject: (d) => `${d.game}${d.attributes && Object.keys(d.attributes).length ? ` (${Object.values(d.attributes).join(', ')})` : ''}: from ${money(d.price_cents, d.currency)}`,
+    body: (d, link) =>
+      `A ${d.game} listing you're watching for is ${d.target_cents ? `at or below your ${money(d.target_cents, d.currency)} target` : 'at a new low'}: "${d.title}" for ${money(d.price_cents, d.currency)}.\n\n${link(`/offers/${d.offer_id}`)}`,
+  },
+  request_posted: {
+    category: 'selling',
+    subject: (d) => `New request in ${d.game}: ${d.title}`,
+    body: (d, link) =>
+      `A buyer is looking for "${d.title}"${d.budget_cents ? ` with a budget of ${money(d.budget_cents, d.currency)}` : ''}. You list in ${d.game}, so you may have what they need. Send a price and delivery time.\n\n${link(`/requests/${d.request_id}`)}`,
+  },
+  request_proposal: {
+    category: 'orders',
+    subject: (d) => `${d.revised ? 'Updated proposal' : 'New proposal'} for "${d.title}"`,
+    body: (d, link) =>
+      `${d.seller_name} offers ${money(d.price_cents, d.currency)} with delivery within ${d.delivery_hours} hours. Accept it to check out; your payment is held in escrow as for any order.\n\n${link(`/requests/${d.request_id}`)}`,
+  },
+  request_accepted: {
+    category: 'selling',
+    subject: (d) => `Proposal accepted: ${d.title}`,
+    body: (d, link) =>
+      `The buyer accepted your ${money(d.price_cents, d.currency)} proposal. We've made a private listing for them; you'll get the usual new-order notice as soon as they pay.\n\n${link(`/requests/${d.request_id}`)}`,
+  },
+  listing_review: {
+    category: 'selling',
+    subject: () => 'Your listing is being reviewed',
+    body: (d, link) =>
+      `${d.title ? `"${d.title}"` : 'Your listing'} mentions something our rules ask us to check (prohibited goods or contact details), so it's hidden until a moderator looks at it, usually within a few hours. You'll hear back either way.\n\n${link('/sell')}`,
+  },
+  listing_approved: {
+    category: 'selling',
+    subject: (d) => `Listing approved: ${d.title}`,
+    body: (d, link) => `A moderator approved "${d.title}" and it's live again.\n\n${link(`/offers/${d.offer_id}`)}`,
+  },
+  listing_rejected: {
+    category: 'selling',
+    subject: (d) => `Listing removed: ${d.title}`,
+    body: (d, link) => `A moderator removed "${d.title}": ${d.note}\n\nYou can post a new listing that follows the rules. Reply to support if you think this is a mistake.\n\n${link('/support/new?category=selling')}`,
+  },
+  support_received: {
+    category: 'support',
+    subject: (d) => `We got your request #${d.number}`,
+    body: (d, link) => `Thanks for getting in touch about "${d.subject}". Our support team usually answers within a few hours; you'll get an email when they reply.\n\n${link(`/support/${d.ticket_id}`)}`,
+  },
+  support_reply: {
+    category: 'support',
+    subject: (d) => (d.resolved ? `Request #${d.number} resolved` : `New reply on request #${d.number}`),
+    body: (d, link) =>
+      `Bullizard Support replied to "${d.subject}"${d.resolved ? ' and marked it resolved. Reply if you still need help and it reopens' : ''}:\n\n${d.preview}\n\n${link(`/support/${d.ticket_id}`)}`,
+  },
+  support_auto_resolved: {
+    category: 'support',
+    subject: (d) => `Request #${d.number} closed`,
+    body: (d, link) => `We haven't heard back about "${d.subject}" for ${d.days} days, so we've marked it resolved. Reply any time to reopen it.\n\n${link(`/support/${d.ticket_id}`)}`,
+  },
   account_locked: {
     category: 'security',
     subject: () => 'Sign-in paused after failed attempts',
@@ -192,13 +291,30 @@ export const TEMPLATES = {
 
 export type TemplateName = keyof typeof TEMPLATES;
 
+/**
+ * A template in the reader's language. Customer-facing messages are translated (./locales);
+ * staff alerts and anything not yet translated fall back to English.
+ */
+export function templateFor(name: TemplateName, locale: Locale = 'en'): Template {
+  const base = TEMPLATES[name] as Template;
+  const t = locale === 'en' ? undefined : PACKS[locale].templates[name];
+  if (!t) return base;
+  const h = helpers(locale);
+  return { ...base, subject: (d) => t.subject(d, h), body: (d, link) => t.body(d, link, h) };
+}
+
+async function localeOf(q: Queryable, userId: string): Promise<Locale> {
+  const row = await maybeOne<{ locale: string }>(q, 'SELECT locale FROM users WHERE id = $1', [userId]);
+  return isLocale(row?.locale) ? row.locale : 'en';
+}
+
 export async function enqueueEmail(q: Queryable, userId: string, template: TemplateName, data: Data, dedupeKey?: string) {
   const { rowCount } = await q.query(
     `INSERT INTO notifications (user_id, template, data, dedupe_key) VALUES ($1, $2, $3, $4) ON CONFLICT (dedupe_key) DO NOTHING RETURNING id`,
     [userId, template, JSON.stringify(data), dedupeKey ?? null],
   );
   if (!rowCount) return; // duplicate (dedupe key): already notified
-  const t = TEMPLATES[template] as Template;
+  const t = templateFor(template, await localeOf(q, userId));
   if (t.inbox === false) return;
   const item = inboxText(t, data);
   await q.query(
@@ -248,12 +364,13 @@ export async function setPreferences(q: Queryable, userId: string, changes: Reco
 // ---------------------------------------------------------------------------
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-export function render(ctx: Ctx, name: TemplateName, data: Data) {
-  const t = TEMPLATES[name] as Template;
+export function render(ctx: Ctx, name: TemplateName, data: Data, locale: Locale = 'en') {
+  const t = templateFor(name, locale);
   const link = (path: string) => `${ctx.cfg.PUBLIC_WEB_URL}${path}`;
-  const text = `${t.body(data, link)}\n\n— Bullizard\nManage emails: ${link('/account')}`;
+  const pack = locale === 'en' ? null : PACKS[locale];
+  const text = `${t.body(data, link)}\n\n${pack?.signoff ?? '— Bullizard'}\n${pack?.manage ?? 'Manage emails'}: ${link('/account')}`;
   const html =
-    `<div style="font:15px/1.55 system-ui,sans-serif;color:#16202e;max-width:560px">` +
+    `<div dir="${locale === 'ar' ? 'rtl' : 'ltr'}" style="font:15px/1.55 system-ui,sans-serif;color:#16202e;max-width:560px">` +
     escapeHtml(text)
       .split('\n')
       .map((l) => l.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1">$1</a>'))
@@ -273,7 +390,7 @@ export async function dispatchEmails(ctx: Ctx, limit = 50): Promise<number> {
         WHERE u.id = n.user_id AND n.id IN (
           SELECT id FROM notifications WHERE status = 'pending' AND next_attempt_at <= now()
            ORDER BY created_at LIMIT $1 FOR UPDATE SKIP LOCKED)
-        RETURNING n.id, n.template, n.data, n.attempts, u.email, u.email_preferences`,
+        RETURNING n.id, n.template, n.data, n.attempts, u.email, u.email_preferences, u.locale`,
       [limit],
     ),
   );
@@ -288,7 +405,7 @@ export async function dispatchEmails(ctx: Ctx, limit = 50): Promise<number> {
       continue;
     }
     try {
-      const msg = render(ctx, n.template as TemplateName, n.data);
+      const msg = render(ctx, n.template as TemplateName, n.data, isLocale(n.locale) ? n.locale : 'en');
       await ctx.messenger.send({ channel: 'email', to: n.email, subject: msg.subject, body: msg.text, html: msg.html });
       await ctx.db.query(`UPDATE notifications SET status = 'sent', sent_at = now(), last_error = NULL WHERE id = $1`, [n.id]);
     } catch (err) {

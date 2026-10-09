@@ -1,9 +1,13 @@
 import { Link } from 'react-router-dom';
-import { BadgeCheck, Coins, Gamepad2, Gift, KeyRound, Rocket, ShieldCheck, Smartphone, Star, Swords, UserRound, Zap } from 'lucide-react';
 import { money } from '../api';
+import { BadgeCheck, Coins, Gamepad2, Gift, KeyRound, Rocket, ShieldCheck, Smartphone, Star, Swords, UserRound, Zap } from 'lucide-react';
 import { categoryLabel, deliveryLabel, hueOf, initials, slugify } from '@/lib/catalog';
 import { cn } from '@/lib/utils';
+import { attributePairs } from '@/lib/attributes';
+import { usePrice } from '@/lib/prefs';
 import type { Offer } from '../pages/Market';
+import { OnlineDot } from '@/lib/presence';
+import { t } from '../i18n';
 
 export const CATEGORY_ICON: Record<string, typeof Coins> = {
   accounts: UserRound,
@@ -65,7 +69,7 @@ export function Avatar({ name, className }: { name: string; className?: string }
 }
 
 export function Rating({ value, count, className }: { value: number | string | null; count: number; className?: string }) {
-  if (!count || value == null) return <span className={cn('text-xs text-muted-foreground', className)}>New seller</span>;
+  if (!count || value == null) return <span className={cn('text-xs text-muted-foreground', className)}>{t('rating.new')}</span>;
   return (
     <span className={cn('inline-flex items-center gap-1 text-xs text-muted-foreground', className)}>
       <Star className="size-3.5 fill-held text-held" />
@@ -86,11 +90,11 @@ export function DeliveryTag({ offer }: { offer: Pick<Offer, 'delivery_mode'> & {
 }
 
 export function ProtectionTag({ offer }: { offer: Offer }) {
-  if (offer.category_kind !== 'account') return <span className="text-[11px] text-muted-foreground">72h inspection</span>;
+  if (offer.category_kind !== 'account') return <span className="text-[11px] text-muted-foreground">{t('protect.inspection')}</span>;
   return offer.high_risk_secondary ? (
-    <span className="text-[11px] text-disputed">14d insurance · no owner proof</span>
+    <span className="text-[11px] text-disputed">{t('protect.noProof')}</span>
   ) : (
-    <span className="inline-flex items-center gap-1 text-[11px] text-released"><BadgeCheck className="size-3.5" /> Owner verified · 14d insurance</span>
+    <span className="inline-flex items-center gap-1 text-[11px] text-released"><BadgeCheck className="size-3.5" /> {t('protect.verified')}</span>
   );
 }
 
@@ -98,8 +102,22 @@ export function ProtectionTag({ offer }: { offer: Offer }) {
  * The comparison table every game, search and seller page uses: one row per listing with the
  * seller, delivery speed, stock and price side by side. Collapses to cards on narrow screens.
  */
+/** A listing's game-specific fields as one quiet line: "EUW · Gold → Platinum". */
+export function AttributeLine({ offer, className }: { offer: Pick<Offer, 'game' | 'category_slug' | 'attributes'>; className?: string }) {
+  const pairs = attributePairs(offer.game, offer.category_slug, offer.attributes);
+  if (!pairs.length) return null;
+  return (
+    <div className={cn('mt-1 flex flex-wrap gap-1', className)}>
+      {pairs.map(([label, v]) => (
+        <span key={label} title={label} className="rounded border border-border bg-background px-1.5 py-px text-[11.5px] leading-5 text-muted-foreground">{v}</span>
+      ))}
+    </div>
+  );
+}
+
 export function OfferTable({ offers, showGame = false, showSeller = true, empty }: { offers: Offer[]; showGame?: boolean; showSeller?: boolean; empty?: React.ReactNode }) {
-  if (offers.length === 0) return <div className="card text-center text-muted-foreground">{empty ?? 'No listings here yet.'}</div>;
+  const price = usePrice();
+  if (offers.length === 0) return <div className="card text-center text-muted-foreground">{empty ?? t('table.empty')}</div>;
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-card">
       <div
@@ -108,11 +126,11 @@ export function OfferTable({ offers, showGame = false, showSeller = true, empty 
           showSeller ? 'md:grid-cols-[minmax(0,2.4fr)_minmax(0,1.3fr)_90px_70px_120px]' : 'md:grid-cols-[minmax(0,3fr)_90px_70px_120px]',
         )}
       >
-        <span>Offer</span>
-        {showSeller && <span>Seller</span>}
-        <span>Delivery</span>
-        <span>Stock</span>
-        <span className="text-right">Price</span>
+        <span>{t('table.offer')}</span>
+        {showSeller && <span>{t('table.seller')}</span>}
+        <span>{t('table.delivery')}</span>
+        <span>{t('table.stock')}</span>
+        <span className="text-end">{t('table.price')}</span>
       </div>
       <ul className="m-0 list-none p-0">
         {offers.map((o) => (
@@ -132,24 +150,31 @@ export function OfferTable({ offers, showGame = false, showSeller = true, empty 
                 <Link to={`/offers/${o.id}`} className="block font-medium leading-snug no-underline after:absolute after:inset-0 group-hover:underline">
                   {o.title}
                 </Link>
+                <AttributeLine offer={o} />
                 <ProtectionTag offer={o} />
               </div>
               {showSeller && (
                 <div className="relative z-[1] order-1 flex min-w-0 items-center gap-2.5 md:order-none">
                   <Avatar name={o.seller_name} className="size-8 text-xs" />
                   <div className="min-w-0">
-                    <Link to={`/sellers/${o.seller_id}`} className="block truncate text-sm font-medium no-underline hover:underline">{o.seller_name}</Link>
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <Link to={`/sellers/${o.seller_id}`} className="block truncate text-sm font-medium no-underline hover:underline">{o.seller_name}</Link>
+                      {o.seller_online && <OnlineDot />}
+                    </span>
                     <Rating value={o.seller_rating} count={o.seller_review_count} />
                   </div>
                 </div>
               )}
               <div className="order-3 col-span-2 flex items-center gap-3 md:order-none md:col-span-1 md:block">
                 <DeliveryTag offer={o as any} />
-                <span className="font-mono text-xs text-muted-foreground md:hidden">· {o.stock} in stock</span>
+                <span className="font-mono text-xs text-muted-foreground md:hidden">· {t('table.inStock', { n: o.stock })}</span>
               </div>
               <span className="hidden font-mono text-sm text-muted-foreground md:block">{o.stock}</span>
-              <div className="order-2 flex items-center justify-end gap-3 md:order-none">
-                <span className="font-mono text-base font-semibold">{money((o as any).display_price_cents ?? o.price_cents, (o as any).display_currency ?? o.currency)}</span>
+              <div className="order-2 flex flex-col items-end justify-center md:order-none">
+                <span className="font-mono text-base font-semibold">{price.offer(o as any)}</span>
+                {!!o.price_tiers?.length && (
+                  <span className="text-xs text-released">{t('tier.bulkFrom', { price: money(o.price_tiers.at(-1)!.priceCents, o.currency), qty: o.price_tiers.at(-1)!.minQty })}</span>
+                )}
               </div>
             </div>
           </li>
@@ -160,14 +185,15 @@ export function OfferTable({ offers, showGame = false, showSeller = true, empty 
 }
 
 export function GameCard({ game, offers, min, categories }: { game: string; offers: number; min: number; categories: Array<{ slug: string; count: number }> }) {
+  const price = usePrice();
   return (
     <Link to={`/games/${slugify(game)}`} className="group block overflow-hidden rounded-xl border border-border bg-card no-underline transition hover:-translate-y-0.5 hover:border-foreground hover:shadow-[0_14px_30px_-18px_rgba(22,32,46,.45)]">
       <GameArt game={game} className="aspect-[16/9]" />
       <div className="p-3">
         <div className="truncate font-display text-[15px] font-semibold tracking-tight">{game}</div>
         <div className="mt-0.5 flex items-center justify-between text-xs text-muted-foreground">
-          <span>{offers} offer{offers === 1 ? '' : 's'}</span>
-          <span className="font-mono">from {money(min)}</span>
+          <span>{t('offers.count', { count: offers })}</span>
+          <span className="font-mono">{t('offers.from', { price: price(min) })}</span>
         </div>
         <div className="mt-2 flex flex-wrap gap-1">
           {categories.slice(0, 3).map((c) => (
@@ -181,10 +207,10 @@ export function GameCard({ game, offers, min, categories }: { game: string; offe
 
 export function TrustStrip({ className }: { className?: string }) {
   const items = [
-    [ShieldCheck, 'Escrow on every order', 'Sellers are paid only after delivery checks out'],
-    [Zap, 'Instant auto-delivery', 'Keys and codes land on your order page in seconds'],
-    [BadgeCheck, '14-day account insurance', 'Refund if a previous owner recovers the account'],
-    [Star, 'Reviews from real orders', 'Only buyers who paid can rate a seller'],
+    [ShieldCheck, t('trust.escrow'), t('trust.escrow.text')],
+    [Zap, t('trust.instant'), t('trust.instant.text')],
+    [BadgeCheck, t('trust.insurance'), t('trust.insurance.text')],
+    [Star, t('trust.reviews'), t('trust.reviews.text')],
   ] as const;
   return (
     <div className={cn('grid gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-2 lg:grid-cols-4', className)}>

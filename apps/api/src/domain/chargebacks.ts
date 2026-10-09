@@ -6,6 +6,7 @@ import { many, maybeOne, one } from '../db.js';
 import { sha256 } from '../lib/crypto.js';
 import { notFound } from '../lib/errors.js';
 import { listMessages, verifyChain } from './chat.js';
+import type { Keyring } from '../lib/crypto.js';
 import { withScope } from './events.js';
 import { accountId, orderEscrowBalance, post, sellerAvailable } from './ledger.js';
 import { enqueueWebhook } from './webhooks.js';
@@ -175,7 +176,7 @@ export async function closeChargeback(ctx: Ctx, disputeRef: string, won: boolean
 // ---------------------------------------------------------------------------
 // Evidence
 // ---------------------------------------------------------------------------
-export async function collectEvidence(q: Queryable, chargebackId: string) {
+export async function collectEvidence(q: Queryable, chargebackId: string, keyring: Keyring) {
   const cb = await one(q, 'SELECT * FROM chargebacks WHERE id = $1', [chargebackId]);
   const order = await one(
     q,
@@ -257,14 +258,14 @@ export async function collectEvidence(q: Queryable, chargebackId: string) {
        FROM chat_attachments a WHERE a.room_id = $1 AND a.status = 'clean' ORDER BY a.created_at`,
     [room.id, order.buyer_id],
   );
-  const chain = await verifyChain(q, room.id);
-  const chat = await listMessages(q, room.id, 0, 500);
+  const chain = await verifyChain(q, room.id, keyring);
+  const chat = await listMessages(keyring, q, room.id, 0, 500);
   return {
     chargeback: { id: cb.id, network: cb.network, reason_code: cb.reason_code, category: cb.category, amount_cents: cb.amount_cents, respond_by: cb.respond_by },
     spec: classify(cb.network, cb.reason_code, cb.category),
     common,
     specific,
-    chat: { integrity: chain, attachments, messages: chat.map((m) => ({ seq: m.seq, at: m.created_at, from: m.sender_id === order.buyer_id ? 'buyer' : m.sender_id ? 'seller' : 'system', body: m.body, hash: m.hash })) },
+    chat: { integrity: chain, attachments, messages: chat.map((m) => ({ seq: m.seq, at: m.created_at, from: m.sender_id === order.buyer_id ? 'buyer' : m.sender_id ? 'seller' : 'system', body: m.body ?? '[erased at the author’s request]', hash: m.hash })) },
   };
 }
 
@@ -319,7 +320,7 @@ export function renderPacketPdf(ev: Evidence): Promise<Buffer> {
 }
 
 export async function buildAndSubmitPacket(ctx: Ctx, chargebackId: string) {
-  const evidence = await collectEvidence(ctx.db, chargebackId);
+  const evidence = await collectEvidence(ctx.db, chargebackId, ctx.keyring);
   const pdf = await renderPacketPdf(evidence);
   await ctx.db.query(
     `UPDATE chargebacks SET status = 'packet_ready', packet_pdf = $2, packet_sha256 = $3,

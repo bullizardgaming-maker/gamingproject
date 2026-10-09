@@ -73,8 +73,10 @@ class DisjointSet {
  * noisy-OR so independent weak evidence compounds.
  *
  * This runs inline on every payment. The offline HGT model in
- * services/fraud-gnn scores the same graph with learned attention weights; when
- * FRAUD_GNN_URL is set its score is blended in (max of the two).
+ * services/fraud-gnn scores the same graph with learned attention weights. With
+ * FRAUD_GNN_URL set, FRAUD_GNN_MODE decides what its score does: `shadow` (default)
+ * records it next to this one for the comparison report, `enforce` blends it in
+ * (max of the two).
  */
 export async function heuristicScore(q: Queryable, orderId: string): Promise<RiskAssessment> {
   const order = await one<{ buyer_id: string; seller_id: string; amount_cents: number; seller_created: string; buyer_created: string }>(
@@ -160,8 +162,8 @@ export async function heuristicScore(q: Queryable, orderId: string): Promise<Ris
   return { score: Math.round(score * 10_000) / 10_000, reasons, source: 'heuristic' };
 }
 
-async function gnnScore(ctx: Ctx, orderId: string): Promise<RiskAssessment | null> {
-  if (!ctx.cfg.FRAUD_GNN_URL) return null;
+async function gnnScore(ctx: Ctx, orderId: string): Promise<(RiskAssessment & { modelVersion: string | null }) | null> {
+  if (!ctx.cfg.FRAUD_GNN_URL || ctx.cfg.FRAUD_GNN_MODE === 'off') return null;
   try {
     const res = await fetch(`${ctx.cfg.FRAUD_GNN_URL}/score`, {
       method: 'POST',
@@ -170,8 +172,9 @@ async function gnnScore(ctx: Ctx, orderId: string): Promise<RiskAssessment | nul
       signal: AbortSignal.timeout(400),
     });
     if (!res.ok) return null;
-    const body = (await res.json()) as { score: number; reasons?: RiskAssessment['reasons'] };
-    return { score: body.score, reasons: body.reasons ?? [{ code: 'gnn_syndicate_score', weight: body.score }], source: 'gnn' };
+    const body = (await res.json()) as { score: number; reasons?: RiskAssessment['reasons']; model_version?: string };
+    if (typeof body.score !== 'number' || !(body.score >= 0 && body.score <= 1)) return null;
+    return { score: body.score, reasons: body.reasons ?? [{ code: 'gnn_syndicate_score', weight: body.score }], source: 'gnn', modelVersion: body.model_version ?? null };
   } catch (err) {
     ctx.log.warn({ err: (err as Error).message }, 'GNN scorer unavailable, using heuristic only');
     return null;
@@ -180,8 +183,118 @@ async function gnnScore(ctx: Ctx, orderId: string): Promise<RiskAssessment | nul
 
 export async function assessOrder(ctx: Ctx, q: Queryable, orderId: string): Promise<RiskAssessment> {
   const [h, g] = await Promise.all([heuristicScore(q, orderId), gnnScore(ctx, orderId)]);
-  if (!g) return h;
-  return { score: Math.max(h.score, g.score), reasons: [...h.reasons, ...g.reasons], source: 'combined' };
+  const mode = !g ? 'off' : ctx.cfg.FRAUD_GNN_MODE;
+  const used: RiskAssessment =
+    g && mode === 'enforce' ? { score: Math.max(h.score, g.score), reasons: [...h.reasons, ...g.reasons], source: 'combined' } : h;
+  await q.query(
+    `INSERT INTO fraud_scores (order_id, heuristic_score, gnn_score, model_version, mode, used_score) VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (order_id) DO NOTHING`,
+    [orderId, h.score, g?.score ?? null, g?.modelVersion ?? null, mode, used.score],
+  );
+  return used;
+}
+
+// ---------------------------------------------------------------------------
+// Shadow-mode evaluation: label outcomes, compare the heuristic with the model
+// ---------------------------------------------------------------------------
+
+/** Label scored orders whose outcome is now known. Returns how many were labelled. */
+export async function labelFraudOutcomes(ctx: Ctx) {
+  const fraud = await ctx.db.query(
+    `UPDATE fraud_scores s SET label = 'fraud', labelled_at = now()
+       FROM orders o
+      WHERE s.order_id = o.id AND s.label IS NULL
+        AND (EXISTS (SELECT 1 FROM chargebacks c WHERE c.order_id = o.id AND c.category = 'fraud')
+             OR EXISTS (SELECT 1 FROM risk_flags f WHERE f.order_id = o.id AND f.status = 'confirmed')
+             OR EXISTS (SELECT 1 FROM users u WHERE u.id IN (o.buyer_id, o.seller_id) AND u.suspension_reason = 'fraud_confirmed'))`,
+  );
+  const legit = await ctx.db.query(
+    `UPDATE fraud_scores s SET label = 'legit', labelled_at = now()
+       FROM orders o
+      WHERE s.order_id = o.id AND s.label IS NULL
+        AND NOT EXISTS (SELECT 1 FROM risk_flags f WHERE f.order_id = o.id AND f.status IN ('open', 'confirmed'))
+        AND NOT EXISTS (SELECT 1 FROM chargebacks c WHERE c.order_id = o.id)
+        AND (EXISTS (SELECT 1 FROM risk_flags f WHERE f.order_id = o.id AND f.status = 'cleared')
+             OR (o.status = 'completed' AND COALESCE(o.paid_at, o.created_at) < now() - make_interval(days => $1)))`,
+    [ctx.cfg.FRAUD_LABEL_LEGIT_DAYS],
+  );
+  return (fraud.rowCount ?? 0) + (legit.rowCount ?? 0);
+}
+
+let lastLabel = 0;
+export async function maybeLabelFraudOutcomes(ctx: Ctx) {
+  if (Date.now() - lastLabel < 6 * 3_600_000) return null;
+  lastLabel = Date.now();
+  return labelFraudOutcomes(ctx);
+}
+
+/** Mann-Whitney AUC: the chance a random fraud case scores above a random legit one. */
+export function rocAuc(rows: Array<{ score: number; fraud: boolean }>) {
+  const pos = rows.filter((r) => r.fraud).map((r) => r.score);
+  const neg = rows.filter((r) => !r.fraud).map((r) => r.score);
+  if (!pos.length || !neg.length) return null;
+  let wins = 0;
+  for (const p of pos) for (const n of neg) wins += p > n ? 1 : p === n ? 0.5 : 0;
+  return Math.round((wins / (pos.length * neg.length)) * 10_000) / 10_000;
+}
+
+function atThreshold(rows: Array<{ score: number; fraud: boolean }>, threshold: number) {
+  const flagged = rows.filter((r) => r.score >= threshold);
+  const tp = flagged.filter((r) => r.fraud).length;
+  const positives = rows.filter((r) => r.fraud).length;
+  return {
+    flagged: flagged.length,
+    caught: tp,
+    precision: flagged.length ? Math.round((tp / flagged.length) * 10_000) / 10_000 : null,
+    recall: positives ? Math.round((tp / positives) * 10_000) / 10_000 : null,
+  };
+}
+
+/**
+ * Compare the heuristic and the graph model on orders with a known outcome, per model version.
+ * Both are measured on the same orders (those the model scored), at the review threshold.
+ */
+export async function fraudModelReport(ctx: Ctx, days = 180) {
+  await labelFraudOutcomes(ctx);
+  const rows = await many<{ heuristic_score: string; gnn_score: string | null; model_version: string | null; label: string | null; mode: string }>(
+    ctx.db,
+    `SELECT heuristic_score, gnn_score, model_version, label, mode FROM fraud_scores WHERE created_at > now() - make_interval(days => $1)`,
+    [days],
+  );
+  const t = ctx.cfg.FRAUD_REVIEW_THRESHOLD;
+  const labelled = rows.filter((r) => r.label);
+  const versions = [...new Set(labelled.filter((r) => r.gnn_score !== null).map((r) => r.model_version ?? 'unknown'))];
+  const models = versions.map((version) => {
+    const set = labelled.filter((r) => r.gnn_score !== null && (r.model_version ?? 'unknown') === version);
+    const h = set.map((r) => ({ score: Number(r.heuristic_score), fraud: r.label === 'fraud' }));
+    const g = set.map((r) => ({ score: Number(r.gnn_score), fraud: r.label === 'fraud' }));
+    const both = set.map((r) => ({ score: Math.max(Number(r.heuristic_score), Number(r.gnn_score)), fraud: r.label === 'fraud' }));
+    return {
+      modelVersion: version,
+      orders: set.length,
+      fraud: h.filter((r) => r.fraud).length,
+      heuristic: { auc: rocAuc(h), ...atThreshold(h, t) },
+      model: { auc: rocAuc(g), ...atThreshold(g, t) },
+      combined: { auc: rocAuc(both), ...atThreshold(both, t) },
+      // Orders only one of them would have sent to review, by outcome.
+      onlyModelFlagged: set.filter((r) => Number(r.gnn_score) >= t && Number(r.heuristic_score) < t).reduce((a, r) => (r.label === 'fraud' ? { ...a, fraud: a.fraud + 1 } : { ...a, legit: a.legit + 1 }), { fraud: 0, legit: 0 }),
+      onlyHeuristicFlagged: set.filter((r) => Number(r.heuristic_score) >= t && Number(r.gnn_score) < t).reduce((a, r) => (r.label === 'fraud' ? { ...a, fraud: a.fraud + 1 } : { ...a, legit: a.legit + 1 }), { fraud: 0, legit: 0 }),
+    };
+  });
+  return {
+    windowDays: days,
+    mode: ctx.cfg.FRAUD_GNN_URL ? ctx.cfg.FRAUD_GNN_MODE : 'off',
+    threshold: t,
+    scored: rows.length,
+    modelScored: rows.filter((r) => r.gnn_score !== null).length,
+    labelled: labelled.length,
+    unlabelled: rows.length - labelled.length,
+    heuristicOnly: (() => {
+      const h = labelled.map((r) => ({ score: Number(r.heuristic_score), fraud: r.label === 'fraud' }));
+      return { orders: h.length, fraud: h.filter((r) => r.fraud).length, auc: rocAuc(h), ...atThreshold(h, t) };
+    })(),
+    models,
+  };
 }
 
 /**

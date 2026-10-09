@@ -68,6 +68,11 @@ const Env = z.object({
   PAYOUT_HOLD_DAYS_TRUSTED: z.coerce.number().int().min(0).max(90).default(0),
   PAYOUT_HOLD_DAYS_WATCH: z.coerce.number().int().min(0).max(90).default(14),
   LATE_AUTO_REFUND_HOURS: z.coerce.number().int().min(1).default(48),
+  // Seller debt collection: reminder days after a balance goes negative, then pause the shop.
+  DEBT_REMINDER_DAYS: z.string().default('0,3,7').transform((v) => v.split(',').map(Number).filter((n) => Number.isFinite(n) && n >= 0).sort((a, b) => a - b)),
+  DEBT_PAUSE_AFTER_DAYS: z.coerce.number().min(0).default(14),
+  DEBT_CHECK_MINUTES: z.coerce.number().min(1).default(60),
+  WATCH_CHECK_MINUTES: z.coerce.number().min(1).default(15).describe('How often price alerts are checked'),
   // Currencies & FX. Everything internal (escrow, ledger, balances) is in SETTLEMENT_CURRENCY.
   SETTLEMENT_CURRENCY: z.string().length(3).default('USD'),
   SUPPORTED_CURRENCIES: z.string().default('USD,EUR,GBP'),
@@ -75,6 +80,15 @@ const Env = z.object({
   FX_STATIC_RATES: z.string().default('{"EUR":0.92,"GBP":0.79}'),
   FX_SPREAD_BPS: z.coerce.number().int().min(0).max(1000).default(100),
   FX_MAX_AGE_HOURS: z.coerce.number().default(48),
+  // Buying EUR/GBP ahead of seller payouts (domain/fxtopups.ts). none = planning only, record conversions by hand.
+  FX_EXCHANGE_PROVIDER: z.enum(['none', 'mock', 'wise']).default('none'),
+  WISE_API_URL: z.string().default('https://api.transferwise.com'),
+  WISE_API_TOKEN: z.string().optional(),
+  WISE_PROFILE_ID: z.string().optional(),
+  FX_TOPUP_BUFFER_BPS: z.coerce.number().int().min(0).max(10_000).default(500),
+  FX_TOPUP_MIN_CENTS: z.coerce.number().int().min(1).default(10_000),
+  // Proposals costing up to this much (settlement currency) execute without a person approving. 0 = always ask.
+  FX_TOPUP_AUTO_APPROVE_CENTS: z.coerce.number().int().min(0).default(0),
   // Tax on commission and invoices. The platform's legal entity:
   PLATFORM_LEGAL_NAME: z.string().default('Bullizard Ltd'),
   PLATFORM_TAX_COUNTRY: z.string().length(2).toUpperCase().default('IE'),
@@ -127,6 +141,11 @@ const Env = z.object({
   RECON_INTERVAL_HOURS: z.coerce.number().default(24),
   RECON_TOLERANCE_CENTS: z.coerce.number().default(0),
   FRAUD_GNN_URL: z.string().optional(),
+  // shadow: record the graph model's score next to the heuristic but act on the heuristic only.
+  // enforce: act on the higher of the two. Switch to enforce once the model report backs it.
+  FRAUD_GNN_MODE: z.enum(['off', 'shadow', 'enforce']).default('shadow'),
+  // A completed order with no fraud signal this long after payment counts as legitimate (past chargeback windows).
+  FRAUD_LABEL_LEGIT_DAYS: z.coerce.number().int().min(1).default(120),
   FRAUD_FREEZE_THRESHOLD: z.coerce.number().default(0.8),
   FRAUD_REVIEW_THRESHOLD: z.coerce.number().default(0.5),
   OFFPLATFORM_SUSPEND_STRIKES: z.coerce.number().default(3),

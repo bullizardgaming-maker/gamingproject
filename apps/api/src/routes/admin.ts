@@ -1,18 +1,26 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Ctx } from '../context.js';
-import { many, maybeOne, one } from '../db.js';
+import { many, maybeOne, one, withTx } from '../db.js';
 import { receiveChargeback } from '../domain/chargebacks.js';
 import { withScope } from '../domain/events.js';
 import { reviewOwnerProof } from '../domain/offers.js';
 import { resolveDispute } from '../domain/orders.js';
 import { setReviewHidden } from '../domain/reviews.js';
 import { runReconciliation } from '../domain/reconciliation.js';
-import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
+import { AppError, badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { ROLE_PERMISSIONS, STAFF_ROLES, permissionsOf, rolesOf } from '../domain/permissions.js';
 import { notify } from '../domain/notifications.js';
 import { refundAfterRelease } from '../domain/clawback.js';
 import { addNote, decideCase, getCase, listCases, openCase, refreshLists, rescreenSellers, runMonitoring, screenUser } from '../domain/aml.js';
+import { collectDebts, listDebts } from '../domain/debts.js';
+import { fraudModelReport } from '../domain/fraud.js';
+import { COMPONENTS, COMPONENT_IDS, createIncident, listIncidents, updateIncident } from '../domain/status.js';
+import { decideTopUp, listTopUps, planTopUps } from '../domain/fxtopups.js';
+import { chatLegalHold, shredUserChatKey } from '../domain/chatkeys.js';
+import { businessMetrics } from '../domain/analytics.js';
+import { getTicket, staffReply, ticketQueue, updateTicket } from '../domain/support.js';
+import { addTerm, chatFlagQueue, decideChatFlag, decideListing, listTerms, moderationCounts, removeTerm, reviewQueue } from '../domain/moderation.js';
 import { requirePermission } from '../server.js';
 import { audit, listAudit } from '../domain/audit.js';
 import { createPromo, listPromos, setPromoActive } from '../domain/promos.js';
@@ -240,6 +248,60 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     currency: z.string().length(3).toUpperCase().default(ctx.cfg.SETTLEMENT_CURRENCY),
     amountCents: z.number().int(),
   });
+  // --- Status page incidents ------------------------------------------------------------
+  app.get('/admin/incidents', async (req) => {
+    requirePermission(req, 'status.manage');
+    return { components: COMPONENT_IDS.map((id) => ({ id, name: COMPONENTS[id].name })), incidents: await listIncidents(ctx) };
+  });
+  app.post('/admin/incidents', async (req, reply) => {
+    const staff = requirePermission(req, 'status.manage');
+    const body = z
+      .object({
+        kind: z.enum(['incident', 'maintenance']).default('incident'),
+        title: z.string().trim().min(5).max(140),
+        impact: z.enum(['minor', 'major', 'critical']).default('minor'),
+        components: z.array(z.string()).max(20).default([]),
+        body: z.string().trim().min(5).max(4_000),
+        scheduledStart: z.string().datetime().optional(),
+        scheduledEnd: z.string().datetime().optional(),
+        notify: z.boolean().default(true),
+      })
+      .parse(req.body);
+    const incident: any = await createIncident(ctx, staff.id, body);
+    await audit(ctx.db, req, 'status.incident_created', { type: 'incident', id: incident.id }, { title: body.title, kind: body.kind });
+    return reply.status(201).send(incident);
+  });
+  app.post('/admin/incidents/:id/updates', async (req) => {
+    const staff = requirePermission(req, 'status.manage');
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z
+      .object({ status: z.string(), body: z.string().trim().min(3).max(4_000), impact: z.enum(['none', 'minor', 'major', 'critical']).optional(), notify: z.boolean().default(true) })
+      .parse(req.body);
+    const incident = await updateIncident(ctx, staff.id, id, body);
+    await audit(ctx.db, req, 'status.incident_updated', { type: 'incident', id }, { status: body.status });
+    return incident;
+  });
+
+  // --- Fraud model evaluation -------------------------------------------------------------
+  app.get('/admin/fraud/model-report', async (req) => {
+    requirePermission(req, 'risk.review');
+    const { days } = z.object({ days: z.coerce.number().int().min(1).max(730).default(180) }).parse(req.query);
+    return fraudModelReport(ctx, days);
+  });
+
+  // --- Seller debts ---------------------------------------------------------------------
+  app.get('/admin/debts', async (req) => {
+    requirePermission(req, 'ledger.view');
+    const { status } = z.object({ status: z.enum(['open', 'closed']).default('open') }).parse(req.query);
+    return listDebts(ctx, status);
+  });
+  app.post('/admin/debts/run', async (req) => {
+    requirePermission(req, 'ledger.adjust');
+    const r = await collectDebts(ctx);
+    await audit(ctx.db, req, 'debts.collection_run', { type: 'seller_debts', id: 'all' }, r);
+    return r;
+  });
+
   app.get('/admin/ledger/adjustments', async (req) => {
     requirePermission(req, 'ledger.adjust');
     return listAdjustments(ctx);
@@ -295,6 +357,106 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     requirePermission(req, 'fx.manage');
     return { positions: await fxPosition(ctx), conversions: await many(ctx.db, 'SELECT * FROM fx_conversions ORDER BY created_at DESC LIMIT 50') };
   });
+  // --- Support queue ------------------------------------------------------------------------
+  // ---- Moderation: listing review queue, flagged chats, banned terms ----
+  app.get('/admin/moderation/summary', async (req) => (requirePermission(req, 'moderation.manage'), moderationCounts(ctx.db)));
+  app.get('/admin/moderation/listings', async (req) => (requirePermission(req, 'moderation.manage'), reviewQueue(ctx.db)));
+  app.post('/admin/moderation/listings/:id', async (req) => {
+    const staff = requirePermission(req, 'moderation.manage');
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ approve: z.boolean(), note: z.string().trim().max(1_000).optional() }).parse(req.body);
+    const res = await decideListing(ctx, id, staff.id, body.approve, body.note);
+    await audit(ctx.db, req, body.approve ? 'moderation.listing_approved' : 'moderation.listing_rejected', { type: 'offer', id }, { note: body.note });
+    return res;
+  });
+  app.get('/admin/moderation/chats', async (req) => {
+    requirePermission(req, 'moderation.manage');
+    const { status } = z.object({ status: z.enum(['open', 'confirmed', 'dismissed']).default('open') }).parse(req.query);
+    const flags = await chatFlagQueue(ctx, status);
+    // Staff reading chat excerpts is logged, as for opening an order's chat.
+    if (flags.length) await audit(ctx.db, req, 'moderation.chats_viewed', { type: 'chat_flags', id: status }, { count: flags.length });
+    return flags;
+  });
+  app.post('/admin/moderation/chats/:id', async (req) => {
+    const staff = requirePermission(req, 'moderation.manage');
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ confirm: z.boolean(), note: z.string().trim().max(1_000).optional() }).parse(req.body);
+    const res = await decideChatFlag(ctx, id, staff.id, body.confirm, body.note);
+    await audit(ctx.db, req, body.confirm ? 'moderation.chat_confirmed' : 'moderation.chat_dismissed', { type: 'chat_flag', id }, { note: body.note });
+    return res;
+  });
+  app.get('/admin/moderation/terms', async (req) => (requirePermission(req, 'moderation.manage'), listTerms(ctx.db)));
+  app.post('/admin/moderation/terms', async (req, reply) => {
+    const staff = requirePermission(req, 'moderation.manage');
+    const body = z.object({ term: z.string().trim().min(2).max(60), action: z.enum(['block', 'review']) }).parse(req.body);
+    const t = await addTerm(ctx.db, body.term, body.action, staff.id);
+    await audit(ctx.db, req, 'moderation.term_added', { type: 'moderation_term', id: t.id }, body);
+    return reply.status(201).send(t);
+  });
+  app.delete('/admin/moderation/terms/:id', async (req, reply) => {
+    requirePermission(req, 'moderation.manage');
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    await removeTerm(ctx.db, id);
+    await audit(ctx.db, req, 'moderation.term_removed', { type: 'moderation_term', id });
+    return reply.status(204).send();
+  });
+
+  app.get('/admin/support/tickets', async (req) => {
+    const staff = requirePermission(req, 'support.manage');
+    const f = z.object({ status: z.enum(['active', 'open', 'pending', 'resolved']).optional(), mine: z.enum(['true', 'false']).optional() }).parse(req.query);
+    return ticketQueue(ctx.db, { status: f.status, assignedTo: f.mine === 'true' ? staff.id : undefined });
+  });
+  app.get('/admin/support/tickets/:id', async (req) => {
+    const staff = requirePermission(req, 'support.manage');
+    return getTicket(ctx.db, z.object({ id: z.string().uuid() }).parse(req.params).id, { id: staff.id, staff: true });
+  });
+  app.post('/admin/support/tickets/:id/messages', async (req) => {
+    const staff = requirePermission(req, 'support.manage');
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ body: z.string().trim().min(1).max(5_000), internal: z.boolean().default(false), resolve: z.boolean().default(false) }).parse(req.body);
+    await withTx(ctx.db, async (tx) => {
+      await staffReply(ctx, tx, staff.id, id, body.body, body.internal, body.resolve);
+      await audit(tx, req, body.internal ? 'support.note' : 'support.reply', { type: 'support_ticket', id }, { resolve: body.resolve });
+    });
+    return getTicket(ctx.db, id, { id: staff.id, staff: true });
+  });
+  app.patch('/admin/support/tickets/:id', async (req) => {
+    const staff = requirePermission(req, 'support.manage');
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const patch = z
+      .object({ status: z.enum(['open', 'pending', 'resolved']).optional(), priority: z.enum(['normal', 'high']).optional(), assignedTo: z.string().uuid().nullable().optional() })
+      .parse(req.body);
+    await withTx(ctx.db, async (tx) => {
+      await updateTicket(tx, id, patch);
+      await audit(tx, req, 'support.update', { type: 'support_ticket', id }, patch);
+    });
+    return getTicket(ctx.db, id, { id: staff.id, staff: true });
+  });
+
+  app.get('/admin/analytics', async (req) => {
+    requirePermission(req, 'analytics.view');
+    const { days } = z.object({ days: z.coerce.number().pipe(z.union([z.literal(7), z.literal(30), z.literal(90), z.literal(365)])).default(30) }).parse(req.query);
+    return businessMetrics(ctx.dbRead, days);
+  });
+
+  app.get('/admin/fx/topups', async (req) => {
+    requirePermission(req, 'fx.manage');
+    return { provider: ctx.fxExchange?.name ?? null, autoApproveCents: ctx.cfg.FX_TOPUP_AUTO_APPROVE_CENTS, topups: await listTopUps(ctx) };
+  });
+  app.post('/admin/fx/topups/plan', async (req) => {
+    const admin = requirePermission(req, 'fx.manage');
+    const created = await planTopUps(ctx, admin.id);
+    await audit(ctx.db, req, 'fx.topups_planned', { type: 'fx_topup', id: null }, { created: created.map((t: any) => t.id) });
+    return created;
+  });
+  app.post('/admin/fx/topups/:id/decide', async (req) => {
+    const admin = requirePermission(req, 'fx.manage');
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const { approve } = z.object({ approve: z.boolean() }).parse(req.body);
+    const t = await decideTopUp(ctx, admin.id, id, approve);
+    await audit(ctx.db, req, approve ? 'fx.topup_approved' : 'fx.topup_rejected', { type: 'fx_topup', id }, { status: t.status });
+    return t;
+  });
   app.post('/admin/fx/conversions', async (req, reply) => {
     const admin = requirePermission(req, 'fx.manage');
     const body = z
@@ -346,6 +508,19 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     requirePermission(req, 'retention.manage');
     return { policy: retentionPolicy(ctx), runs: await many(ctx.db, 'SELECT * FROM retention_runs ORDER BY started_at DESC LIMIT 30') };
   });
+  /** Erasure request: destroy the user's chat key so everything they wrote becomes unreadable. */
+  app.post('/admin/users/:id/erase-chat', async (req) => {
+    requirePermission(req, 'retention.manage');
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const { reason } = z.object({ reason: z.string().trim().min(5).max(500) }).parse(req.body);
+    if (!(await maybeOne(ctx.db, 'SELECT 1 FROM users WHERE id = $1', [id]))) throw notFound('User');
+    const hold = await chatLegalHold(ctx.db, id);
+    if (hold) throw new AppError(409, 'legal_hold', `Can't erase while there is ${hold}; the messages are evidence`);
+    const shredded = await shredUserChatKey(ctx.db, id, reason);
+    await audit(ctx.db, req, 'chat.erased', { type: 'user', id }, { reason });
+    return { erased: true, alreadyErased: !shredded };
+  });
+
   app.post('/admin/retention/run', async (req) => {
     requirePermission(req, 'retention.manage');
     const res = await runRetention(ctx);

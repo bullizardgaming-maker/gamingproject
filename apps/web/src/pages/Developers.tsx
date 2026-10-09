@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { API_ORIGIN, DEMO, api } from '../api';
 import { useSession } from '../session';
+import { usePageMeta } from '@/lib/seo';
 
 const SCOPES = ['orders:read', 'orders:write', 'inventory:write', 'offers:write', 'chat:write'];
 const EVENTS = ['order.created', 'order.delivered', 'order.completed', 'order.disputed', 'order.refunded', 'order.cancelled', 'offer.low_stock', 'chat.message', 'chargeback.created'];
@@ -23,6 +24,7 @@ function handler(req, res) {
 }`;
 
 export function Developers() {
+  usePageMeta({ title: 'Seller API and webhooks', description: 'Automate your Bullizard shop: REST API, signed webhooks, sandbox, and TypeScript and Python SDKs.' });
   const { user } = useSession();
   const [keys, setKeys] = useState<any[]>([]);
   const [hooks, setHooks] = useState<any[]>([]);

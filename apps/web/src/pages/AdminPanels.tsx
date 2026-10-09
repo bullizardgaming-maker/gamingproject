@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
 const fmt = (d: string) => new Date(d).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 const label = (s: string) => s.replace(/_/g, ' ');
 
-function useLoad<T>(fn: () => Promise<T>) {
+export function useLoad<T>(fn: () => Promise<T>) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState('');
   const reload = useCallback(async () => {
@@ -73,10 +73,10 @@ export function AmlPanel() {
                   <tr key={c.id} onClick={() => setSelected(c.id)} className={cn('cursor-pointer hover:bg-secondary/60', selected === c.id && 'bg-secondary')}>
                     <td>
                       {c.display_name}
-                      {c.holds_payouts && <span className="chip disputed" style={{ marginLeft: 6 }}>payouts paused</span>}
+                      {c.holds_payouts && <span className="chip disputed" style={{ marginInlineStart: 6 }}>payouts paused</span>}
                     </td>
                     <td className="small">
-                      <span className={cn('mr-1.5 inline-block size-2 rounded-full', c.severity === 'high' ? 'bg-disputed' : 'bg-held')} />
+                      <span className={cn('me-1.5 inline-block size-2 rounded-full', c.severity === 'high' ? 'bg-disputed' : 'bg-held')} />
                       {label(c.rule)}
                     </td>
                     <td className="small muted">{fmt(c.created_at)}</td>
@@ -160,7 +160,7 @@ function CaseDetail({ id, onChanged }: { id: string; onChanged: () => void }) {
       {c.notes?.length > 0 && (
         <div className="small stack" style={{ gap: 6 }}>
           {c.notes.map((n: any, i: number) => (
-            <div key={i} style={{ borderLeft: '2px solid var(--rule)', paddingLeft: 10 }}>
+            <div key={i} style={{ borderInlineStart: '2px solid var(--rule)', paddingInlineStart: 10 }}>
               {n.decision && <b>{label(n.decision)} · </b>}{n.note}
               <div className="muted">{fmt(n.at)}</div>
             </div>
@@ -346,7 +346,7 @@ export function TaxPanel() {
 const ROLES = ['arbiter', 'support', 'finance', 'compliance', 'admin'] as const;
 const ROLE_HINT: Record<string, string> = {
   arbiter: 'Disputes, owner proofs, reviews, refunds after release',
-  support: 'Read orders and chats; no money movement',
+  support: 'Read orders and chats, post status-page incidents; no money movement',
   finance: 'Treasury, chargebacks, tax, invoices, ledger corrections',
   compliance: 'Fraud and AML review, suspensions, audit log',
   admin: 'Everything, including staff access',

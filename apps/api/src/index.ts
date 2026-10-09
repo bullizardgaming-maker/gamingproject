@@ -23,6 +23,7 @@ const shutdown = async () => {
   stopIndexer();
   await app.close();
   await ctx.pubsub.close();
+  await ctx.views.close();
   await ctx.db.end();
   process.exit(0);
 };

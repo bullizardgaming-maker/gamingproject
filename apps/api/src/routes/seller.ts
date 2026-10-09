@@ -18,8 +18,10 @@ import { payoutCurrency, sellerBalances, setPayoutCurrency } from '../domain/sel
 import { getTaxProfile, setTaxProfile } from '../domain/tax.js';
 import { getInvoice, invoicePdf, listInvoices } from '../domain/invoices.js';
 import { listCreditNotes } from '../domain/clawback.js';
+import { sellerAnalytics } from '../domain/analytics.js';
+import { sellerDebts, shopHeldForDebt, startDebtPayment } from '../domain/debts.js';
 import { DELIVERY_FILTERS, WEBHOOK_EVENTS, createEndpoint, listDeliveries, redeliver, replayDead, rotateSecret, setEndpointActive } from '../domain/webhooks.js';
-import { badRequest, notFound } from '../lib/errors.js';
+import { AppError, badRequest, notFound } from '../lib/errors.js';
 import { me } from '../server.js';
 
 const Id = z.object({ id: z.string().uuid() });
@@ -35,6 +37,12 @@ export const OfferBody = z.object({
   stock: z.number().int().min(0).max(1_000_000).optional(),
   lowStockThreshold: z.number().int().min(0).max(100_000).optional(),
   deliveryHours: z.number().int().min(1).max(168).optional().describe('Promised delivery time for manual orders, in hours'),
+  attributes: z.record(z.string().max(30), z.string().max(60)).optional().describe('Game-specific fields such as server, region, platform or rank (GET /v1/catalog/attributes)'),
+  priceTiers: z
+    .array(z.object({ minQty: z.number().int().min(2).max(100_000), priceCents: z.number().int().positive().max(100_000_00) }))
+    .max(5)
+    .optional()
+    .describe('Cheaper unit prices for larger orders, e.g. [{"minQty":10,"priceCents":450}]. Send [] to remove.'),
 });
 
 export const InventoryBody = z.object({
@@ -69,16 +77,25 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
       payoutCurrency: currency,
       balances: { currency, availableCents: available, pendingEscrowCents: escrow.pending, withdrawableCents: hold.withdrawableCents, onHoldCents: hold.heldCents },
       allBalances: await sellerBalances(ctx.db, user.id),
+      debts: await sellerDebts(ctx, user.id),
       payoutHold: { level: hold.level, days: hold.holdDays, upcoming: hold.upcoming },
       withdrawalsFrozen: user.withdrawals_frozen,
       shop: await one(
         ctx.db,
         `SELECT (shop_paused AND (shop_paused_until IS NULL OR shop_paused_until > now())) AS paused,
-                shop_paused_until AS until, shop_pause_message AS message FROM users WHERE id = $1`,
+                shop_paused_until AS until, shop_pause_message AS message, show_online AS "showOnline",
+                response_minutes AS "responseMinutes", response_sample AS "responseSample" FROM users WHERE id = $1`,
         [user.id],
       ),
       stats,
     };
+  });
+
+  app.get('/seller/analytics', async (req) => {
+    const user = me(req);
+    requireSeller(user);
+    const { days } = z.object({ days: z.coerce.number().pipe(z.union([z.literal(7), z.literal(30), z.literal(90), z.literal(365)])).default(30) }).parse(req.query);
+    return sellerAnalytics(ctx.dbRead, user.id, days);
   });
 
   // --- Offers & inventory ------------------------------------------------------------
@@ -96,7 +113,7 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/offers', async (req, reply) => reply.status(201).send(await createOffer(ctx, me(req), OfferBody.parse(req.body))));
 
   app.patch('/offers/:id', async (req) => {
-    const body = OfferBody.pick({ title: true, description: true, priceCents: true, stock: true, lowStockThreshold: true, deliveryHours: true })
+    const body = OfferBody.pick({ title: true, description: true, priceCents: true, stock: true, lowStockThreshold: true, deliveryHours: true, attributes: true, priceTiers: true })
       .partial()
       .extend({ version: z.number().int().min(0), status: z.enum(['active', 'paused', 'removed']).optional() })
       .parse(req.body);
@@ -146,6 +163,9 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
       .object({ paused: z.boolean(), until: z.string().datetime().optional(), message: z.string().trim().max(200).optional() })
       .parse(req.body);
     if (body.until && new Date(body.until) <= new Date()) throw badRequest('invalid_until', 'Pick a time in the future');
+    if (!body.paused && (await shopHeldForDebt(ctx.db, user.id))) {
+      throw new AppError(409, 'debt_outstanding', 'Your shop reopens as soon as your balance is settled');
+    }
     const row = await one(
       ctx.db,
       `UPDATE users SET shop_paused = $2, shop_paused_until = $3, shop_pause_message = $4 WHERE id = $1
@@ -154,6 +174,12 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     );
     const open = await one<{ n: number }>(ctx.db, `SELECT count(*)::int AS n FROM orders WHERE seller_id = $1 AND status = 'paid'`, [user.id]);
     return { ...row, ordersStillToDeliver: open.n };
+  });
+
+  /** Whether buyers see "Online now" for this seller. */
+  app.put('/seller/presence', async (req) => {
+    const { showOnline } = z.object({ showOnline: z.boolean() }).parse(req.body);
+    return one(ctx.db, 'UPDATE users SET show_online = $2 WHERE id = $1 RETURNING show_online AS "showOnline"', [me(req).id, showOnline]);
   });
 
   app.post('/seller/payout-account', async (req) => startPayoutOnboarding(ctx, me(req)));
@@ -199,6 +225,13 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     const { currency } = z.object({ currency: z.string().length(3).toUpperCase().optional() }).parse(req.query);
     const id = me(req).id;
     return withdrawable(ctx, ctx.db, id, currency ?? (await payoutCurrency(ctx, ctx.db, id)));
+  });
+  app.get('/seller/debts', async (req) => sellerDebts(ctx, me(req).id));
+  app.post('/seller/debts/:id/pay', async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const { amountCents } = z.object({ amountCents: z.number().int().positive().optional() }).parse(req.body ?? {});
+    const user = me(req);
+    return reply.status(201).send(await startDebtPayment(ctx, user, id, amountCents));
   });
   app.get('/seller/withdrawals', async (req) => many(ctx.db, 'SELECT * FROM withdrawals WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100', [me(req).id]));
 

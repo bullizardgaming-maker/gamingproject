@@ -1,3 +1,4 @@
+import { moneyLocale } from './i18n';
 const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? '';
 
 /**
@@ -21,6 +22,8 @@ export interface User {
   withdrawals_frozen: boolean;
   totp_enabled: boolean;
   payouts_enabled: boolean;
+  /** Language for emails and notifications. */
+  locale?: string;
   session_mfa?: boolean;
 }
 
@@ -128,7 +131,7 @@ export async function signOut() {
 }
 
 export const money = (cents: number, currency = 'USD') =>
-  new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(cents / 100);
+  new Intl.NumberFormat(moneyLocale(), { style: 'currency', currency }).format(cents / 100);
 
 // ---------------------------------------------------------------------------
 // Realtime: one shared socket, auto-reconnect, per-room resync by last seq.
@@ -138,8 +141,10 @@ export interface ChatMessage {
   room_id: string;
   seq: number;
   sender_id: string | null;
-  kind: 'text' | 'system' | 'delivery' | 'warning';
-  body: string;
+  kind: 'text' | 'system' | 'delivery' | 'warning' | 'attachment';
+  /** null when the author's chat history was erased. */
+  body: string | null;
+  erased?: boolean;
   flags: string[];
   hash: string;
   created_at: string;

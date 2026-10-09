@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, money, session } from '../api';
@@ -14,9 +15,9 @@ export function DemoBanner() {
     <div className="demo-banner" role="note">
       <div className="shell row spread">
         <span>
-          <b>Preview with sample data.</b> No real payments or accounts. Sign in with a demo account; verification codes are <span className="mono">123456</span>.
+          <b>{t('demo.banner')}</b> {t('demo.banner.text', { code: '123456' })}
         </span>
-        <button className="btn ghost" onClick={reset}>Reset demo</button>
+        <button className="btn ghost" onClick={reset}>{t('demo.reset')}</button>
       </div>
     </div>
   );

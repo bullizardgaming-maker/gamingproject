@@ -5,6 +5,13 @@ import { useSession } from '../session';
 import { OfferBadges, type Offer } from './Market';
 import { Avatar, DeliveryTag, GameArt, OfferTable, Rating } from '../components/CatalogUi';
 import { categoryLabel, slugify } from '@/lib/catalog';
+import { usePrice } from '@/lib/prefs';
+import { usePageMeta } from '@/lib/seo';
+import { attributePairs } from '@/lib/attributes';
+import { WatchButton } from '../components/WatchButton';
+import { unitPriceFor } from '@/lib/tiers';
+import { OnlineDot, replyLabel } from '@/lib/presence';
+import { t } from '../i18n';
 
 export function OfferPage() {
   const { id } = useParams();
@@ -18,6 +25,8 @@ export function OfferPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [similar, setSimilar] = useState<Offer[]>([]);
+  const price = usePrice();
+  usePageMeta({ title: offer?.title, description: offer ? `${offer.title} — ${offer.game}. Paid into escrow, released only after delivery checks out.` : undefined });
 
   useEffect(() => {
     setOffer(null);
@@ -29,9 +38,11 @@ export function OfferPage() {
     api<{ items: Offer[] }>(`/offers?${q}`).then((r) => setSimilar(r.items.filter((o) => o.id !== offer.id).slice(0, 5))).catch(() => {});
   }, [offer]);
 
-  if (!offer) return <p className="muted">{error || 'Loading…'}</p>;
+  if (!offer) return <p className="muted">{error || t('offer.loading')}</p>;
   const isAccount = offer.category_kind === 'account';
-  const total = offer.price_cents * qty;
+  const tiers = isAccount ? [] : offer.price_tiers ?? [];
+  const unit = unitPriceFor(offer, qty);
+  const total = unit * qty;
   const own = user?.id === offer.seller_id;
 
   const buy = async () => {
@@ -45,7 +56,7 @@ export function OfferPage() {
       if (res.checkoutUrl) window.location.assign(res.checkoutUrl);
       else nav(`/orders/${res.order.id}`);
     } catch (e: any) {
-      setError(e.code === 'kyc_required' ? 'Verify your email and phone number before buying.' : e.message);
+      setError(e.code === 'kyc_required' ? t('offer.verifyFirst') : e.message);
       setBusy(false);
     }
   };
@@ -59,7 +70,7 @@ export function OfferPage() {
   return (
     <div className="stack">
     <nav className="crumbs" aria-label="Breadcrumb">
-      <Link to="/games">Games</Link><span>/</span>
+      <Link to="/games">{t('game.crumb')}</Link><span>/</span>
       <Link to={`/games/${gameSlug}`}>{offer.game}</Link><span>/</span>
       <Link to={`/games/${gameSlug}/${offer.category_slug}`}>{categoryLabel(offer.category_slug)}</Link>
     </nav>
@@ -70,72 +81,112 @@ export function OfferPage() {
           <div className="eyebrow" style={{ margin: 0 }}>{offer.game} · {categoryLabel(offer.category_slug)}</div>
         </div>
         <h1 style={{ fontSize: 40 }}>{offer.title}</h1>
+        {offer.reserved_for && (
+          <div className="notice small">
+            {user?.id === offer.reserved_for ? t('req.reservedForYou') : t('req.reservedSeller')}{' '}
+            {offer.request_id && <Link to={`/requests/${offer.request_id}`}>{t('req.viewRequest')}</Link>}
+          </div>
+        )}
         <div className="row" style={{ gap: 12 }}>
           <OfferBadges offer={offer} />
           <DeliveryTag offer={offer} />
+          {user?.id !== offer.seller_id && <WatchButton target={{ offerId: offer.id }} className="ms-auto" />}
         </div>
-        <p style={{ whiteSpace: 'pre-wrap' }}>{offer.description || <span className="muted">The seller has not added a description.</span>}</p>
+        {attributePairs(offer.game, offer.category_slug, offer.attributes).length > 0 && (
+          <dl className="m-0 grid grid-cols-2 gap-x-6 gap-y-2 rounded-xl border border-border bg-card p-4 sm:grid-cols-3">
+            {attributePairs(offer.game, offer.category_slug, offer.attributes).map(([label, v]) => (
+              <div key={label} className="min-w-0">
+                <dt className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">{label}</dt>
+                <dd className="m-0 truncate font-medium">{v}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+        <p style={{ whiteSpace: 'pre-wrap' }}>{offer.description || <span className="muted">{t('offer.noDescription')}</span>}</p>
         <Link to={`/sellers/${offer.seller_id}`} className="card flex items-center gap-3 no-underline hover:border-foreground" style={{ padding: 14 }}>
           <Avatar name={offer.seller_name} className="size-11" />
           <div className="min-w-0 flex-1">
-            <div className="font-semibold">{offer.seller_name}</div>
+            <div className="flex items-center gap-2 font-semibold">
+              {offer.seller_name}
+              {offer.seller_online && <span className="inline-flex items-center gap-1 text-xs font-medium text-released"><OnlineDot /> {t('presence.online')}</span>}
+            </div>
             <div className="flex flex-wrap items-center gap-x-3 text-xs text-muted-foreground">
               <Rating value={offer.seller_rating} count={offer.seller_review_count} />
-              <span>{offer.seller_completed_orders.toLocaleString()} completed orders</span>
-              <span>identity verified</span>
+              <span>{t('offer.completed', { n: offer.seller_completed_orders })}</span>
+              <span>{t('offer.idVerified')}</span>
+              {replyLabel(offer.seller_response_minutes) && <span>{replyLabel(offer.seller_response_minutes)}</span>}
             </div>
           </div>
-          <span className="small muted">View shop →</span>
+          <span className="small muted">{t('offer.viewShop')}</span>
         </Link>
         {offer.high_risk_secondary && (
           <div className="alert">
-            This account has no verified Original Owner Proof. It may have changed hands before, which raises the risk that a previous
-            owner recovers it. Escrow and the 14-day insurance still apply.
+            {t('offer.highRisk')}
           </div>
         )}
       </div>
 
       <div className="card stack">
         <div className="row spread">
-          <span className="mono" style={{ fontSize: 28, fontWeight: 600 }}>{money(total, offer.currency)}</span>
-          <span className="small muted">{offer.stock} available</span>
+          <span className="stack" style={{ gap: 0 }}>
+            <span className="mono" style={{ fontSize: 28, fontWeight: 600 }}>{money(total, offer.currency)}</span>
+            {price(total, offer.currency).startsWith('≈') && <span className="small muted">{price(total, offer.currency)} · {t('offer.chargedIn', { currency: offer.currency })}</span>}
+          </span>
+          <span className="small muted">{t('offer.available', { n: offer.stock })}</span>
         </div>
         {!isAccount && (
           <label className="field">
-            Quantity
+            {t('offer.quantity')}
             <input type="number" min={1} max={offer.stock} value={qty} onChange={(e) => setQty(Math.max(1, Number(e.target.value)))} />
           </label>
         )}
+        {tiers.length > 0 && (
+          <div className="stack" style={{ gap: 6 }}>
+            <div className="small muted">{t('tier.title')}</div>
+            <div className="flex flex-wrap gap-2" role="group" aria-label={t('tier.title')}>
+              {[{ minQty: 1, priceCents: offer.price_cents }, ...tiers].map((tr) => (
+                <button
+                  key={tr.minQty}
+                  type="button"
+                  className={`chip cursor-pointer ${unit === tr.priceCents && qty >= tr.minQty ? 'released' : ''}`}
+                  onClick={() => setQty(tr.minQty)}
+                >
+                  {t('tier.row', { qty: tr.minQty, price: money(tr.priceCents, offer.currency) })}
+                </button>
+              ))}
+            </div>
+            {unit < offer.price_cents && <div className="small text-released">{t('tier.saving', { amount: money((offer.price_cents - unit) * qty, offer.currency), each: money(unit, offer.currency) })}</div>}
+          </div>
+        )}
         <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0 }}>
-          <legend className="small muted" style={{ marginBottom: 8 }}>Pay with</legend>
-          <label className="row"><input type="radio" style={{ width: 'auto' }} checked={rail === 'fiat'} onChange={() => setRail('fiat')} /> Card (hosted secure checkout)</label>
-          <label className="row"><input type="radio" style={{ width: 'auto' }} checked={rail === 'crypto'} onChange={() => setRail('crypto')} /> USDC / USDT (on-chain escrow contract)</label>
+          <legend className="small muted" style={{ marginBottom: 8 }}>{t('offer.payWith')}</legend>
+          <label className="row"><input type="radio" style={{ width: 'auto' }} checked={rail === 'fiat'} onChange={() => setRail('fiat')} /> {t('offer.card')}</label>
+          <label className="row"><input type="radio" style={{ width: 'auto' }} checked={rail === 'crypto'} onChange={() => setRail('crypto')} /> {t('offer.crypto')}</label>
           {rail === 'crypto' && (
             <label className="field">
-              Your wallet address
+              {t('offer.wallet')}
               <input className="mono" placeholder="0x…" value={wallet} onChange={(e) => setWallet(e.target.value.trim())} />
             </label>
           )}
         </fieldset>
         <div className="notice">
-          Your payment is held in escrow. The seller is paid after {isAccount ? 'the 14-day insurance period' : 'the 72-hour inspection window'} or when
-          you confirm, whichever comes first.
+          {isAccount ? t('offer.escrow14') : t('offer.escrow72')}
         </div>
         <label className="row small">
           <input type="checkbox" style={{ width: 'auto' }} checked={tos} onChange={(e) => setTos(e.target.checked)} />
-          I accept the Terms of Service, including that all communication for this order stays in the order chat.
+          {t('offer.tos')}
         </label>
-        {error && <div className="alert">{error} {error.includes('Verify') && <Link to="/account">Verify now</Link>}</div>}
+        {error && <div className="alert">{error} {error === t('offer.verifyFirst') && <Link to="/account">{t('offer.verifyNow')}</Link>}</div>}
         {!user ? (
-          <Link className="btn" to={`/login?next=/offers/${offer.id}`}>Sign in to buy</Link>
+          <Link className="btn" to={`/login?next=/offers/${offer.id}`}>{t('offer.signInToBuy')}</Link>
         ) : own ? (
-          <p className="muted small">This is your listing.</p>
+          <p className="muted small">{t('offer.yours')}</p>
         ) : (
           <div className="row">
             <button className="btn" disabled={!tos || busy || offer.stock < qty || (rail === 'crypto' && !/^0x[0-9a-fA-F]{40}$/.test(wallet))} onClick={buy}>
-              {busy ? 'Opening checkout…' : `Pay ${money(total, offer.currency)} into escrow`}
+              {busy ? t('offer.opening') : t('offer.pay', { amount: money(total, offer.currency) })}
             </button>
-            <button className="btn ghost" onClick={ask}>Ask the seller</button>
+            <button className="btn ghost" onClick={ask}>{t('offer.ask')}</button>
           </div>
         )}
       </div>
@@ -143,8 +194,8 @@ export function OfferPage() {
     {similar.length > 0 && (
       <section className="stack" style={{ marginTop: 32 }}>
         <div className="row spread">
-          <h3 style={{ margin: 0 }}>Compare other {offer.game} {categoryLabel(offer.category_slug).toLowerCase()}</h3>
-          <Link to={`/games/${gameSlug}/${offer.category_slug}`} className="small">See all</Link>
+          <h3 style={{ margin: 0 }}>{t('offer.compare', { game: offer.game, category: categoryLabel(offer.category_slug).toLowerCase() })}</h3>
+          <Link to={`/games/${gameSlug}/${offer.category_slug}`} className="small">{t('home.seeAll')}</Link>
         </div>
         <OfferTable offers={similar} />
       </section>

@@ -12,12 +12,18 @@ import { beginSetup, disable, enable, remainingRecoveryCodes } from '../domain/m
 import { changePassword, requestPasswordReset, resetPassword, completeMfaLogin, confirmVerificationCode, login, register, sendVerificationCode, startKyc } from '../domain/users.js';
 import { REFRESH_TTL_DAYS, issueAccessToken, listSessions, refreshSession, revokeByRefreshToken, revokeFamily, revokeOtherSessions, revokeSessionById } from '../domain/sessions.js';
 import { enqueueEmail, getPreferences, setPreferences } from '../domain/notifications.js';
-import { AppError, unauthorized } from '../lib/errors.js';
+import { AppError, badRequest, notFound, unauthorized } from '../lib/errors.js';
+import { ATTR_KEY, ATTR_VALUE_MAX, CATEGORY_DEFAULTS, GAME_SETS, attributesFor } from '../domain/attributeSets.js';
 import { deleteAccount, exportData } from '../domain/privacy.js';
 import { isStaff as isStaffUser, permissionsOf } from '../domain/permissions.js';
 import {
   getPushPreferences, listInbox, listPushSubscriptions, markAllRead, markRead, removePushSubscription, setPushPreferences, subscribePush, unreadCount, unsubscribePush,
 } from '../domain/inbox.js';
+import { recordView } from '../domain/analytics.js';
+import { LOCALES } from '../domain/locales/index.js';
+import { TICKET_CATEGORIES, createTicket, customerReply, customerResolve, getTicket, listMyTickets } from '../domain/support.js';
+import { createWatch, deleteWatch, listWatches, updateWatch } from '../domain/watches.js';
+import { confirmSubscription, getIncident, statusSummary, subscribe, unsubscribe } from '../domain/status.js';
 import { me, requestMeta } from '../server.js';
 
 const Credentials = z.object({ email: z.string().email().max(254), password: z.string().min(10).max(200), captchaToken: z.string().max(4096).optional() });
@@ -59,7 +65,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   }));
 
   app.post('/auth/register', strict, async (req, reply) => {
-    const body = Credentials.extend({ displayName: z.string().trim().min(2).max(40), referralCode: z.string().trim().max(20).optional() }).parse(req.body);
+    const body = Credentials.extend({ displayName: z.string().trim().min(2).max(40), referralCode: z.string().trim().max(20).optional(), locale: z.enum(LOCALES).optional() }).parse(req.body);
     await requireCaptcha(req, body.captchaToken);
     const res = await register(ctx, { ...body, ...meta(req) });
     return reply.status(201).send(deliver(req, reply, res));
@@ -118,6 +124,12 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   app.get('/me', async (req) => ({ user: me(req) }));
+  // Emails, notifications and SMS go out in this language; the web app sets it when the user switches.
+  app.put('/me/locale', async (req) => {
+    const { locale } = z.object({ locale: z.enum(LOCALES) }).parse(req.body);
+    await ctx.db.query('UPDATE users SET locale = $2 WHERE id = $1', [me(req).id, locale]);
+    return { locale };
+  });
   app.get('/me/permissions', async (req) => ({ permissions: [...permissionsOf(me(req))].sort() }));
 
   app.post('/me/password', strict, async (req) => {
@@ -270,6 +282,15 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
         pageSize: z.coerce.number().int().min(1).max(60).optional(),
       })
       .parse(req.query);
+    // Game-specific fields come as attr.<key>=<value>, e.g. attr.server=EUW&attr.rank=Gold.
+    const attributes: Record<string, string> = {};
+    for (const [k, v] of Object.entries(req.query as Record<string, unknown>)) {
+      if (!k.startsWith('attr.')) continue;
+      const key = k.slice(5);
+      if (!ATTR_KEY.test(key) || typeof v !== 'string' || !v.trim() || v.length > ATTR_VALUE_MAX) throw badRequest('invalid_attribute_filter', `Bad filter ${k}`);
+      attributes[key] = v.trim();
+    }
+    if (Object.keys(attributes).length > 6) throw badRequest('invalid_attribute_filter', 'At most 6 field filters');
     // Price filters are given in the display currency and compared in the settlement currency.
     const display = q.currency ?? ctx.cfg.SETTLEMENT_CURRENCY;
     const rate = await getRate(ctx, ctx.db, display);
@@ -279,6 +300,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
       minPriceCents: toSettlement(q.minPrice),
       maxPriceCents: toSettlement(q.maxPrice),
       sellerId: q.seller,
+      attributes,
     });
     return withDisplayPrices(ctx, res, display);
   });
@@ -301,12 +323,82 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.get('/me/referral', async (req) => referralSummary(ctx, me(req).id));
 
+  // --- Help centre support tickets --------------------------------------------------------------
+  const Body = z.string().trim().min(2).max(5_000);
+  app.get('/support/tickets', async (req) => listMyTickets(ctx.db, me(req).id));
+  app.post('/support/tickets', async (req, reply) => {
+    const body = z
+      .object({ category: z.enum(TICKET_CATEGORIES), subject: z.string().trim().min(3).max(140), body: Body, orderId: z.string().uuid().optional() })
+      .parse(req.body);
+    const id = await createTicket(ctx, me(req).id, body);
+    return reply.status(201).send(await getTicket(ctx.db, id, { id: me(req).id, staff: false }));
+  });
+  app.get('/support/tickets/:id', async (req) => getTicket(ctx.db, z.object({ id: z.string().uuid() }).parse(req.params).id, { id: me(req).id, staff: false }));
+  app.post('/support/tickets/:id/messages', async (req) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    await customerReply(ctx, me(req).id, id, z.object({ body: Body }).parse(req.body).body);
+    return getTicket(ctx.db, id, { id: me(req).id, staff: false });
+  });
+  app.post('/support/tickets/:id/resolve', async (req) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    await customerResolve(ctx, me(req).id, id);
+    return getTicket(ctx.db, id, { id: me(req).id, staff: false });
+  });
+
+  // --- Watchlist & price alerts -------------------------------------------------------------
+  const WatchTarget = z.number().int().positive().max(100_000_00).nullable();
+  app.get('/me/watches', async (req) => listWatches(ctx, me(req).id));
+  app.post('/me/watches', async (req, reply) => {
+    const body = z
+      .object({
+        offerId: z.string().uuid().optional(),
+        game: z.string().trim().min(1).max(80).optional(),
+        category: z.string().max(40).optional(),
+        attributes: z.record(z.string().max(30), z.string().max(60)).optional(),
+        targetCents: WatchTarget.optional(),
+        currency: z.string().length(3).optional(),
+      })
+      .refine((b) => !!b.offerId !== !!b.game, 'Give either offerId or game')
+      .parse(req.body);
+    return reply.status(201).send(await createWatch(ctx, me(req).id, body));
+  });
+  app.patch('/me/watches/:id', async (req) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ targetCents: WatchTarget, currency: z.string().length(3).optional() }).parse(req.body);
+    return updateWatch(ctx, me(req).id, id, body);
+  });
+  app.delete('/me/watches/:id', async (req, reply) => {
+    await deleteWatch(ctx, me(req).id, z.object({ id: z.string().uuid() }).parse(req.params).id);
+    return reply.status(204).send();
+  });
+
   app.get('/fx/rates', async () => currentRates(ctx));
+
+  // Game-specific listing fields: the sell form and game-page filters read these.
+  app.get('/catalog/attributes', async (req, reply) => {
+    const { game, category } = z.object({ game: z.string().trim().min(1).max(80).optional(), category: z.string().max(40).optional() }).parse(req.query);
+    reply.header('Cache-Control', 'public, max-age=300');
+    if (game && category) return { game, category, fields: attributesFor(game, category) };
+    return { defaults: CATEGORY_DEFAULTS, games: GAME_SETS };
+  });
 
   app.get('/catalog/games', async (_req, reply) => {
     reply.header('Cache-Control', 'public, max-age=60');
     return gameDirectory(ctx.dbRead);
   });
+
+  // --- Public status page -----------------------------------------------------------------
+  app.get('/status', async (_req, reply) => {
+    reply.header('Cache-Control', 'public, max-age=15');
+    return statusSummary(ctx);
+  });
+  app.get('/status/incidents/:id', async (req) => getIncident(ctx, z.object({ id: z.string().uuid() }).parse(req.params).id));
+  app.post('/status/subscribe', strict, async (req, reply) => {
+    const { email } = z.object({ email: z.string().max(254) }).parse(req.body);
+    return reply.status(202).send(await subscribe(ctx, email));
+  });
+  app.post('/status/confirm', strict, async (req) => confirmSubscription(ctx, z.object({ token: z.string().min(10).max(100) }).parse(req.body).token));
+  app.post('/status/unsubscribe', strict, async (req) => unsubscribe(ctx, z.object({ token: z.string().min(10).max(120) }).parse(req.body).token));
 
   app.get('/games', async (req) => {
     const { q } = z.object({ q: z.string().trim().min(1).max(60) }).parse(req.query);
@@ -315,6 +407,18 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.get('/offers/:id', async (req) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
-    return getOffer(ctx.dbRead, id);
+    const offer = await getOffer(ctx.dbRead, id);
+    // A listing agreed on a buyer request is only visible to that buyer, its seller and staff.
+    const staffViewer = !!req.user && isStaffUser(req.user as any);
+    if (offer.reserved_for && ![offer.reserved_for, offer.seller_id].includes(req.user?.id) && !staffViewer) throw notFound('Offer');
+    // Listings waiting for moderation are only for their seller and staff, and only they see why.
+    const insider = offer.seller_id === req.user?.id || staffViewer;
+    if (offer.status === 'review' && !insider) throw notFound('Offer');
+    if (!insider) {
+      delete offer.review_reasons;
+      delete offer.review_note;
+    }
+    void recordView(ctx, offer.id, offer.seller_id, { userId: req.user?.id, ip: req.ip });
+    return offer;
   });
 }

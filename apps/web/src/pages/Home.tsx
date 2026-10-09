@@ -8,6 +8,8 @@ import { CATEGORY_META, CATEGORY_ORDER, popular, slugify, useGames } from '@/lib
 import type { Offer } from './Market';
 import { EscrowTrack, formatRemaining } from '../components/EscrowTrack';
 import { FeeLadder } from '../components/FeeLadder';
+import { usePageMeta } from '@/lib/seo';
+import { t } from '../i18n';
 
 const DEMO_LOG = [
   { seq: 1, who: 'system', text: 'Payment received. $300 locked in escrow.' },
@@ -61,6 +63,7 @@ function LiveEscrow() {
 }
 
 export function Home() {
+  usePageMeta({ description: t('home.meta') });
   const { games } = useGames();
   const [instant, setInstant] = useState<Offer[] | null>(null);
   const [fresh, setFresh] = useState<Offer[] | null>(null);
@@ -81,17 +84,16 @@ export function Home() {
     <>
       <section className="home-hero">
         <div className="stack" style={{ minWidth: 0 }}>
-          <div className="eyebrow">Accounts · currency · items · keys · boosting</div>
+          <div className="eyebrow">{t('home.eyebrow')}</div>
           <h1>
-            Trade game goods. Your money waits until it’s <em>really yours</em>.
+            {t('home.title')} <em>{t('home.titleEm')}</em>.
           </h1>
           <p className="lede" style={{ marginTop: 12 }}>
-            {games ? `${games.reduce((s, g) => s + g.offers, 0)} live offers across ${games.length} games` : 'Thousands of offers'}, every one paid into escrow
-            and released only after delivery checks out.
+            {games ? t('home.lede', { offers: games.reduce((s, g) => s + g.offers, 0), games: games.length }) : t('home.ledeLoading')}
           </p>
           <GameSearch big />
           <div className="row small" style={{ gap: 8 }}>
-            <span className="muted">Trending:</span>
+            <span className="muted">{t('home.trending')}</span>
             {trending.map((g) => (
               <Link key={g.game} to={`/games/${slugify(g.game)}`} className="chip" style={{ textDecoration: 'none' }}>{g.game}</Link>
             ))}
@@ -105,8 +107,8 @@ export function Home() {
       <section className="section" style={{ paddingTop: 48 }}>
         <div className="row spread" style={{ alignItems: 'end' }}>
           <div>
-            <div className="eyebrow">Shop by category</div>
-            <h2 style={{ margin: 0 }}>What are you after?</h2>
+            <div className="eyebrow">{t('home.byCategory')}</div>
+            <h2 style={{ margin: 0 }}>{t('home.byCategory.title')}</h2>
           </div>
         </div>
         <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -122,7 +124,7 @@ export function Home() {
                   <b className="block font-display text-[15px] tracking-tight">{meta.label}</b>
                   <span className="block text-xs leading-snug text-muted-foreground">{meta.hint}</span>
                 </span>
-                <span className="ml-auto self-start font-mono text-xs text-muted-foreground">{counts[slug] ?? '·'}</span>
+                <span className="ms-auto self-start font-mono text-xs text-muted-foreground">{counts[slug] ?? '·'}</span>
               </Link>
             );
           })}
@@ -132,10 +134,10 @@ export function Home() {
       <section className="section" style={{ paddingTop: 48 }}>
         <div className="row spread" style={{ alignItems: 'end' }}>
           <div>
-            <div className="eyebrow">Popular games</div>
-            <h2 style={{ margin: 0 }}>Where the trading is</h2>
+            <div className="eyebrow">{t('home.popular')}</div>
+            <h2 style={{ margin: 0 }}>{t('home.popular.title')}</h2>
           </div>
-          <Link to="/games" className="inline-flex items-center gap-1 text-sm font-medium no-underline hover:underline">All games A–Z <ArrowRight className="size-4" /></Link>
+          <Link to="/games" className="inline-flex items-center gap-1 text-sm font-medium no-underline hover:underline">{t('home.allGames')} <ArrowRight className="size-4 rtl:rotate-180" /></Link>
         </div>
         <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           {games === null
@@ -148,22 +150,22 @@ export function Home() {
         <div className="min-w-0">
           <div className="row spread" style={{ alignItems: 'end', marginBottom: 16 }}>
             <div>
-              <div className="eyebrow">Instant delivery</div>
-              <h3 style={{ margin: 0 }}>Codes on your order page in seconds</h3>
+              <div className="eyebrow">{t('home.instant')}</div>
+              <h3 style={{ margin: 0 }}>{t('home.instant.title')}</h3>
             </div>
-            <Link to="/market?delivery=instant" className="small" style={{ whiteSpace: 'nowrap' }}>See all</Link>
+            <Link to="/market?delivery=instant" className="small" style={{ whiteSpace: 'nowrap' }}>{t('home.seeAll')}</Link>
           </div>
-          {instant ? <OfferTable offers={instant} showGame showSeller={false} /> : <p className="muted">Loading…</p>}
+          {instant ? <OfferTable offers={instant} showGame showSeller={false} /> : <p className="muted">{t('home.loading')}</p>}
         </div>
         <div className="min-w-0">
           <div className="row spread" style={{ alignItems: 'end', marginBottom: 16 }}>
             <div>
-              <div className="eyebrow">Owner-verified accounts</div>
-              <h3 style={{ margin: 0 }}>Original owner proven, 14 days insured</h3>
+              <div className="eyebrow">{t('home.verified')}</div>
+              <h3 style={{ margin: 0 }}>{t('home.verified.title')}</h3>
             </div>
-            <Link to="/market?category=accounts&ownerVerified=true" className="small" style={{ whiteSpace: 'nowrap' }}>See all</Link>
+            <Link to="/market?category=accounts&ownerVerified=true" className="small" style={{ whiteSpace: 'nowrap' }}>{t('home.seeAll')}</Link>
           </div>
-          {fresh ? <OfferTable offers={fresh} showGame showSeller={false} /> : <p className="muted">Loading…</p>}
+          {fresh ? <OfferTable offers={fresh} showGame showSeller={false} /> : <p className="muted">{t('home.loading')}</p>}
         </div>
       </section>
 
@@ -171,10 +173,10 @@ export function Home() {
         <section className="section" style={{ paddingTop: 48 }}>
           <div className="row spread" style={{ alignItems: 'end' }}>
             <div>
-              <div className="eyebrow">Game index</div>
-              <h2 style={{ margin: 0 }}>Jump straight to a game</h2>
+              <div className="eyebrow">{t('home.index')}</div>
+              <h2 style={{ margin: 0 }}>{t('home.index.title')}</h2>
             </div>
-            <Link to="/games" className="inline-flex items-center gap-1 text-sm font-medium no-underline hover:underline">Full directory <ArrowRight className="size-4" /></Link>
+            <Link to="/games" className="inline-flex items-center gap-1 text-sm font-medium no-underline hover:underline">{t('home.directory')} <ArrowRight className="size-4 rtl:rotate-180" /></Link>
           </div>
           <div className="mt-5 columns-1 gap-6 sm:columns-2 lg:columns-4">
             {games.map((g) => (
@@ -194,14 +196,14 @@ export function Home() {
       )}
 
       <section className="section" id="how" style={{ paddingTop: 64 }}>
-        <div className="eyebrow">How a trade works</div>
-        <h2>Four steps, and the money only moves at the last one</h2>
+        <div className="eyebrow">{t('home.how')}</div>
+        <h2>{t('home.how.title')}</h2>
         <ol className="steps">
           {[
-            [Wallet, 'Pay into escrow', 'Card or USDC/USDT. The seller sees the order is paid, but can’t touch the money.'],
-            [PackageCheck, 'Get your delivery', 'Codes arrive instantly; accounts, gold and boosts are handed over in the order chat.'],
-            [MessagesSquare, 'Check it in the window', '72 hours for keys, items and currency; 14 days of insurance for accounts.'],
-            [BadgeCheck, 'Seller gets paid', `Confirm early or let the window close. Problem? Open a dispute and the funds freeze.`],
+            [Wallet, t('home.step1'), t('home.step1.text')],
+            [PackageCheck, t('home.step2'), t('home.step2.text')],
+            [MessagesSquare, t('home.step3'), t('home.step3.text')],
+            [BadgeCheck, t('home.step4'), t('home.step4.text')],
           ].map(([Icon, title, text], i) => {
             const I = Icon as typeof Wallet;
             return (
@@ -217,45 +219,36 @@ export function Home() {
         <div className="windows" style={{ marginTop: 24 }}>
           <div className="card window-card held stack">
             <div className="big mono">72h</div>
-            <h3>Inspection window</h3>
-            <p className="muted">
-              Keys, gift cards, currency and items. Test what you got. If something is wrong, open a dispute and the funds freeze until an
-              arbiter reviews the order chat.
-            </p>
+            <h3>{t('home.window72')}</h3>
+            <p className="muted">{t('home.window72.text')}</p>
           </div>
           <div className="card window-card ins stack">
             <div className="big mono">14d</div>
-            <h3>Asset insurance for accounts</h3>
-            <p className="muted">
-              Sellers prove they are the original owner. You secure the account with a checklist: new password, new recovery email, fresh
-              2FA. If the old owner recovers it within 14 days, you get your money back.
-            </p>
+            <h3>{t('home.window14')}</h3>
+            <p className="muted">{t('home.window14.text')}</p>
           </div>
         </div>
         <p className="small muted" style={{ marginTop: 16 }}>
-          Listings without Original Owner Proof are labelled <span className="chip disputed">High risk · secondary market</span> before you buy.
+          {t('home.highRiskNote', { chip: '\u0000' }).split('\u0000')[0]}
+          <span className="chip disputed">{t('badge.highRisk')}</span>
+          {t('home.highRiskNote', { chip: '\u0000' }).split('\u0000')[1]}
         </p>
       </section>
 
       <section className="section split" id="fees">
         <div className="stack">
-          <div className="eyebrow">For sellers</div>
-          <h2>Fees fall as your monthly sales grow</h2>
-          <p className="muted">
-            Your rate is set by your completed sales over the last 30 days and locked in when each order is placed. Gift cards, top-ups and
-            video games are a flat 4.99% at every level.
-          </p>
+          <div className="eyebrow">{t('home.sellers')}</div>
+          <h2>{t('home.sellers.title')}</h2>
+          <p className="muted">{t('home.sellers.text')}</p>
           <div className="ok">
-            <b>Chargeback Shield.</b> If a buyer files a card chargeback on a verified listing you delivered through the platform, the
-            platform reserve covers it and files the evidence with the bank. Your balance is not touched.
+            <b>{t('home.shield')}</b> {t('home.shield.text')}
           </div>
           <p className="muted small">
-            Running a shop at volume? Upload thousands of codes for instant delivery, and connect your own tools with the REST API and
-            signed webhooks. <Link to="/developers">See the API</Link>.
+            {t('home.api')} <Link to="/developers">{t('home.api.link')}</Link>.
           </p>
           <div className="row">
-            <Link className="btn" to="/sell">Open your shop</Link>
-            <span className="small muted">Free to list · paid out in USD, EUR or GBP</span>
+            <Link className="btn" to="/sell">{t('home.openShop')}</Link>
+            <span className="small muted">{t('home.freeToList')}</span>
           </div>
         </div>
         <div className="card">
@@ -264,13 +257,9 @@ export function Home() {
       </section>
 
       <section className="section">
-        <div className="eyebrow">House rule</div>
-        <h2>Every word of a trade stays in the order chat</h2>
-        <p className="lede">
-          The chat is the record an arbiter reads when something goes wrong, and the record we send the bank when a payment is disputed.
-          Each message is numbered and chained to the one before it, so nothing can be edited later. Moving a deal to Discord, Telegram or
-          another payment app takes it out of escrow.
-        </p>
+        <div className="eyebrow">{t('home.rule')}</div>
+        <h2>{t('home.rule.title')}</h2>
+        <p className="lede">{t('home.rule.text')}</p>
       </section>
     </>
   );

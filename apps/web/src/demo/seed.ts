@@ -3,6 +3,8 @@
  * every page works: three demo accounts, a market of listings, and a few orders in different
  * states so escrow, chat, disputes and the operations console all have something to show.
  */
+import { DEFAULT_TERMS } from '../../../api/src/domain/safety';
+
 export const DEMO_PASSWORD = 'demo-password-123';
 export const DEMO_CODE = '123456';
 
@@ -14,6 +16,7 @@ export interface DemoUser {
   id: string;
   email: string;
   password: string;
+  locale?: string;
   display_name: string;
   role: 'user' | 'arbiter' | 'support' | 'finance' | 'compliance' | 'admin';
   staff_roles?: string[];
@@ -124,6 +127,75 @@ const LISTINGS: Seed[] = [
   ['keys', 'Hogwarts Legacy', 'Hogwarts Legacy — Steam key (Global)', 21_90, 'auto', 16, 'seller5'],
   ['keys', 'Red Dead Redemption 2', 'Red Dead Redemption 2 — Rockstar key', 15_50, 'auto', 20, 'seller2'],
 ];
+/** Game-specific fields per listing title (see apps/api/src/domain/attributeSets.ts). */
+/** Quantity prices on bulk listings (gold, top-ups). */
+const TIERS: Record<string, Array<{ minQty: number; priceCents: number }>> = {
+  '100k Gold — Stormrage (Alliance)': [{ minQty: 5, priceCents: 16_50 }, { minQty: 10, priceCents: 15_00 }],
+  '100M OSRS GP': [{ minQty: 3, priceCents: 51_00 }],
+  '1 billion gold, Season 6 softcore': [{ minQty: 5, priceCents: 5_90 }, { minQty: 20, priceCents: 5_20 }],
+  'Blessing of the Welkin Moon — UID top-up': [{ minQty: 3, priceCents: 4_19 }, { minQty: 6, priceCents: 3_99 }],
+};
+
+const ATTRS: Record<string, Record<string, string>> = {
+  'Elden Ring — Steam key (Global)': { platform: 'Steam', region: 'Global' },
+  'Baldur’s Gate 3 — Steam key (EU)': { platform: 'Steam', region: 'Europe' },
+  'Cyberpunk 2077 + Phantom Liberty — GOG key': { platform: 'GOG', region: 'Global' },
+  'Steam Wallet $50 gift card (US)': { region: 'United States' },
+  'PlayStation Store $25 (US)': { region: 'United States' },
+  '6480 Genesis Crystals — direct top-up': { server: 'Europe' },
+  '100k Gold — Stormrage (Alliance)': { region: 'US', server: 'Stormrage', faction: 'Alliance' },
+  '100M OSRS GP': { method: 'Trade' },
+  'Lvl 80 Warrior, full mythic gear, 2009 account': { region: 'EU', faction: 'Horde' },
+  'Immortal 2 account, 34 skins': { region: 'Europe', rank: 'Immortal' },
+  'OG account, Renegade Raider + 210 skins': { platform: 'PC' },
+  'Gold IV → Platinum IV, duo queue': { server: 'EUW', rank_from: 'Gold', rank_to: 'Platinum' },
+  'Premier 10k → 15k rating': { region: 'Europe' },
+  'AK-47 | Redline (Field-Tested)': { exterior: 'Field-Tested', stattrak: 'No' },
+  'Shako (Harlequin Crest), Season 6': { mode: 'Softcore', platform: 'PC' },
+  'Zelda: Tears of the Kingdom — eShop code (US)': { platform: 'Nintendo eShop', region: 'North America' },
+  'Blessing of the Welkin Moon — UID top-up': { server: 'Asia' },
+  'AR 58 · 9 five-stars incl. Furina C2, Neuvillette': { server: 'Europe' },
+  'Starter AR 10 · Raiden + Nahida reroll (Asia)': { server: 'Asia' },
+  'Spiral Abyss 36★ clear, any team': { server: 'America' },
+  '2,050 VP — EU region code': { region: 'Europe' },
+  '5,350 VP — NA region code': { region: 'North America' },
+  'Ascendant 1 → Ascendant 3, solo or duo': { region: 'Europe', rank_from: 'Ascendant', rank_to: 'Ascendant' },
+  'Radiant-ready smurf, level 20, unranked (EU)': { region: 'Europe', rank: 'Unranked' },
+  '1,380 RP gift code (EUW)': { server: 'EUW' },
+  'Level 30 unranked, 40k BE, hand-levelled (NA)': { server: 'NA', rank: 'Unranked' },
+  'Placement games (5) with a Master duo': { server: 'EUW' },
+  '13,500 V-Bucks — gifted to your account': { platform: 'PlayStation' },
+  'Chapter 1 Season 2 account, Black Knight': { platform: 'Xbox' },
+  'Karambit | Doppler Phase 2 (Factory New)': { exterior: 'Factory New', stattrak: 'No' },
+  'AWP | Asiimov (Field-Tested)': { exterior: 'Field-Tested', stattrak: 'Yes' },
+  'Prime account, 2,000 hours, Faceit level 8': { prime: 'Yes', region: 'Europe' },
+  '250k Gold — Silvermoon (Horde, EU)': { region: 'EU', server: 'Silvermoon', faction: 'Horde' },
+  'Mythic+ 10 key, timed, loot funnel': { region: 'EU' },
+  '250M OSRS GP — trade in Grand Exchange': { method: 'Grand Exchange' },
+  'Maxed main, 2277 total, infernal cape': { type: 'Main' },
+  '1 billion gold, Season 6 softcore': { mode: 'Softcore', platform: 'PC' },
+  'Level 1 → 60 + Torment 4 unlock': { mode: 'Softcore', platform: 'PlayStation' },
+  '1M FUT coins, comfort trade (PS5)': { platform: 'PlayStation', method: 'Comfort trade' },
+  '500k FUT coins, player auction (PC)': { platform: 'PC', method: 'Player auction' },
+  'Java + Bedrock, full access, OG name': { platform: 'PC', region: 'Global' },
+  'Minecraft Java & Bedrock — PC key (Global)': { region: 'Global' },
+  '100 Divine Orbs — Standard league': { league: 'Standard' },
+  'Mirror-tier bow, crafted to order': { league: 'Challenge' },
+  '6480 Oneiric Shards — UID top-up': { server: 'America' },
+  'TL 65 · Acheron E1 + signature cone': { server: 'Asia' },
+  'Heirloom account, 3 heirlooms, Predator badge': { platform: 'PC', rank: 'Predator' },
+  'Ranked: Platinum → Diamond': { platform: 'PC', rank_from: 'Platinum', rank_to: 'Diamond' },
+  '+1,000 MMR, party with an Immortal player': { region: 'Europe' },
+  '2,195 Diamonds — direct top-up': { region: 'Asia' },
+  '1,800 UC — direct top-up': { region: 'Middle East' },
+  'TH16 max, 60+ hero levels, legend league': { platform: 'Mobile' },
+  'Steam Wallet €20 (EU)': { region: 'Europe' },
+  'Xbox Game Pass Ultimate — 3 months': { region: 'Global' },
+  'Apple Gift Card $25 (US)': { region: 'United States' },
+  'Mario Kart 8 Deluxe — eShop code (EU)': { platform: 'Nintendo eShop', region: 'Europe' },
+  'Hogwarts Legacy — Steam key (Global)': { platform: 'Steam', region: 'Global' },
+  'Red Dead Redemption 2 — Rockstar key': { platform: 'Rockstar', region: 'Global' },
+};
 const DEFAULT_HOURS: Record<string, number> = { accounts: 2, currency: 1, items: 1, boosting: 24, 'top-ups': 0.5 };
 
 export function seed() {
@@ -158,17 +230,39 @@ export function seed() {
       inventory: mode === 'auto' ? Array.from({ length: stock }, (_, k) => `${game.slice(0, 4).toUpperCase().replace(/[^A-Z]/g, 'X')}-${String(k + 1).padStart(4, '0')}-${(i * 7919 + k * 104729).toString(36).toUpperCase().slice(-5).padStart(5, 'Q')}`) : [],
       status: 'active',
       owner_proof_status: kind === 'account' ? proof ?? 'none' : 'none',
+      attributes: ATTRS[title] ?? {},
+      price_tiers: TIERS[title] ?? [],
+      review_reasons: [] as string[],
+      // Set on listings made from an accepted buyer request.
+      reserved_for: null as string | null,
+      request_id: null as string | null,
       version: 1,
       created_at: ago((LISTINGS.length - i) * 3_600_000 * 7),
     };
   });
+  // Moderation samples: a listing held for review and a pre-sale chat flagged for off-platform contact.
+  const template = offers.find((o) => o.title.startsWith('Premier 10k'))!;
+  offers.push({
+    ...template, id: 'offer-review-1', seller_id: users[5]!.id, category_slug: 'items', category_kind: 'item', title: 'CS2 rage config with aimbot settings, undetected',
+    description: 'Works on Premier. Add me on discord for the loader and updates.', price_cents: 14_99, stock: 50, attributes: {}, status: 'review', review_reasons: ['term:aimbot', 'contact:discord'], created_at: ago(3 * 3_600_000),
+  });
+  const flagRoom = { id: 'room-flag-1', order_id: null, offer_id: 'offer-10', buyer_id: 'u-req-zed', seller_id: users[3]!.id, last_seq: 3 };
+  const flagMsgs = [
+    ['u-req-zed', 'Hi, is the Immortal 2 account still available?'],
+    [users[3]!.id, 'Yes, it has 34 skins and the original email.'],
+    ['u-req-zed', 'Can I pay you with PayPal friends and family? Cheaper for both of us. My whatsapp is +44 7700 900456'],
+  ].map(([sender, body], k) => ({ id: `fm-${k}`, room_id: flagRoom.id, seq: k + 1, sender_id: sender, kind: 'text', body, flags: k === 2 ? ['offplatform:whatsapp'] : [], hash: `seed-${k}`, created_at: ago((40 - k * 5) * 60_000) }));
 
   return {
     users,
     offers,
     orders: [] as any[],
-    rooms: [] as any[],
-    messages: [] as any[],
+    rooms: [flagRoom] as any[],
+    messages: flagMsgs as any[],
+    modTerms: DEFAULT_TERMS.map((t, k) => ({ id: `term-${k}`, ...t, created_at: ago(30 * day) })),
+    chatFlags: [
+      { id: 'cf-1', room_id: flagRoom.id, seq: 3, user_id: 'u-req-zed', user_name: 'zed.plays', user_email: 'zed@example.test', reasons: ['whatsapp', 'external_payment', 'phone_number'], status: 'open', note: null, created_at: ago(30 * 60_000) },
+    ] as any[],
     reviews: [
       { id: 'r1', order_id: 'seed-1', seller_id: users[1]!.id, rating: 5, comment: 'Key worked instantly.', seller_reply: null, created_at: ago(20 * day) },
       { id: 'r2', order_id: 'seed-2', seller_id: users[1]!.id, rating: 5, comment: 'Gold arrived in 20 minutes.', seller_reply: 'Thanks!', created_at: ago(12 * day) },
@@ -202,6 +296,45 @@ export function seed() {
     monthlySales: { [users[1]!.id]: 6_420_00, [users[3]!.id]: 840_00, [users[4]!.id]: 2_310_00 } as Record<string, number>,
     withdrawals: [] as any[],
     apiKeys: [] as any[],
+    watches: [] as any[],
+    tickets: [] as any[],
+    // "Online now" and typical reply time per seller (minutes).
+    presence: {
+      [users[1]!.id]: { online: false, last_seen_at: ago(40 * 60_000), response_minutes: 12 },
+      [users[3]!.id]: { online: false, last_seen_at: ago(3 * 3_600_000), response_minutes: 45 },
+      [users[4]!.id]: { online: false, last_seen_at: ago(26 * 3_600_000), response_minutes: 180 },
+      [users[5]!.id]: { online: true, last_seen_at: ago(60_000), response_minutes: 8 },
+      [users[6]!.id]: { online: true, last_seen_at: ago(120_000), response_minutes: 5 },
+    } as Record<string, { online: boolean; last_seen_at: string; response_minutes: number | null }>,
+    showOnline: {} as Record<string, boolean>,
+    // Buyer requests board: one by the demo buyer with proposals waiting, others for sellers to answer.
+    requests: [
+      {
+        id: 'req-1', buyer_id: users[0]!.id, buyer_name: users[0]!.display_name, game: 'Valorant', category_slug: 'accounts', title: 'EU account with Reaver Vandal, Diamond or higher',
+        description: 'Full access with original email please. Happy to wait a day.', budget_cents: 120_00, currency: 'USD', attributes: { region: 'Europe' },
+        status: 'open', accepted_proposal_id: null, expires_at: ago(-12 * day), created_at: ago(2 * day), updated_at: ago(day),
+      },
+      {
+        id: 'req-2', buyer_id: 'u-req-mira', buyer_name: 'Mira_K', game: 'League of Legends', category_slug: 'boosting', title: 'Silver II → Gold IV on EUW before the split ends',
+        description: 'Solo queue, I play Lux and Ahri mostly.', budget_cents: 45_00, currency: 'USD', attributes: { server: 'EUW', rank_from: 'Silver', rank_to: 'Gold' },
+        status: 'open', accepted_proposal_id: null, expires_at: ago(-13 * day), created_at: ago(20 * 3_600_000), updated_at: ago(20 * 3_600_000),
+      },
+      {
+        id: 'req-3', buyer_id: 'u-req-zed', buyer_name: 'zed.plays', game: 'Elden Ring', category_slug: 'keys', title: 'Shadow of the Erdtree DLC key, Steam (Global)',
+        description: '', budget_cents: 30_00, currency: 'USD', attributes: { platform: 'Steam', region: 'Global' },
+        status: 'open', accepted_proposal_id: null, expires_at: ago(-10 * day), created_at: ago(4 * day), updated_at: ago(4 * day),
+      },
+      {
+        id: 'req-4', buyer_id: 'u-req-holl', buyer_name: 'Hollowfang', game: 'Old School RuneScape', category_slug: 'currency', title: '500M OSRS GP, delivered in two trades',
+        description: 'Grand Exchange or in-person trade at Varrock.', budget_cents: null, currency: 'USD', attributes: {},
+        status: 'open', accepted_proposal_id: null, expires_at: ago(-9 * day), created_at: ago(5 * day), updated_at: ago(5 * day),
+      },
+    ] as any[],
+    proposals: [
+      { id: 'prop-1', request_id: 'req-1', seller_id: users[3]!.id, price_cents: 110_00, delivery_hours: 6, message: 'Diamond 3, Reaver Vandal + Prime collection. Original email included.', status: 'pending', offer_id: null, created_at: ago(day), updated_at: ago(day) },
+      { id: 'prop-2', request_id: 'req-1', seller_id: users[5]!.id, price_cents: 98_00, delivery_hours: 12, message: 'Ascendant 1 with Reaver Vandal and Karambit. Owner-verified seller.', status: 'pending', offer_id: null, created_at: ago(20 * 3_600_000), updated_at: ago(20 * 3_600_000) },
+      { id: 'prop-3', request_id: 'req-3', seller_id: users[6]!.id, price_cents: 28_50, delivery_hours: 1, message: '', status: 'pending', offer_id: null, created_at: ago(3 * day), updated_at: ago(3 * day) },
+    ] as any[],
     webhooks: [] as any[],
     emailPrefs: {} as Record<string, Record<string, boolean>>,
     ownerProofs: [
@@ -271,6 +404,34 @@ export function seed() {
     staff: [
       { id: 'u-fin-1', email: 'finley@bullizard.test', display_name: 'Finley', role: 'user', staff_roles: ['finance'], totp_enabled: true },
       { id: 'u-cmp-1', email: 'casey@bullizard.test', display_name: 'Casey', role: 'user', staff_roles: ['compliance', 'support'], totp_enabled: false },
+    ] as any[],
+    incidents: [
+      {
+        id: 'inc-2', kind: 'incident', title: 'Slow instant delivery for some Steam keys', impact: 'minor', status: 'resolved', components: ['delivery'],
+        scheduled_start: null, scheduled_end: null, created_at: ago(2 * day + 3 * 3_600_000), resolved_at: ago(2 * day + 3_600_000),
+        updates: [
+          { status: 'resolved', body: 'All delayed keys were delivered. Buyers’ protection windows started at delivery, not at payment.', at: ago(2 * day + 3_600_000) },
+          { status: 'identified', body: 'A queue backlog after a large inventory upload; we added workers.', at: ago(2 * day + 2 * 3_600_000) },
+          { status: 'investigating', body: 'Some instant-delivery orders are taking up to 10 minutes. Money stays in escrow.', at: ago(2 * day + 3 * 3_600_000) },
+        ],
+      },
+      {
+        id: 'inc-1', kind: 'maintenance', title: 'Database upgrade', impact: 'none', status: 'completed', components: ['payouts', 'checkout'],
+        scheduled_start: ago(5 * day), scheduled_end: ago(5 * day - 3_600_000), created_at: ago(8 * day), resolved_at: ago(5 * day - 3_000_000),
+        updates: [
+          { status: 'completed', body: 'Upgrade finished in 18 minutes.', at: ago(5 * day - 3_000_000) },
+          { status: 'scheduled', body: 'Payouts and checkout may pause for up to 30 minutes.', at: ago(8 * day) },
+        ],
+      },
+    ] as any[],
+    subscribers: [] as string[],
+    debts: [
+      { id: 'debt-1', seller_id: users[3]!.id, currency: 'USD', opened_at: ago(16 * day), peak_cents: 112_40, owed_cents: 64_90, reminders_sent: 3, paused_at: ago(2 * day), closed_at: null, closed_reason: null },
+      { id: 'debt-0', seller_id: users[4]!.id, currency: 'USD', opened_at: ago(30 * day), peak_cents: 41_00, owed_cents: 0, reminders_sent: 2, paused_at: null, closed_at: ago(24 * day), closed_reason: 'repaid' },
+    ] as any[],
+    fxTopups: [
+      { id: 'fx-1', from_currency: 'USD', to_currency: 'EUR', to_cents: 2_400_00, est_from_cents: 2_621_00, from_cents: 2_618_44, status: 'completed', requested_by: null, requested_by_name: null, decided_by_name: 'Arbiter Ada', error: null, created_at: ago(9 * day) },
+      { id: 'fx-2', from_currency: 'USD', to_currency: 'GBP', to_cents: 900_00, est_from_cents: 1_140_00, from_cents: null, status: 'proposed', requested_by: null, requested_by_name: null, decided_by_name: null, error: null, created_at: ago(3 * 3_600_000) },
     ] as any[],
     platform: { escrow: 0, treasury: 18_432_10, reserve: 2_048_00, tax_payable: 3_118_40, withdrawn: 5_000_00, gateway_clearing: -24_960_00 },
     seq: 1,

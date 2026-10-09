@@ -13,10 +13,17 @@ import { Account, ForgotPassword, Login, ResetPassword } from './pages/Account';
 import { Admin } from './pages/Admin';
 import { GamePage, Games } from './pages/Games';
 import { SellerPage } from './pages/SellerPage';
+import { Watchlist } from './pages/Watchlist';
+import { HelpArticlePage, HelpCentre, SupportList, SupportNew, SupportTicket } from './pages/Help';
+import { StatusPage } from './pages/StatusPage';
+import { MyProposals, MyRequests, RequestNew, RequestPage, RequestsBoard } from './pages/Requests';
 import { SiteHeader } from './components/SiteHeader';
 import { SiteFooter } from './components/SiteFooter';
 import { DEMO } from './api';
 import { DemoBanner, DemoCheckout } from './demo/DemoUi';
+import { applyTheme } from '@/lib/prefs';
+import { setUpPwa } from '@/lib/pwa';
+import { initI18n, t, useLocale } from './i18n';
 import './tailwind.css';
 import './styles.css';
 
@@ -31,8 +38,10 @@ function ScrollToTop() {
 }
 
 function App() {
+  // A language switch remounts the app so every string, date and number re-renders in it.
+  const locale = useLocale();
   return (
-    <SessionProvider>
+    <SessionProvider key={locale}>
       {DEMO && <DemoBanner />}
       <SiteHeader />
       <ScrollToTop />
@@ -44,12 +53,25 @@ function App() {
           <Route path="/games/:slug" element={<GamePage />} />
           <Route path="/games/:slug/:category" element={<GamePage />} />
           <Route path="/sellers/:id" element={<SellerPage />} />
+          <Route path="/status" element={<StatusPage />} />
+          <Route path="/watchlist" element={<Watchlist />} />
+          <Route path="/requests" element={<RequestsBoard />} />
+          <Route path="/requests/new" element={<RequestNew />} />
+          <Route path="/requests/mine" element={<MyRequests />} />
+          <Route path="/requests/proposals" element={<MyProposals />} />
+          <Route path="/requests/:id" element={<RequestPage />} />
+          <Route path="/help" element={<HelpCentre />} />
+          <Route path="/help/:slug" element={<HelpArticlePage />} />
+          <Route path="/support" element={<SupportList />} />
+          <Route path="/support/new" element={<SupportNew />} />
+          <Route path="/support/:id" element={<SupportTicket />} />
           <Route path="/offers/:id" element={<OfferPage />} />
           <Route path="/orders" element={<Orders />} />
           <Route path="/orders/:id" element={<OrderPage />} />
           <Route path="/chat/:id" element={<InquiryChat />} />
           <Route path="/sell" element={<Sell />} />
           <Route path="/sell/money" element={<Sell />} />
+          <Route path="/sell/analytics" element={<Sell />} />
           <Route path="/sell/invoices" element={<Navigate to="/sell/money" replace />} />
           <Route path="/developers" element={<Developers />} />
           <Route path="/login" element={<Login />} />
@@ -58,7 +80,7 @@ function App() {
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/admin" element={<Admin />} />
           {DEMO && <Route path="/demo-checkout/:id" element={<DemoCheckout />} />}
-          <Route path="*" element={<div className="card"><h2>Page not found</h2><Link to="/games">Browse all games</Link></div>} />
+          <Route path="*" element={<div className="card"><h2>{t('common.notFound')}</h2><Link to="/games">{t('game.browseAll')}</Link></div>} />
         </Routes>
       </main>
       <SiteFooter />
@@ -66,10 +88,15 @@ function App() {
   );
 }
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <BrowserRouter>
-      <App />
-    </BrowserRouter>
-  </StrictMode>,
+applyTheme();
+
+setUpPwa();
+initI18n().then(() =>
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
+    </StrictMode>,
+  ),
 );

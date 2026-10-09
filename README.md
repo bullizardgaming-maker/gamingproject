@@ -56,6 +56,19 @@ Site structure: home (search, categories, popular games, instant-delivery and ow
 `/games` (A–Z directory) → `/games/:game[/:category]` (category tabs and a seller/delivery/stock/price comparison table) →
 `/offers/:id` → order page with escrow and chat. Sellers have public storefronts at `/sellers/:id` (listings by game, reviews).
 Game cover art is generated from each game's name; no publisher artwork is used.
+Also in the web app:
+- A public status page at `/status`, with email subscriptions.
+- Light and dark themes, following the system setting until the viewer picks one.
+- Prices shown in USD, EUR or GBP; conversions are approximate and checkout shows the exact amount.
+- Per-page titles, descriptions and canonical URLs.
+- A `sitemap.xml` and `robots.txt` generated at build. Set `VITE_SITE_URL` to the production domain; private pages are excluded and marked noindex.
+
+Staff screens under Operations:
+- Status-page incidents and maintenance
+- Seller debts
+- Currency top-ups
+- The fraud model report
+- Chat erasure requests
 
 UI components: the web app has Tailwind CSS v4 and a shadcn `components.json` (aliases `@/components`, `@/lib/utils`;
 theme tokens mapped to the Bullizard palette in `src/tailwind.css`), so registry components drop in with
@@ -64,27 +77,45 @@ theme tokens mapped to the Bullizard palette in `src/tailwind.css`), so registry
 ## Tests
 
 ```bash
-npm test -w apps/api          # 148 tests, needs Postgres (TEST_DATABASE_URL, default market_test) and Redis for the multi-node test
+npm test -w apps/api          # 199 tests, needs Postgres (TEST_DATABASE_URL, default market_test) and Redis for the multi-node and view-count tests
 npm test -w contracts         # 10 Hardhat tests
 cd services/fraud-gnn && pip install -r requirements.txt && pytest -q   # 9 tests
 npm run build -w apps/web     # includes the payment-page script inventory check
+VITE_DEMO=true npm run build -w apps/web && npm run e2e -w apps/web   # 52 Playwright browser tests (desktop + phone) against the demo build
 ```
+
+The browser tests cover browsing and filters, buying and chatting, price alerts, support requests, buyer requests, quantity prices, listing moderation, staff tools, languages (including Arabic right-to-left), the installable app and phone layouts. CI runs them on every push and uploads the report when one fails.
 
 Highlights of what the tests prove: exactly one of 25 simultaneous buyers gets a single-stock item; chat sequence numbers stay gapless under 30 concurrent writers; a message sent to one API node reaches a socket on another node through Redis; webhook signatures verify with the merchant's secret and retries keep the same idempotency key; a buyer cluster sharing one device freezes a new seller's escrows and withdrawals; chargebacks produce reason-code-specific PDF packets and move money through the ledger correctly; the escrow contract rejects buyer-tampered terms and executes a commit-reveal validator verdict.
 
 ## Key API surfaces
 
 - `POST /v1/orders` → hosted checkout URL (card) or EIP-712 escrow terms (`GET /v1/orders/:id/crypto-terms`, USDC/USDT)
-- Catalogue: `GET /v1/catalog/games` (game directory with per-category counts), `GET /v1/offers?game=&category=&seller=&sort=`, `GET /v1/sellers/:id`
-- `POST /v1/orders/quote` (currency, promo code, store credit breakdown)
+- Catalogue: `GET /v1/catalog/games` (game directory with per-category counts), `GET /v1/offers?game=&category=&seller=&sort=&attr.<key>=`, `GET /v1/catalog/attributes` (game-specific fields), `GET /v1/sellers/:id`
+- Watchlist and price alerts: `GET|POST /v1/me/watches`, `PATCH|DELETE /v1/me/watches/:id`
+- Analytics: seller `GET /v1/seller/analytics?days=7|30|90|365`; staff `GET /v1/admin/analytics` (GMV, take rate, dispute and chargeback rates)
+- Support: `GET|POST /v1/support/tickets`, `POST /v1/support/tickets/:id/{messages,resolve}`; staff `GET /v1/admin/support/tickets`, `POST /v1/admin/support/tickets/:id/messages`, `PATCH /v1/admin/support/tickets/:id`
+- `POST /v1/orders/quote` (currency, promo code, store credit and quantity-price breakdown)
+- Buyer requests: `GET /v1/requests` (public board), `POST /v1/requests`, `GET /v1/requests/:id`, `POST /v1/requests/:id/close`, `POST /v1/requests/:id/proposals`, `DELETE /v1/requests/:id/proposals/mine`, `POST /v1/requests/:id/proposals/:pid/accept` (returns the reserved listing to check out)
+- Quantity prices: `priceTiers` on `POST /v1/offers` and `PATCH /v1/offers/:id`
+- Moderation (staff, `moderation.manage`): `GET /v1/admin/moderation/{summary,listings,chats,terms}`, `POST /v1/admin/moderation/listings/:id`, `POST /v1/admin/moderation/chats/:id`, `POST|DELETE /v1/admin/moderation/terms`
+- Presence: `seller_online` / `seller_response_minutes` on listings, `online` / `response_minutes` on seller profiles; `PUT /v1/seller/presence`
+- Language: `PUT /v1/me/locale` (emails and notifications follow it)
 - `POST /v1/orders/:id/{deliver,confirm,dispute,cancel,cancel-late}`, `PATCH /v1/orders/:id/checklist`
+- Chat erasure (per-user keys): staff `POST /v1/admin/users/:id/erase-chat`
 - `POST /v1/chat/rooms/:id/attachments` (screenshot evidence, malware-scanned)
 - Notifications: `GET /v1/me/notifications`, `GET /v1/push/config`, `POST /v1/me/push-subscriptions`, `PATCH /v1/me/push-preferences`
 - Seller reports: `GET /v1/seller/exports/{sales,statement,payouts,invoices,credit_notes}` (CSV/JSON), `GET /v1/seller/credit-notes`
+- FX top-ups: `GET /v1/admin/fx/topups`, `POST /v1/admin/fx/topups/plan`, `POST /v1/admin/fx/topups/:id/decide` (Wise or mock exchange)
+- Status page: `GET /v1/status` (public), `POST /v1/status/subscribe`; staff `POST /v1/admin/incidents`, `POST /v1/admin/incidents/:id/updates`
+- Fraud model evaluation: `GET /v1/admin/fraud/model-report` (heuristic vs graph model on labelled orders; `FRAUD_GNN_MODE=shadow|enforce`)
+- Seller debts: `GET /v1/seller/debts`, `POST /v1/seller/debts/:id/pay` (card repayment); staff `GET /v1/admin/debts`
 - Seller money: `GET /v1/seller/dashboard` (per-currency balances, payout hold), `PUT /v1/seller/payout-currency`, `PUT /v1/seller/tax-profile`, `GET /v1/seller/invoices[/:id/pdf]`
 - `GET /v1/ws` WebSocket chat and notifications (protocol documented in `apps/api/src/ws/gateway.ts`)
 - Merchant API (API-key auth): `GET /v1/merchant/orders`, `POST /v1/merchant/inventory`, `PATCH /v1/merchant/prices`, `POST /v1/merchant/orders/:id/deliver`, `GET /v1/merchant/webhooks/deliveries`, `POST /v1/merchant/webhooks/deliveries/:id/redeliver`
 - Webhooks: `order.created` (funded), `order.delivered`, `order.completed`, `order.disputed`, `order.refunded`, `order.cancelled`, `offer.low_stock`, `chat.message`, `chargeback.created`, signed with `X-Hook-Signature` = hex HMAC-SHA256 of the raw body
+
+Seller SDKs: `sdks/typescript` (`@bullizard/sdk`) and `sdks/python` (`bullizard`). Both cover orders (with a polling helper), inventory, prices, chat, invoices, reports and webhook deliveries, and both verify webhook signatures. The TypeScript SDK's tests run against the real API in the API suite, and a test checks every path either SDK calls is in the API reference.
 
 Seller API reference: `/v1/docs` (OpenAPI JSON at `/v1/openapi.json`). Run a sandbox with `SANDBOX_MODE=true` (mock payments and KYC only) to get `/v1/sandbox/*` test helpers.
 

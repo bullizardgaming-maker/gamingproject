@@ -137,7 +137,7 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   // --- Chat (REST mirror of the WebSocket protocol) ----------------------------------
-  app.get('/chat/rooms', async (req) => listRooms(ctx.db, me(req).id));
+  app.get('/chat/rooms', async (req) => listRooms(ctx.keyring, ctx.db, me(req).id));
 
   app.post('/chat/rooms', async (req) => {
     const { offerId } = z.object({ offerId: z.string().uuid() }).parse(req.body);
@@ -150,7 +150,7 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
     const user = me(req);
     const room = await roomForParticipant(ctx.db, id, user);
     if (room.buyer_id !== user.id && room.seller_id !== user.id && afterSeq === 0) await audit(ctx.db, req, 'chat.viewed', { type: 'chat_room', id });
-    return listMessages(ctx.db, id, afterSeq, limit);
+    return listMessages(ctx.keyring, ctx.db, id, afterSeq, limit);
   });
 
   app.post('/chat/rooms/:id/messages', async (req, reply) => {
@@ -189,7 +189,7 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/chat/rooms/:id/verify', async (req) => {
     const { id } = Id.parse(req.params);
     await roomForParticipant(ctx.db, id, me(req));
-    return verifyChain(ctx.db, id);
+    return verifyChain(ctx.db, id, ctx.keyring);
   });
 
   app.get('/chat/rooms/:id', async (req) => {

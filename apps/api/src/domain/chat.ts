@@ -2,7 +2,8 @@ import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { many, maybeOne, one } from '../db.js';
 import { hasPermission } from './permissions.js';
-import { sha256 } from '../lib/crypto.js';
+import { sha256, type Keyring } from '../lib/crypto.js';
+import { bodyMac, seal, systemMac, unseal, userChatKey } from './chatkeys.js';
 import { forbidden, notFound } from '../lib/errors.js';
 import type { TxScope } from './events.js';
 import { withScope } from './events.js';
@@ -24,32 +25,45 @@ export interface ChatMessage {
   seq: number;
   sender_id: string | null;
   kind: 'text' | 'system' | 'delivery' | 'warning' | 'attachment';
-  body: string;
+  /** null when the sender's chat key was destroyed (the message is erased). */
+  body: string | null;
+  erased?: boolean;
   flags: string[];
+  hash_version: number;
+  body_mac: string | null;
   prev_hash: string;
   hash: string;
   created_at: string;
 }
 
-// ---------------------------------------------------------------------------
-// Off-platform contact detection. All negotiation must stay in the recorded chat:
-// it is the evidence base for arbitration and chargeback representment.
-// ---------------------------------------------------------------------------
-const OFFPLATFORM_PATTERNS: Array<[string, RegExp]> = [
-  ['discord', /\bdiscord(?:app)?(?:\.gg|\.com)?\b/i],
-  ['telegram', /\btelegram\b|\bt\.me\/|\btg\s*:\s*@?\w+/i],
-  ['whatsapp', /\bwhats\s?app\b|\bwa\.me\//i],
-  ['other_messenger', /\b(?:skype|viber|wechat|signal\s+app|kik|snapchat)\b/i],
-  ['external_payment', /\b(?:paypal\.me|cash\s?app|venmo|zelle|western\s+union)\b/i],
-  ['phone_number', /(?:\+|\b00)\d[\d\s().-]{7,}\d\b/],
-];
+// Off-platform contact detection lives in safety.ts (shared with the web app).
+export { detectOffPlatform } from './safety.js';
+import { detectOffPlatform } from './safety.js';
 
-export function detectOffPlatform(body: string): string[] {
-  return OFFPLATFORM_PATTERNS.filter(([, re]) => re.test(body)).map(([name]) => name);
-}
-
+/** v1 (messages written before per-user keys): the chain covers the text itself. */
 export function messageHash(prevHash: string, seq: number, senderId: string | null, kind: string, body: string, createdAt: string) {
   return sha256([prevHash, seq, senderId ?? 'system', kind, body, createdAt].join('|'));
+}
+
+/** v2: the chain covers a digest of the text, so the text can be erased (key destroyed) without breaking it. */
+export function messageHashV2(prevHash: string, seq: number, senderId: string | null, kind: string, mac: string, createdAt: string) {
+  return sha256([prevHash, seq, senderId ?? 'system', kind, `mac:${mac}`, createdAt].join('|'));
+}
+
+type StoredMessage = ChatMessage & { body_sealed?: string | null };
+
+/** Decrypt users' messages with their keys; a destroyed key shows the message as erased. */
+export async function openMessages(keyring: Keyring, q: Queryable, rows: StoredMessage[]): Promise<ChatMessage[]> {
+  const out: ChatMessage[] = [];
+  for (const { body_sealed, ...m } of rows) {
+    if (m.hash_version === 2 && m.sender_id && body_sealed) {
+      const key = await userChatKey(keyring, q, m.sender_id);
+      out.push(key ? { ...m, body: unseal(key, body_sealed, m.room_id, Number(m.seq)) } : { ...m, body: null, erased: true });
+    } else {
+      out.push(m);
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -87,11 +101,12 @@ export async function roomForParticipant(q: Queryable, roomId: string, user: { i
   return room;
 }
 
-export async function listRooms(q: Queryable, userId: string) {
-  return many(
+export async function listRooms(keyring: Keyring, q: Queryable, userId: string) {
+  const rooms = await many<any>(
     q,
     `SELECT r.*, o.title AS offer_title, ord.status AS order_status,
-            (SELECT body FROM chat_messages m WHERE m.room_id = r.id ORDER BY seq DESC LIMIT 1) AS last_message
+            (SELECT row_to_json(m) FROM (SELECT id, room_id, seq, sender_id, kind, body, body_sealed, hash_version FROM chat_messages m
+                                          WHERE m.room_id = r.id ORDER BY seq DESC LIMIT 1) m) AS last
        FROM chat_rooms r
        LEFT JOIN offers o ON o.id = r.offer_id
        LEFT JOIN orders ord ON ord.id = r.order_id
@@ -99,6 +114,12 @@ export async function listRooms(q: Queryable, userId: string) {
       ORDER BY r.created_at DESC LIMIT 100`,
     [userId],
   );
+  for (const r of rooms) {
+    const last = r.last ? (await openMessages(keyring, q, [r.last]))[0]! : null;
+    r.last_message = last ? (last.erased ? null : last.body) : null;
+    delete r.last;
+  }
+  return rooms;
 }
 
 // ---------------------------------------------------------------------------
@@ -116,7 +137,10 @@ export async function appendMessage(
   kind: ChatMessage['kind'],
   body: string,
   flags: string[] = [],
+  /** Required for messages from a user: their text is sealed with their own chat key. */
+  keyring?: Keyring,
 ): Promise<ChatMessage> {
+  if (senderId && !keyring) throw new Error('appendMessage: a user message needs the keyring to seal it');
   const createdAt = new Date().toISOString();
   const room = await one<{ last_seq: number; last_hash: string; buyer_id: string; seller_id: string; order_id: string | null }>(
     s.tx,
@@ -125,13 +149,24 @@ export async function appendMessage(
     [roomId],
   );
   const seq = room.last_seq;
-  const hash = messageHash(room.last_hash, seq, senderId, kind, body, createdAt);
-  const msg = await one<ChatMessage>(
+  let mac: string;
+  let sealed: string | null = null;
+  if (senderId) {
+    const key = (await userChatKey(keyring!, s.tx, senderId, true))!;
+    if (!key) throw forbidden('chat_erased', 'Chat history for this account was erased');
+    mac = bodyMac(key, body);
+    sealed = seal(key, body, roomId, seq);
+  } else {
+    mac = systemMac(body);
+  }
+  const hash = messageHashV2(room.last_hash, seq, senderId, kind, mac, createdAt);
+  const { body_sealed: _sealed, ...stored } = await one<StoredMessage>(
     s.tx,
-    `INSERT INTO chat_messages (room_id, seq, sender_id, kind, body, flags, prev_hash, hash, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-    [roomId, seq, senderId, kind, body, flags, room.last_hash, hash, createdAt],
+    `INSERT INTO chat_messages (room_id, seq, sender_id, kind, body, flags, prev_hash, hash, created_at, hash_version, body_mac, body_sealed)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 2, $10, $11) RETURNING *`,
+    [roomId, seq, senderId, kind, sealed ? '' : body, flags, room.last_hash, hash, createdAt, mac, sealed],
   );
+  const msg: ChatMessage = { ...stored, body };
   await s.tx.query('UPDATE chat_rooms SET last_hash = $2 WHERE id = $1', [roomId, hash]);
   s.publishRoom(roomId, { type: 'message', roomId, message: msg });
   return msg;
@@ -143,9 +178,11 @@ export async function postUserMessage(ctx: Ctx, roomId: string, user: { id: stri
     const room = await roomForParticipant(s.tx, roomId, user);
     const violations = detectOffPlatform(body);
     const flags = violations.map((v) => `offplatform:${v}`);
-    const msg = await appendMessage(s, roomId, user.id, 'text', body, flags);
+    const msg = await appendMessage(s, roomId, user.id, 'text', body, flags, ctx.keyring);
 
     if (violations.length && user.role === 'user') {
+      // Into the staff queue (Admin → Moderation) to confirm or dismiss.
+      await s.tx.query(`INSERT INTO chat_flags (room_id, seq, user_id, reasons) VALUES ($1, $2, $3, $4) ON CONFLICT (room_id, seq) DO NOTHING`, [roomId, msg.seq, user.id, violations]);
       const { offplatform_strikes } = await one<{ offplatform_strikes: number }>(
         s.tx,
         'UPDATE users SET offplatform_strikes = offplatform_strikes + 1 WHERE id = $1 RETURNING offplatform_strikes',
@@ -176,26 +213,50 @@ export async function postUserMessage(ctx: Ctx, roomId: string, user: { id: stri
   });
 }
 
-export async function listMessages(q: Queryable, roomId: string, afterSeq = 0, limit = 200): Promise<ChatMessage[]> {
-  return many<ChatMessage>(q, 'SELECT * FROM chat_messages WHERE room_id = $1 AND seq > $2 ORDER BY seq LIMIT $3', [roomId, afterSeq, Math.min(limit, 500)]);
+export async function listMessages(keyring: Keyring, q: Queryable, roomId: string, afterSeq = 0, limit = 200): Promise<ChatMessage[]> {
+  const rows = await many<StoredMessage>(q, 'SELECT * FROM chat_messages WHERE room_id = $1 AND seq > $2 ORDER BY seq LIMIT $3', [roomId, afterSeq, Math.min(limit, 500)]);
+  return openMessages(keyring, q, rows);
 }
 
-/** Recompute the hash chain. Any edited, deleted, re-ordered or inserted message breaks it. */
-export async function verifyChain(q: Queryable, roomId: string) {
+/**
+ * Recompute the hash chain. Any edited, deleted, re-ordered or inserted message breaks it.
+ * v2 messages chain over their stored digest. With the keyring, every readable message's text is
+ * also checked against its digest (so a swapped ciphertext is caught); erased ones can't be.
+ */
+export async function verifyChain(q: Queryable, roomId: string, keyring?: Keyring) {
   const room = await maybeOne<{ purged_at: string | null; purged_messages: number | null; last_hash: string }>(q, 'SELECT purged_at, purged_messages, last_hash FROM chat_rooms WHERE id = $1', [roomId]);
   if (room?.purged_at) {
     // Messages were deleted at the end of the retention period; the final hash is kept.
     return { valid: true, messages: 0, brokenAtSeq: null, headHash: room.last_hash, purgedAt: room.purged_at, purgedMessages: room.purged_messages };
   }
-  const msgs = await many<ChatMessage>(q, 'SELECT * FROM chat_messages WHERE room_id = $1 ORDER BY seq', [roomId]);
+  const msgs = await many<StoredMessage>(q, 'SELECT * FROM chat_messages WHERE room_id = $1 ORDER BY seq', [roomId]);
   let prev = '0'.repeat(64);
+  let erased = 0;
   for (let i = 0; i < msgs.length; i++) {
     const m = msgs[i]!;
-    const expected = messageHash(prev, m.seq, m.sender_id, m.kind, m.body, new Date(m.created_at).toISOString());
-    if (m.seq !== i + 1 || m.prev_hash !== prev || m.hash !== expected) {
-      return { valid: false, messages: msgs.length, brokenAtSeq: m.seq, headHash: prev };
+    const at = new Date(m.created_at).toISOString();
+    let ok: boolean;
+    if (m.hash_version === 2) {
+      ok = !!m.body_mac && m.hash === messageHashV2(prev, m.seq, m.sender_id, m.kind, m.body_mac, at);
+      if (ok && !m.sender_id) ok = systemMac(m.body ?? '') === m.body_mac;
+      if (ok && m.sender_id && keyring) {
+        const key = await userChatKey(keyring, q, m.sender_id);
+        if (!key) erased++;
+        else {
+          try {
+            ok = bodyMac(key, unseal(key, m.body_sealed ?? '', m.room_id, Number(m.seq))) === m.body_mac;
+          } catch {
+            ok = false; // ciphertext tampered with or moved
+          }
+        }
+      }
+    } else {
+      ok = m.hash === messageHash(prev, m.seq, m.sender_id, m.kind, m.body ?? '', at);
+    }
+    if (m.seq !== i + 1 || m.prev_hash !== prev || !ok) {
+      return { valid: false, messages: msgs.length, brokenAtSeq: m.seq, headHash: prev, erasedMessages: erased };
     }
     prev = m.hash;
   }
-  return { valid: true, messages: msgs.length, brokenAtSeq: null, headHash: prev };
+  return { valid: true, messages: msgs.length, brokenAtSeq: null, headHash: prev, erasedMessages: erased };
 }
