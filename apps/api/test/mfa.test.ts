@@ -38,7 +38,8 @@ describe('two-factor login', () => {
     const secret: string = setupRes.body.secret;
 
     expect((await u.api.post('/v1/me/2fa/enable', { code: '000000' })).status).toBe(400);
-    const enabled = await u.api.post('/v1/me/2fa/enable', { code: codeFor(secret) });
+    const enrolCode = codeFor(secret);
+    const enabled = await u.api.post('/v1/me/2fa/enable', { code: enrolCode });
     expect(enabled.status).toBe(200);
     expect(enabled.body.recoveryCodes).toHaveLength(10);
 
@@ -49,8 +50,8 @@ describe('two-factor login', () => {
     // The challenge token is not a session.
     expect((await client(h.app, login.body.mfaToken).get('/v1/me')).status).toBe(401);
 
-    // The code used during enrolment can't be replayed.
-    expect((await client(h.app).post('/v1/auth/mfa', { mfaToken: login.body.mfaToken, code: codeFor(secret) })).status).toBe(401);
+    // The code used during enrolment can't be replayed (the exact code, even if a 30-second step has passed since).
+    expect((await client(h.app).post('/v1/auth/mfa', { mfaToken: login.body.mfaToken, code: enrolCode })).status).toBe(401);
     const ok = await client(h.app).post('/v1/auth/mfa', { mfaToken: login.body.mfaToken, code: codeFor(secret, 1) });
     expect(ok.status).toBe(200);
     const status = await client(h.app, ok.body.token).get('/v1/me/2fa');
