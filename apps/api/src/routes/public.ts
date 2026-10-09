@@ -20,6 +20,8 @@ import {
   getPushPreferences, listInbox, listPushSubscriptions, markAllRead, markRead, removePushSubscription, setPushPreferences, subscribePush, unreadCount, unsubscribePush,
 } from '../domain/inbox.js';
 import { recordView } from '../domain/analytics.js';
+import { MAX_HISTORY_DAYS, marketPriceHistory, offerPriceHistory } from '../domain/priceHistory.js';
+import { alsoBought } from '../domain/recommendations.js';
 import { LOCALES } from '../domain/locales/index.js';
 import { createSavedSearch, deleteSavedSearch, listSavedSearches, updateSavedSearch } from '../domain/savedSearches.js';
 import { TICKET_CATEGORIES, createTicket, customerReply, customerResolve, getTicket, listMyTickets } from '../domain/support.js';
@@ -431,8 +433,8 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     return suggestGames(ctx.dbRead, q);
   });
 
-  app.get('/offers/:id', async (req) => {
-    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+  /** Loads a listing the viewer may see: request-agreed listings and ones in review stay private. */
+  const visibleOffer = async (req: FastifyRequest, id: string) => {
     const offer = await getOffer(ctx.dbRead, id);
     // A listing agreed on a buyer request is only visible to that buyer, its seller and staff.
     const staffViewer = !!req.user && isStaffUser(req.user as any);
@@ -444,6 +446,30 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
       delete offer.review_reasons;
       delete offer.review_note;
     }
+    return offer;
+  };
+  const Days = z.object({ days: z.coerce.number().int().min(7).max(MAX_HISTORY_DAYS).default(90) });
+
+  app.get('/offers/:id/price-history', async (req) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    await visibleOffer(req, id);
+    return offerPriceHistory(ctx.dbRead, id, Days.parse(req.query).days);
+  });
+
+  app.get('/offers/:id/also-bought', async (req) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    await visibleOffer(req, id);
+    return alsoBought(ctx.dbRead, id);
+  });
+
+  app.get('/catalog/price-history', async (req) => {
+    const p = z.object({ game: z.string().trim().min(1).max(80), category: z.string().max(40), days: Days.shape.days }).parse(req.query);
+    return marketPriceHistory(ctx, ctx.dbRead, p.game, p.category, p.days);
+  });
+
+  app.get('/offers/:id', async (req) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const offer = await visibleOffer(req, id);
     void recordView(ctx, offer.id, offer.seller_id, { userId: req.user?.id, ip: req.ip });
     return offer;
   });

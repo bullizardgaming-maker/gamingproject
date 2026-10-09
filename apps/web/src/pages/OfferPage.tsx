@@ -13,6 +13,8 @@ import { unitPriceFor } from '@/lib/tiers';
 import { OnlineDot, replyLabel } from '@/lib/presence';
 import { addToCart } from '@/lib/cart';
 import { ShoppingCart } from 'lucide-react';
+import { OfferPriceHistory } from '../components/PriceHistory';
+import { AlsoBought } from '../components/AlsoBought';
 import { intlLocale, t } from '../i18n';
 
 export function OfferPage() {
@@ -151,6 +153,7 @@ export function OfferPage() {
             {t('offer.highRisk')}
           </div>
         )}
+        <OfferPriceHistory offerId={offer.id} game={offer.game} />
       </div>
 
       <div className="card stack">
@@ -272,6 +275,7 @@ export function OfferPage() {
         <OfferTable offers={similar} />
       </section>
     )}
+    <AlsoBought offerId={offer.id} game={offer.game} />
     </div>
   );
 }

@@ -549,5 +549,20 @@ const es: Messages = {
   "saved.daily": "Resumen diario",
   "saved.hourly": "Cada hora",
   "saved.delete": "Eliminar {name}",
+  // Price history and recommendations
+  "history.offerTitle": "Historial de precios",
+  "history.unchanged": "El precio no ha cambiado desde el {date}.",
+  "history.atLow": "El precio de hoy es el más bajo en {days} días.",
+  "history.lowWas": "Más bajo en los últimos {days} días: {price}.",
+  "history.price": "Precio",
+  "history.offerAria": "Precio de esta oferta de {game} en {days} días: ahora {now}, mínimo {low}",
+  "history.marketTitle": "Tendencia de precios: {what}",
+  "history.lowest": "Precio más bajo",
+  "history.median": "Precio habitual (mediana)",
+  "history.marketAria": "Precios diarios de {what}: mínimo actual {low}, mediana {median}",
+  "history.table": "Ver como tabla",
+  "history.date": "Fecha",
+  "also.title": "Los compradores también compraron",
+  "also.more": "Popular en {game}",
 };
 export default es;

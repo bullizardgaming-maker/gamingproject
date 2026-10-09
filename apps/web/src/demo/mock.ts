@@ -528,6 +528,55 @@ route('GET', '/offers/:id', ({ me, params }) => {
   return offerView(o);
 });
 
+/** Repeatable pseudo-random numbers per listing, so the demo's price history is the same on every visit. */
+function seeded(key: string) {
+  let h = 2166136261;
+  for (const c of key) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
+  return () => ((h = Math.imul(h ^ (h >>> 15), 2246822507) >>> 0) % 10_000) / 10_000;
+}
+const DAY = 86_400_000;
+route('GET', '/offers/:id/price-history', ({ me, params, query }) => {
+  const o = state.offers.find((x) => x.id === params[0]) ?? fail(404, 'not_found', 'Listing not found');
+  if (o.reserved_for && ![o.reserved_for, o.seller_id].includes(me?.id ?? '')) fail(404, 'not_found', 'Listing not found');
+  const days = Number(query.get('days') ?? 90);
+  const rnd = seeded(o.id);
+  const nowPrice = effectivePrice(o);
+  // A few earlier prices, each within about 20% of today's, then today's.
+  const changes = 1 + Math.floor(rnd() * 4);
+  const points = Array.from({ length: changes }, (_, i) => ({
+    at: new Date(Date.now() - (days - (i * days) / (changes + 1)) * DAY).toISOString(),
+    price_cents: Math.round((nowPrice * (0.9 + rnd() * 0.3)) / 10) * 10,
+  }));
+  points.push({ at: new Date(Date.now() - Math.floor(rnd() * 10 + 1) * DAY).toISOString(), price_cents: nowPrice });
+  return { currency: o.currency, points };
+});
+route('GET', '/offers/:id/also-bought', ({ params }) => {
+  const o = state.offers.find((x) => x.id === params[0]) ?? fail(404, 'not_found', 'Listing not found');
+  const live = state.offers.filter(listed).map(offerView).filter((x) => x.stock > 0 && x.id !== o.id);
+  const rnd = seeded(`also:${o.id}`);
+  const others = live.filter((x) => x.game !== o.game).sort(() => rnd() - 0.5).slice(0, 3).map((x) => ({ ...x, reason: 'also_bought' }));
+  const same = live.filter((x) => x.game === o.game).slice(0, 6 - others.length).map((x) => ({ ...x, reason: 'same_game' }));
+  return { items: [...others, ...same] };
+});
+route('GET', '/catalog/price-history', ({ query }) => {
+  const game = query.get('game') ?? '';
+  const category = query.get('category') ?? '';
+  const days = Number(query.get('days') ?? 90);
+  const prices = state.offers.filter(listed).map(offerView).filter((x) => x.stock > 0 && x.game.toLowerCase() === game.toLowerCase() && x.category_slug === category).map((x) => x.price_cents).sort((a, b) => a - b);
+  if (!prices.length) return { currency: 'USD', points: [] };
+  const rnd = seeded(`market:${game}:${category}`);
+  const low = prices[0]!;
+  const median = prices[Math.floor(prices.length / 2)]!;
+  let drift = 1.15;
+  const points = Array.from({ length: days }, (_, i) => {
+    drift = Math.max(0.95, drift - 0.0017 + (rnd() - 0.5) * 0.02); // prices ease down over the quarter
+    const last = i === days - 1;
+    const m = last ? median : Math.round(median * drift);
+    return { day: new Date(Date.now() - (days - 1 - i) * DAY).toISOString().slice(0, 10), min_cents: last ? low : Math.min(m, Math.round(low * (drift + (rnd() - 0.5) * 0.04))), median_cents: m, listings: prices.length };
+  });
+  return { currency: 'USD', points };
+});
+
 // --- Orders ----------------------------------------------------------------------------
 route('POST', '/orders', ({ me, body }) => {
   const u = need(me);

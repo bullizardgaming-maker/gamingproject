@@ -549,5 +549,20 @@ const de: Messages = {
   "saved.daily": "Tägliche Zusammenfassung",
   "saved.hourly": "Stündlich",
   "saved.delete": "{name} löschen",
+  // Price history and recommendations
+  "history.offerTitle": "Preisverlauf",
+  "history.unchanged": "Der Preis ist seit dem {date} unverändert.",
+  "history.atLow": "Der heutige Preis ist der niedrigste seit {days} Tagen.",
+  "history.lowWas": "Tiefstpreis der letzten {days} Tage: {price}.",
+  "history.price": "Preis",
+  "history.offerAria": "Preis dieses {game}-Angebots über {days} Tage: jetzt {now}, Tiefstwert {low}",
+  "history.marketTitle": "Preistrend: {what}",
+  "history.lowest": "Niedrigster Preis",
+  "history.median": "Üblicher Preis (Median)",
+  "history.marketAria": "Tagespreise für {what}: aktuell niedrigster {low}, Median {median}",
+  "history.table": "Als Tabelle anzeigen",
+  "history.date": "Datum",
+  "also.title": "Käufer kauften auch",
+  "also.more": "Beliebt in {game}",
 };
 export default de;

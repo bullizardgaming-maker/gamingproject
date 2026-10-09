@@ -12,6 +12,7 @@ import { attrLabel, attributesFor } from '@/lib/attributes';
 import { t, type MessageKey } from '../i18n';
 import { WatchButton } from '../components/WatchButton';
 import { SaveSearchButton, paramsFromUrl } from '../components/SaveSearchButton';
+import { MarketPriceHistory } from '../components/PriceHistory';
 
 type AttrFacet = { key: string; value: string; count: number };
 
@@ -240,6 +241,8 @@ export function GamePage() {
           </span>
         </div>
       )}
+
+      {category && <MarketPriceHistory game={entry.game} category={category} />}
 
       {error && <div className="alert">{error}</div>}
       {offers === null ? (

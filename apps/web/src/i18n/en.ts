@@ -732,6 +732,22 @@ const en = {
   "saved.hourly": "Every hour",
   "saved.delete": "Delete {name}",
 
+  // Price history and recommendations
+  "history.offerTitle": "Price history",
+  "history.unchanged": "The price hasn’t changed since {date}.",
+  "history.atLow": "Today’s price is the lowest in {days} days.",
+  "history.lowWas": "Lowest in the last {days} days: {price}.",
+  "history.price": "Price",
+  "history.offerAria": "Price of this {game} listing over {days} days: now {now}, lowest {low}",
+  "history.marketTitle": "Price trend: {what}",
+  "history.lowest": "Lowest price",
+  "history.median": "Typical (median) price",
+  "history.marketAria": "Daily prices for {what}: lowest now {low}, median {median}",
+  "history.table": "Show as a table",
+  "history.date": "Date",
+  "also.title": "Buyers also bought",
+  "also.more": "Popular in {game}",
+
   // Generic
   'common.notFound': 'Page not found',
   'common.englishOnly': 'This section is in English.',

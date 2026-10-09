@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, money, realtime } from '../api';
 import { Chat } from '../components/Chat';
+import { AlsoBought } from '../components/AlsoBought';
 import { EscrowTrack, formatRemaining, type TrackVariant } from '../components/EscrowTrack';
 import { useSession } from '../session';
 import { usePageMeta } from '@/lib/seo';
@@ -262,6 +263,7 @@ export function OrderPage() {
         </div>
         <Chat roomId={order.room_id} meId={user.id} names={names} />
       </div>
+      {isBuyer && !['awaiting_payment', 'cancelled'].includes(order.status) && <AlsoBought offerId={order.offer_id} game={order.game} fillers />}
     </div>
   );
 }

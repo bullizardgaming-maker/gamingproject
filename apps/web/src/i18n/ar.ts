@@ -587,5 +587,20 @@ const ar: Messages = {
   "saved.daily": "ملخص يومي",
   "saved.hourly": "كل ساعة",
   "saved.delete": "احذف {name}",
+  // Price history and recommendations
+  "history.offerTitle": "سجل الأسعار",
+  "history.unchanged": "لم يتغير السعر منذ {date}.",
+  "history.atLow": "سعر اليوم هو الأدنى منذ {days} يومًا.",
+  "history.lowWas": "أدنى سعر خلال آخر {days} يومًا: {price}.",
+  "history.price": "السعر",
+  "history.offerAria": "سعر عرض {game} هذا خلال {days} يومًا: الآن {now}، والأدنى {low}",
+  "history.marketTitle": "اتجاه الأسعار: {what}",
+  "history.lowest": "أدنى سعر",
+  "history.median": "السعر المعتاد (الوسيط)",
+  "history.marketAria": "الأسعار اليومية لـ {what}: الأدنى الآن {low}، والوسيط {median}",
+  "history.table": "عرض كجدول",
+  "history.date": "التاريخ",
+  "also.title": "اشترى المشترون أيضًا",
+  "also.more": "رائج في {game}",
 };
 export default ar;

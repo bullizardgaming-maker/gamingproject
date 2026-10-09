@@ -16,6 +16,8 @@
   --field: #fff;            /* input backgrounds */
   --btn-hover: #26344a;
   --banner-rule: #4a5a72;
+  --viz-1: #2a78d6;         /* chart series (validated for colour-blind separation) */
+  --viz-2: #eb6834;
 
   --display: 'Bricolage Grotesque', 'IBM Plex Sans Arabic', 'Segoe UI', sans-serif;
   --body: 'IBM Plex Sans', 'IBM Plex Sans Arabic', system-ui, sans-serif;
@@ -293,6 +295,8 @@ html.dark {
   --field: #0f1621;
   --btn-hover: #c9d3e0;
   --banner-rule: #c2ccda;
+  --viz-1: #3987e5;
+  --viz-2: #d95926;
 }
 html.dark .demo-banner { background: #1d2737; color: var(--ink); }
 html.dark .demo-banner .btn.ghost { color: var(--ink); border-color: var(--rule); }
