@@ -139,4 +139,6 @@ Load tests: `npm run loadtest -w apps/api` (flash sale) and `npm run loadtest:se
 
 Staging (real API, sandbox payments): `render.yaml` and [docs/STAGING.md](docs/STAGING.md).
 
+App-store versions (Android Trusted Web Activity, iOS Capacitor shell, app-link files, store payment rules): [docs/MOBILE.md](docs/MOBILE.md).
+
 See `docs/ARCHITECTURE.md` for the rest.

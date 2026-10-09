@@ -47,6 +47,48 @@ function cspPlugin(apiUrl?: string): Plugin {
  * VITE_SITE_URL at the production domain). Private pages (orders, account, operations) are
  * disallowed and also carry noindex.
  */
+/**
+ * App-store verification files (docs/MOBILE.md), emitted only when configured:
+ *  - Android: .well-known/assetlinks.json links the Play app (a Trusted Web Activity) to this
+ *    site, so it opens full-screen without a browser bar. ANDROID_CERT_SHA256 = the signing
+ *    certificate fingerprint(s) from Play Console (comma-separated, AA:BB:… form).
+ *  - iOS: .well-known/apple-app-site-association opens listing, order and shop links in the
+ *    app (universal links). APPLE_TEAM_ID from the Apple developer account.
+ */
+export function appLinkFiles(env: Record<string, string | undefined>) {
+  const files: Record<string, string> = {};
+  const pkg = env.ANDROID_PACKAGE_ID || 'com.bullizard.app';
+  const certs = (env.ANDROID_CERT_SHA256 ?? '').split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
+  if (certs.length) {
+    if (certs.some((c) => !/^([0-9A-F]{2}:){31}[0-9A-F]{2}$/.test(c))) throw new Error('ANDROID_CERT_SHA256 must be SHA-256 fingerprints like AA:BB:… (32 bytes)');
+    files['.well-known/assetlinks.json'] = JSON.stringify(
+      [{ relation: ['delegate_permission/common.handle_all_urls'], target: { namespace: 'android_app', package_name: pkg, sha256_cert_fingerprints: certs } }],
+      null,
+      2,
+    );
+  }
+  if (env.APPLE_TEAM_ID) {
+    if (!/^[A-Z0-9]{10}$/.test(env.APPLE_TEAM_ID)) throw new Error('APPLE_TEAM_ID must be the 10-character team id');
+    const appId = `${env.APPLE_TEAM_ID}.${env.IOS_BUNDLE_ID || 'com.bullizard.app'}`;
+    files['.well-known/apple-app-site-association'] = JSON.stringify(
+      { applinks: { details: [{ appIDs: [appId], components: ['/offers/*', '/orders/*', '/sellers/*', '/games/*', '/requests/*'].map((p) => ({ '/': p })) }] } },
+      null,
+      2,
+    );
+  }
+  return files;
+}
+
+function appLinksPlugin(): Plugin {
+  return {
+    name: 'app-links',
+    apply: 'build',
+    generateBundle() {
+      for (const [fileName, source] of Object.entries(appLinkFiles(process.env))) this.emitFile({ type: 'asset', fileName, source });
+    },
+  };
+}
+
 function seoFilesPlugin(siteUrl: string): Plugin {
   const slug = (g: string) => g.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   return {
@@ -83,7 +125,7 @@ const siteUrl = () =>
 
 export default defineConfig(({ mode }) => ({
   resolve: { alias: { '@': path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'src') } },
-  plugins: [react(), tailwindcss(), cspPlugin(loadEnv(mode, process.cwd(), 'VITE_').VITE_API_URL || process.env.VITE_API_URL), seoFilesPlugin(siteUrl())],
+  plugins: [react(), tailwindcss(), cspPlugin(loadEnv(mode, process.cwd(), 'VITE_').VITE_API_URL || process.env.VITE_API_URL), seoFilesPlugin(siteUrl()), appLinksPlugin()],
   build: { sourcemap: false },
   server: {
     port: 5173,

@@ -1,0 +1,13 @@
+{
+  "appId": "com.bullizard.app",
+  "appName": "Bullizard",
+  "webDir": "www",
+  "server": {
+    "url": "https://app.example.com/?source=ios",
+    "allowNavigation": ["app.example.com", "api.example.com", "checkout.stripe.com"]
+  },
+  "ios": {
+    "contentInset": "automatic",
+    "scheme": "Bullizard"
+  }
+}

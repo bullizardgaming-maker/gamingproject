@@ -1,0 +1,30 @@
+{
+  "packageId": "com.bullizard.app",
+  "host": "app.example.com",
+  "name": "Bullizard — escrow-protected game marketplace",
+  "launcherName": "Bullizard",
+  "display": "standalone",
+  "orientation": "default",
+  "themeColor": "#16202E",
+  "themeColorDark": "#0D131C",
+  "navigationColor": "#16202E",
+  "navigationColorDark": "#0D131C",
+  "backgroundColor": "#EEF1F5",
+  "enableNotifications": true,
+  "startUrl": "/?source=twa",
+  "iconUrl": "https://app.example.com/icons/icon-512.png",
+  "maskableIconUrl": "https://app.example.com/icons/maskable-512.png",
+  "webManifestUrl": "https://app.example.com/manifest.webmanifest",
+  "fallbackType": "customtabs",
+  "enableSiteSettingsShortcut": true,
+  "shortcuts": [
+    { "name": "Market", "shortName": "Market", "url": "/market?source=twa", "chosenIconUrl": "https://app.example.com/icons/icon-192.png" },
+    { "name": "My orders", "shortName": "Orders", "url": "/orders?source=twa", "chosenIconUrl": "https://app.example.com/icons/icon-192.png" },
+    { "name": "Sell", "shortName": "Sell", "url": "/sell?source=twa", "chosenIconUrl": "https://app.example.com/icons/icon-192.png" }
+  ],
+  "signingKey": { "path": "./bullizard-upload.keystore", "alias": "bullizard" },
+  "appVersionName": "1.0.0",
+  "appVersionCode": 1,
+  "minSdkVersion": 21,
+  "generatorApp": "bubblewrap-cli"
+}
