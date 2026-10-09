@@ -21,6 +21,7 @@ import { SiteFooter } from './components/SiteFooter';
 import { DEMO } from './api';
 import { DemoBanner, DemoCheckout } from './demo/DemoUi';
 import { applyTheme } from '@/lib/prefs';
+import { setUpPwa } from '@/lib/pwa';
 import './tailwind.css';
 import './styles.css';
 
@@ -80,6 +81,7 @@ function App() {
 
 applyTheme();
 
+setUpPwa();
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>

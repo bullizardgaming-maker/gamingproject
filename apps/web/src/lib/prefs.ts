@@ -39,6 +39,8 @@ export function applyTheme() {
   const dark = resolvedTheme() === 'dark';
   document.documentElement.classList.toggle('dark', dark);
   document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+  // Browser chrome (and the installed app's title bar) follows the chosen theme, not just the OS.
+  document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute('content', dark ? '#0d131c' : '#eef1f5'));
 }
 media?.addEventListener?.('change', () => theme === 'system' && (applyTheme(), emit()));
 

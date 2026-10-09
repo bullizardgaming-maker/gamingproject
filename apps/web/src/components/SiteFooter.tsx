@@ -1,4 +1,7 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Download, Share } from 'lucide-react';
+import { useInstall } from '@/lib/pwa';
 import { CATEGORY_META, CATEGORY_ORDER } from '@/lib/catalog';
 
 const COLUMNS: Array<[string, Array<[string, string]>]> = [
@@ -8,6 +11,25 @@ const COLUMNS: Array<[string, Array<[string, string]>]> = [
   ['Account', [['Sign in', '/login'], ['Settings & security', '/account'], ['Notifications', '/account#notifications'], ['Watchlist & price alerts', '/watchlist'], ['All games A–Z', '/games']]],
   ['Help', [['Help centre', '/help'], ['Contact support', '/support/new'], ['My requests', '/support'], ['System status', '/status']]],
 ];
+
+/** "Install the app": the browser's own prompt, or the iOS Add to Home Screen steps. */
+function InstallApp() {
+  const { state, install } = useInstall();
+  const [iosHelp, setIosHelp] = useState(false);
+  if (state === 'installed' || state === 'none') return null;
+  return (
+    <div className="mt-4">
+      <button type="button" className="btn ghost inline-flex items-center gap-2" style={{ fontSize: 14 }} onClick={() => (state === 'prompt' ? install() : setIosHelp((v) => !v))}>
+        <Download className="size-4" /> Install the app
+      </button>
+      {iosHelp && (
+        <p className="small muted" style={{ margin: '8px 0 0' }}>
+          In Safari, tap <Share className="inline size-4 align-text-bottom" aria-label="Share" /> then “Add to Home Screen”.
+        </p>
+      )}
+    </div>
+  );
+}
 
 export function SiteFooter() {
   return (
@@ -19,6 +41,7 @@ export function SiteFooter() {
             <p className="small muted" style={{ margin: '12px 0 0' }}>
               The gaming marketplace where your money waits in escrow until the account, key or gold is really yours.
             </p>
+            <InstallApp />
           </div>
           {COLUMNS.map(([title, links]) => (
             <div key={title}>
