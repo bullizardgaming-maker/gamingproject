@@ -231,6 +231,12 @@ export const TEMPLATES = {
     subject: (d) => `Back in stock: ${d.title}`,
     body: (d, link) => `${d.title} is available again at ${money(d.price_cents, d.currency)}.\n\n${link(`/offers/${d.offer_id}`)}`,
   },
+  saved_search_digest: {
+    category: 'alerts',
+    subject: (d) => `${d.count} new listing${d.count === 1 ? '' : 's'} for "${d.name}"`,
+    body: (d, link) =>
+      `New since we last looked, cheapest first:\n\n${(d.top as any[]).map((o) => `- ${o.title}: ${money(o.price_cents, o.currency)}`).join('\n')}\n\nSee all ${d.count}: ${link(d.path)}\n\nChange or stop this digest on your watchlist: ${link('/watchlist')}`,
+  },
   watch_game_low: {
     category: 'alerts',
     subject: (d) => `${d.game}${d.attributes && Object.keys(d.attributes).length ? ` (${Object.values(d.attributes).join(', ')})` : ''}: from ${money(d.price_cents, d.currency)}`,

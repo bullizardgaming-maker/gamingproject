@@ -16,6 +16,8 @@ export interface SearchParams {
   minRating?: number;
   inStock?: boolean;
   sellerId?: string;
+  /** Only listings created after this time (saved-search digests). */
+  createdAfter?: string | Date;
   /** Exact (case-insensitive) matches on game-specific fields, e.g. {server: 'EUW', rank: 'Gold'}. */
   attributes?: Record<string, string>;
   sort?: Sort;
@@ -64,6 +66,7 @@ export async function searchOffers(q: Queryable, p: SearchParams) {
   if (p.delivery) where.push(`f.delivery_mode = ${arg(p.delivery === 'instant' ? 'auto' : 'manual')}`);
   if (p.ownerVerified) where.push(`f.owner_proof_status = 'verified'`);
   if (p.sellerId) where.push(`f.seller_id = ${arg(p.sellerId)}`);
+  if (p.createdAfter) where.push(`f.created_at > ${arg(p.createdAfter)}`);
   const attrs = Object.entries(p.attributes ?? {});
 
   // Filters on computed columns apply to the wrapped query.

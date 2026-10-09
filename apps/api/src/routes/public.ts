@@ -21,6 +21,7 @@ import {
 } from '../domain/inbox.js';
 import { recordView } from '../domain/analytics.js';
 import { LOCALES } from '../domain/locales/index.js';
+import { createSavedSearch, deleteSavedSearch, listSavedSearches, updateSavedSearch } from '../domain/savedSearches.js';
 import { TICKET_CATEGORIES, createTicket, customerReply, customerResolve, getTicket, listMyTickets } from '../domain/support.js';
 import { createWatch, deleteWatch, listWatches, updateWatch } from '../domain/watches.js';
 import { confirmSubscription, getIncident, statusSummary, subscribe, unsubscribe } from '../domain/status.js';
@@ -325,6 +326,31 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // --- Help centre support tickets --------------------------------------------------------------
   const Body = z.string().trim().min(2).max(5_000);
+  // ---- Saved searches (digests of new matching listings) ----
+  const SavedParams = z.object({
+    q: z.string().max(100).optional(),
+    game: z.string().max(80).optional(),
+    category: z.string().max(40).optional(),
+    maxPriceCents: z.number().int().min(0).optional(),
+    delivery: z.enum(['instant', 'manual']).optional(),
+    ownerVerified: z.boolean().optional(),
+    minRating: z.number().min(1).max(5).optional(),
+    attributes: z.record(z.string().max(30), z.string().max(60)).optional(),
+  });
+  app.get('/me/saved-searches', async (req) => listSavedSearches(ctx.db, me(req).id));
+  app.post('/me/saved-searches', async (req, reply) => {
+    const body = z.object({ name: z.string().trim().min(1).max(80), params: SavedParams, frequency: z.enum(['hourly', 'daily']).default('daily') }).parse(req.body);
+    return reply.status(201).send(await createSavedSearch(ctx, me(req).id, body));
+  });
+  app.patch('/me/saved-searches/:id', async (req) => {
+    const body = z.object({ frequency: z.enum(['hourly', 'daily']).optional(), name: z.string().trim().min(1).max(80).optional() }).parse(req.body);
+    return updateSavedSearch(ctx.db, me(req).id, z.object({ id: z.string().uuid() }).parse(req.params).id, body);
+  });
+  app.delete('/me/saved-searches/:id', async (req, reply) => {
+    await deleteSavedSearch(ctx.db, me(req).id, z.object({ id: z.string().uuid() }).parse(req.params).id);
+    return reply.status(204).send();
+  });
+
   app.get('/support/tickets', async (req) => listMyTickets(ctx.db, me(req).id));
   app.post('/support/tickets', async (req, reply) => {
     const body = z

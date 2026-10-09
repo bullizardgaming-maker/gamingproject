@@ -10,7 +10,7 @@ import { CATEGORY_DEFAULTS, GAME_SETS, attributesFor, cleanAttributes } from '..
 import { checkTiers, effectivePrice, unitPriceFor } from '../../../api/src/domain/priceTiers';
 import { detectOffPlatform, matchTerms } from '../../../api/src/domain/safety';
 
-const KEY = 'bz.demo.v13';
+const KEY = 'bz.demo.v14';
 const day = 86_400_000;
 const now = () => new Date().toISOString();
 const rid = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2) + Date.now().toString(16));
@@ -1170,6 +1170,47 @@ route('POST', '/requests/:id/proposals/:pid/accept', ({ me, params }) => {
   Object.assign(r, { status: 'accepted', accepted_proposal_id: p.id, updated_at: now() });
   notify(p.seller_id, 'selling', 'request_accepted', `Proposal accepted: ${r.title}`, 'The buyer accepted your proposal. You’ll get the usual new-order notice when they pay.', `/requests/${r.id}`);
   return { offerId: offer.id, request: reqView(r, u.id) };
+});
+// --- Saved searches ---------------------------------------------------------------------------
+const savedPath = (p: any) => {
+  const qs = new URLSearchParams();
+  for (const k of ['q', 'game', 'category'] as const) if (p[k]) qs.set(k, p[k]);
+  if (p.maxPriceCents != null) qs.set('maxPrice', String(p.maxPriceCents));
+  if (p.delivery) qs.set('delivery', p.delivery);
+  if (p.ownerVerified) qs.set('ownerVerified', 'true');
+  if (p.minRating) qs.set('minRating', String(p.minRating));
+  for (const [k, v] of Object.entries(p.attributes ?? {})) qs.set(`attr.${k}`, String(v));
+  qs.set('sort', 'newest');
+  return `/market?${qs}`;
+};
+route('GET', '/me/saved-searches', ({ me }) => state.savedSearches.filter((s) => s.user_id === need(me).id).map((s) => ({ ...s, path: savedPath(s.params) })));
+route('POST', '/me/saved-searches', ({ me, body }) => {
+  const u = need(me);
+  const p = body.params ?? {};
+  if (!p.q && !p.game && !p.category) fail(400, 'invalid_search', 'Save a search with at least a game, a category or search words');
+  if (state.savedSearches.filter((s) => s.user_id === u.id).length >= 20) fail(400, 'too_many_searches', 'You can save up to 20 searches');
+  const s = { id: rid(), user_id: u.id, name: String(body.name ?? 'Search').slice(0, 80), params: p, frequency: body.frequency ?? 'daily', last_sent_at: null, created_at: now() };
+  state.savedSearches.unshift(s);
+  // Stand-in for the first digest, so the demo shows what it looks like.
+  setTimeout(() => {
+    const hits = state.offers.filter((o) => listed(o) && (!p.game || o.game.toLowerCase() === String(p.game).toLowerCase()) && (!p.category || o.category_slug === p.category)).slice(0, 3);
+    if (!hits.length) return;
+    notify(u.id, 'alerts', 'saved_search_digest', `${hits.length} new listings for "${s.name}"`, hits.map((o) => `${o.title}: $${(effectivePrice(o) / 100).toFixed(2)}`).join(' · ') + ' (Demo: simulated digest.)', savedPath(p));
+    save();
+  }, 5000);
+  return { ...s, path: savedPath(p) };
+});
+route('PATCH', '/me/saved-searches/:id', ({ me, params, body }) => {
+  const s = state.savedSearches.find((x) => x.id === params[0] && x.user_id === need(me).id) ?? fail(404, 'not_found', 'Saved search not found');
+  if (body.frequency) s.frequency = body.frequency;
+  if (body.name) s.name = body.name;
+  return { ...s, path: savedPath(s.params) };
+});
+route('DELETE', '/me/saved-searches/:id', ({ me, params }) => {
+  const u = need(me);
+  const i = state.savedSearches.findIndex((x) => x.id === params[0] && x.user_id === u.id);
+  if (i < 0) fail(404, 'not_found', 'Saved search not found');
+  state.savedSearches.splice(i, 1);
 });
 // --- Watchlist & price alerts ------------------------------------------------------------
 const RATES: Record<string, number> = { USD: 1, EUR: 0.92, GBP: 0.79 };

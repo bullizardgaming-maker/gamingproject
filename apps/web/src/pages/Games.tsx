@@ -11,6 +11,7 @@ import { usePageMeta } from '@/lib/seo';
 import { attrLabel, attributesFor } from '@/lib/attributes';
 import { t, type MessageKey } from '../i18n';
 import { WatchButton } from '../components/WatchButton';
+import { SaveSearchButton, paramsFromUrl } from '../components/SaveSearchButton';
 
 type AttrFacet = { key: string; value: string; count: number };
 
@@ -249,6 +250,7 @@ export function GamePage() {
             <span>{t('offers.count', { count: total })}{prices.length > 1 ? ` · ${price(Math.min(...prices))} – ${price(Math.max(...prices))}` : ''}</span>
             <span className="flex items-center gap-3">
               <Link to="/sell" className="small">{t('game.sellThis', { game: entry.game, what: category ? categoryLabel(category) : t('game.items') })}</Link>
+              <SaveSearchButton params={paramsFromUrl(params, { game: entry.game, ...(category ? { category } : {}) })} name={category ? `${entry.game} · ${categoryLabel(category)}` : entry.game} />
               <WatchButton
                 label={category ? t('game.alertLows') : t('game.watch', { game: entry.game })}
                 target={{

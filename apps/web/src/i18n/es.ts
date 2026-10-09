@@ -538,5 +538,16 @@ const es: Messages = {
   "req.matches.offer": "Proponer esta oferta",
   "req.p.listing": "Oferta existente",
   "req.p.viewListing": "Ver oferta",
+  // Saved searches
+  "saved.save": "Guardar esta búsqueda",
+  "saved.done": "Guardada. Te enviaremos las ofertas nuevas cada día.",
+  "saved.manage": "Gestionar",
+  "saved.title": "Búsquedas guardadas",
+  "saved.lede": "Las revisamos en busca de ofertas nuevas y te enviamos las más baratas, solo cuando hay algo nuevo.",
+  "saved.empty": "Aún no tienes búsquedas guardadas. Usa «Guardar esta búsqueda» en cualquier página del mercado o de un juego.",
+  "saved.frequency": "Frecuencia",
+  "saved.daily": "Resumen diario",
+  "saved.hourly": "Cada hora",
+  "saved.delete": "Eliminar {name}",
 };
 export default es;

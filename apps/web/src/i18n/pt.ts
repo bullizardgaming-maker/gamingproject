@@ -539,5 +539,16 @@ const pt: Messages = {
   "req.matches.offer": "Oferecer este anúncio",
   "req.p.listing": "Anúncio existente",
   "req.p.viewListing": "Ver anúncio",
+  // Saved searches
+  "saved.save": "Salvar esta busca",
+  "saved.done": "Salva. Vamos enviar os anúncios novos todos os dias.",
+  "saved.manage": "Gerenciar",
+  "saved.title": "Buscas salvas",
+  "saved.lede": "Verificamos se há anúncios novos e enviamos os mais baratos, só quando houver novidade.",
+  "saved.empty": "Nenhuma busca salva ainda. Use “Salvar esta busca” em qualquer página do mercado ou de jogo.",
+  "saved.frequency": "Frequência",
+  "saved.daily": "Resumo diário",
+  "saved.hourly": "A cada hora",
+  "saved.delete": "Excluir {name}",
 };
 export default pt;

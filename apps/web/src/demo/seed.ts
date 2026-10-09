@@ -315,6 +315,7 @@ export function seed() {
     apiKeys: [] as any[],
     watches: [] as any[],
     tickets: [] as any[],
+    savedSearches: [] as any[],
     sellerCodes: [
       { id: 'code-1', seller_id: users[1]!.id, code: 'NORTHWIND10', percent_off: 10, min_order_cents: 20_00, max_uses: 500, per_buyer_limit: 1, starts_at: ago(10 * day), ends_at: ago(-20 * day), active: true, created_at: ago(10 * day), uses_before: 37 },
     ] as any[],

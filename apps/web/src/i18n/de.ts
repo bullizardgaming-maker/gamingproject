@@ -538,5 +538,16 @@ const de: Messages = {
   "req.matches.offer": "Dieses Angebot vorschlagen",
   "req.p.listing": "Bestehendes Angebot",
   "req.p.viewListing": "Angebot ansehen",
+  // Saved searches
+  "saved.save": "Suche speichern",
+  "saved.done": "Gespeichert. Wir schicken dir täglich neue Angebote.",
+  "saved.manage": "Verwalten",
+  "saved.title": "Gespeicherte Suchen",
+  "saved.lede": "Wir prüfen sie auf neue Angebote und schicken dir die günstigsten, nur wenn es etwas Neues gibt.",
+  "saved.empty": "Noch keine gespeicherten Suchen. Nutze „Suche speichern“ auf einer Markt- oder Spielseite.",
+  "saved.frequency": "Wie oft",
+  "saved.daily": "Tägliche Zusammenfassung",
+  "saved.hourly": "Stündlich",
+  "saved.delete": "{name} löschen",
 };
 export default de;

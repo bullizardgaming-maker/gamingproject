@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils';
 import { usePageMeta } from '@/lib/seo';
 import { t, type MessageKey } from '../i18n';
 import type { PriceTier } from '@/lib/tiers';
+import { SaveSearchButton, paramsFromUrl } from '../components/SaveSearchButton';
 
 interface Category {
   slug: string;
@@ -126,6 +127,7 @@ export function Market() {
         <div>
           <div className="eyebrow">{q ? t('market.searchEyebrow') : t('market.eyebrow')}</div>
           <h1 style={{ fontSize: 40, margin: 0 }}>{title}</h1>
+          <div style={{ marginTop: 8 }}><SaveSearchButton params={paramsFromUrl(params)} name={title} /></div>
         </div>
         <form
           onSubmit={(e) => {

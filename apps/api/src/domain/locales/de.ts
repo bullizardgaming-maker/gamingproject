@@ -144,6 +144,11 @@ const de: LocalePack = {
       subject: (d) => `Wieder verfügbar: ${d.title}`,
       body: (d, link, h) => `${d.title} ist wieder für ${h.money(d.price_cents, d.currency)} erhältlich.\n\n${link(`/offers/${d.offer_id}`)}`,
     },
+    saved_search_digest: {
+      subject: (d) => `${d.count} ${d.count === 1 ? 'neues Angebot' : 'neue Angebote'} für „${d.name}“`,
+      body: (d, link, h) =>
+        `Neu seit dem letzten Mal, günstigstes zuerst:\n\n${(d.top as any[]).map((o) => `- ${o.title}: ${h.money(o.price_cents, o.currency)}`).join('\n')}\n\nAlle ${d.count} ansehen: ${link(d.path)}\n\nÄndere oder beende diese Zusammenfassung auf deiner Merkliste: ${link('/watchlist')}`,
+    },
     watch_game_low: {
       subject: (d, h) => `${d.game}${d.attributes && Object.keys(d.attributes).length ? ` (${Object.values(d.attributes).join(', ')})` : ''}: ab ${h.money(d.price_cents, d.currency)}`,
       body: (d, link, h) =>

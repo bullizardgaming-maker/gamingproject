@@ -63,6 +63,7 @@ describe('messages in the user’s language', () => {
       first: true, pause_at: new Date().toISOString(), resumed: true, price_cents: 50, target_cents: 60, offer_id: 'f', game: 'G', attributes: { server: 'EUW' },
       subject: 's', ticket_id: 't', preview: 'p', resolved: false, days: 7, failures: 5, number_of: 1,
       request_id: 'q', budget_cents: 70, seller_name: 'S', delivery_hours: 6, revised: false,
+      name: 'N', count: 2, path: '/market', top: [{ title: 'T', price_cents: 100, currency: 'USD', offer_id: 'f' }], role: 'buyer',
     };
     for (const [locale, pack] of Object.entries(PACKS)) {
       for (const name of Object.keys(pack.templates) as TemplateName[]) {

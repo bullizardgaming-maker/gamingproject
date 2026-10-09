@@ -576,5 +576,16 @@ const ar: Messages = {
   "req.matches.offer": "اعرض هذا العرض",
   "req.p.listing": "عرض قائم",
   "req.p.viewListing": "عرض الصفحة",
+  // Saved searches
+  "saved.save": "احفظ هذا البحث",
+  "saved.done": "تم الحفظ. سنرسل لك العروض الجديدة يوميًا.",
+  "saved.manage": "إدارة",
+  "saved.title": "عمليات البحث المحفوظة",
+  "saved.lede": "نتحقق منها بحثًا عن عروض جديدة ونرسل لك الأرخص، فقط عند وجود جديد.",
+  "saved.empty": "لا توجد عمليات بحث محفوظة بعد. استخدم «احفظ هذا البحث» في أي صفحة سوق أو لعبة.",
+  "saved.frequency": "كم مرة",
+  "saved.daily": "ملخص يومي",
+  "saved.hourly": "كل ساعة",
+  "saved.delete": "احذف {name}",
 };
 export default ar;

@@ -720,6 +720,18 @@ const en = {
   "req.p.listing": "Existing listing",
   "req.p.viewListing": "View listing",
 
+  // Saved searches
+  "saved.save": "Save this search",
+  "saved.done": "Saved. We’ll send you new listings daily.",
+  "saved.manage": "Manage",
+  "saved.title": "Saved searches",
+  "saved.lede": "We check these for new listings and send you the cheapest ones, only when there’s something new.",
+  "saved.empty": "No saved searches yet. Use “Save this search” on any market or game page.",
+  "saved.frequency": "How often",
+  "saved.daily": "Daily digest",
+  "saved.hourly": "Every hour",
+  "saved.delete": "Delete {name}",
+
   // Generic
   'common.notFound': 'Page not found',
   'common.englishOnly': 'This section is in English.',

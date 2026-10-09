@@ -538,5 +538,16 @@ const fr: Messages = {
   "req.matches.offer": "Proposer cette offre",
   "req.p.listing": "Offre existante",
   "req.p.viewListing": "Voir l’offre",
+  // Saved searches
+  "saved.save": "Enregistrer cette recherche",
+  "saved.done": "Enregistrée. Nous vous enverrons les nouvelles offres chaque jour.",
+  "saved.manage": "Gérer",
+  "saved.title": "Recherches enregistrées",
+  "saved.lede": "Nous y cherchons de nouvelles offres et vous envoyons les moins chères, seulement quand il y a du nouveau.",
+  "saved.empty": "Aucune recherche enregistrée. Utilisez « Enregistrer cette recherche » sur une page du marché ou d’un jeu.",
+  "saved.frequency": "Fréquence",
+  "saved.daily": "Résumé quotidien",
+  "saved.hourly": "Toutes les heures",
+  "saved.delete": "Supprimer {name}",
 };
 export default fr;
