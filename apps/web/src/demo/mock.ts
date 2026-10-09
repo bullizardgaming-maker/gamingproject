@@ -6,8 +6,9 @@
  * and identity verification. Nothing here talks to a server.
  */
 import { CATEGORIES, DEMO_CODE, seed, type DemoState, type DemoUser } from './seed';
+import { CATEGORY_DEFAULTS, GAME_SETS, attributesFor, cleanAttributes } from '../../../api/src/domain/attributeSets';
 
-const KEY = 'bz.demo.v4';
+const KEY = 'bz.demo.v5';
 const day = 86_400_000;
 const now = () => new Date().toISOString();
 const rid = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2) + Date.now().toString(16));
@@ -393,8 +394,25 @@ route('GET', '/offers', ({ query }) => {
   if (query.get('seller')) items = items.filter((o) => o.seller_id === query.get('seller'));
   if (query.get('game')) items = items.filter((o) => o.game.toLowerCase() === query.get('game')!.toLowerCase());
   if (query.get('inStock') !== 'false') items = items.filter((o) => o.stock > 0);
+  // Game-specific fields: attr.<key>=<value>, exact and case-insensitive.
+  const attrs = [...query.entries()].filter(([k]) => k.startsWith('attr.')).map(([k, v]) => [k.slice(5), v.toLowerCase()] as const);
+  const matches = (o: any, skip?: string) => attrs.every(([k, v]) => k === skip || String(o.attributes?.[k] ?? '').toLowerCase() === v);
+  const counted = (xs: any[]) => {
+    const m = new Map<string, number>();
+    for (const o of xs) for (const [k, v] of Object.entries(o.attributes ?? {})) m.set(`${k}\u0000${v}`, (m.get(`${k}\u0000${v}`) ?? 0) + 1);
+    return [...m.entries()].map(([kv, count]) => ({ key: kv.split('\u0000')[0]!, value: kv.split('\u0000')[1]!, count }));
+  };
+  // Each field's counts ignore that field's own filter, as the API does.
+  const inCat = (o: any) => !query.get('category') || o.category_slug === query.get('category');
+  const attributeFacets = query.get('game')
+    ? [
+        ...counted(items.filter((o) => inCat(o) && matches(o))).filter((f) => !attrs.some(([k]) => k === f.key)),
+        ...attrs.flatMap(([k]) => counted(items.filter((o) => inCat(o) && matches(o, k))).filter((f) => f.key === k)),
+      ].sort((a, b) => a.key.localeCompare(b.key) || b.count - a.count || a.value.localeCompare(b.value))
+    : [];
+  items = items.filter((o) => matches(o));
   // Facets ignore the category filter so every category tab can show its count.
-  const facets = { categories: CATEGORIES.map((c) => ({ category_slug: c.slug, count: items.filter((o) => o.category_slug === c.slug).length })).filter((c) => c.count > 0) };
+  const facets = { categories: CATEGORIES.map((c) => ({ category_slug: c.slug, count: items.filter((o) => o.category_slug === c.slug).length })).filter((c) => c.count > 0), attributes: attributeFacets };
   if (query.get('category')) items = items.filter((o) => o.category_slug === query.get('category'));
   const sort = query.get('sort') ?? (q ? 'relevance' : 'newest');
   const by: Record<string, (a: any, b: any) => number> = {
@@ -408,6 +426,11 @@ route('GET', '/offers', ({ query }) => {
   const page = Math.max(1, Number(query.get('page') ?? 1));
   const pageSize = Number(query.get('pageSize') ?? 12);
   return { items: items.slice((page - 1) * pageSize, page * pageSize), total: items.length, page, pageSize, hasMore: page * pageSize < items.length, facets };
+});
+route('GET', '/catalog/attributes', ({ query }) => {
+  const game = query.get('game');
+  const category = query.get('category');
+  return game && category ? { game, category, fields: attributesFor(game, category) } : { defaults: CATEGORY_DEFAULTS, games: GAME_SETS };
 });
 route('GET', '/catalog/games', () => {
   const live = state.offers.filter((o) => o.status === 'active').map(offerView).filter((o) => o.stock > 0);
@@ -622,10 +645,13 @@ route('POST', '/offers', ({ me, body }) => {
   const cat = CATEGORIES.find((c) => c.slug === body.categorySlug) ?? fail(400, 'invalid_category', 'Unknown category');
   if (!body.title || String(body.title).length < 3) fail(400, 'validation_error', 'Give the listing a title');
   if (!(body.priceCents > 0)) fail(400, 'validation_error', 'Set a price');
+  const attrs = cleanAttributes(String(body.game ?? ''), cat.slug, body.attributes);
+  if (!attrs.ok) fail(400, 'invalid_attributes', attrs.error);
   const o = {
     id: `offer-${rid().slice(0, 8)}`, seller_id: u.id, category_slug: cat.slug, category_kind: cat.kind, game: body.game, title: body.title,
     description: body.description ?? '', price_cents: body.priceCents, currency: 'USD', delivery_mode: body.deliveryMode, delivery_hours: body.deliveryMode === 'auto' ? 0 : Number(body.deliveryHours ?? 2),
     stock: body.deliveryMode === 'manual' ? Number(body.stock ?? 1) : 0, inventory: [] as string[], status: 'active', owner_proof_status: 'none', version: 1, created_at: now(),
+    attributes: attrs.ok ? attrs.value : {},
   };
   state.offers.unshift(o);
   return offerView(o);

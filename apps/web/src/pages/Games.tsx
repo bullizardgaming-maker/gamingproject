@@ -8,6 +8,9 @@ import { cn } from '@/lib/utils';
 import { usePrice } from '@/lib/prefs';
 import type { Offer } from './Market';
 import { usePageMeta } from '@/lib/seo';
+import { attributesFor } from '@/lib/attributes';
+
+type AttrFacet = { key: string; value: string; count: number };
 
 const LETTERS = ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
 const letterOf = (g: string) => (/^[a-z]/i.test(g) ? g[0]!.toUpperCase() : '#');
@@ -113,6 +116,7 @@ export function GamePage() {
   const [hasMore, setHasMore] = useState(false);
   const [page, setPage] = useState(1);
   const [error, setError] = useState('');
+  const [facets, setFacets] = useState<AttrFacet[]>([]);
   const entry = games?.find((g) => slugify(g.game) === slug);
   usePageMeta({
     title: entry ? `${entry.game} ${category ? categoryLabel(category).toLowerCase() : 'marketplace'}` : undefined,
@@ -128,6 +132,8 @@ export function GamePage() {
     const q = new URLSearchParams({ game: entry.game, sort, pageSize: '20' });
     if (category) q.set('category', category);
     for (const k of ['delivery', 'ownerVerified', 'minRating', 'q']) if (params.get(k)) q.set(k, params.get(k)!);
+    // Game-specific fields only apply within one category (each category has its own set).
+    if (category) for (const [k, v] of params) if (k.startsWith('attr.') && v) q.set(k, v);
     return q;
   }, [entry, category, sort, params]);
 
@@ -135,8 +141,8 @@ export function GamePage() {
     if (!query) return;
     setOffers(null);
     setPage(1);
-    api<{ items: Offer[]; total: number; hasMore: boolean }>(`/offers?${query}`)
-      .then((r) => (setOffers(r.items), setTotal(r.total), setHasMore(r.hasMore)))
+    api<{ items: Offer[]; total: number; hasMore: boolean; facets?: { attributes?: AttrFacet[] } }>(`/offers?${query}`)
+      .then((r) => (setOffers(r.items), setTotal(r.total), setHasMore(r.hasMore), setFacets(r.facets?.attributes ?? [])))
       .catch((e) => setError(e.message));
   }, [query]);
 
@@ -225,6 +231,8 @@ export function GamePage() {
         </select>
       </div>
 
+      {category && <AttributeFilters game={entry.game} category={category} facets={facets} params={params} set={set} clear={(keys) => { const next = new URLSearchParams(params); keys.forEach((k) => next.delete(k)); setParams(next, { replace: true }); }} />}
+
       {meta && (
         <div className={cn('flex items-start gap-2.5 rounded-lg border px-3.5 py-2.5 text-sm', meta.protection === '14d' ? 'border-released/30 bg-released/5' : 'border-held/30 bg-held/5')} style={{ marginTop: 0 }}>
           {meta.protection === '14d' ? <BadgeCheck className="mt-0.5 size-4 shrink-0 text-released" /> : <ShieldCheck className="mt-0.5 size-4 shrink-0 text-held" />}
@@ -257,6 +265,50 @@ export function GamePage() {
           />
           {hasMore && <button className="btn ghost" style={{ alignSelf: 'center' }} onClick={more}>Show more offers</button>}
         </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Server / region / platform / rank pickers for one game and category, G2G-style. Each option
+ * shows how many live offers it has given the other filters; options with none are still listed
+ * (greyed) so the full range is visible.
+ */
+function AttributeFilters({ game, category, facets, params, set, clear }: { game: string; category: string; facets: AttrFacet[]; params: URLSearchParams; set: (k: string, v: string) => void; clear: (keys: string[]) => void }) {
+  const defs = attributesFor(game, category);
+  if (!defs.length) return null;
+  const active = defs.filter((d) => params.get(`attr.${d.key}`));
+  return (
+    <div className="flex flex-wrap items-end gap-2.5" role="group" aria-label={`${game} filters`}>
+      {defs.map((d) => {
+        const counts = new Map(facets.filter((f) => f.key === d.key).map((f) => [f.value, f.count]));
+        // Free-text fields (e.g. a WoW realm) offer the values sellers have used.
+        const options = d.type === 'select' ? [...d.options!] : [...counts.keys()].sort();
+        const cur = params.get(`attr.${d.key}`) ?? '';
+        if (!options.length && !cur) return null;
+        return (
+          <label key={d.key} className="grid gap-1 text-xs font-medium text-muted-foreground" style={{ flex: '0 1 180px' }}>
+            {d.label}
+            <select
+              value={cur}
+              onChange={(e) => set(`attr.${d.key}`, e.target.value)}
+              className={cn(cur && 'border-foreground')}
+              style={{ height: 38, padding: '6px 10px' }}
+            >
+              <option value="">Any {d.label.toLowerCase()}</option>
+              {options.map((o) => {
+                const n = counts.get(o) ?? 0;
+                return <option key={o} value={o} disabled={!n && o !== cur}>{o}{` (${n})`}</option>;
+              })}
+            </select>
+          </label>
+        );
+      })}
+      {active.length > 0 && (
+        <button type="button" className="btn ghost" style={{ height: 38, fontSize: 14 }} onClick={() => clear(active.map((d) => `attr.${d.key}`))}>
+          Clear {active.length === 1 ? active[0]!.label.toLowerCase() : 'filters'}
+        </button>
       )}
     </div>
   );

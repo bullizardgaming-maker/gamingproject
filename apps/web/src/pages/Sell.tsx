@@ -5,6 +5,8 @@ import { FeeLadder } from '../components/FeeLadder';
 import { useSession } from '../session';
 import { SellerMoney } from './SellerMoney';
 import { usePageMeta } from '@/lib/seo';
+import { attributesFor } from '@/lib/attributes';
+import { useGames } from '@/lib/catalog';
 
 interface Dashboard {
   tier: { name: string; accountRateBps: number; otherRateBps: number };
@@ -266,6 +268,9 @@ function OfferRow({ offer, onChange }: { offer: SellerOffer; onChange: () => voi
 function NewOffer({ onCreated }: { onCreated: () => void }) {
   const [error, setError] = useState('');
   const [category, setCategory] = useState('keys');
+  const [game, setGame] = useState('');
+  const fields = attributesFor(game, category);
+  const { games } = useGames();
   const submit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const form = e.currentTarget;
@@ -280,10 +285,12 @@ function NewOffer({ onCreated }: { onCreated: () => void }) {
           description: f.description,
           priceCents: Math.round(Number(f.price) * 100),
           deliveryMode: f.deliveryMode,
+          attributes: Object.fromEntries(fields.map((d) => [d.key, f[`attr.${d.key}`] ?? '']).filter(([, v]) => v)),
           ...(f.deliveryMode === 'manual' && f.categorySlug !== 'accounts' ? { stock: Number(f.stock || 1) } : {}),
         },
       });
       form.reset();
+      setGame('');
       onCreated();
     } catch (err: any) {
       setError(err.message);
@@ -306,7 +313,8 @@ function NewOffer({ onCreated }: { onCreated: () => void }) {
             <option value="video-games">Video games (4.99%)</option>
           </select>
         </label>
-        <label className="field">Game<input name="game" required maxLength={80} /></label>
+        <label className="field">Game<input name="game" required maxLength={80} value={game} onChange={(e) => setGame(e.target.value)} list="sell-games" /></label>
+        <datalist id="sell-games">{games?.map((g) => <option key={g.game} value={g.game} />)}</datalist>
         <label className="field">Title<input name="title" required minLength={3} maxLength={140} /></label>
         <label className="field">Price (USD)<input name="price" type="number" step="0.01" min="0.01" required /></label>
         <label className="field">
@@ -318,6 +326,28 @@ function NewOffer({ onCreated }: { onCreated: () => void }) {
         </label>
         {category !== 'accounts' && <label className="field">Stock (manual delivery)<input name="stock" type="number" min="1" defaultValue="1" /></label>}
       </div>
+      {fields.length > 0 && (
+        <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0, gap: 8 }}>
+          <legend className="small muted" style={{ marginBottom: 8 }}>
+            {game.trim() ? `${game.trim()} details` : 'Listing details'} · buyers filter by these on the game page
+          </legend>
+          <div className="grid three">
+            {fields.map((d) => (
+              <label key={`${category}-${game.trim().toLowerCase()}-${d.key}`} className="field">
+                {d.label}{d.required ? '' : ' (optional)'}
+                {d.type === 'select' ? (
+                  <select name={`attr.${d.key}`} required={d.required} defaultValue="">
+                    <option value="">{d.required ? 'Choose…' : '—'}</option>
+                    {d.options!.map((o) => <option key={o}>{o}</option>)}
+                  </select>
+                ) : (
+                  <input name={`attr.${d.key}`} required={d.required} maxLength={60} />
+                )}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      )}
       <label className="field">Description<textarea name="description" maxLength={5000} /></label>
       {category === 'accounts' && (
         <p className="small muted">After creating an account listing, submit Original Owner Proof so buyers see it as verified instead of high risk.</p>

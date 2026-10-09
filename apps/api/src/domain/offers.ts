@@ -4,6 +4,7 @@ import { many, maybeOne, one, withTx } from '../db.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { addInventory, parseBulkUpload } from './inventory.js';
 import { getRate } from './fx.js';
+import { cleanAttributes } from './attributeSets.js';
 
 export interface OfferInput {
   categorySlug: string;
@@ -16,11 +17,13 @@ export interface OfferInput {
   stock?: number;
   lowStockThreshold?: number;
   deliveryHours?: number;
+  /** Game-specific fields (server, region, rank…); see attributeSets.ts. */
+  attributes?: Record<string, string>;
 }
 
 export const OFFER_LIST_SQL = `
   SELECT f.id, f.seller_id, f.category_slug, f.game, f.title, f.description, f.price_cents, f.currency, f.price_settlement_cents, f.delivery_mode,
-         f.status, f.owner_proof_status, f.version, f.created_at, f.updated_at, f.low_stock_threshold,
+         f.status, f.owner_proof_status, f.version, f.attributes, f.created_at, f.updated_at, f.low_stock_threshold,
          c.kind AS category_kind, c.risk_class, u.display_name AS seller_name, f.delivery_hours,
          (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now())) AS shop_paused,
          u.shop_paused_until, u.shop_pause_message,
@@ -47,13 +50,15 @@ export async function createOffer(ctx: Ctx, seller: { id: string; kyc_tier: numb
   if (cat.kind === 'account' && input.deliveryMode === 'auto' && (input.stock ?? 0) > 0) {
     throw badRequest('invalid_stock', 'Account listings with auto-delivery take stock from uploaded inventory');
   }
+  const attrs = cleanAttributes(input.game, input.categorySlug, input.attributes);
+  if (!attrs.ok) throw badRequest('invalid_attributes', attrs.error);
   const stock = input.deliveryMode === 'manual' ? (cat.kind === 'account' ? 1 : input.stock ?? 1) : 0;
   const offer = await one(
     ctx.db,
-    `INSERT INTO offers (seller_id, category_slug, game, title, description, price_cents, currency, delivery_mode, stock, low_stock_threshold, delivery_hours)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+    `INSERT INTO offers (seller_id, category_slug, game, title, description, price_cents, currency, delivery_mode, stock, low_stock_threshold, delivery_hours, attributes)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
     [seller.id, input.categorySlug, input.game, input.title, input.description ?? '', input.priceCents, (input.currency ?? ctx.cfg.SETTLEMENT_CURRENCY).toUpperCase(),
-     input.deliveryMode, stock, input.lowStockThreshold ?? 5, input.deliveryHours ?? 24],
+     input.deliveryMode, stock, input.lowStockThreshold ?? 5, input.deliveryHours ?? 24, JSON.stringify(attrs.value)],
   );
   return getOffer(ctx.db, offer.id);
 }
@@ -74,17 +79,25 @@ export async function updateOffer(
   sellerId: string,
   offerId: string,
   version: number,
-  patch: Partial<Pick<OfferInput, 'title' | 'description' | 'priceCents' | 'stock' | 'lowStockThreshold' | 'deliveryHours'>> & { status?: 'active' | 'paused' | 'removed' },
+  patch: Partial<Pick<OfferInput, 'title' | 'description' | 'priceCents' | 'stock' | 'lowStockThreshold' | 'deliveryHours' | 'attributes'>> & { status?: 'active' | 'paused' | 'removed' },
 ) {
+  let attributes: string | null = null;
+  if (patch.attributes) {
+    const cur = await maybeOne(ctx.db, 'SELECT seller_id, game, category_slug FROM offers WHERE id = $1', [offerId]);
+    if (!cur || cur.seller_id !== sellerId) throw notFound('Offer');
+    const attrs = cleanAttributes(cur.game, cur.category_slug, patch.attributes);
+    if (!attrs.ok) throw badRequest('invalid_attributes', attrs.error);
+    attributes = JSON.stringify(attrs.value);
+  }
   const res = await ctx.db.query(
     `UPDATE offers SET
         title = COALESCE($4, title), description = COALESCE($5, description), price_cents = COALESCE($6, price_cents),
         stock = CASE WHEN delivery_mode = 'manual' THEN COALESCE($7, stock) ELSE stock END,
         low_stock_threshold = COALESCE($8, low_stock_threshold), status = COALESCE($9, status),
-        delivery_hours = COALESCE($10, delivery_hours),
+        delivery_hours = COALESCE($10, delivery_hours), attributes = COALESCE($11::jsonb, attributes),
         version = version + 1, updated_at = now()
       WHERE id = $1 AND seller_id = $2 AND version = $3 RETURNING id`,
-    [offerId, sellerId, version, patch.title, patch.description, patch.priceCents, patch.stock, patch.lowStockThreshold, patch.status, patch.deliveryHours],
+    [offerId, sellerId, version, patch.title, patch.description, patch.priceCents, patch.stock, patch.lowStockThreshold, patch.status, patch.deliveryHours, attributes],
   );
   if (res.rowCount === 0) {
     const cur = await maybeOne(ctx.db, 'SELECT seller_id, version FROM offers WHERE id = $1', [offerId]);

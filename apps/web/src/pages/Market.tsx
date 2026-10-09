@@ -35,6 +35,8 @@ export interface Offer {
   seller_rating: number | null;
   seller_review_count: number;
   version: number;
+  /** Game-specific fields such as server, region or rank. */
+  attributes?: Record<string, string>;
 }
 
 export function OfferBadges({ offer }: { offer: Offer }) {

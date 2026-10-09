@@ -12,7 +12,8 @@ import { beginSetup, disable, enable, remainingRecoveryCodes } from '../domain/m
 import { changePassword, requestPasswordReset, resetPassword, completeMfaLogin, confirmVerificationCode, login, register, sendVerificationCode, startKyc } from '../domain/users.js';
 import { REFRESH_TTL_DAYS, issueAccessToken, listSessions, refreshSession, revokeByRefreshToken, revokeFamily, revokeOtherSessions, revokeSessionById } from '../domain/sessions.js';
 import { enqueueEmail, getPreferences, setPreferences } from '../domain/notifications.js';
-import { AppError, unauthorized } from '../lib/errors.js';
+import { AppError, badRequest, unauthorized } from '../lib/errors.js';
+import { ATTR_KEY, ATTR_VALUE_MAX, CATEGORY_DEFAULTS, GAME_SETS, attributesFor } from '../domain/attributeSets.js';
 import { deleteAccount, exportData } from '../domain/privacy.js';
 import { isStaff as isStaffUser, permissionsOf } from '../domain/permissions.js';
 import {
@@ -271,6 +272,15 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
         pageSize: z.coerce.number().int().min(1).max(60).optional(),
       })
       .parse(req.query);
+    // Game-specific fields come as attr.<key>=<value>, e.g. attr.server=EUW&attr.rank=Gold.
+    const attributes: Record<string, string> = {};
+    for (const [k, v] of Object.entries(req.query as Record<string, unknown>)) {
+      if (!k.startsWith('attr.')) continue;
+      const key = k.slice(5);
+      if (!ATTR_KEY.test(key) || typeof v !== 'string' || !v.trim() || v.length > ATTR_VALUE_MAX) throw badRequest('invalid_attribute_filter', `Bad filter ${k}`);
+      attributes[key] = v.trim();
+    }
+    if (Object.keys(attributes).length > 6) throw badRequest('invalid_attribute_filter', 'At most 6 field filters');
     // Price filters are given in the display currency and compared in the settlement currency.
     const display = q.currency ?? ctx.cfg.SETTLEMENT_CURRENCY;
     const rate = await getRate(ctx, ctx.db, display);
@@ -280,6 +290,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
       minPriceCents: toSettlement(q.minPrice),
       maxPriceCents: toSettlement(q.maxPrice),
       sellerId: q.seller,
+      attributes,
     });
     return withDisplayPrices(ctx, res, display);
   });
@@ -302,7 +313,16 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.get('/me/referral', async (req) => referralSummary(ctx, me(req).id));
 
+
   app.get('/fx/rates', async () => currentRates(ctx));
+
+  // Game-specific listing fields: the sell form and game-page filters read these.
+  app.get('/catalog/attributes', async (req, reply) => {
+    const { game, category } = z.object({ game: z.string().trim().min(1).max(80).optional(), category: z.string().max(40).optional() }).parse(req.query);
+    reply.header('Cache-Control', 'public, max-age=300');
+    if (game && category) return { game, category, fields: attributesFor(game, category) };
+    return { defaults: CATEGORY_DEFAULTS, games: GAME_SETS };
+  });
 
   app.get('/catalog/games', async (_req, reply) => {
     reply.header('Cache-Control', 'public, max-age=60');

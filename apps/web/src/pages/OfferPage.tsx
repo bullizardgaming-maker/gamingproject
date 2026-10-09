@@ -7,6 +7,7 @@ import { Avatar, DeliveryTag, GameArt, OfferTable, Rating } from '../components/
 import { categoryLabel, slugify } from '@/lib/catalog';
 import { usePrice } from '@/lib/prefs';
 import { usePageMeta } from '@/lib/seo';
+import { attributePairs } from '@/lib/attributes';
 
 export function OfferPage() {
   const { id } = useParams();
@@ -78,6 +79,16 @@ export function OfferPage() {
           <OfferBadges offer={offer} />
           <DeliveryTag offer={offer} />
         </div>
+        {attributePairs(offer.game, offer.category_slug, offer.attributes).length > 0 && (
+          <dl className="m-0 grid grid-cols-2 gap-x-6 gap-y-2 rounded-xl border border-border bg-card p-4 sm:grid-cols-3">
+            {attributePairs(offer.game, offer.category_slug, offer.attributes).map(([label, v]) => (
+              <div key={label} className="min-w-0">
+                <dt className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">{label}</dt>
+                <dd className="m-0 truncate font-medium">{v}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
         <p style={{ whiteSpace: 'pre-wrap' }}>{offer.description || <span className="muted">The seller has not added a description.</span>}</p>
         <Link to={`/sellers/${offer.seller_id}`} className="card flex items-center gap-3 no-underline hover:border-foreground" style={{ padding: 14 }}>
           <Avatar name={offer.seller_name} className="size-11" />

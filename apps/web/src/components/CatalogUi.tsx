@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { BadgeCheck, Coins, Gamepad2, Gift, KeyRound, Rocket, ShieldCheck, Smartphone, Star, Swords, UserRound, Zap } from 'lucide-react';
 import { categoryLabel, deliveryLabel, hueOf, initials, slugify } from '@/lib/catalog';
 import { cn } from '@/lib/utils';
+import { attributePairs } from '@/lib/attributes';
 import { usePrice } from '@/lib/prefs';
 import type { Offer } from '../pages/Market';
 
@@ -98,6 +99,19 @@ export function ProtectionTag({ offer }: { offer: Offer }) {
  * The comparison table every game, search and seller page uses: one row per listing with the
  * seller, delivery speed, stock and price side by side. Collapses to cards on narrow screens.
  */
+/** A listing's game-specific fields as one quiet line: "EUW · Gold → Platinum". */
+export function AttributeLine({ offer, className }: { offer: Pick<Offer, 'game' | 'category_slug' | 'attributes'>; className?: string }) {
+  const pairs = attributePairs(offer.game, offer.category_slug, offer.attributes);
+  if (!pairs.length) return null;
+  return (
+    <div className={cn('mt-1 flex flex-wrap gap-1', className)}>
+      {pairs.map(([label, v]) => (
+        <span key={label} title={label} className="rounded border border-border bg-background px-1.5 py-px text-[11.5px] leading-5 text-muted-foreground">{v}</span>
+      ))}
+    </div>
+  );
+}
+
 export function OfferTable({ offers, showGame = false, showSeller = true, empty }: { offers: Offer[]; showGame?: boolean; showSeller?: boolean; empty?: React.ReactNode }) {
   const price = usePrice();
   if (offers.length === 0) return <div className="card text-center text-muted-foreground">{empty ?? 'No listings here yet.'}</div>;
@@ -133,6 +147,7 @@ export function OfferTable({ offers, showGame = false, showSeller = true, empty 
                 <Link to={`/offers/${o.id}`} className="block font-medium leading-snug no-underline after:absolute after:inset-0 group-hover:underline">
                   {o.title}
                 </Link>
+                <AttributeLine offer={o} />
                 <ProtectionTag offer={o} />
               </div>
               {showSeller && (
