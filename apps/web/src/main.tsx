@@ -52,12 +52,16 @@ function RouteAnnouncer() {
       first.current = false;
       return;
     }
+    // Where focus was when the navigation happened: if the user moves it before we act (opens a
+    // menu, starts typing), leave it alone.
+    const before = document.activeElement;
     // After the page has rendered and set its title.
     const timer = setTimeout(() => {
       setMessage(document.title);
       const main = document.getElementById('main');
       const active = document.activeElement;
-      if (main && (!active || active === document.body || !main.contains(active))) main.focus({ preventScroll: true });
+      const untouched = !active || active === document.body || !active.isConnected || active === before;
+      if (main && untouched && !main.contains(active)) main.focus({ preventScroll: true });
     }, 120);
     return () => clearTimeout(timer);
   }, [pathname]);

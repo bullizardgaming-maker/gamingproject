@@ -18,8 +18,10 @@ test.describe('bundles', () => {
     await page.locator('input[name=title]').fill('VP + skin code starter pack');
     await page.locator('input[name=price]').fill('70');
     await page.getByLabel('Make this a bundle of my instant listings').check();
-    await page.getByRole('checkbox', { name: /5,350 VP — NA region code/ }).check();
-    await page.getByRole('checkbox', { name: /Galaxy Scout skin code/ }).check();
+    // Scoped to the new-listing form: the shop-page editor lists the same titles for pinning.
+    const form = page.locator('form', { has: page.locator('input[name=title]') });
+    await form.getByRole('checkbox', { name: /5,350 VP — NA region code/ }).check();
+    await form.getByRole('checkbox', { name: /Galaxy Scout skin code/ }).check();
     await page.getByRole('button', { name: 'Create listing' }).click();
     await expect(page.getByRole('row', { name: /VP \+ skin code starter pack/ }).getByText('Bundle')).toBeVisible();
   });

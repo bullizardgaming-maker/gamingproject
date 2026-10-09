@@ -78,11 +78,11 @@ theme tokens mapped to the Bullizard palette in `src/tailwind.css`), so registry
 ## Tests
 
 ```bash
-npm test -w apps/api          # 219 tests, needs Postgres (TEST_DATABASE_URL, default market_test) and Redis for the multi-node and view-count tests
-npm test -w contracts         # 10 Hardhat tests
+npm test -w apps/api          # 223 tests, needs Postgres (TEST_DATABASE_URL, default market_test) and Redis for the multi-node and view-count tests
+npm test -w contracts         # 14 Hardhat tests
 cd services/fraud-gnn && pip install -r requirements.txt && pytest -q   # 9 tests
 npm run build -w apps/web     # includes the payment-page script inventory check
-VITE_DEMO=true npm run build -w apps/web && npm run e2e -w apps/web   # 88 Playwright browser tests (desktop + phone) against the demo build, including axe accessibility scans
+VITE_DEMO=true npm run build -w apps/web && npm run e2e -w apps/web   # 91 Playwright browser tests (desktop + phone) against the demo build, including axe accessibility scans
 npm run loadtest -w apps/api && npm run loadtest:search -w apps/api   # load checks against a running API (CI runs both)
 ```
 
@@ -107,6 +107,8 @@ Highlights of what the tests prove: exactly one of 25 simultaneous buyers gets a
 - Disputes: `POST /v1/orders/:id/dispute/statements`; staff `GET /v1/admin/disputes/:id/case`
 - Saved searches: `GET|POST /v1/me/saved-searches`, `PATCH|DELETE /v1/me/saved-searches/:id`
 - Price history: `GET /v1/offers/:id/price-history?days=`, `GET /v1/catalog/price-history?game=&category=&days=`; recommendations: `GET /v1/offers/:id/also-bought`
+- Storefront: `GET|PUT /v1/seller/storefront`, `POST|DELETE /v1/seller/storefront/banner` (raw image body), `GET /v1/sellers/:id/banner`; staff `POST /v1/admin/sellers/:id/storefront/clear`
+- Bulk listings: `GET /v1/seller/listings/export.csv`, `POST /v1/seller/listings/import` (`dryRun` preview first)
 - Account warranty: `warrantyDays` on account listings; `POST /v1/orders/:id/warranty-claims`, `POST /v1/warranty-claims/:id/{seller,buyer}`; staff `GET /v1/admin/warranty-claims`, `POST /v1/admin/warranty-claims/:id/decide`
 - Moderation (staff, `moderation.manage`): `GET /v1/admin/moderation/{summary,listings,chats,terms}`, `POST /v1/admin/moderation/listings/:id`, `POST /v1/admin/moderation/chats/:id`, `POST|DELETE /v1/admin/moderation/terms`
 - Presence: `seller_online` / `seller_response_minutes` on listings, `online` / `response_minutes` on seller profiles; `PUT /v1/seller/presence`

@@ -62,7 +62,7 @@ export function BulkListings({ onApplied }: { onApplied: () => void }) {
           <input
             type="file"
             accept=".csv,text/csv"
-            className="sr-only"
+            className="file-input"
             disabled={busy}
             onChange={async (e) => {
               const f = e.target.files?.[0];

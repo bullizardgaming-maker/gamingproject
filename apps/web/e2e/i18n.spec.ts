@@ -21,7 +21,7 @@ test.describe('languages', () => {
     await signIn(page, 'Seller');
     await page.getByLabel('Language').first().selectOption('ar');
     await page.goto('/sell');
-    await expect(page.getByRole('heading', { name: 'متجرك' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'متجرك', exact: true })).toBeVisible();
     await expectNoHorizontalScroll(page);
     await page.goto('/help');
     await expect(page.getByText('النزاعات والحماية').first()).toBeVisible();

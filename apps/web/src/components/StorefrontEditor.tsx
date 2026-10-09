@@ -67,7 +67,7 @@ export function StorefrontEditor({ sellerId }: { sellerId: string }) {
             <input
               type="file"
               accept="image/png,image/jpeg,image/webp"
-              className="sr-only"
+              className="file-input"
               disabled={busy}
               onChange={(e) => {
                 const f = e.target.files?.[0];
