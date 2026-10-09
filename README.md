@@ -78,15 +78,15 @@ theme tokens mapped to the Bullizard palette in `src/tailwind.css`), so registry
 ## Tests
 
 ```bash
-npm test -w apps/api          # 213 tests, needs Postgres (TEST_DATABASE_URL, default market_test) and Redis for the multi-node and view-count tests
+npm test -w apps/api          # 219 tests, needs Postgres (TEST_DATABASE_URL, default market_test) and Redis for the multi-node and view-count tests
 npm test -w contracts         # 10 Hardhat tests
 cd services/fraud-gnn && pip install -r requirements.txt && pytest -q   # 9 tests
 npm run build -w apps/web     # includes the payment-page script inventory check
-VITE_DEMO=true npm run build -w apps/web && npm run e2e -w apps/web   # 78 Playwright browser tests (desktop + phone) against the demo build, including axe accessibility scans
+VITE_DEMO=true npm run build -w apps/web && npm run e2e -w apps/web   # 88 Playwright browser tests (desktop + phone) against the demo build, including axe accessibility scans
 npm run loadtest -w apps/api && npm run loadtest:search -w apps/api   # load checks against a running API (CI runs both)
 ```
 
-The browser tests cover browsing and filters, buying and chatting, price alerts, support requests, buyer requests, quantity prices, the cart, sales and shop codes, bundles, trust badges, saved searches, dispute case files, listing moderation, staff tools, accessibility (axe), languages (including Arabic right-to-left), the installable app and phone layouts. CI runs them on every push and uploads the report when one fails.
+The browser tests cover browsing and filters, buying and chatting, price alerts, support requests, buyer requests, quantity prices, the cart, sales and shop codes, bundles, trust badges, saved searches, dispute case files, listing moderation, staff tools, accessibility (axe), keyboard use, price history, account warranty claims, languages (including Arabic right-to-left), the installable app and phone layouts. CI runs them on every push and uploads the report when one fails.
 
 Highlights of what the tests prove: exactly one of 25 simultaneous buyers gets a single-stock item; chat sequence numbers stay gapless under 30 concurrent writers; a message sent to one API node reaches a socket on another node through Redis; webhook signatures verify with the merchant's secret and retries keep the same idempotency key; a buyer cluster sharing one device freezes a new seller's escrows and withdrawals; chargebacks produce reason-code-specific PDF packets and move money through the ledger correctly; the escrow contract rejects buyer-tampered terms and executes a commit-reveal validator verdict.
 
@@ -106,6 +106,8 @@ Highlights of what the tests prove: exactly one of 25 simultaneous buyers gets a
 - Trust levels: `seller_trust_level` on listings, `sort=trust`; `GET /v1/seller/trust` (progress to the next level)
 - Disputes: `POST /v1/orders/:id/dispute/statements`; staff `GET /v1/admin/disputes/:id/case`
 - Saved searches: `GET|POST /v1/me/saved-searches`, `PATCH|DELETE /v1/me/saved-searches/:id`
+- Price history: `GET /v1/offers/:id/price-history?days=`, `GET /v1/catalog/price-history?game=&category=&days=`; recommendations: `GET /v1/offers/:id/also-bought`
+- Account warranty: `warrantyDays` on account listings; `POST /v1/orders/:id/warranty-claims`, `POST /v1/warranty-claims/:id/{seller,buyer}`; staff `GET /v1/admin/warranty-claims`, `POST /v1/admin/warranty-claims/:id/decide`
 - Moderation (staff, `moderation.manage`): `GET /v1/admin/moderation/{summary,listings,chats,terms}`, `POST /v1/admin/moderation/listings/:id`, `POST /v1/admin/moderation/chats/:id`, `POST|DELETE /v1/admin/moderation/terms`
 - Presence: `seller_online` / `seller_response_minutes` on listings, `online` / `response_minutes` on seller profiles; `PUT /v1/seller/presence`
 - Language: `PUT /v1/me/locale` (emails and notifications follow it)
