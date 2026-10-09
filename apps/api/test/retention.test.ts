@@ -1,6 +1,5 @@
-import sharp from 'sharp';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { runRetention } from '../src/domain/retention.js';
+import { retentionMetrics } from '../src/domain/cohorts.js';
 import { buyAndPay, makeOffer, makeUser, setup, type Harness } from './helpers.js';
 
 let h: Harness;
@@ -9,78 +8,50 @@ beforeAll(async () => {
 });
 afterAll(async () => h.close());
 
-const png = () => sharp({ create: { width: 8, height: 8, channels: 3, background: '#cc3333' } }).png().toBuffer();
+// Orders are back-dated into 2030 so other tests' orders (paid now) fall outside the window.
+const at = (iso: string) => new Date(`${iso}T12:00:00Z`);
 
-/** Pretend `sql`'s rows happened `days` ago (test-only: bypasses the append-only triggers). */
-async function age(table: string, where: string, params: unknown[], column: string, days: number) {
-  await h.ctx.db.query(`ALTER TABLE ${table} DISABLE TRIGGER USER`);
-  await h.ctx.db.query(`UPDATE ${table} SET ${column} = ${column} - make_interval(days => ${days}) WHERE ${where}`, params);
-  await h.ctx.db.query(`ALTER TABLE ${table} ENABLE TRIGGER USER`);
-}
+describe('retention dashboard', () => {
+  it('builds buyer and seller cohorts, returning buyers, seller churn and the 90-day repeat rate', async () => {
+    const s1 = await makeUser(h, { tier: 2 });
+    const s2 = await makeUser(h, { tier: 2 });
+    const [a, b, c] = [await makeUser(h, { tier: 1 }), await makeUser(h, { tier: 1 }), await makeUser(h, { tier: 1 })];
+    const o1 = await makeOffer(s1, { deliveryMode: 'manual', stock: 20, categorySlug: 'currency', title: 'Gold one' });
+    const o2 = await makeOffer(s2, { deliveryMode: 'manual', stock: 20, categorySlug: 'currency', title: 'Gold two' });
+    const buy = async (who: any, offer: any, day: string) => {
+      const o = await buyAndPay(h, who, offer.id);
+      await h.ctx.db.query('UPDATE orders SET paid_at = $2, created_at = $2 WHERE id = $1', [o.id, at(day)]);
+    };
+    // January: A and B buy from seller 1; seller 2 sells to C.
+    await buy(a, o1, '2030-01-05');
+    await buy(b, o1, '2030-01-20');
+    await buy(c, o2, '2030-01-25');
+    // February: A comes back (within 90 days); only seller 1 sells, so seller 2 has churned.
+    await buy(a, o1, '2030-02-10');
+    // March: B comes back, 40 days after their first order.
+    await buy(b, o1, '2030-03-01');
 
-describe('data retention', () => {
-  it('deletes old closed-order chats with their images, erases old delivered codes, and keeps the books', async () => {
-    const seller = await makeUser(h, { tier: 2 });
-    const buyer = await makeUser(h, { tier: 1 });
-    const offer = await makeOffer(seller);
-    await seller.api.post(`/v1/offers/${offer.id}/inventory`, { format: 'txt', content: 'OLD-CODE-1\nNEW-CODE-2' });
-    const old = await buyAndPay(h, buyer, offer.id);
-    const fresh = await buyAndPay(h, buyer, offer.id);
-    for (const o of [old, fresh]) await buyer.api.post(`/v1/orders/${o.id}/confirm`);
+    const r = await retentionMetrics(h.ctx.db, 6, at('2030-06-15'));
+    expect(r.buyerCohorts[0]).toEqual({ cohort: '2030-01', size: 3, retained: [3, 1, 1, 0, 0, 0] });
+    expect(r.buyerCohorts[1]).toMatchObject({ cohort: '2030-02', size: 0 });
+    expect(r.sellerCohorts[0]).toEqual({ cohort: '2030-01', size: 2, retained: [2, 1, 1, 0, 0, 0] });
 
-    const oldRoom = (await buyer.api.get(`/v1/orders/${old.id}`)).body.room_id as string;
-    const up = await buyer.api.post(`/v1/chat/rooms/${oldRoom}/attachments`, await png(), { 'content-type': 'image/png', 'x-filename': 'proof.png' });
-    expect(up.status).toBe(201);
-    const { rows: [att] } = await h.ctx.db.query('SELECT storage_key FROM chat_attachments WHERE id = $1', [up.body.id]);
-    const headBefore = (await buyer.api.get(`/v1/chat/rooms/${oldRoom}/verify`)).body.headHash;
+    const feb = r.series.find((m) => m.month === '2030-02')!;
+    expect(feb).toMatchObject({ active_buyers: 1, returning_buyers: 1, returning_pct: 100, active_sellers: 1, sellers_last_month: 2, churned_sellers: 1, seller_churn_pct: 50 });
+    const jan = r.series.find((m) => m.month === '2030-01')!;
+    expect(jan).toMatchObject({ active_buyers: 3, returning_buyers: 0, new_sellers: 2 });
 
-    // The old order closed three years ago; its code was delivered then too.
-    await age('orders', 'id = $1', [old.id], 'completed_at', 1100);
-    await age('inventory_items', 'order_id = $1', [old.id], 'delivered_at', 1100);
-    const ledgerBefore = (await h.ctx.db.query('SELECT count(*)::int AS n FROM ledger_entries')).rows[0].n;
-
-    const run = await runRetention(h.ctx);
-    expect(run.counts).toMatchObject({ chatRooms: 1, chatFiles: 1, deliveredItems: 1 });
-    expect(run.counts.chatMessages).toBeGreaterThan(2);
-
-    // Chat: messages gone, final hash kept, image deleted from storage.
-    expect((await h.ctx.db.query('SELECT count(*)::int AS n FROM chat_messages WHERE room_id = $1', [oldRoom])).rows[0].n).toBe(0);
-    const verify = (await buyer.api.get(`/v1/chat/rooms/${oldRoom}/verify`)).body;
-    expect(verify).toMatchObject({ valid: true, headHash: headBefore });
-    expect(verify.purgedAt).toBeTruthy();
-    await expect(h.ctx.storage.get(att.storage_key)).rejects.toThrow();
-
-    // Codes: the old one is erased, the recent one still readable.
-    expect((await buyer.api.get(`/v1/orders/${old.id}/items`)).body[0]).toMatchObject({ content: null });
-    expect((await buyer.api.get(`/v1/orders/${fresh.id}/items`)).body[0].content).toBe('NEW-CODE-2');
-    expect((await h.ctx.db.query('SELECT count(*)::int AS n FROM chat_messages m JOIN chat_rooms r ON r.id = m.room_id WHERE r.order_id = $1', [fresh.id])).rows[0].n).toBeGreaterThan(0);
-
-    // Money records are never purged.
-    expect((await h.ctx.db.query('SELECT count(*)::int AS n FROM ledger_entries')).rows[0].n).toBe(ledgerBefore);
-    // Outside the retention job the chat log is still append-only.
-    await expect(h.ctx.db.query('DELETE FROM chat_messages WHERE room_id IN (SELECT id FROM chat_rooms WHERE order_id = $1)', [fresh.id])).rejects.toThrow(/append-only/);
+    // A and B ordered again within 90 days of their first order; C didn't.
+    expect(r.repeat[0]).toMatchObject({ cohort: '2030-01', buyers: 3, repeat_90d: 2, repeat_pct: 66.7, complete: true });
+    expect(r.repeat90dPct).toBe(66.7);
   });
 
-  it('keeps chats that are still contested and purges short-lived security data', async () => {
-    const seller = await makeUser(h, { tier: 2 });
-    const buyer = await makeUser(h, { tier: 1 });
-    const offer = await makeOffer(seller, { categorySlug: 'boosting', deliveryMode: 'manual', stock: 2 });
-    const order = await buyAndPay(h, buyer, offer.id);
-    await seller.api.post(`/v1/orders/${order.id}/deliver`, { payload: 'done' });
-    await buyer.api.post(`/v1/orders/${order.id}/dispute`, { reason: 'The boost was not completed as agreed' });
-    await h.ctx.db.query(`UPDATE orders SET status = 'refunded' WHERE id = $1`, [order.id]); // closed, but the dispute row is still open
-    await age('orders', 'id = $1', [order.id], 'updated_at', 1100);
-
-    await h.ctx.db.query(`INSERT INTO login_failures (ip, created_at) VALUES ('203.0.113.9', now() - interval '2 days')`);
-    await h.ctx.db.query(`INSERT INTO csp_reports (payload, created_at) VALUES ('{}', now() - interval '200 days')`);
-    const run = await runRetention(h.ctx);
-    expect(run.counts.chatRooms).toBe(0);
-    expect(run.counts.loginFailures).toBeGreaterThanOrEqual(1);
-    expect(run.counts.cspReports).toBe(1);
-
-    const admin = await makeUser(h, { role: 'admin' });
-    const view = (await admin.api.get('/v1/admin/retention')).body;
-    expect(view.policy.chatAfterOrderClosedDays).toBe(730);
-    expect(view.runs[0].status).toBe('ok');
+  it('is staff-only', async () => {
+    const user = await makeUser(h, { tier: 1 });
+    expect((await user.api.get('/v1/admin/analytics/retention')).status).toBe(403);
+    const admin = await makeUser(h, { tier: 2, role: 'admin' });
+    const res = await admin.api.get('/v1/admin/analytics/retention?months=6');
+    expect(res.status).toBe(200);
+    expect(res.body.buyerCohorts).toHaveLength(6);
   });
 });

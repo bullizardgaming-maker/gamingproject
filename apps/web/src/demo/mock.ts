@@ -2090,6 +2090,57 @@ route('GET', '/seller/analytics', ({ me, query }) => {
   };
 });
 
+// Retention: synthetic but consistent cohorts (each cohort's later months are what the series sums).
+route('GET', '/admin/analytics/retention', ({ me, query }) => {
+  needPerm(me, 'analytics.view');
+  const months = Number(query.get('months') ?? 12);
+  if (![6, 12, 24].includes(months)) fail(400, 'validation_error', 'months must be 6, 12 or 24');
+  const today = new Date();
+  // Cohorts start 24 months back so 6- and 12-month views show the same recent months.
+  const all = Array.from({ length: 25 }, (_, i) => new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 24 + i, 1)).toISOString().slice(0, 7));
+  const list = all.slice(-months);
+  const build = (key: string, base: number, first: number, decay: number) => {
+    const r = rng(`retention:${key}`);
+    return all.map((c, i) => {
+      const size = Math.round((base + i * base * 0.03) * (0.85 + r() * 0.3) * (all.length - 1 === i ? today.getUTCDate() / 30 : 1));
+      // The current month is still running: later-month activity is partial too.
+      const part = (k: number) => (i + k === all.length - 1 ? today.getUTCDate() / 30 : 1);
+      const retained = all.slice(i).map((_, k) => (k === 0 ? size : Math.round(size * first * decay ** (k - 1) * (0.85 + r() * 0.3) * part(k))));
+      return { cohort: c, size, retained };
+    });
+  };
+  const buyersAll = build('buyers', 420, 0.31, 0.88);
+  const sellersAll = build('sellers', 38, 0.62, 0.93);
+  const activeIn = (cs: typeof buyersAll, m: number) => cs.slice(0, m + 1).reduce((t, c, i) => t + (c.retained[m - i] ?? 0), 0);
+  const series = all.map((month, m) => {
+    const activeBuyers = activeIn(buyersAll, m);
+    const activeSellers = activeIn(sellersAll, m);
+    const last = m > 0 ? activeIn(sellersAll, m - 1) : 0;
+    const churned = m > 0 ? Math.max(0, Math.round(last - (activeSellers - sellersAll[m]!.size))) : 0;
+    const pct = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : null);
+    return {
+      month, active_buyers: activeBuyers, returning_buyers: activeBuyers - buyersAll[m]!.size, returning_pct: pct(activeBuyers - buyersAll[m]!.size, activeBuyers),
+      active_sellers: activeSellers, new_sellers: sellersAll[m]!.size, sellers_last_month: last,
+      partial: m === all.length - 1, churned_sellers: m === all.length - 1 ? null : churned, seller_churn_pct: m === all.length - 1 ? null : pct(churned, last),
+    };
+  });
+  const r = rng('retention:repeat');
+  const repeat = all.map((c, i) => {
+    const buyers = buyersAll[i]!.size;
+    const complete = Date.parse(`${c}-01T00:00:00Z`) + 120 * 86_400_000 < Date.now();
+    const share = complete ? 0.27 + r() * 0.08 : 0.12 + r() * 0.08;
+    const n = Math.round(buyers * share);
+    return { cohort: c, buyers, repeat_90d: n, repeat_pct: buyers ? Math.round((n / buyers) * 1000) / 10 : null, complete };
+  });
+  const keep = (x: { cohort: string }) => list.includes(x.cohort);
+  const done = repeat.filter((x) => keep(x) && x.complete);
+  const sum = (k: 'buyers' | 'repeat_90d') => done.reduce((t, x) => t + x[k], 0);
+  const trim = (cs: typeof buyersAll) => cs.filter(keep).map((c) => ({ ...c, retained: c.retained.slice(0, list.length - list.indexOf(c.cohort)) }));
+  return {
+    months, buyerCohorts: trim(buyersAll), sellerCohorts: trim(sellersAll), series: series.filter((x) => list.includes(x.month)),
+    repeat: repeat.filter(keep), repeat90dPct: sum('buyers') ? Math.round((sum('repeat_90d') / sum('buyers')) * 1000) / 10 : null,
+  };
+});
 route('GET', '/admin/analytics', ({ me, query }) => {
   needPerm(me, 'analytics.view');
   const days = Number(query.get('days') ?? 30);

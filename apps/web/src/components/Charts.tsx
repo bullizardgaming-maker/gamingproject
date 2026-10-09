@@ -79,7 +79,15 @@ export function BarChart({ data, series, format = String, label, className }: { 
 }
 
 /** Lines on a shared scale (e.g. percentages). Null values break the line. */
-export function LineChart({ data, series, format = String, label, className }: { data: Point[]; series: Series[]; format?: (v: number) => string; label: string; className?: string }) {
+export function LineChart({ data, series, format = String, label, className, xLabel = short }: {
+  data: Point[];
+  series: Series[];
+  format?: (v: number) => string;
+  label: string;
+  className?: string;
+  /** How a point's date reads on the axis and in tooltips (default "Mar 4"). */
+  xLabel?: (iso: string) => string;
+}) {
   const vals = data.flatMap((d) => series.map((s) => d[s.key])).filter((v): v is number => typeof v === 'number');
   const max = Math.max(1e-9, ...vals) * 1.1;
   const iw = W - PAD.left - PAD.right;
@@ -112,12 +120,12 @@ export function LineChart({ data, series, format = String, label, className }: {
         })}
         {data.map((d, i) => (
           <g key={d.date}>
-            <title>{`${short(d.date)}: ${series.map((s) => `${s.label} ${typeof d[s.key] === 'number' ? format(d[s.key] as number) : '—'}`).join(', ')}`}</title>
+            <title>{`${xLabel(d.date)}: ${series.map((s) => `${s.label} ${typeof d[s.key] === 'number' ? format(d[s.key] as number) : '—'}`).join(', ')}`}</title>
             <rect x={x(i) - iw / Math.max(2, data.length) / 2} y={PAD.top} width={iw / Math.max(2, data.length)} height={ih} fill="transparent" />
           </g>
         ))}
         {ticks(data).map((i) => (
-          <text key={i} x={x(i)} y={H - 6} textAnchor={i === 0 ? 'start' : i === data.length - 1 ? 'end' : 'middle'} fontSize="11" fill="var(--muted-foreground)">{short(data[i]!.date)}</text>
+          <text key={i} x={x(i)} y={H - 6} textAnchor={i === 0 ? 'start' : i === data.length - 1 ? 'end' : 'middle'} fontSize="11" fill="var(--muted-foreground)">{xLabel(data[i]!.date)}</text>
         ))}
       </svg>
       <figcaption className="sr-only">{label}</figcaption>

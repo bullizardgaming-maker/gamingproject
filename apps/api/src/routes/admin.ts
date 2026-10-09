@@ -1,3 +1,4 @@
+import { retentionMetrics } from '../domain/cohorts.js';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Ctx } from '../context.js';
@@ -477,6 +478,11 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     requirePermission(req, 'analytics.view');
     const { days } = z.object({ days: z.coerce.number().pipe(z.union([z.literal(7), z.literal(30), z.literal(90), z.literal(365)])).default(30) }).parse(req.query);
     return businessMetrics(ctx.dbRead, days);
+  });
+  app.get('/admin/analytics/retention', async (req) => {
+    requirePermission(req, 'analytics.view');
+    const { months } = z.object({ months: z.coerce.number().pipe(z.union([z.literal(6), z.literal(12), z.literal(24)])).default(12) }).parse(req.query);
+    return retentionMetrics(ctx.dbRead, months);
   });
 
   app.get('/admin/fx/topups', async (req) => {

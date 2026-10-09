@@ -14,6 +14,19 @@ test.describe('staff operations', () => {
     await expect(page.getByText('GMV and take per day')).toBeVisible();
   });
 
+  test('retention dashboard: cohorts, repeat rate and seller churn', async ({ page }) => {
+    await page.getByRole('tab', { name: 'Retention' }).click();
+    await expect(page.getByText('Repeat within 90 days')).toBeVisible();
+    const cohorts = page.getByRole('table', { name: /Buyer cohorts/ });
+    await expect(cohorts.getByRole('row')).toHaveCount(13); // header + 12 months
+    await expect(cohorts.getByRole('row').nth(1).getByRole('cell').nth(1)).toHaveText('100%'); // M0
+    await page.getByRole('button', { name: 'Sellers', exact: true }).click();
+    await expect(page.getByRole('table', { name: /Seller cohorts/ })).toBeVisible();
+    await page.getByRole('button', { name: '6 months' }).click();
+    await expect(page.getByRole('table', { name: /Seller cohorts/ }).getByRole('row')).toHaveCount(7);
+    await expect(page.getByText('Sellers per month')).toBeVisible();
+  });
+
   test('posts an incident that shows on the public status page', async ({ page }) => {
     await page.getByRole('tab', { name: 'Status page' }).click();
     await page.getByLabel('Title').fill('Payouts delayed for some sellers');
