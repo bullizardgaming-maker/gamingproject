@@ -18,6 +18,8 @@ envVarGroups:
         value: console
       - key: MALWARE_SCANNER
         value: clamd
+      - key: PLATFORM_ACCOUNTS
+        value: mock # Steam/Riot linking completes without leaving the site
       - key: CLAMD_PORT
         value: "3310"
       - key: TRUST_PROXY

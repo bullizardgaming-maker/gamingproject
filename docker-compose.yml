@@ -35,6 +35,7 @@ services:
       TRUST_PROXY: uniquelocal # the web container's nginx, on the private compose network
       MALWARE_SCANNER: clamd
       CLAMD_HOST: clamav
+      PLATFORM_ACCOUNTS: live # Steam sign-in needs no key; Riot only with RIOT_CLIENT_ID/SECRET in .env
       STORAGE_DIR: /data/uploads
     volumes: [uploads:/data/uploads]
     depends_on:
@@ -49,6 +50,10 @@ services:
     environment:
       DATABASE_URL: postgres://market:market@postgres:5432/market
       REDIS_URL: redis://redis:6379
+      # Same production checks as the API container.
+      MALWARE_SCANNER: clamd
+      CLAMD_HOST: clamav
+      PLATFORM_ACCOUNTS: live
     depends_on:
       api: { condition: service_started }
 

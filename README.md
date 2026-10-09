@@ -109,6 +109,10 @@ Highlights of what the tests prove: exactly one of 25 simultaneous buyers gets a
 - Price history: `GET /v1/offers/:id/price-history?days=`, `GET /v1/catalog/price-history?game=&category=&days=`; recommendations: `GET /v1/offers/:id/also-bought`
 - Storefront: `GET|PUT /v1/seller/storefront`, `POST|DELETE /v1/seller/storefront/banner` (raw image body), `GET /v1/sellers/:id/banner`; staff `POST /v1/admin/sellers/:id/storefront/clear`
 - Bulk listings: `GET /v1/seller/listings/export.csv`, `POST /v1/seller/listings/import` (`dryRun` preview first)
+- Linked game accounts: `GET /v1/seller/linked-accounts`, `POST /v1/seller/linked-accounts/{steam,riot}/start` (returns the sign-in URL), `DELETE /v1/seller/linked-accounts/:id`; `linkedAccountId` on account listings; listings carry `linked_platform` and `linked_account_created_at`
+- Boosting progress: `POST /v1/orders/:id/progress` (`percent`, `note`, optional `attachmentId` from the order chat); `progress` on the order
+- Buyer reputation: `POST /v1/orders/:id/buyer-rating` (seller, after completion), `GET /v1/me/buyer-reputation`; `buyer_reputation` on orders for the seller
+- Retention (staff, `analytics.view`): `GET /v1/admin/analytics/retention?months=6|12|24`
 - Account warranty: `warrantyDays` on account listings; `POST /v1/orders/:id/warranty-claims`, `POST /v1/warranty-claims/:id/{seller,buyer}`; staff `GET /v1/admin/warranty-claims`, `POST /v1/admin/warranty-claims/:id/decide`
 - Moderation (staff, `moderation.manage`): `GET /v1/admin/moderation/{summary,listings,chats,terms}`, `POST /v1/admin/moderation/listings/:id`, `POST /v1/admin/moderation/chats/:id`, `POST|DELETE /v1/admin/moderation/terms`
 - Presence: `seller_online` / `seller_response_minutes` on listings, `online` / `response_minutes` on seller profiles; `PUT /v1/seller/presence`
