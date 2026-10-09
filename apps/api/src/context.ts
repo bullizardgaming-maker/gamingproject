@@ -35,6 +35,7 @@ export interface Logger {
 }
 
 /** Everything a domain function needs. Constructed once per process. */
+import { createViewDeduper, type ViewDeduper } from './lib/viewDedupe.js';
 export interface Ctx {
   cfg: Config;
   db: Db;
@@ -42,6 +43,8 @@ export interface Ctx {
   dbRead: ReadPool;
   keyring: Keyring;
   pubsub: PubSub;
+  /** Listing-view de-duplication: Redis when configured (exact across nodes), else this process's memory. */
+  views: ViewDeduper;
   payments: PaymentProvider;
   kyc: KycProvider;
   messenger: Messenger;
@@ -85,6 +88,7 @@ export function createContext(cfg: Config, log: Logger, overrides: Partial<Ctx> 
     dbRead: overrides.dbRead ?? new ReadPool(db, cfg.DATABASE_READ_URL ? createPool(cfg.DATABASE_READ_URL, undefined, { connectTimeoutMs: 5_000 }) : null, cfg.REPLICA_MAX_LAG_SECONDS),
     keyring,
     pubsub: overrides.pubsub ?? createPubSub(cfg.REDIS_URL),
+    views: overrides.views ?? createViewDeduper(cfg.REDIS_URL),
     payments,
     kyc,
     messenger: overrides.messenger ?? buildMessenger(cfg, log),

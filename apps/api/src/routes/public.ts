@@ -418,7 +418,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
       delete offer.review_reasons;
       delete offer.review_note;
     }
-    recordView(ctx.db, offer.id, offer.seller_id, { userId: req.user?.id, ip: req.ip });
+    void recordView(ctx, offer.id, offer.seller_id, { userId: req.user?.id, ip: req.ip });
     return offer;
   });
 }

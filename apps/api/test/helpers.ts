@@ -32,6 +32,7 @@ export async function setup(overrides: Record<string, string> = {}, ctxOverrides
     messenger,
     async close() {
       await app.close();
+      await ctx.views.close();
       await db.end();
     },
   };

@@ -55,4 +55,5 @@ for (const o of offers) {
 
 console.log('Seeded. Log in as buyer@demo.test / seller@demo.test / admin@demo.test with password "demo-password-123".');
 await ctx.pubsub.close();
+await ctx.views.close();
 await ctx.db.end();

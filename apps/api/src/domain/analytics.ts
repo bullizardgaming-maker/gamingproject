@@ -1,3 +1,4 @@
+import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { many, one } from '../db.js';
 
@@ -13,19 +14,25 @@ const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 10_000) / 10
 // --------------------------------------------------------------------------------------------
 // Listing views
 // --------------------------------------------------------------------------------------------
-const seen = new Set<string>();
-/** Count a listing view, once per viewer, listing and hour. Fire-and-forget: never fails the page. */
-export function recordView(q: Queryable, offerId: string, sellerId: string, viewer: { userId?: string; ip: string }) {
-  if (viewer.userId === sellerId) return;
-  const key = `${viewer.userId ?? viewer.ip}:${offerId}:${new Date().toISOString().slice(0, 13)}`;
-  if (seen.has(key)) return;
-  if (seen.size > 50_000) seen.clear();
-  seen.add(key);
-  q.query(
-    `INSERT INTO offer_views (offer_id, day, views) VALUES ($1, current_date, 1)
-     ON CONFLICT (offer_id, day) DO UPDATE SET views = offer_views.views + 1`,
-    [offerId],
-  ).catch(() => {});
+/**
+ * Count a listing view, once per viewer and listing per hour (exact across API nodes when Redis
+ * is configured; see lib/viewDedupe.ts). Never the seller's own views. Returns a promise for
+ * tests; callers fire and forget, and it never fails the page.
+ */
+export function recordView(ctx: Pick<Ctx, 'db' | 'views'>, offerId: string, sellerId: string, viewer: { userId?: string; ip: string }): Promise<boolean> {
+  if (viewer.userId === sellerId) return Promise.resolve(false);
+  return ctx.views
+    .firstView(`${viewer.userId ? `u:${viewer.userId}` : `ip:${viewer.ip}`}:${offerId}`)
+    .then(async (first) => {
+      if (!first) return false;
+      await ctx.db.query(
+        `INSERT INTO offer_views (offer_id, day, views) VALUES ($1, current_date, 1)
+         ON CONFLICT (offer_id, day) DO UPDATE SET views = offer_views.views + 1`,
+        [offerId],
+      );
+      return true;
+    })
+    .catch(() => false);
 }
 
 // --------------------------------------------------------------------------------------------
