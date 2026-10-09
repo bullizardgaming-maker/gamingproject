@@ -11,6 +11,7 @@ import { attrLabel, attributesFor } from '@/lib/attributes';
 import { categoryLabel, useGames } from '@/lib/catalog';
 import { replyLabel } from '@/lib/presence';
 import { TrustBadge } from '../components/CatalogUi';
+import { StorefrontEditor } from '../components/StorefrontEditor';
 
 interface Dashboard {
   tier: { name: string; accountRateBps: number; otherRateBps: number };
@@ -205,6 +206,7 @@ export function Sell() {
       {tabs}
       <PresenceSettings shop={dash.shop} />
       <TrustCard />
+      {user && <StorefrontEditor sellerId={user.id} />}
       <div className="grid three">
         <div className="card stack">
           <div className="eyebrow">{t('sell.level')}</div>

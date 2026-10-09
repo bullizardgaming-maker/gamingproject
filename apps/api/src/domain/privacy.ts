@@ -105,6 +105,10 @@ export async function deleteAccount(ctx: Ctx, user: User, password: string, code
     await s.tx.query(`DELETE FROM notifications WHERE user_id = $1 AND status = 'pending'`, [user.id]);
     await s.tx.query(`UPDATE owner_proofs SET registration_email = 'redacted', billing_name = NULL, evidence = '{}' WHERE seller_id = $1`, [user.id]);
     await s.tx.query(`UPDATE reviews SET comment = '' WHERE buyer_id = $1`, [user.id]);
+    // Storefront: intro and pins cleared; the banner file is deleted once this commits.
+    await s.tx.query(`UPDATE users SET shop_intro = '', shop_pinned = '{}' WHERE id = $1`, [user.id]);
+    const banner = await s.tx.query<{ storage_key: string }>('DELETE FROM shop_banners WHERE seller_id = $1 RETURNING storage_key', [user.id]);
+    for (const b of banner.rows) s.afterCommit.push(() => ctx.storage.delete(b.storage_key));
     return { deleted: true };
   });
 }

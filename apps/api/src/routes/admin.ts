@@ -25,6 +25,7 @@ import { addTerm, chatFlagQueue, decideChatFlag, decideListing, listTerms, moder
 import { requirePermission } from '../server.js';
 import { audit, listAudit } from '../domain/audit.js';
 import { decideClaim, escalatedClaims } from '../domain/warranty.js';
+import { clearStorefront } from '../domain/storefront.js';
 import { createPromo, listPromos, setPromoActive } from '../domain/promos.js';
 import { withdrawable } from '../domain/payoutholds.js';
 import { retentionPolicy, runRetention } from '../domain/retention.js';
@@ -388,6 +389,15 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   // ---- Moderation: listing review queue, flagged chats, banned terms ----
   app.get('/admin/moderation/summary', async (req) => (requirePermission(req, 'moderation.manage'), moderationCounts(ctx.db)));
   app.get('/admin/moderation/listings', async (req) => (requirePermission(req, 'moderation.manage'), reviewQueue(ctx.db)));
+  /** Remove a shop's banner and/or intro (offensive image, rule-breaking text). */
+  app.post('/admin/sellers/:id/storefront/clear', async (req) => {
+    requirePermission(req, 'moderation.manage');
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ banner: z.boolean().default(false), intro: z.boolean().default(false), note: z.string().trim().min(3).max(500) }).parse(req.body);
+    await clearStorefront(ctx, id, body);
+    await audit(ctx.db, req, 'storefront.clear', { type: 'user', id }, body);
+    return { ok: true };
+  });
   app.post('/admin/moderation/listings/:id', async (req) => {
     const staff = requirePermission(req, 'moderation.manage');
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);

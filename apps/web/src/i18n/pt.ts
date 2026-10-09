@@ -577,5 +577,28 @@ const pt: Messages = {
   // Accessibility
   "a11y.skip": "Pular para o conteúdo principal",
   "a11y.chatLog": "Mensagens do chat do pedido",
+  // Storefront
+  "shop.title": "Sua página de loja",
+  "shop.view": "Ver sua loja",
+  "shop.lede": "O que os compradores veem primeiro na sua loja. A apresentação é verificada como um anúncio: sem contatos ou pagamentos externos.",
+  "shop.banner": "Banner",
+  "shop.bannerAlt": "Banner da sua loja",
+  "shop.upload": "Enviar banner",
+  "shop.remove": "Remover",
+  "shop.bannerHint": "PNG, JPEG ou WebP. Recortado para 1500 × 400.",
+  "shop.bannerSaved": "Banner atualizado.",
+  "shop.bannerRemoved": "Banner removido.",
+  "shop.intro": "Apresentação",
+  "shop.introHint": "Restam {n} caracteres",
+  "shop.accent": "Cor de destaque",
+  "shop.accent.steel": "Aço",
+  "shop.accent.teal": "Azul-petróleo",
+  "shop.accent.amber": "Âmbar",
+  "shop.accent.rose": "Rosa",
+  "shop.accent.violet": "Violeta",
+  "shop.pinned": "Anúncios em destaque (até {n})",
+  "shop.noListings": "Você ainda não tem anúncios ativos para destacar.",
+  "shop.save": "Salvar página da loja",
+  "shop.saved": "Página da loja salva.",
 };
 export default pt;

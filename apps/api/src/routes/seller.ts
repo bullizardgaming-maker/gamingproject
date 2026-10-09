@@ -10,6 +10,7 @@ import { sellerAvailable } from '../domain/ledger.js';
 import { createOffer, getOffer, requireSeller, submitOwnerProof, updateOffer, uploadInventory } from '../domain/offers.js';
 import { createSellerCode, endSale, listSellerCodes, setSale, setSellerCodeActive } from '../domain/discounts.js';
 import { trustSummary } from '../domain/trust.js';
+import { ACCENTS, MAX_INTRO, MAX_PINNED, deleteBanner, storefront, updateStorefront, uploadBanner } from '../domain/storefront.js';
 import { requestWithdrawal } from '../domain/users.js';
 import { payoutStatus, startPayoutOnboarding } from '../domain/payouts.js';
 import { withdrawable } from '../domain/payoutholds.js';
@@ -102,6 +103,28 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
 
   /** The seller's trust level, the numbers behind it and what the next level needs. */
   app.get('/seller/trust', async (req) => trustSummary(ctx.db, me(req).id));
+
+  // --- Storefront: banner, intro, accent, pinned listings ----------------------------------
+  app.get('/seller/storefront', async (req) => storefront(ctx.db, me(req).id));
+  app.put('/seller/storefront', async (req) => {
+    const user = me(req);
+    requireSeller(user);
+    const body = z
+      .object({ intro: z.string().max(MAX_INTRO + 100).optional(), accent: z.enum(ACCENTS).optional(), pinned: z.array(z.string().uuid()).max(MAX_PINNED).optional() })
+      .parse(req.body);
+    return updateStorefront(ctx, user.id, body);
+  });
+  /** Banner image: raw PNG/JPEG/WebP body, cropped to 1500×400. */
+  app.post('/seller/storefront/banner', async (req) => {
+    const user = me(req);
+    requireSeller(user);
+    if (!Buffer.isBuffer(req.body)) throw badRequest('unsupported_file', 'Send the image bytes with Content-Type image/png, image/jpeg or image/webp');
+    return uploadBanner(ctx, user.id, req.body);
+  });
+  app.delete('/seller/storefront/banner', async (req) => {
+    await deleteBanner(ctx, me(req).id);
+    return storefront(ctx.db, me(req).id);
+  });
 
   app.get('/seller/analytics', async (req) => {
     const user = me(req);

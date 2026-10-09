@@ -84,6 +84,8 @@ export async function keyStatus(ctx: Ctx) {
       `SELECT key_version AS v, count(*)::int AS n FROM chat_attachments WHERE storage_key IS NOT NULL GROUP BY 1`,
     );
     byTarget.chat_files = Object.fromEntries(rows.map((r) => [r.v ?? 'unknown', r.n]));
+    const banners = await many<{ v: string | null; n: number }>(ctx.db, `SELECT key_version AS v, count(*)::int AS n FROM shop_banners GROUP BY 1`);
+    byTarget.shop_banners = Object.fromEntries(banners.map((r) => [r.v ?? 'unknown', r.n]));
   }
   const inUse = new Set(Object.values(byTarget).flatMap((m) => Object.keys(m)));
   // 'missing' = a file row whose file is gone; reported, but nothing left to re-encrypt.
@@ -134,6 +136,23 @@ export async function rotateBatch(ctx: Ctx) {
       }
     }
     done.chat_files = n;
+    const banners = await many<{ seller_id: string; storage_key: string }>(
+      ctx.db,
+      `SELECT seller_id, storage_key FROM shop_banners WHERE key_version IS DISTINCT FROM $1 AND key_version IS DISTINCT FROM 'missing' LIMIT ${BATCH}`,
+      [current],
+    );
+    let b = 0;
+    for (const f of banners) {
+      try {
+        const v = await ctx.storage.rekey(f.storage_key);
+        await ctx.db.query('UPDATE shop_banners SET key_version = $2 WHERE seller_id = $1 AND storage_key = $3', [f.seller_id, v, f.storage_key]);
+        b++;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') await ctx.db.query(`UPDATE shop_banners SET key_version = 'missing' WHERE seller_id = $1`, [f.seller_id]);
+        else throw err;
+      }
+    }
+    done.shop_banners = b;
   }
   return done;
 }

@@ -6,6 +6,7 @@ import { detectOffPlatform } from './chat.js';
 import { ONLINE_SQL } from './presence.js';
 import { withScope } from './events.js';
 import { enqueueEmail } from './notifications.js';
+import { storefront } from './storefront.js';
 
 export const REVIEW_WINDOW_DAYS = 30;
 
@@ -102,8 +103,9 @@ export async function sellerProfile(q: Queryable, sellerId: string, limit = 20, 
     [sellerId],
   );
   if (!seller) throw notFound('Seller');
-  const [rating, reviews] = await Promise.all([
+  const [rating, shop, reviews] = await Promise.all([
     sellerRating(q, sellerId),
+    storefront(q, sellerId),
     many(
       q,
       `SELECT r.id, r.rating, r.comment, r.seller_reply, r.replied_at, r.created_at, b.display_name AS buyer_name, f.title AS offer_title
@@ -112,5 +114,5 @@ export async function sellerProfile(q: Queryable, sellerId: string, limit = 20, 
       [sellerId, Math.min(limit, 50), offset],
     ),
   ]);
-  return { ...seller, rating, reviews };
+  return { ...seller, rating, storefront: shop, reviews };
 }

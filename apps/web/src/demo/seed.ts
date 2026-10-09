@@ -333,6 +333,10 @@ export function seed() {
       [users[6]!.id]: { online: true, last_seen_at: ago(120_000), response_minutes: 5 },
     } as Record<string, { online: boolean; last_seen_at: string; response_minutes: number | null }>,
     showOnline: {} as Record<string, boolean>,
+    // Shop pages: intro, accent, banner (a data: URL in the demo) and pinned listings.
+    storefronts: {
+      [users[1]!.id]: { intro: 'Keys, gift cards and wallet codes since 2019. Most orders deliver in under a minute, and every code comes with a replacement promise.', accent: 'teal', banner: null as string | null, pinned: ['offer-2', 'offer-bundle-1'] },
+    } as Record<string, { intro: string; accent: string; banner: string | null; pinned: string[] }>,
     trust: { [users[1]!.id]: 'trusted', [users[3]!.id]: 'rising', [users[4]!.id]: 'trusted', [users[5]!.id]: 'top', [users[6]!.id]: 'top' } as Record<string, string>,
     // Buyer requests board: one by the demo buyer with proposals waiting, others for sellers to answer.
     requests: [

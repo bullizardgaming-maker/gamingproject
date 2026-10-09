@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { BadgeCheck, CalendarDays, MessageCircle, PackageCheck, Star, Timer } from 'lucide-react';
-import { api } from '../api';
+import { api, assetUrl } from '../api';
 import { Avatar, OfferTable, TrustBadge } from '../components/CatalogUi';
 import { cn } from '@/lib/utils';
 import type { Offer } from './Market';
@@ -25,6 +25,7 @@ interface Profile {
   shop_paused_until: string | null;
   shop_pause_message: string | null;
   rating: { average: number | string | null; count: number; positive_pct: number | string | null };
+  storefront?: { intro: string; accent: string; banner_url: string | null; pinned: Offer[] };
   reviews: Array<{ id: string; rating: number; comment: string; seller_reply: string | null; created_at: string; buyer_name: string; offer_title: string | null }>;
 }
 
@@ -64,9 +65,11 @@ export function SellerPage() {
   const r = profile.rating;
   const shown = (offers ?? []).filter((o) => !game || o.game === game);
 
+  const shop = profile.storefront;
   return (
     <div className="stack">
-      <div className="card seller-head" style={{ padding: 24 }}>
+      {shop?.banner_url && <img className="shop-banner" src={assetUrl(shop.banner_url)} alt={`${profile.display_name} shop banner`} />}
+      <div className="card seller-head" style={{ padding: 24, borderTop: `4px solid var(--shop-${shop?.accent ?? 'steel'})` }}>
         <Avatar name={profile.display_name} className="size-20 text-2xl" />
         <div className="min-w-0">
           <h1 style={{ fontSize: 36, margin: 0 }} className="flex flex-wrap items-center gap-2">
@@ -87,6 +90,7 @@ export function SellerPage() {
               lastSeenLabel(profile.last_seen_at) && <span>{lastSeenLabel(profile.last_seen_at)}</span>
             )}
           </div>
+          {shop?.intro && <p style={{ margin: '12px 0 0', maxWidth: '70ch', whiteSpace: 'pre-line' }}>{shop.intro}</p>}
           {profile.shop_paused && <div className="notice" style={{ marginTop: 12 }}>{profile.shop_pause_message || 'This shop is taking a short break.'}</div>}
         </div>
         <div className="rounded-xl border border-border bg-background px-5 py-3 text-center">
@@ -99,6 +103,13 @@ export function SellerPage() {
           </div>
         </div>
       </div>
+
+      {shop && shop.pinned.length > 0 && (
+        <section className="stack" aria-labelledby="pinned-title" style={{ gap: 8 }}>
+          <h2 id="pinned-title" style={{ fontSize: 20, margin: 0, borderInlineStart: `4px solid var(--shop-${shop.accent})`, paddingInlineStart: 10 }}>Featured</h2>
+          <OfferTable offers={shop.pinned} showGame showSeller={false} />
+        </section>
+      )}
 
       <div className="game-tabs" role="tablist">
         <a href="#offers" role="tab" aria-selected={tab === 'offers'} className={cn(tab === 'offers' && 'active')} onClick={(e) => (e.preventDefault(), setTab('offers'))}>

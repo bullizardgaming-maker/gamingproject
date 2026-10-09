@@ -576,5 +576,28 @@ const fr: Messages = {
   // Accessibility
   "a11y.skip": "Aller au contenu principal",
   "a11y.chatLog": "Messages de la discussion de commande",
+  // Storefront
+  "shop.title": "Votre page boutique",
+  "shop.view": "Voir votre boutique",
+  "shop.lede": "Ce que les acheteurs voient en premier sur votre boutique. L’intro est vérifiée comme une offre : pas de coordonnées ni de paiement externe.",
+  "shop.banner": "Bannière",
+  "shop.bannerAlt": "Bannière de votre boutique",
+  "shop.upload": "Importer une bannière",
+  "shop.remove": "Retirer",
+  "shop.bannerHint": "PNG, JPEG ou WebP. Recadrée en 1500 × 400.",
+  "shop.bannerSaved": "Bannière mise à jour.",
+  "shop.bannerRemoved": "Bannière retirée.",
+  "shop.intro": "Présentation",
+  "shop.introHint": "Encore {n} caractères",
+  "shop.accent": "Couleur d’accent",
+  "shop.accent.steel": "Acier",
+  "shop.accent.teal": "Bleu canard",
+  "shop.accent.amber": "Ambre",
+  "shop.accent.rose": "Rose",
+  "shop.accent.violet": "Violet",
+  "shop.pinned": "Offres mises en avant (jusqu’à {n})",
+  "shop.noListings": "Vous n’avez pas encore d’offre active à mettre en avant.",
+  "shop.save": "Enregistrer la page boutique",
+  "shop.saved": "Page boutique enregistrée.",
 };
 export default fr;

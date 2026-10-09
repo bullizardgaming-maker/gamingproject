@@ -8,6 +8,8 @@ const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? '';
 export const DEMO = import.meta.env.VITE_DEMO === 'true';
 /** Where the API lives ('' = same origin, behind the web server's /v1 proxy). */
 export const API_ORIGIN = BASE;
+/** A file the API serves (e.g. a shop banner); data: URLs (demo mode) pass through. */
+export const assetUrl = (path: string) => (path.startsWith('data:') ? path : BASE + path);
 const demo = () => import('./demo/mock');
 
 export interface User {
@@ -121,6 +123,25 @@ export async function api<T = any>(path: string, init: { method?: string; body?:
     }
     throw new ApiError(res.status, data.error?.code ?? 'error', data.error?.message ?? `Request failed (${res.status})`);
   }
+  return data as T;
+}
+
+/** Upload a file as the raw request body (images); demo mode stores it as a data: URL instead. */
+export async function apiUpload<T = any>(path: string, file: File): Promise<T> {
+  if (DEMO) {
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result));
+      r.onerror = () => reject(r.error);
+      r.readAsDataURL(file);
+    });
+    return api<T>(path, { body: { dataUrl, type: file.type, size: file.size } });
+  }
+  const headers: Record<string, string> = { 'Content-Type': file.type || 'application/octet-stream', 'X-Device-Fingerprint': deviceFingerprint() };
+  if (session.token) headers.Authorization = `Bearer ${session.token}`;
+  const res = await fetch(`${BASE}/v1${path}`, { method: 'POST', headers, credentials: 'include', body: file });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new ApiError(res.status, data.error?.code ?? 'error', data.error?.message ?? `Upload failed (${res.status})`);
   return data as T;
 }
 

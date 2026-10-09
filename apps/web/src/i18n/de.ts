@@ -576,5 +576,28 @@ const de: Messages = {
   // Accessibility
   "a11y.skip": "Zum Hauptinhalt springen",
   "a11y.chatLog": "Nachrichten im Bestellchat",
+  // Storefront
+  "shop.title": "Deine Shopseite",
+  "shop.view": "Shop ansehen",
+  "shop.lede": "Was Käufer auf deiner Shopseite zuerst sehen. Die Vorstellung wird wie ein Angebot geprüft: keine Kontaktdaten oder externen Zahlungswege.",
+  "shop.banner": "Banner",
+  "shop.bannerAlt": "Dein Shop-Banner",
+  "shop.upload": "Banner hochladen",
+  "shop.remove": "Entfernen",
+  "shop.bannerHint": "PNG, JPEG oder WebP. Zugeschnitten auf 1500 × 400.",
+  "shop.bannerSaved": "Banner aktualisiert.",
+  "shop.bannerRemoved": "Banner entfernt.",
+  "shop.intro": "Vorstellung",
+  "shop.introHint": "Noch {n} Zeichen",
+  "shop.accent": "Akzentfarbe",
+  "shop.accent.steel": "Stahl",
+  "shop.accent.teal": "Petrol",
+  "shop.accent.amber": "Bernstein",
+  "shop.accent.rose": "Rosé",
+  "shop.accent.violet": "Violett",
+  "shop.pinned": "Hervorgehobene Angebote (bis zu {n})",
+  "shop.noListings": "Du hast noch keine aktiven Angebote zum Hervorheben.",
+  "shop.save": "Shopseite speichern",
+  "shop.saved": "Shopseite gespeichert.",
 };
 export default de;

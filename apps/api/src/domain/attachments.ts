@@ -23,6 +23,16 @@ export function sniffImage(buf: Buffer): Kind | null {
   return null;
 }
 
+/** Malware-scan uploaded bytes; uploads pause (fail closed) while the scanner is unreachable. */
+export async function scanOrPause(ctx: Ctx, body: Buffer): Promise<{ clean: boolean; signature?: string }> {
+  try {
+    return await ctx.scanner.scan(body);
+  } catch (err) {
+    ctx.log.error({ err }, 'malware scanner unavailable');
+    throw new AppError(503, 'scanner_unavailable', 'Uploads are paused for a moment. Try again shortly.');
+  }
+}
+
 const cleanName = (name: string) => name.replace(/[^\w.\- ]+/g, '_').slice(0, 100) || 'image';
 
 /**
@@ -50,13 +60,7 @@ export async function uploadAttachment(ctx: Ctx, roomId: string, user: { id: str
   if (!kind) throw badRequest('unsupported_file', 'Only PNG, JPEG and WebP images can be attached');
   const name = cleanName(fileName);
 
-  let scan: { clean: boolean; signature?: string };
-  try {
-    scan = await ctx.scanner.scan(body);
-  } catch (err) {
-    ctx.log.error({ err }, 'malware scanner unavailable');
-    throw new AppError(503, 'scanner_unavailable', 'Uploads are paused for a moment. Try again shortly.');
-  }
+  const scan = await scanOrPause(ctx, body);
   if (!scan.clean) {
     await withScope(ctx, async (s) => {
       await s.tx.query(

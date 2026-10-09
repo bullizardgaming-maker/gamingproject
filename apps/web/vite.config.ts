@@ -13,16 +13,18 @@ import { seed } from './src/demo/seed';
 function csp(apiUrl?: string) {
   // A separately hosted API (VITE_API_URL) must be allowed for fetch and the WebSocket.
   let api = '';
+  let apiImg = ''; // shop banners are served by the API
   if (apiUrl) {
     const u = new URL(apiUrl);
     api = ` ${u.origin} ${u.origin.replace(/^http/, 'ws')}`;
+    apiImg = ` ${u.origin}`;
   }
   return [
   "default-src 'self'",
   "script-src 'self'",
   "style-src 'self' https://fonts.googleapis.com",
   "font-src https://fonts.gstatic.com",
-  "img-src 'self' data:",
+  `img-src 'self' data:${apiImg}`,
   `connect-src 'self' ws: wss:${api}`,
   "frame-src https://checkout.stripe.com https://js.stripe.com",
   "form-action 'self' https://checkout.stripe.com",

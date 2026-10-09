@@ -10,7 +10,7 @@ import { CATEGORY_DEFAULTS, GAME_SETS, attributesFor, cleanAttributes } from '..
 import { checkTiers, effectivePrice, unitPriceFor } from '../../../api/src/domain/priceTiers';
 import { detectOffPlatform, matchTerms } from '../../../api/src/domain/safety';
 
-const KEY = 'bz.demo.v15';
+const KEY = 'bz.demo.v16';
 const day = 86_400_000;
 const now = () => new Date().toISOString();
 const rid = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2) + Date.now().toString(16));
@@ -520,8 +520,51 @@ route('GET', '/sellers/:id', ({ params, query }) => {
     ...presenceOf(u.id),
     trust_level: state.trust[u.id] ?? 'new',
     rating: { average: s.rating, count: s.count, positive_pct: s.count ? Math.round(((s.rating ?? 0) / 5) * 1000) / 10 : null },
+    storefront: storefrontOf(u.id),
     reviews: reviews.slice(offset, offset + limit),
   };
+});
+function storefrontOf(sellerId: string) {
+  const s = state.storefronts[sellerId] ?? { intro: '', accent: 'steel', banner: null, pinned: [] };
+  return {
+    intro: s.intro, accent: s.accent, banner_url: s.banner,
+    pinned: s.pinned.map((id) => state.offers.find((o) => o.id === id && o.seller_id === sellerId && listed(o))).filter(Boolean).map(offerView),
+  };
+}
+route('GET', '/seller/storefront', ({ me }) => storefrontOf(needSeller(me).id));
+route('PUT', '/seller/storefront', ({ me, body }) => {
+  const u = needSeller(me);
+  const cur = state.storefronts[u.id] ?? { intro: '', accent: 'steel', banner: null, pinned: [] };
+  if (body.intro != null) {
+    const intro = String(body.intro).trim();
+    if (intro.length > 600) fail(400, 'intro_too_long', 'Keep the intro under 600 characters');
+    if (detectOffPlatform(intro).length) fail(400, 'contact_details', 'Contact details and outside payment methods aren’t allowed: buyers reach you through order chat');
+    if (matchTerms(intro, state.modTerms).length) fail(400, 'intro_not_allowed', 'The intro mentions something our rules don’t allow on a shop page');
+    cur.intro = intro;
+  }
+  if (body.accent) cur.accent = body.accent;
+  if (body.pinned) {
+    const ids = [...new Set(body.pinned as string[])];
+    if (ids.length > 4) fail(400, 'too_many_pinned', 'Pin up to 4 listings');
+    if (ids.some((id) => !state.offers.some((o) => o.id === id && o.seller_id === u.id && listed(o)))) fail(400, 'invalid_pinned', 'Pin your own active listings');
+    cur.pinned = ids;
+  }
+  state.storefronts[u.id] = cur;
+  return storefrontOf(u.id);
+});
+route('POST', '/seller/storefront/banner', ({ me, body }) => {
+  const u = needSeller(me);
+  if (!/^image\/(png|jpeg|webp)$/.test(body.type ?? '')) fail(400, 'unsupported_file', 'Use a PNG, JPEG or WebP image');
+  // The demo keeps the image in this browser's storage, so it has to stay small.
+  if (body.size > 600_000) fail(413, 'file_too_large', 'In the demo, banners can be up to 600 KB');
+  const cur = state.storefronts[u.id] ?? { intro: '', accent: 'steel', banner: null, pinned: [] };
+  state.storefronts[u.id] = { ...cur, banner: body.dataUrl };
+  return storefrontOf(u.id);
+});
+route('DELETE', '/seller/storefront/banner', ({ me }) => {
+  const u = needSeller(me);
+  if (state.storefronts[u.id]) state.storefronts[u.id]!.banner = null;
+  return storefrontOf(u.id);
 });
 route('GET', '/offers/:id', ({ me, params }) => {
   const o = state.offers.find((x) => x.id === params[0]);

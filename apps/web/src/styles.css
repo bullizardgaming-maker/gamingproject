@@ -16,6 +16,8 @@
   --field: #fff;            /* input backgrounds */
   --btn-hover: #26344a;
   --banner-rule: #4a5a72;
+  /* Shop accent colours: bars and fills behind no text, so 3:1 against the page is enough. */
+  --shop-steel: #536279; --shop-teal: #0b7166; --shop-amber: #b26f00; --shop-rose: #a82d61; --shop-violet: #5b4bc4;
   --viz-1: #2a78d6;         /* chart series (validated for colour-blind separation) */
   --viz-2: #eb6834;
 
@@ -258,6 +260,7 @@ table.data td { padding: 12px 8px; border-bottom: 1px solid var(--rule); vertica
 .az-bar a { background: var(--paper); border: 1px solid var(--rule); }
 .az-bar a:hover { border-color: var(--ink); }
 .az-bar span { color: var(--rule); }
+.shop-banner { display: block; width: 100%; aspect-ratio: 15 / 4; object-fit: cover; border-radius: 14px; background: var(--frost); }
 .seller-head { display: grid; grid-template-columns: auto 1fr auto; gap: 20px; align-items: center; }
 .crumbs { display: flex; flex-wrap: wrap; gap: 6px; font-size: 14px; color: var(--steel); margin-bottom: 12px; }
 .crumbs a { text-decoration: none; }
@@ -302,6 +305,7 @@ html.dark {
   --field: #0f1621;
   --btn-hover: #c9d3e0;
   --banner-rule: #c2ccda;
+  --shop-steel: #9aa8bb; --shop-teal: #2fbfae; --shop-amber: #f0a830; --shop-rose: #e8709b; --shop-violet: #9a8cf0;
   --viz-1: #3987e5;
   --viz-2: #d95926;
 }

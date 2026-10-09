@@ -618,5 +618,28 @@ const ar: Messages = {
   // Accessibility
   "a11y.skip": "تخطَّ إلى المحتوى الرئيسي",
   "a11y.chatLog": "رسائل محادثة الطلب",
+  // Storefront
+  "shop.title": "صفحة متجرك",
+  "shop.view": "عرض متجرك",
+  "shop.lede": "ما يراه المشترون أولًا في صفحة متجرك. تُراجَع المقدمة مثل العروض: بلا وسائل تواصل أو طرق دفع خارجية.",
+  "shop.banner": "اللافتة",
+  "shop.bannerAlt": "لافتة متجرك",
+  "shop.upload": "رفع لافتة",
+  "shop.remove": "إزالة",
+  "shop.bannerHint": "PNG أو JPEG أو WebP. تُقص إلى 1500 × 400.",
+  "shop.bannerSaved": "تم تحديث اللافتة.",
+  "shop.bannerRemoved": "أُزيلت اللافتة.",
+  "shop.intro": "المقدمة",
+  "shop.introHint": "متبقٍ {n} حرفًا",
+  "shop.accent": "لون التمييز",
+  "shop.accent.steel": "رمادي فولاذي",
+  "shop.accent.teal": "أزرق مخضر",
+  "shop.accent.amber": "كهرماني",
+  "shop.accent.rose": "وردي",
+  "shop.accent.violet": "بنفسجي",
+  "shop.pinned": "عروض مميزة (حتى {n})",
+  "shop.noListings": "لا توجد لديك عروض نشطة لتمييزها بعد.",
+  "shop.save": "حفظ صفحة المتجر",
+  "shop.saved": "تم حفظ صفحة المتجر.",
 };
 export default ar;

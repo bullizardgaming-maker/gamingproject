@@ -15,6 +15,7 @@ import { createReview, replyToReview, sellerProfile } from '../domain/reviews.js
 import { badRequest, forbidden, notFound } from '../lib/errors.js';
 import { readAttachment, uploadAttachment } from '../domain/attachments.js';
 import { audit } from '../domain/audit.js';
+import { readBanner } from '../domain/storefront.js';
 import { me, requestMeta } from '../server.js';
 
 const Id = z.object({ id: z.string().uuid() });
@@ -183,6 +184,16 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/sellers/:id', async (req) => {
     const q = z.object({ limit: z.coerce.number().int().positive().max(50).default(20), offset: z.coerce.number().int().min(0).default(0) }).parse(req.query);
     return sellerProfile(ctx.dbRead, Id.parse(req.params).id, q.limit, q.offset);
+  });
+  app.get('/sellers/:id/banner', async (req, reply) => {
+    const { bytes, sha256 } = await readBanner(ctx, Id.parse(req.params).id);
+    return reply
+      .header('Content-Type', 'image/webp')
+      .header('Cache-Control', 'public, max-age=86400') // the URL carries the hash, so a new banner is a new URL
+      .header('ETag', `"${sha256.slice(0, 16)}"`)
+      .header('X-Content-Type-Options', 'nosniff')
+      .header('Content-Security-Policy', "default-src 'none'; sandbox")
+      .send(bytes);
   });
 
   // --- Chat (REST mirror of the WebSocket protocol) ----------------------------------

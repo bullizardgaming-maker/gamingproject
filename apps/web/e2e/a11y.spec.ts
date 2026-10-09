@@ -23,7 +23,7 @@ async function scan(page: Page, path: string) {
   expect(serious, `${path}\n${report}`).toEqual([]);
 }
 
-const PUBLIC = ['/', '/market', '/games', '/games/elden-ring', '/offers/offer-2', '/offers/offer-bundle-1', '/requests', '/help', '/status', '/login', '/cart'];
+const PUBLIC = ['/', '/market', '/games', '/games/elden-ring', '/offers/offer-2', '/offers/offer-bundle-1', '/requests', '/help', '/status', '/login', '/cart', '/sellers/u-sell1-0000-4000-8000-000000000002'];
 
 test.describe('accessibility', () => {
   for (const path of PUBLIC) {
