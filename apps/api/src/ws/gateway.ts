@@ -6,6 +6,7 @@ import { listMessages, postUserMessage, roomForParticipant } from '../domain/cha
 import { getUser, userFromToken, type User } from '../domain/users.js';
 import { activeSession } from '../domain/sessions.js';
 import { AppError } from '../lib/errors.js';
+import { touchPresence } from '../domain/presence.js';
 
 /**
  * WebSocket chat + notification gateway.
@@ -83,8 +84,11 @@ export function registerGateway(app: FastifyInstance, ctx: Ctx) {
             return ws.close(4401, 'invalid session'); // client refreshes its access token and reconnects
           }
           add(users, user.id, ws);
+          touchPresence(ctx, user.id);
           return send(ws, { type: 'ready', userId: user.id });
         }
+        // An open tab pings, so a signed-in user with the site open shows as online.
+        if (user) touchPresence(ctx, user.id);
         if (frame.type === 'ping') return send(ws, { type: 'pong' });
         if (!user) throw new AppError(401, 'unauthorized', 'Authenticate first');
 

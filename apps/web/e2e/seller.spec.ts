@@ -37,4 +37,17 @@ test.describe('seller', () => {
     await page.getByRole('button', { name: /^Withdraw \$/ }).click();
     await expect(page.getByText(/on its way to your bank/).first()).toBeVisible();
   });
+
+  test('can hide online status from buyers', async ({ page }) => {
+    await signIn(page, 'Seller');
+    await page.goto('/sellers/u-sell1-0000-4000-8000-000000000002');
+    await expect(page.getByText('Online now')).toBeVisible();
+    await page.goto('/sell');
+    await expect(page.getByText('Buyers see: “Usually replies within 15 minutes”')).toBeVisible();
+    await page.getByLabel('Show buyers when I’m online').uncheck();
+    await expect(page.getByRole('status').filter({ hasText: 'Saved' })).toBeVisible();
+    await page.goto('/sellers/u-sell1-0000-4000-8000-000000000002');
+    await expect(page.getByText('Usually replies within 15 minutes')).toBeVisible();
+    await expect(page.getByText('Online now')).toHaveCount(0);
+  });
 });

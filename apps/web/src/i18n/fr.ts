@@ -442,5 +442,18 @@ const fr: Messages = {
   "chat.offPlatform": "Cela ressemble à des coordonnées ou à un moyen de paiement hors de Bullizard. L’envoyer compte comme un avertissement, des avertissements répétés suspendent le compte, et les accords conclus ailleurs ne sont pas couverts par le séquestre.",
   "mod.inReview": "En vérification",
   "mod.inReviewHint": "Masquée jusqu’à l’examen d’un modérateur, en général sous quelques heures.",
+  // Presence
+  "presence.online": "En ligne",
+  "presence.lastSeen": "Vu {when}",
+  "presence.reply15": "Répond en général sous 15 minutes",
+  "presence.reply60": "Répond en général sous une heure",
+  "presence.reply6h": "Répond en général sous quelques heures",
+  "presence.reply24h": "Répond en général sous un jour",
+  "presence.replySlow": "Répond en général en plus d’un jour",
+  "presence.showOnline": "Montrer aux acheteurs quand je suis en ligne",
+  "presence.showOnlineHint": "Les acheteurs voient « En ligne » sur vos offres quand vous êtes connecté. Votre délai de réponse s’affiche dans tous les cas.",
+  "presence.yourReply": "Les acheteurs voient : « {time} »",
+  "presence.noReplyYet": "Votre délai de réponse apparaît après quelques discussions avec des acheteurs.",
+  "presence.saved": "Enregistré",
 };
 export default fr;

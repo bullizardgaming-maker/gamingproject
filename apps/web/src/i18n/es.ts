@@ -442,5 +442,18 @@ const es: Messages = {
   "chat.offPlatform": "Esto parece un dato de contacto o un método de pago fuera de Bullizard. Enviarlo cuenta como advertencia, varias advertencias suspenden la cuenta y los acuerdos hechos fuera no están cubiertos por la custodia.",
   "mod.inReview": "En revisión",
   "mod.inReviewHint": "Oculta hasta que un moderador la revise, normalmente en pocas horas.",
+  // Presence
+  "presence.online": "En línea",
+  "presence.lastSeen": "Visto {when}",
+  "presence.reply15": "Suele responder en 15 minutos",
+  "presence.reply60": "Suele responder en una hora",
+  "presence.reply6h": "Suele responder en unas horas",
+  "presence.reply24h": "Suele responder en un día",
+  "presence.replySlow": "Suele tardar más de un día en responder",
+  "presence.showOnline": "Mostrar a los compradores cuando estoy en línea",
+  "presence.showOnlineHint": "Los compradores ven «En línea» en tus ofertas mientras tienes la sesión iniciada. Tu tiempo de respuesta se muestra igualmente.",
+  "presence.yourReply": "Los compradores ven: «{time}»",
+  "presence.noReplyYet": "Tu tiempo de respuesta aparece tras unos cuantos chats con compradores.",
+  "presence.saved": "Guardado",
 };
 export default es;

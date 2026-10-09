@@ -21,6 +21,10 @@ export interface Offer {
   request_id?: string | null;
   /** Cheaper unit prices for larger orders, ascending by quantity. */
   price_tiers?: PriceTier[];
+  /** Seller signed in within the last few minutes (and shows it). */
+  seller_online?: boolean;
+  /** Median first reply in chat, minutes; null until there are enough chats. */
+  seller_response_minutes?: number | null;
   id: string;
   seller_id: string;
   seller_name: string;

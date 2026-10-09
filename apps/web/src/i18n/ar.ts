@@ -468,5 +468,18 @@ const ar: Messages = {
   "chat.offPlatform": "يبدو أن هذه بيانات تواصل أو وسيلة دفع خارج Bullizard. إرسالها يُحتسب تحذيرًا، وتكرار التحذيرات يوقف الحساب، والصفقات خارج المنصة لا يشملها الضمان.",
   "mod.inReview": "قيد المراجعة",
   "mod.inReviewHint": "مخفي حتى يراجعه مشرف، عادةً خلال ساعات قليلة.",
+  // Presence
+  "presence.online": "متصل الآن",
+  "presence.lastSeen": "آخر ظهور {when}",
+  "presence.reply15": "يرد عادةً خلال 15 دقيقة",
+  "presence.reply60": "يرد عادةً خلال ساعة",
+  "presence.reply6h": "يرد عادةً خلال ساعات قليلة",
+  "presence.reply24h": "يرد عادةً خلال يوم",
+  "presence.replySlow": "يرد عادةً بعد أكثر من يوم",
+  "presence.showOnline": "أظهر للمشترين أنني متصل",
+  "presence.showOnlineHint": "يرى المشترون «متصل الآن» على عروضك أثناء تسجيل دخولك. يظهر وقت ردك في الحالتين.",
+  "presence.yourReply": "يرى المشترون: «{time}»",
+  "presence.noReplyYet": "يظهر وقت ردك بعد بضع محادثات مع المشترين.",
+  "presence.saved": "تم الحفظ",
 };
 export default ar;

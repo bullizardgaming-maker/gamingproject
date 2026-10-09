@@ -10,7 +10,7 @@ import { CATEGORY_DEFAULTS, GAME_SETS, attributesFor, cleanAttributes } from '..
 import { checkTiers, unitPriceFor } from '../../../api/src/domain/priceTiers';
 import { detectOffPlatform, matchTerms } from '../../../api/src/domain/safety';
 
-const KEY = 'bz.demo.v8';
+const KEY = 'bz.demo.v9';
 const day = 86_400_000;
 const now = () => new Date().toISOString();
 const rid = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2) + Date.now().toString(16));
@@ -103,10 +103,19 @@ function sellerStats(sellerId: string) {
   return { completed, rating, count };
 }
 
+/** A demo seller shows online if seeded so, or if it's the account you're signed in as (and they show it). */
+function presenceOf(id: string) {
+  const p = state.presence[id];
+  const shown = state.showOnline[id] ?? true;
+  return { online: shown && (id === viewer || !!p?.online), last_seen_at: shown ? (id === viewer ? now() : p?.last_seen_at ?? null) : null, response_minutes: p?.response_minutes ?? null };
+}
 function offerView(o: any) {
   const s = sellerStats(o.seller_id);
+  const pr = presenceOf(o.seller_id);
   return {
     ...o,
+    seller_online: pr.online,
+    seller_response_minutes: pr.response_minutes,
     inventory: undefined,
     stock: o.delivery_mode === 'auto' ? o.inventory.length : o.stock,
     seller_name: userById(o.seller_id)?.display_name ?? 'Seller',
@@ -483,6 +492,7 @@ route('GET', '/sellers/:id', ({ params, query }) => {
     id: u.id, display_name: u.display_name, member_since: u.created_at, identity_verified: u.kyc_tier >= 2, completed_orders: s.completed,
     active_listings: state.offers.filter((o) => o.seller_id === u.id && listed(o)).length,
     on_time_delivery_pct: before ? Math.min(100, 93 + (before.count % 7)) : null, shop_paused: false, shop_paused_until: null, shop_pause_message: null,
+    ...presenceOf(u.id),
     rating: { average: s.rating, count: s.count, positive_pct: s.count ? Math.round(((s.rating ?? 0) / 5) * 1000) / 10 : null },
     reviews: reviews.slice(offset, offset + limit),
   };
@@ -628,6 +638,11 @@ const needSeller = (me: DemoUser | null) => {
   if (u.kyc_tier < 2) fail(403, 'kyc_required', 'Tier 2 identity verification is required to sell');
   return u;
 };
+route('PUT', '/seller/presence', ({ me, body }) => {
+  const u = needSeller(me);
+  state.showOnline[u.id] = !!body.showOnline;
+  return { showOnline: state.showOnline[u.id] };
+});
 route('GET', '/seller/dashboard', ({ me }) => {
   const u = needSeller(me);
   const t = tierOf(u.id);
@@ -642,6 +657,7 @@ route('GET', '/seller/dashboard', ({ me }) => {
     allBalances: [{ currency: 'USD', cents: state.balances[u.id] ?? 0 }],
     balances: { availableCents: state.balances[u.id] ?? 0, withdrawableCents: holdOf(u.id).withdrawableCents, onHoldCents: holdOf(u.id).heldCents, currency: 'USD', pendingEscrowCents: mine.filter((o) => ['paid', 'delivered', 'disputed'].includes(o.status)).reduce((s, o) => s + o.seller_net_cents, 0) },
     withdrawalsFrozen: u.withdrawals_frozen,
+    shop: { paused: false, until: null, message: null, showOnline: state.showOnline[u.id] ?? true, responseMinutes: state.presence[u.id]?.response_minutes ?? null, responseSample: state.presence[u.id] ? 12 : 0 },
     stats: {
       completed: sellerStats(u.id).completed,
       in_progress: mine.filter((o) => ['paid', 'delivered'].includes(o.status)).length,

@@ -442,5 +442,18 @@ const de: Messages = {
   "chat.offPlatform": "Das sieht nach Kontaktdaten oder einer Zahlungsart außerhalb von Bullizard aus. Das Senden zählt als Verwarnung, wiederholte Verwarnungen sperren das Konto, und Geschäfte außerhalb sind nicht durch die Treuhand geschützt.",
   "mod.inReview": "In Prüfung",
   "mod.inReviewHint": "Ausgeblendet, bis ein Moderator es prüft, meist innerhalb weniger Stunden.",
+  // Presence
+  "presence.online": "Jetzt online",
+  "presence.lastSeen": "Zuletzt online {when}",
+  "presence.reply15": "Antwortet meist innerhalb von 15 Minuten",
+  "presence.reply60": "Antwortet meist innerhalb einer Stunde",
+  "presence.reply6h": "Antwortet meist innerhalb weniger Stunden",
+  "presence.reply24h": "Antwortet meist innerhalb eines Tages",
+  "presence.replySlow": "Antwortet meist erst nach mehr als einem Tag",
+  "presence.showOnline": "Käufern zeigen, wenn ich online bin",
+  "presence.showOnlineHint": "Käufer sehen „Jetzt online“ bei deinen Angeboten, während du angemeldet bist. Deine Antwortzeit wird immer angezeigt.",
+  "presence.yourReply": "Käufer sehen: „{time}“",
+  "presence.noReplyYet": "Deine Antwortzeit erscheint nach ein paar Käufer-Chats.",
+  "presence.saved": "Gespeichert",
 };
 export default de;

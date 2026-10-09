@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { attributePairs } from '@/lib/attributes';
 import { usePrice } from '@/lib/prefs';
 import type { Offer } from '../pages/Market';
+import { OnlineDot } from '@/lib/presence';
 import { t } from '../i18n';
 
 export const CATEGORY_ICON: Record<string, typeof Coins> = {
@@ -156,7 +157,10 @@ export function OfferTable({ offers, showGame = false, showSeller = true, empty 
                 <div className="relative z-[1] order-1 flex min-w-0 items-center gap-2.5 md:order-none">
                   <Avatar name={o.seller_name} className="size-8 text-xs" />
                   <div className="min-w-0">
-                    <Link to={`/sellers/${o.seller_id}`} className="block truncate text-sm font-medium no-underline hover:underline">{o.seller_name}</Link>
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <Link to={`/sellers/${o.seller_id}`} className="block truncate text-sm font-medium no-underline hover:underline">{o.seller_name}</Link>
+                      {o.seller_online && <OnlineDot />}
+                    </span>
                     <Rating value={o.seller_rating} count={o.seller_review_count} />
                   </div>
                 </div>

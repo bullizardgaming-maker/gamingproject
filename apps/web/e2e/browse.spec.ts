@@ -85,4 +85,15 @@ test.describe('browsing', () => {
     await page.getByLabel('Quantity').fill('3');
     await expect(page.getByText('$54.00').first()).toBeVisible();
   });
+
+  test('listings and shops show who is online and how fast they reply', async ({ page }) => {
+    await page.goto('/games/genshin-impact/top-ups');
+    await expect(page.getByRole('img', { name: 'Online now' }).first()).toBeVisible();
+    await page.goto('/sellers/u-sell5-0000-4000-8000-000000000007');
+    await expect(page.getByText('Online now')).toBeVisible();
+    await expect(page.getByText('Usually replies within 15 minutes')).toBeVisible();
+    await page.goto('/sellers/u-sell2-0000-4000-8000-000000000004');
+    await expect(page.getByText('Usually replies within an hour')).toBeVisible();
+    await expect(page.getByText(/Last seen 3 hours ago/)).toBeVisible();
+  });
 });

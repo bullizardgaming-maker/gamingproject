@@ -9,6 +9,7 @@ import { usePageMeta } from '@/lib/seo';
 import { t } from '../i18n';
 import { attrLabel, attributesFor } from '@/lib/attributes';
 import { categoryLabel, useGames } from '@/lib/catalog';
+import { replyLabel } from '@/lib/presence';
 
 interface Dashboard {
   tier: { name: string; accountRateBps: number; otherRateBps: number };
@@ -17,6 +18,7 @@ interface Dashboard {
   payoutCurrency?: string;
   balances: { availableCents: number; pendingEscrowCents: number; withdrawableCents?: number; onHoldCents?: number; currency?: string };
   withdrawalsFrozen: boolean;
+  shop?: { showOnline?: boolean; responseMinutes?: number | null };
   stats: { completed: number; in_progress: number; disputed: number; charged_back: number };
 }
 
@@ -34,6 +36,33 @@ interface SellerOffer {
 }
 
 const TIER_ROWS = [0, 1, 2];
+
+/** "Online now" opt-out and the seller's own reply time, as buyers see it. */
+function PresenceSettings({ shop }: { shop?: Dashboard['shop'] }) {
+  const [show, setShow] = useState(shop?.showOnline ?? true);
+  const [saved, setSaved] = useState(false);
+  const reply = replyLabel(shop?.responseMinutes);
+  return (
+    <div className="card row" style={{ gap: 16, padding: '12px 16px' }}>
+      <label className="row small" style={{ flex: '1 1 280px', gap: 8 }} title={t('presence.showOnlineHint')}>
+        <input
+          type="checkbox"
+          style={{ width: 'auto' }}
+          checked={show}
+          onChange={async (e) => {
+            const next = e.target.checked;
+            setShow(next);
+            setSaved(false);
+            await api('/seller/presence', { method: 'PUT', body: { showOnline: next } }).then(() => setSaved(true), () => setShow(!next));
+          }}
+        />
+        {t('presence.showOnline')}
+        {saved && <span className="text-released" role="status">{t('presence.saved')}</span>}
+      </label>
+      <span className="small muted">{reply ? t('presence.yourReply', { time: reply }) : t('presence.noReplyYet')}</span>
+    </div>
+  );
+}
 
 export function Sell() {
   usePageMeta({ title: 'Sell on Bullizard', description: 'Open a shop: fees fall as your sales grow, instant delivery for codes, Chargeback Shield and payouts in USD, EUR or GBP.' });
@@ -118,6 +147,7 @@ export function Sell() {
     <div className="stack">
       <h1 style={{ fontSize: 40 }}>{t('sell.title')}</h1>
       {tabs}
+      <PresenceSettings shop={dash.shop} />
       <div className="grid three">
         <div className="card stack">
           <div className="eyebrow">{t('sell.level')}</div>

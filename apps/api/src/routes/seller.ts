@@ -83,7 +83,8 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
       shop: await one(
         ctx.db,
         `SELECT (shop_paused AND (shop_paused_until IS NULL OR shop_paused_until > now())) AS paused,
-                shop_paused_until AS until, shop_pause_message AS message FROM users WHERE id = $1`,
+                shop_paused_until AS until, shop_pause_message AS message, show_online AS "showOnline",
+                response_minutes AS "responseMinutes", response_sample AS "responseSample" FROM users WHERE id = $1`,
         [user.id],
       ),
       stats,
@@ -173,6 +174,12 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     );
     const open = await one<{ n: number }>(ctx.db, `SELECT count(*)::int AS n FROM orders WHERE seller_id = $1 AND status = 'paid'`, [user.id]);
     return { ...row, ordersStillToDeliver: open.n };
+  });
+
+  /** Whether buyers see "Online now" for this seller. */
+  app.put('/seller/presence', async (req) => {
+    const { showOnline } = z.object({ showOnline: z.boolean() }).parse(req.body);
+    return one(ctx.db, 'UPDATE users SET show_online = $2 WHERE id = $1 RETURNING show_online AS "showOnline"', [me(req).id, showOnline]);
   });
 
   app.post('/seller/payout-account', async (req) => startPayoutOnboarding(ctx, me(req)));

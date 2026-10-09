@@ -618,6 +618,20 @@ const en = {
   "mod.inReview": "In review",
   "mod.inReviewHint": "Hidden until a moderator checks it, usually within a few hours.",
 
+  // Presence
+  "presence.online": "Online now",
+  "presence.lastSeen": "Last seen {when}",
+  "presence.reply15": "Usually replies within 15 minutes",
+  "presence.reply60": "Usually replies within an hour",
+  "presence.reply6h": "Usually replies within a few hours",
+  "presence.reply24h": "Usually replies within a day",
+  "presence.replySlow": "Usually replies in more than a day",
+  "presence.showOnline": "Show buyers when I’m online",
+  "presence.showOnlineHint": "Buyers see “Online now” on your listings while you’re signed in. Your reply time shows either way.",
+  "presence.yourReply": "Buyers see: “{time}”",
+  "presence.noReplyYet": "Your reply time appears after a few buyer chats.",
+  "presence.saved": "Saved",
+
   // Generic
   'common.notFound': 'Page not found',
   'common.englishOnly': 'This section is in English.',

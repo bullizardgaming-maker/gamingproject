@@ -298,6 +298,15 @@ export function seed() {
     apiKeys: [] as any[],
     watches: [] as any[],
     tickets: [] as any[],
+    // "Online now" and typical reply time per seller (minutes).
+    presence: {
+      [users[1]!.id]: { online: false, last_seen_at: ago(40 * 60_000), response_minutes: 12 },
+      [users[3]!.id]: { online: false, last_seen_at: ago(3 * 3_600_000), response_minutes: 45 },
+      [users[4]!.id]: { online: false, last_seen_at: ago(26 * 3_600_000), response_minutes: 180 },
+      [users[5]!.id]: { online: true, last_seen_at: ago(60_000), response_minutes: 8 },
+      [users[6]!.id]: { online: true, last_seen_at: ago(120_000), response_minutes: 5 },
+    } as Record<string, { online: boolean; last_seen_at: string; response_minutes: number | null }>,
+    showOnline: {} as Record<string, boolean>,
     // Buyer requests board: one by the demo buyer with proposals waiting, others for sellers to answer.
     requests: [
       {

@@ -10,6 +10,7 @@ import { usePageMeta } from '@/lib/seo';
 import { attributePairs } from '@/lib/attributes';
 import { WatchButton } from '../components/WatchButton';
 import { unitPriceFor } from '@/lib/tiers';
+import { OnlineDot, replyLabel } from '@/lib/presence';
 import { t } from '../i18n';
 
 export function OfferPage() {
@@ -105,11 +106,15 @@ export function OfferPage() {
         <Link to={`/sellers/${offer.seller_id}`} className="card flex items-center gap-3 no-underline hover:border-foreground" style={{ padding: 14 }}>
           <Avatar name={offer.seller_name} className="size-11" />
           <div className="min-w-0 flex-1">
-            <div className="font-semibold">{offer.seller_name}</div>
+            <div className="flex items-center gap-2 font-semibold">
+              {offer.seller_name}
+              {offer.seller_online && <span className="inline-flex items-center gap-1 text-xs font-medium text-released"><OnlineDot /> {t('presence.online')}</span>}
+            </div>
             <div className="flex flex-wrap items-center gap-x-3 text-xs text-muted-foreground">
               <Rating value={offer.seller_rating} count={offer.seller_review_count} />
               <span>{t('offer.completed', { n: offer.seller_completed_orders })}</span>
               <span>{t('offer.idVerified')}</span>
+              {replyLabel(offer.seller_response_minutes) && <span>{replyLabel(offer.seller_response_minutes)}</span>}
             </div>
           </div>
           <span className="small muted">{t('offer.viewShop')}</span>
