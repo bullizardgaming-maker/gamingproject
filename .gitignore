@@ -20,3 +20,7 @@ services/fraud-gnn/models/*.pt
 # local uploads
 apps/api/data/
 *.tsbuildinfo
+
+# Playwright
+apps/web/test-results/
+apps/web/playwright-report/
