@@ -262,7 +262,7 @@ export function OrderPage() {
         </p>
       </div>
 
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
 
       <div className="order-layout">
         <div className="stack">
@@ -410,7 +410,7 @@ function CryptoDeposit({ orderId }: { orderId: string }) {
         <input className="mono" placeholder="0x… (the wallet you will pay from)" value={wallet} onChange={(e) => setWallet(e.target.value.trim())} style={{ flex: 1 }} />
         <button className="btn ghost" disabled={!/^0x[0-9a-fA-F]{40}$/.test(wallet)} onClick={fetchTerms}>Get signed terms</button>
       </div>
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
       {terms !== null && <pre className="secret" style={{ whiteSpace: 'pre-wrap', maxHeight: 260, overflow: 'auto' }}>{JSON.stringify(terms, null, 2)}</pre>}
     </div>
   );
@@ -440,7 +440,7 @@ function ReviewForm({ orderId, onDone }: { orderId: string; onDone: () => void }
         ))}
       </div>
       <textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder="What went well or badly? (optional)" maxLength={1000} style={{ minHeight: 70 }} />
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
       <button className="btn" onClick={submit}>Post review</button>
     </div>
   );

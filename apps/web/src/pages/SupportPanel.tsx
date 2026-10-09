@@ -35,7 +35,7 @@ export function SupportPanel() {
         </div>
         <label className="small inline-flex items-center gap-2"><input type="checkbox" style={{ width: 'auto' }} checked={mine} onChange={(e) => setMine(e.target.checked)} /> Assigned to me</label>
       </div>
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
       {list === null ? (
         <p className="muted">Loading…</p>
       ) : list.length === 0 ? (
@@ -139,7 +139,7 @@ function TicketView({ t, me, onChange, onBack }: { t: Ticket; me: string; onChan
           <textarea rows={4} maxLength={5000} value={body} onChange={(e) => setBody(e.target.value)} />
         </label>
         <label className="small inline-flex items-center gap-2"><input type="checkbox" style={{ width: 'auto' }} checked={internal} onChange={(e) => setInternal(e.target.checked)} /> Internal note — the customer won’t see it</label>
-        {error && <div className="alert">{error}</div>}
+        {error && <div className="alert" role="alert">{error}</div>}
         <div className="row">
           <button className="btn" disabled={busy || !body.trim()} onClick={() => send(false)}>{internal ? 'Add note' : 'Send reply'}</button>
           {!internal && <button className="btn ghost" disabled={busy || !body.trim()} onClick={() => send(true)}>Send and resolve</button>}

@@ -573,5 +573,8 @@ const de: Messages = {
   "warranty.badge": "{days} Tage Garantie",
   "warranty.badgeHint": "Holt der ursprüngliche Besitzer den Account zurück oder wird er innerhalb von {days} Tagen nach der Freigabe gebannt oder gesperrt, kann der Käufer eine Lösung oder Erstattung verlangen.",
   "money.unlocksClaim": "Nach Abschluss eines Garantieanspruchs",
+  // Accessibility
+  "a11y.skip": "Zum Hauptinhalt springen",
+  "a11y.chatLog": "Nachrichten im Bestellchat",
 };
 export default de;

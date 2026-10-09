@@ -63,7 +63,7 @@ export function Games() {
       <nav className="az-bar" aria-label={t('games.jump')}>
         {LETTERS.map((l) => (groups.has(l) ? <a key={l} href={`#letter-${l}`}>{l}</a> : <span key={l}>{l}</span>))}
       </nav>
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
       {games === null ? (
         <p className="muted">{t('games.loading')}</p>
       ) : shown.length === 0 ? (
@@ -244,7 +244,7 @@ export function GamePage() {
 
       {category && <MarketPriceHistory game={entry.game} category={category} />}
 
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
       {offers === null ? (
         <p className="muted">{t('game.loadingOffers')}</p>
       ) : (

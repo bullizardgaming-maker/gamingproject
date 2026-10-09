@@ -39,6 +39,12 @@ body {
 a { color: inherit; }
 button, input, select, textarea { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+/* Fields keep their border change and get the same visible ring from the keyboard. */
+input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+/* Focus is moved to <main> after navigation; it doesn't need a ring around the whole page. */
+main:focus { outline: none; }
+.skip-link { position: absolute; inset-inline-start: 12px; top: 8px; z-index: 100; padding: 10px 14px; border-radius: 8px; background: var(--ink); color: var(--paper); font-weight: 600; transform: translateY(-200%); }
+.skip-link:focus { transform: none; }
 .mono { font-family: var(--mono); font-feature-settings: 'zero'; }
 
 /* ---------- Shell ---------- */
@@ -86,7 +92,8 @@ h3 { font-size: 19px; font-weight: 650; }
 
 label.field { display: grid; gap: 6px; font-size: 14px; color: var(--steel); }
 input, select, textarea { background: var(--field); border: 1px solid var(--rule); border-radius: 8px; padding: 10px 12px; width: 100%; }
-input:focus, select:focus, textarea:focus { border-color: var(--ink); outline: none; }
+input:focus, select:focus, textarea:focus { border-color: var(--ink); }
+input:focus:not(:focus-visible), select:focus:not(:focus-visible), textarea:focus:not(:focus-visible) { outline: none; }
 textarea { min-height: 110px; resize: vertical; }
 
 .alert { border-inline-start: 3px solid var(--disputed); background: var(--disputed-soft); padding: 10px 14px; border-radius: 6px; font-size: 14px; }
@@ -158,7 +165,7 @@ table.data td { padding: 12px 8px; border-bottom: 1px solid var(--rule); vertica
 /* ---------- Market ---------- */
 .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
 .filters button { border: 1px solid var(--rule); background: var(--paper); padding: 7px 12px; border-radius: 999px; cursor: pointer; font-size: 14px; }
-.filters button[aria-pressed='true'] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.filters button[aria-pressed='true'], .filters button[aria-selected='true'] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 .filters a { border: 1px solid var(--rule); background: var(--paper); padding: 7px 14px; border-radius: 999px; font-size: 14px; text-decoration: none; }
 .filters a[aria-current='page'] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 .offer { display: grid; gap: 10px; text-decoration: none; }

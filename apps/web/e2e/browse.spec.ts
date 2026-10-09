@@ -19,7 +19,7 @@ test.describe('browsing', () => {
   test('header search suggests a game and the game page has category tabs', async ({ page }) => {
     await page.goto('/');
     await page.locator('header input[name=search]').fill('genshin');
-    await page.locator('header').getByRole('button', { name: /Genshin Impact/ }).click();
+    await page.locator('header').getByRole('option', { name: /Genshin Impact/ }).click();
     await expect(page).toHaveURL(/genshin-impact/);
     await page.getByRole('link', { name: /^Accounts 2$/ }).click();
     await expect(page).toHaveURL(/genshin-impact\/accounts/);

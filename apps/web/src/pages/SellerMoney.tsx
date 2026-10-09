@@ -359,7 +359,7 @@ function Exports() {
         ))}
       </div>
       <p className="small muted" style={{ margin: 0 }}>{t('money.csv')}</p>
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
     </div>
   );
 }

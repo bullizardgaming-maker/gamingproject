@@ -1,4 +1,4 @@
-import { StrictMode, useEffect } from 'react';
+import { StrictMode, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { SessionProvider } from './session';
@@ -38,15 +38,43 @@ function ScrollToTop() {
   return null;
 }
 
+/**
+ * After a client-side navigation, screen readers hear nothing and keyboard focus is left on a link
+ * that no longer exists. Announce the new page's title and put focus at the top of the content,
+ * unless the page already placed it there (an autofocused field).
+ */
+function RouteAnnouncer() {
+  const { pathname } = useLocation();
+  const [message, setMessage] = useState('');
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    // After the page has rendered and set its title.
+    const timer = setTimeout(() => {
+      setMessage(document.title);
+      const main = document.getElementById('main');
+      const active = document.activeElement;
+      if (main && (!active || active === document.body || !main.contains(active))) main.focus({ preventScroll: true });
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [pathname]);
+  return <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">{message}</div>;
+}
+
 function App() {
   // A language switch remounts the app so every string, date and number re-renders in it.
   const locale = useLocale();
   return (
     <SessionProvider key={locale}>
+      <a href="#main" className="skip-link">{t('a11y.skip')}</a>
       {DEMO && <DemoBanner />}
       <SiteHeader />
       <ScrollToTop />
-      <main className="shell">
+      <RouteAnnouncer />
+      <main className="shell" id="main" tabIndex={-1}>
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/market" element={<Market />} />

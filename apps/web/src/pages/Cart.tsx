@@ -138,7 +138,7 @@ export function CartPage() {
           {t('offer.tos')}
         </label>
         {currencies.size > 1 && <div className="alert small">{t('cart.oneCurrency')}</div>}
-        {error && <div className="alert">{error}</div>}
+        {error && <div className="alert" role="alert">{error}</div>}
         {!user ? (
           <Link className="btn" to="/login?next=/cart">{t('offer.signInToBuy')}</Link>
         ) : (

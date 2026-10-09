@@ -154,7 +154,7 @@ export function Market() {
       )}
 
       <div className="grid items-start gap-6 lg:grid-cols-[230px_1fr]">
-        <aside className={cn('card stack lg:sticky lg:top-[132px]', !filtersOpen && 'max-lg:hidden')} style={{ padding: 16 }} aria-label={t('market.filters')}>
+        <aside id="market-filters" className={cn('card stack lg:sticky lg:top-[132px]', !filtersOpen && 'max-lg:hidden')} style={{ padding: 16 }} aria-label={t('market.filters')}>
           <div>
             <div className="eyebrow" style={{ marginBottom: 8 }}>{t('market.category')}</div>
             <div className="filters" role="group" aria-label={t('market.category')} style={{ flexDirection: 'column', gap: 2, marginBottom: 0 }}>
@@ -198,13 +198,13 @@ export function Market() {
           <div className="row spread small">
             <span className="muted">{result ? t('offers.count', { count: result.total }) : ' '}</span>
             <div className="row" style={{ gap: 8 }}>
-              <button className="btn ghost filters-toggle" onClick={() => setFiltersOpen((o) => !o)}><SlidersHorizontal className="size-4" /> {t('market.filters')}</button>
+              <button className="btn ghost filters-toggle" aria-expanded={filtersOpen} aria-controls="market-filters" onClick={() => setFiltersOpen((o) => !o)}><SlidersHorizontal className="size-4" /> {t('market.filters')}</button>
               <select value={get('sort') || (q ? 'relevance' : 'newest')} onChange={(e) => set({ sort: e.target.value })} style={{ width: 200 }} aria-label={t('sort.label')}>
                 {SORTS.filter((k) => q || k !== 'relevance').map((k) => <option key={k} value={k}>{t(`sort.${k}` as MessageKey)}</option>)}
               </select>
             </div>
           </div>
-          {error && <div className="alert">{error}</div>}
+          {error && <div className="alert" role="alert">{error}</div>}
           {result === null ? (
             <p className="muted">{t('market.loading')}</p>
           ) : result.items.length === 0 ? (

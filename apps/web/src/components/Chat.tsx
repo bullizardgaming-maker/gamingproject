@@ -62,7 +62,7 @@ export function Chat({ roomId, meId, names }: { roomId: string; meId: string; na
         <h3 style={{ margin: 0 }}>{t('chat.title')}</h3>
         <span className="chip">{t('chat.recorded')}</span>
       </div>
-      <div className="chat-log" ref={logRef} aria-live="polite">
+      <div className="chat-log" ref={logRef} role="log" aria-label={t('a11y.chatLog')}>
         {ordered.map((m) => {
           const mine = m.sender_id === meId;
           const cls = m.kind === 'text' ? (mine ? 'msg mine' : 'msg') : `msg ${m.kind}`;

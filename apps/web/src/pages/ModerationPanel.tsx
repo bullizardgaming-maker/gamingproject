@@ -47,7 +47,7 @@ function ListingQueue({ onChange }: { onChange: () => void }) {
   return (
     <div className="stack">
       <p className="small muted" style={{ margin: 0 }}>Listings matching a review term or containing contact details are hidden until approved. Block terms are refused at posting time.</p>
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
       {list.length === 0 ? (
         <div className="card muted">No listings waiting. 🎉</div>
       ) : (
@@ -100,7 +100,7 @@ function ChatQueue({ onChange }: { onChange: () => void }) {
           {(['open', 'confirmed', 'dismissed'] as const).map((s) => <button key={s} aria-pressed={status === s} onClick={() => setStatus(s)}>{s[0]!.toUpperCase() + s.slice(1)}</button>)}
         </div>
       </div>
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
       {list === null ? (
         <p className="muted">Loading…</p>
       ) : list.length === 0 ? (
@@ -171,7 +171,7 @@ function Terms() {
         <button className="btn">Add term</button>
       </form>
       <p className="small muted" style={{ margin: 0 }}>Matching ignores case and simple tricks like digits for letters (h4ck) or dots between letters. Changes apply to new and edited listings within 30 seconds.</p>
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
       {list === null ? (
         <p className="muted">Loading…</p>
       ) : (

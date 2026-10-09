@@ -758,6 +758,10 @@ const en = {
   "warranty.badgeHint": "If the account is recovered by its original owner, banned or locked within {days} days after escrow releases, the buyer can claim a fix or a refund.",
   "money.unlocksClaim": "After a warranty claim is settled",
 
+  // Accessibility
+  "a11y.skip": "Skip to main content",
+  "a11y.chatLog": "Order chat messages",
+
   // Generic
   'common.notFound': 'Page not found',
   'common.englishOnly': 'This section is in English.',

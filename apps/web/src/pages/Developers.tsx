@@ -86,7 +86,7 @@ export function Developers() {
         <div className="notice">API keys and webhooks are available to identity-verified sellers. <Link to="/account">Verify your identity</Link></div>
       ) : (
         <>
-          {error && <div className="alert">{error}</div>}
+          {error && <div className="alert" role="alert">{error}</div>}
           {secret && (
             <div className="ok stack">
               <b>Copy this now. It won't be shown again.</b>

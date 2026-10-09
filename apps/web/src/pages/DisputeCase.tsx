@@ -22,7 +22,7 @@ export function DisputeCase({ id, onResolve }: { id: string; onResolve: (outcome
   const [only, setOnly] = useState<string>('all');
   const [note, setNote] = useState('');
   useEffect(() => void api(`/admin/disputes/${id}/case`).then(setFile).catch((e) => setError(e.message)), [id]);
-  if (error) return <div className="alert">{error}</div>;
+  if (error) return <div className="alert" role="alert">{error}</div>;
   if (!file) return <p className="muted">Loading case file…</p>;
   const { dispute, order, buyer, seller, facts, statements, snapshot, payment } = file;
   const items = file.timeline.filter((t: any) => only === 'all' || t.type === only);

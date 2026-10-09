@@ -355,7 +355,7 @@ function DiscountCodes() {
         <label className="field">{t('code.ends')}<input name="ends" type="date" /></label>
         <button className="btn">{t('code.create')}</button>
       </form>
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
     </div>
   );
 }
@@ -618,7 +618,7 @@ function NewOffer({ onCreated, offers }: { onCreated: () => void; offers: Seller
       {category === 'accounts' && (
         <p className="small muted">{t('sell.f.accountHint')}</p>
       )}
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
       <button className="btn" type="submit">{t('sell.f.create')}</button>
     </form>
   );

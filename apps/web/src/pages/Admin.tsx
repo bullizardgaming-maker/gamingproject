@@ -123,12 +123,31 @@ export function Admin() {
     <div className="stack">
       <h1 style={{ fontSize: 40 }}>Operations</h1>
       {currentLocale() !== 'en' && <p className="small muted" style={{ margin: 0 }} lang={currentLocale()}>{t('common.englishOnly')}</p>}
-      <div className="filters" role="tablist">
+      <div className="filters" role="tablist" aria-label="Operations sections">
         {visible.map((t) => (
-          <button key={t.id} role="tab" aria-pressed={tab === t.id} onClick={() => setTab(t.id)}>{t.label}</button>
+          <button
+            key={t.id}
+            id={`tab-${t.id}`}
+            role="tab"
+            aria-selected={tab === t.id}
+            tabIndex={tab === t.id ? 0 : -1}
+            onClick={() => setTab(t.id)}
+            onKeyDown={(e) => {
+              // Arrow keys move between tabs (one tab stop for the whole list).
+              const i = visible.findIndex((x) => x.id === t.id);
+              const next = e.key === 'ArrowRight' ? i + 1 : e.key === 'ArrowLeft' ? i - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? visible.length - 1 : null;
+              if (next == null) return;
+              e.preventDefault();
+              const target = visible[(next + visible.length) % visible.length]!;
+              setTab(target.id);
+              document.getElementById(`tab-${target.id}`)?.focus();
+            }}
+          >
+            {t.label}
+          </button>
         ))}
       </div>
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
       {isPanel(tab) ? (
         (() => {
           const Panel = PANELS[tab];

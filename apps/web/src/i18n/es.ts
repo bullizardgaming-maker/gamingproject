@@ -573,5 +573,8 @@ const es: Messages = {
   "warranty.badge": "Garantía de {days} días",
   "warranty.badgeHint": "Si el propietario original recupera la cuenta, o se banea o bloquea en los {days} días tras la liberación, el comprador puede reclamar un arreglo o un reembolso.",
   "money.unlocksClaim": "Cuando se resuelva una reclamación de garantía",
+  // Accessibility
+  "a11y.skip": "Saltar al contenido principal",
+  "a11y.chatLog": "Mensajes del chat del pedido",
 };
 export default es;

@@ -53,7 +53,7 @@ export function Login() {
         <h2>Enter your sign-in code</h2>
         <p className="muted small">Open your authenticator app and enter the 6-digit code for Bullizard. Lost your phone? Enter one of your recovery codes instead.</p>
         <input name="code" className="mono" autoComplete="one-time-code" autoFocus required maxLength={20} aria-label="Code" />
-        {error && <div className="alert">{error}</div>}
+        {error && <div className="alert" role="alert">{error}</div>}
         <button className="btn" type="submit">Sign in</button>
       </form>
     );
@@ -73,7 +73,7 @@ export function Login() {
           Password
           <input name="password" type="password" required minLength={10} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
         </label>
-        {error && <div className="alert">{error}</div>}
+        {error && <div className="alert" role="alert">{error}</div>}
         <button className="btn" type="submit">{mode === 'login' ? 'Sign in' : 'Create account'}</button>
       </form>
       {mode === 'login' && <Link to="/forgot-password" className="small">Forgot your password?</Link>}
@@ -162,7 +162,7 @@ function TwoFactor() {
           <button className="btn ghost" onClick={start}>Set up two-factor login</button>
         </>
       )}
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
     </div>
   );
 }
@@ -212,7 +212,7 @@ function CodeStep({ channel, done, onDone }: { channel: 'email' | 'sms'; done: b
           </button>
         </div>
       )}
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
     </div>
   );
 }
@@ -297,7 +297,7 @@ function Devices() {
           <button className="btn ghost" onClick={() => run(() => api('/me/sessions/revoke-others', { body: {} }))}>Sign out all other devices</button>
         )}
       </div>
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
       {devices?.map((d) => (
         <div key={d.id} className="row spread small" style={{ borderTop: '1px solid var(--rule)', paddingTop: 10 }}>
           <span>
@@ -409,7 +409,7 @@ export function ResetPassword() {
       <h2>Choose a new password</h2>
       <label className="field">New password<input name="newPassword" type="password" required minLength={10} autoComplete="new-password" /></label>
       <p className="small muted">You'll be signed out on all devices. Two-factor login stays on.</p>
-      {error && <div className="alert">{error} {error.includes('expired') && <Link to="/forgot-password">Request a new link</Link>}</div>}
+      {error && <div className="alert" role="alert">{error} {error.includes('expired') && <Link to="/forgot-password">Request a new link</Link>}</div>}
       <button className="btn">Set password</button>
     </form>
   );
@@ -455,7 +455,7 @@ function PrivacyControls() {
           </p>
           <label className="field">Password<input name="password" type="password" required autoComplete="current-password" /></label>
           {user?.totp_enabled && <label className="field">Two-factor code<input name="code" className="mono" required /></label>}
-          {error && <div className="alert">{error}</div>}
+          {error && <div className="alert" role="alert">{error}</div>}
           <button className="btn dispute">Delete my account permanently</button>
         </form>
       )}

@@ -58,7 +58,7 @@ export function AmlPanel() {
           <button key={s} aria-pressed={status === s} onClick={() => (setStatus(s), setSelected(null))}>{label(s)}</button>
         ))}
       </div>
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
       <div className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
         <div className="card table-wrap" style={{ padding: 0 }}>
           {cases === null ? (
@@ -185,7 +185,7 @@ function CaseDetail({ id, onChanged }: { id: string; onChanged: () => void }) {
           )}
         </>
       )}
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
     </div>
   );
 }
@@ -246,7 +246,7 @@ export function TreasuryPanel() {
           </button>
         </div>
       </div>
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
       <div className="card table-wrap">
         <table className="data">
           <thead><tr><th>Requested</th><th>From</th><th>Amount</th><th>Note</th><th>Status</th><th /></tr></thead>
@@ -306,7 +306,7 @@ export function TaxPanel() {
         <button className="btn ghost" onClick={() => download(`/admin/tax/report?from=${from}&to=${to}&format=csv`, `tax-${from}-${to}.csv`)}><Download className="size-4" /> CSV for the return</button>
       </div>
       <p className="small muted" style={{ margin: 0 }}>VAT/GST on our commission by country and treatment, net of credit notes. The basis for OSS and local returns.</p>
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
       <div className="card table-wrap">
         <table className="data">
           <thead><tr><th>Country</th><th>Treatment</th><th>Rate</th><th>Orders</th><th>Credit notes</th><th>Commission</th><th>Tax</th></tr></thead>
@@ -365,7 +365,7 @@ export function StaffPanel() {
           <div key={r} className="card small"><b className="capitalize">{r}</b><div className="muted">{ROLE_HINT[r]}</div></div>
         ))}
       </div>
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
       <div className="card table-wrap">
         <table className="data">
           <thead><tr><th>Person</th><th>Roles</th><th>2FA</th><th /></tr></thead>

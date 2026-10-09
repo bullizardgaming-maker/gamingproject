@@ -294,7 +294,7 @@ export function RequestNew() {
       <label className="field">{t('req.f.budget')}<input name="budget" type="number" step="0.01" min="0.5" placeholder={t('req.f.budgetHint')} /></label>
       <label className="field">{t('req.f.description')}<textarea name="description" maxLength={2000} rows={4} placeholder={t('req.f.descriptionHint')} /></label>
       <p className="small muted" style={{ margin: 0 }}>{t('req.new.note')}</p>
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
       <div className="row">
         <button className="btn" disabled={busy}>{t('req.new.submit')}</button>
         <Link to="/requests" className="btn ghost">{t('common.cancel')}</Link>
@@ -328,7 +328,7 @@ function ProposalForm({ r, mine, onSaved }: { r: BuyerRequest; mine?: Proposal; 
       </div>
       <label className="field">{t('req.p.message')}<textarea name="message" maxLength={1000} rows={3} defaultValue={live ? mine.message : ''} placeholder={t('req.p.messageHint')} /></label>
       <p className="small muted" style={{ margin: 0 }}>{t('req.p.note')}</p>
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
       <div className="row">
         <button className="btn" disabled={busy}>{live ? t('req.p.update') : t('req.p.send')}</button>
         {live && (
@@ -416,7 +416,7 @@ export function RequestPage() {
           <span><b>{t('req.proposalsLabel')}</b> {r.proposals}</span>
         </div>
       </div>
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
 
       {r.mine ? (
         <>

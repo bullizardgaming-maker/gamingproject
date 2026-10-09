@@ -25,7 +25,7 @@ export function WarrantyPanel() {
   const [error, setError] = useState('');
   const load = useCallback(() => api<Claim[]>('/admin/warranty-claims').then(setRows).catch((e) => setError(e.message)), []);
   useEffect(() => void load(), [load]);
-  if (error) return <div className="alert">{error}</div>;
+  if (error) return <div className="alert" role="alert">{error}</div>;
   if (!rows) return <p className="muted">Loading…</p>;
   if (!rows.length) return <div className="card"><p className="muted">No warranty claims waiting for an arbiter.</p></div>;
   return (
@@ -71,7 +71,7 @@ function ClaimCard({ c, onDone }: { c: Claim; onDone: () => void }) {
         <button className="btn" disabled={note.trim().length < 5} onClick={() => decide('refund')}>Refund buyer</button>
         <button className="btn ghost" disabled={note.trim().length < 5} onClick={() => decide('reject')}>Reject claim</button>
       </div>
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
     </div>
   );
 }

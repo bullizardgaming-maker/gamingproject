@@ -615,5 +615,8 @@ const ar: Messages = {
   "warranty.badge": "ضمان {days} يومًا",
   "warranty.badgeHint": "إذا استعاد المالك الأصلي الحساب أو حُظر أو قُفل خلال {days} يومًا بعد تحرير المبلغ، يمكن للمشتري المطالبة بإصلاح أو استرداد.",
   "money.unlocksClaim": "بعد حسم مطالبة الضمان",
+  // Accessibility
+  "a11y.skip": "تخطَّ إلى المحتوى الرئيسي",
+  "a11y.chatLog": "رسائل محادثة الطلب",
 };
 export default ar;

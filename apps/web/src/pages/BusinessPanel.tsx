@@ -57,7 +57,7 @@ export function BusinessPanel() {
           {PERIODS.map((d) => <button key={d} aria-pressed={days === d} onClick={() => setDays(d)}>{periodLabel(d)}</button>)}
         </div>
       </div>
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
       {!data || !t || !p ? (
         <p className="muted">{error ? '' : 'Loading…'}</p>
       ) : (

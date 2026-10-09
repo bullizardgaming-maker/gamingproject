@@ -47,7 +47,7 @@ export function IncidentsPanel() {
       <p className="small muted" style={{ margin: 0 }}>
         Posts appear on the public <a href="/status">status page</a> and are emailed to subscribers. Component health is also measured automatically.
       </p>
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
       <form className="card stack" onSubmit={create}>
         <div className="row spread">
           <h3 style={{ margin: 0 }} className="inline-flex items-center gap-2"><Megaphone className="size-5" /> Post to the status page</h3>
@@ -135,7 +135,7 @@ export function DebtsPanel() {
         <button aria-pressed={status === 'open'} onClick={() => setStatus('open')}>Open</button>
         <button aria-pressed={status === 'closed'} onClick={() => setStatus('closed')}>Closed (90 days)</button>
       </div>
-      {(error || closed.error) && <div className="alert">{error || closed.error}</div>}
+      {(error || closed.error) && <div className="alert" role="alert">{error || closed.error}</div>}
       <div className="card table-wrap" style={{ padding: 0 }}>
         <table className="data">
           <thead><tr><th>Seller</th><th>Owed</th><th>Peak</th><th>Opened</th><th>Reminders</th><th>Shop</th>{status === 'closed' && <th>Closed</th>}</tr></thead>
@@ -185,7 +185,7 @@ export function CurrencyPanel() {
   const t = topups.data;
   return (
     <div className="stack">
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
       <div className="grid gap-3 sm:grid-cols-3">
         {position.data.positions.map((p) => (
           <div key={p.currency} className={cn('card', p.shortfallCents > 0 && 'border-held/50')}>
@@ -273,7 +273,7 @@ function FraudReport({ days, setDays }: { days: number; setDays: (d: number) => 
           </select>
         </label>
       </div>
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
       {!data ? (
         <p className="muted">Loading…</p>
       ) : (

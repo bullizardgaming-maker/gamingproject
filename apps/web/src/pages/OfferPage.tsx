@@ -237,7 +237,7 @@ export function OfferPage() {
         </label>
         {added === 'ok' && <div className="notice small" role="status">{t('cart.added')} <Link to="/cart">{t('cart.view')}</Link></div>}
         {added === 'full' && <div className="alert small">{t('cart.full')}</div>}
-        {error && <div className="alert">{error} {error === t('offer.verifyFirst') && <Link to="/account">{t('offer.verifyNow')}</Link>}</div>}
+        {error && <div className="alert" role="alert">{error} {error === t('offer.verifyFirst') && <Link to="/account">{t('offer.verifyNow')}</Link>}</div>}
         {!user ? (
           <div className="row">
             <Link className="btn" to={`/login?next=/offers/${offer.id}`}>{t('offer.signInToBuy')}</Link>

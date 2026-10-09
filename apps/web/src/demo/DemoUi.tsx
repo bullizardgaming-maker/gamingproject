@@ -54,7 +54,7 @@ export function DemoSignIn({ next }: { next: string }) {
           </button>
         ))}
       </div>
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
     </div>
   );
 }

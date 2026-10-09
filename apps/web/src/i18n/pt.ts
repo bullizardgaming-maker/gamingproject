@@ -574,5 +574,8 @@ const pt: Messages = {
   "warranty.badge": "Garantia de {days} dias",
   "warranty.badgeHint": "Se o dono original recuperar a conta, ou ela for banida ou bloqueada até {days} dias após a liberação, o comprador pode pedir correção ou reembolso.",
   "money.unlocksClaim": "Após a resolução de uma reclamação de garantia",
+  // Accessibility
+  "a11y.skip": "Pular para o conteúdo principal",
+  "a11y.chatLog": "Mensagens do chat do pedido",
 };
 export default pt;

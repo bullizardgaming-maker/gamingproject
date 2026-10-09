@@ -573,5 +573,8 @@ const fr: Messages = {
   "warranty.badge": "Garantie {days} jours",
   "warranty.badgeHint": "Si le compte est récupéré par son propriétaire d’origine, banni ou verrouillé dans les {days} jours après la libération, l’acheteur peut demander une correction ou un remboursement.",
   "money.unlocksClaim": "Après le règlement d’une réclamation de garantie",
+  // Accessibility
+  "a11y.skip": "Aller au contenu principal",
+  "a11y.chatLog": "Messages de la discussion de commande",
 };
 export default fr;

@@ -67,7 +67,10 @@ export function NotificationBell() {
   useEffect(() => {
     if (!open) return;
     const close = (e: MouseEvent | KeyboardEvent) => {
-      if (e instanceof KeyboardEvent ? e.key === 'Escape' : !ref.current?.contains(e.target as Node)) setOpen(false);
+      if (e instanceof KeyboardEvent ? e.key === 'Escape' : !ref.current?.contains(e.target as Node)) {
+        setOpen(false);
+        if (e instanceof KeyboardEvent) button.current?.focus(); // back to where the keyboard user was
+      }
     };
     document.addEventListener('mousedown', close);
     document.addEventListener('keydown', close);
@@ -89,10 +92,15 @@ export function NotificationBell() {
     setUnread(0);
   };
 
+  const button = useRef<HTMLButtonElement>(null);
+  // Stable, so it runs once when the panel opens (not on every re-render inside it).
+  const focusPanel = useCallback((el: HTMLDivElement | null) => el?.focus({ preventScroll: true }), []);
   return (
     <div className="relative" ref={ref}>
       <button
+        ref={button}
         type="button"
+        aria-haspopup="dialog"
         aria-label={unread ? t('notif.unread', { n: unread }) : t('notif.title')}
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
@@ -119,6 +127,8 @@ export function NotificationBell() {
           <motion.div
             role="dialog"
             aria-label={t('notif.title')}
+            tabIndex={-1}
+            ref={focusPanel}
             initial={{ opacity: 0, y: -6, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -6, scale: 0.98 }}

@@ -257,7 +257,7 @@ export function SupportNew() {
         <textarea name="body" required minLength={2} maxLength={5000} rows={6} placeholder={t('sup.detailsHint')} />
       </label>
       <p className="small muted" style={{ margin: 0 }}>{t('sup.privacy')}</p>
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
       <div className="row">
         <button className="btn" disabled={busy}>{t('sup.send')}</button>
         <Link to="/help" className="btn ghost">{t('sup.backHelp')}</Link>
@@ -326,7 +326,7 @@ export function SupportTicket() {
           {tk.status === 'resolved' ? t('sup.replyReopen') : t('sup.reply')}
           <textarea required minLength={2} maxLength={5000} rows={4} value={reply} onChange={(e) => setReply(e.target.value)} />
         </label>
-        {error && <div className="alert">{error}</div>}
+        {error && <div className="alert" role="alert">{error}</div>}
         <div className="row">
           <button className="btn" disabled={busy || reply.trim().length < 2}>{t('sup.sendReply')}</button>
           {tk.status !== 'resolved' && <button type="button" className="btn ghost" onClick={resolve}>{t('sup.solved')}</button>}

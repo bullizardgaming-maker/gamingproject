@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { Heart, LayoutGrid, Moon, Search, ShieldCheck, ShoppingCart, Sun } from 'lucide-react';
 import { cartCount, useCart } from '@/lib/cart';
@@ -12,6 +12,7 @@ import { DISPLAY_CURRENCIES, resolvedTheme, setCurrency, setTheme, useDisplayCur
 
 /** Search box with game suggestions: Enter searches listings, picking a game opens its page. */
 export function GameSearch({ big = false, autoFocus = false }: { big?: boolean; autoFocus?: boolean }) {
+  const listId = useId();
   const nav = useNavigate();
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
@@ -58,6 +59,11 @@ export function GameSearch({ big = false, autoFocus = false }: { big?: boolean; 
         autoComplete="off"
         autoFocus={autoFocus}
         aria-label={t('search.label')}
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={open && matches.length > 0}
+        aria-controls={listId}
+        aria-activedescendant={open && active >= 0 ? `${listId}-${active}` : undefined}
         placeholder={big ? t('search.big') : t('search.small')}
         value={q}
         onFocus={() => setOpen(true)}
@@ -65,17 +71,21 @@ export function GameSearch({ big = false, autoFocus = false }: { big?: boolean; 
         onKeyDown={(e) => {
           if (e.key === 'ArrowDown') (e.preventDefault(), setActive((a) => Math.min(a + 1, matches.length - 1)));
           if (e.key === 'ArrowUp') (e.preventDefault(), setActive((a) => Math.max(a - 1, -1)));
-          if (e.key === 'Escape') setOpen(false);
+          if (e.key === 'Escape') (setOpen(false), setActive(-1));
         }}
         style={{ paddingInlineStart: big ? 46 : 36, height: big ? 56 : 40, borderRadius: big ? 14 : 10, fontSize: big ? 17 : 15 }}
         className="shadow-[0_1px_0_rgba(22,32,46,.04)]"
       />
       {open && matches.length > 0 && (
-        <div className="absolute inset-x-0 top-[calc(100%+6px)] z-50 overflow-hidden rounded-xl border border-border bg-card shadow-[0_18px_50px_-12px_rgba(22,32,46,0.28)]">
-          <div className="px-3 pb-1 pt-2.5 font-mono text-[11px] uppercase tracking-[0.1em] text-muted-foreground">{q.trim() ? t('search.games') : t('search.popular')}</div>
+        <div id={listId} role="listbox" aria-label={q.trim() ? t('search.games') : t('search.popular')} className="absolute inset-x-0 top-[calc(100%+6px)] z-50 overflow-hidden rounded-xl border border-border bg-card shadow-[0_18px_50px_-12px_rgba(22,32,46,0.28)]">
+          <div aria-hidden="true" className="px-3 pb-1 pt-2.5 font-mono text-[11px] uppercase tracking-[0.1em] text-muted-foreground">{q.trim() ? t('search.games') : t('search.popular')}</div>
           {matches.map((g, i) => (
             <button
               key={g.game}
+              id={`${listId}-${i}`}
+              role="option"
+              aria-selected={active === i}
+              tabIndex={-1}
               type="button"
               onMouseEnter={() => setActive(i)}
               onClick={() => go(`/games/${slugify(g.game)}`)}
