@@ -351,6 +351,7 @@ const PREF_CATS = [
   ['disputes', 'Disputes and chargebacks', true],
   ['reminders', 'Reminders before your protection window ends', false],
   ['alerts', 'Price alerts and watchlist updates', false],
+  ['support', 'Replies to your help requests', true],
   ['account', 'Verification and payout account updates', true],
   ['security', 'Security alerts', true],
 ] as const;
@@ -1068,6 +1069,98 @@ route('POST', '/admin/users/:id/erase-chat', ({ me, params, body }) => {
   return { erased: true, alreadyErased: n === 0 };
 });
 
+// --- Support tickets ---------------------------------------------------------------------------
+const TICKET_CATS = ['order', 'payment', 'account', 'selling', 'report', 'other'];
+function ticketOrder(id: string | null) {
+  const o = id ? state.orders.find((x) => x.id === id) : null;
+  return o ? { id: o.id, status: o.status, amount_cents: o.amount_cents, currency: o.currency, offer_title: o.offer_title, game: o.game, buyer_name: userById(o.buyer_id)?.display_name, seller_name: userById(o.seller_id)?.display_name } : null;
+}
+function ticketView(t: any, staff: boolean) {
+  const u = userById(t.user_id);
+  const base = { ...t, messages: undefined, user_name: u?.display_name, order: ticketOrder(t.order_id) };
+  const messages = t.messages
+    .filter((m: any) => staff || !m.internal)
+    .map((m: any) => ({ ...m, author_name: m.staff && !staff ? 'Bullizard Support' : userById(m.author_id)?.display_name ?? 'Support' }));
+  if (!staff) return { ...base, assigned_to: undefined, messages: messages.map(({ internal: _i, author_id: _a, ...m }: any) => m) };
+  return { ...base, user_email: u?.email, assignee_name: t.assigned_to ? userById(t.assigned_to)?.display_name : null, messages };
+}
+const myTicket = (me: DemoUser | null, id: string) => state.tickets.find((t) => t.id === id && t.user_id === need(me).id) ?? fail(404, 'not_found', 'Ticket not found');
+route('GET', '/support/tickets', ({ me }) => {
+  const u = need(me);
+  return state.tickets.filter((t) => t.user_id === u.id).sort((a, b) => b.updated_at.localeCompare(a.updated_at)).map((t) => ({ ...ticketView(t, false), messages: undefined, last_from_staff: t.messages.filter((m: any) => !m.internal).at(-1)?.staff ?? false }));
+});
+route('POST', '/support/tickets', ({ me, body }) => {
+  const u = need(me);
+  if (!TICKET_CATS.includes(body.category)) fail(400, 'validation_error', 'Choose a topic');
+  if (String(body.subject ?? '').trim().length < 3 || String(body.body ?? '').trim().length < 2) fail(400, 'validation_error', 'Add a subject and some details');
+  if (state.tickets.filter((t) => t.user_id === u.id && t.status !== 'resolved').length >= 5) fail(400, 'too_many_tickets', 'You have 5 open requests. Reply on one of those before opening another.');
+  let priority = 'normal';
+  if (body.orderId) {
+    const o = state.orders.find((x) => x.id === body.orderId && (x.buyer_id === u.id || x.seller_id === u.id)) ?? fail(404, 'not_found', 'Order not found');
+    if (['order', 'payment'].includes(body.category) && ['paid', 'delivered', 'disputed'].includes(o.status)) priority = 'high';
+  }
+  const t = {
+    id: rid(), number: 10001 + state.tickets.length, user_id: u.id, order_id: body.orderId ?? null, category: body.category, subject: String(body.subject).trim(), status: 'open', priority,
+    assigned_to: null, created_at: now(), updated_at: now(), first_response_at: null, resolved_at: null,
+    messages: [{ id: rid(), author_id: u.id, staff: false, internal: false, body: String(body.body).trim(), created_at: now() }],
+  };
+  state.tickets.unshift(t);
+  notify(u.id, 'support', 'support_received', `We got your request #${t.number}`, `Thanks for getting in touch about "${t.subject}". You'll get a notification when support replies.`, `/support/${t.id}`);
+  // Stand-in for a support agent, so the demo shows a reply arriving.
+  setTimeout(() => {
+    const admin = state.users.find((x) => x.role === 'admin')!;
+    t.messages.push({ id: rid(), author_id: admin.id, staff: true, internal: false, body: `Hi ${u.display_name}, thanks for the details. We're looking into this now and will update you here. (Demo: this reply is simulated.)`, created_at: now() });
+    Object.assign(t, { status: 'pending', first_response_at: now(), assigned_to: admin.id, updated_at: now() });
+    notify(u.id, 'support', 'support_reply', `New reply on request #${t.number}`, 'Bullizard Support replied to your request.', `/support/${t.id}`);
+    save();
+  }, 6000);
+  return ticketView(t, false);
+});
+route('GET', '/support/tickets/:id', ({ me, params }) => ticketView(myTicket(me, params[0]!), false));
+route('POST', '/support/tickets/:id/messages', ({ me, params, body }) => {
+  const t = myTicket(me, params[0]!);
+  if (String(body.body ?? '').trim().length < 2) fail(400, 'validation_error', 'Write a reply');
+  t.messages.push({ id: rid(), author_id: t.user_id, staff: false, internal: false, body: String(body.body).trim(), created_at: now() });
+  Object.assign(t, { status: 'open', resolved_at: null, updated_at: now() });
+  return ticketView(t, false);
+});
+route('POST', '/support/tickets/:id/resolve', ({ me, params }) => {
+  const t = myTicket(me, params[0]!);
+  Object.assign(t, { status: 'resolved', resolved_at: now(), updated_at: now() });
+  return ticketView(t, false);
+});
+route('GET', '/admin/support/tickets', ({ me, query }) => {
+  const u = needPerm(me, 'support.manage');
+  const status = query.get('status') ?? 'active';
+  return state.tickets
+    .filter((t) => (status === 'active' ? t.status !== 'resolved' : t.status === status) && (query.get('mine') !== 'true' || t.assigned_to === u.id))
+    .sort((a, b) => Number(b.status === 'open') - Number(a.status === 'open') || Number(b.priority === 'high') - Number(a.priority === 'high') || a.updated_at.localeCompare(b.updated_at))
+    .map((t) => ({ ...ticketView(t, true), messages: t.messages.filter((m: any) => !m.internal).length }));
+});
+const staffTicket = (me: DemoUser | null, id: string) => (needPerm(me, 'support.manage'), state.tickets.find((t) => t.id === id) ?? fail(404, 'not_found', 'Ticket not found'));
+route('GET', '/admin/support/tickets/:id', ({ me, params }) => ticketView(staffTicket(me, params[0]!), true));
+route('POST', '/admin/support/tickets/:id/messages', ({ me, params, body }) => {
+  const t = staffTicket(me, params[0]!);
+  const u = me!;
+  t.messages.push({ id: rid(), author_id: u.id, staff: true, internal: !!body.internal, body: String(body.body ?? '').trim(), created_at: now() });
+  if (!body.internal) {
+    Object.assign(t, { status: body.resolve ? 'resolved' : 'pending', resolved_at: body.resolve ? now() : null, first_response_at: t.first_response_at ?? now(), assigned_to: t.assigned_to ?? u.id });
+    notify(t.user_id, 'support', 'support_reply', body.resolve ? `Request #${t.number} resolved` : `New reply on request #${t.number}`, 'Bullizard Support replied to your request.', `/support/${t.id}`);
+  }
+  t.updated_at = now();
+  audit(u, body.internal ? 'support.note' : 'support.reply', 'support_ticket', t.id, {});
+  return ticketView(t, true);
+});
+route('PATCH', '/admin/support/tickets/:id', ({ me, params, body }) => {
+  const t = staffTicket(me, params[0]!);
+  if (body.status) Object.assign(t, { status: body.status, resolved_at: body.status === 'resolved' ? now() : null });
+  if (body.priority) t.priority = body.priority;
+  if (body.assignedTo !== undefined) t.assigned_to = body.assignedTo;
+  t.updated_at = now();
+  audit(me!, 'support.update', 'support_ticket', t.id, body);
+  return ticketView(t, true);
+});
+
 // --- Analytics -------------------------------------------------------------------------------
 /** Deterministic pseudo-random numbers, so the demo charts look the same on every visit. */
 function rng(seedText: string) {
@@ -1208,11 +1301,11 @@ const ALL_PERMS = [
   'orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'risk.review', 'users.suspend', 'aml.review', 'aml.sar',
   'chargebacks.manage', 'orders.refund_after_release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view',
   'ledger.adjust', 'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'keys.manage', 'retention.manage', 'audit.view', 'staff.manage', 'status.manage',
-  'analytics.view',
+  'analytics.view', 'support.manage',
 ];
 const ROLE_PERMS: Record<string, string[]> = {
   arbiter: ['orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'orders.refund_after_release'],
-  support: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage'],
+  support: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage', 'support.manage'],
   finance: ['chargebacks.manage', 'orders.refund_after_release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view', 'ledger.adjust', 'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'analytics.view'],
   compliance: ['orders.view_any', 'risk.review', 'users.suspend', 'aml.review', 'aml.sar', 'payout_holds.set', 'ledger.view', 'audit.view', 'retention.manage', 'analytics.view'],
   admin: ALL_PERMS,

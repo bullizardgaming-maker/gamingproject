@@ -20,6 +20,7 @@ import {
   getPushPreferences, listInbox, listPushSubscriptions, markAllRead, markRead, removePushSubscription, setPushPreferences, subscribePush, unreadCount, unsubscribePush,
 } from '../domain/inbox.js';
 import { recordView } from '../domain/analytics.js';
+import { TICKET_CATEGORIES, createTicket, customerReply, customerResolve, getTicket, listMyTickets } from '../domain/support.js';
 import { createWatch, deleteWatch, listWatches, updateWatch } from '../domain/watches.js';
 import { confirmSubscription, getIncident, statusSummary, subscribe, unsubscribe } from '../domain/status.js';
 import { me, requestMeta } from '../server.js';
@@ -314,6 +315,28 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   app.get('/me/referral', async (req) => referralSummary(ctx, me(req).id));
+
+  // --- Help centre support tickets --------------------------------------------------------------
+  const Body = z.string().trim().min(2).max(5_000);
+  app.get('/support/tickets', async (req) => listMyTickets(ctx.db, me(req).id));
+  app.post('/support/tickets', async (req, reply) => {
+    const body = z
+      .object({ category: z.enum(TICKET_CATEGORIES), subject: z.string().trim().min(3).max(140), body: Body, orderId: z.string().uuid().optional() })
+      .parse(req.body);
+    const id = await createTicket(ctx, me(req).id, body);
+    return reply.status(201).send(await getTicket(ctx.db, id, { id: me(req).id, staff: false }));
+  });
+  app.get('/support/tickets/:id', async (req) => getTicket(ctx.db, z.object({ id: z.string().uuid() }).parse(req.params).id, { id: me(req).id, staff: false }));
+  app.post('/support/tickets/:id/messages', async (req) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    await customerReply(ctx, me(req).id, id, z.object({ body: Body }).parse(req.body).body);
+    return getTicket(ctx.db, id, { id: me(req).id, staff: false });
+  });
+  app.post('/support/tickets/:id/resolve', async (req) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    await customerResolve(ctx, me(req).id, id);
+    return getTicket(ctx.db, id, { id: me(req).id, staff: false });
+  });
 
   // --- Watchlist & price alerts -------------------------------------------------------------
   const WatchTarget = z.number().int().positive().max(100_000_00).nullable();

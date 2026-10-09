@@ -128,7 +128,8 @@ export function OrderPage() {
           {isSeller
             ? `You receive ${money(order.seller_net_cents, order.currency)} after the ${(order.commission_bps / 100).toFixed(2)}% ${order.seller_tier} tier fee.`
             : `Paid ${money(order.amount_cents, order.currency)} via ${order.rail === 'crypto' ? 'on-chain escrow' : 'card'}.`}
-          {order.escrow_frozen && order.status !== 'disputed' && ' This order is in a routine security review; funds stay in escrow until it finishes.'}
+          {order.escrow_frozen && order.status !== 'disputed' && ' This order is in a routine security review; funds stay in escrow until it finishes.'}{' '}
+          <Link to={`/support/new?category=order&order=${order.id}`}>Get help with this order</Link>
         </p>
       </div>
 

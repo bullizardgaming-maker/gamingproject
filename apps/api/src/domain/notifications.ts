@@ -9,7 +9,7 @@ import { badRequest } from '../lib/errors.js';
  * Each one lands in the user's in-app inbox, and the worker delivers it by email and Web Push
  * according to the user's per-category preferences for each channel, and live to open tabs.
  */
-export type EmailCategory = 'orders' | 'selling' | 'disputes' | 'reminders' | 'alerts' | 'account' | 'security' | 'operations';
+export type EmailCategory = 'orders' | 'selling' | 'disputes' | 'reminders' | 'alerts' | 'support' | 'account' | 'security' | 'operations';
 
 export const EMAIL_CATEGORIES: Record<EmailCategory, { label: string; mandatory?: boolean; staffOnly?: boolean }> = {
   orders: { label: 'Purchases: payment received, delivery, refunds' },
@@ -17,6 +17,7 @@ export const EMAIL_CATEGORIES: Record<EmailCategory, { label: string; mandatory?
   disputes: { label: 'Disputes and chargebacks', mandatory: true },
   reminders: { label: 'Reminders before your protection window ends' },
   alerts: { label: 'Price alerts and watchlist updates' },
+  support: { label: 'Replies to your help requests', mandatory: true },
   account: { label: 'Verification and payout account updates', mandatory: true },
   security: { label: 'Security alerts', mandatory: true },
   operations: { label: 'Staff alerts (reconciliation, operations)', mandatory: true, staffOnly: true },
@@ -229,6 +230,22 @@ export const TEMPLATES = {
     subject: (d) => `${d.game}${d.attributes && Object.keys(d.attributes).length ? ` (${Object.values(d.attributes).join(', ')})` : ''}: from ${money(d.price_cents, d.currency)}`,
     body: (d, link) =>
       `A ${d.game} listing you're watching for is ${d.target_cents ? `at or below your ${money(d.target_cents, d.currency)} target` : 'at a new low'}: "${d.title}" for ${money(d.price_cents, d.currency)}.\n\n${link(`/offers/${d.offer_id}`)}`,
+  },
+  support_received: {
+    category: 'support',
+    subject: (d) => `We got your request #${d.number}`,
+    body: (d, link) => `Thanks for getting in touch about "${d.subject}". Our support team usually answers within a few hours; you'll get an email when they reply.\n\n${link(`/support/${d.ticket_id}`)}`,
+  },
+  support_reply: {
+    category: 'support',
+    subject: (d) => (d.resolved ? `Request #${d.number} resolved` : `New reply on request #${d.number}`),
+    body: (d, link) =>
+      `Bullizard Support replied to "${d.subject}"${d.resolved ? ' and marked it resolved. Reply if you still need help and it reopens' : ''}:\n\n${d.preview}\n\n${link(`/support/${d.ticket_id}`)}`,
+  },
+  support_auto_resolved: {
+    category: 'support',
+    subject: (d) => `Request #${d.number} closed`,
+    body: (d, link) => `We haven't heard back about "${d.subject}" for ${d.days} days, so we've marked it resolved. Reply any time to reopen it.\n\n${link(`/support/${d.ticket_id}`)}`,
   },
   account_locked: {
     category: 'security',

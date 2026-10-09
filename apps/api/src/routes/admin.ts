@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Ctx } from '../context.js';
-import { many, maybeOne, one } from '../db.js';
+import { many, maybeOne, one, withTx } from '../db.js';
 import { receiveChargeback } from '../domain/chargebacks.js';
 import { withScope } from '../domain/events.js';
 import { reviewOwnerProof } from '../domain/offers.js';
@@ -19,6 +19,7 @@ import { COMPONENTS, COMPONENT_IDS, createIncident, listIncidents, updateInciden
 import { decideTopUp, listTopUps, planTopUps } from '../domain/fxtopups.js';
 import { chatLegalHold, shredUserChatKey } from '../domain/chatkeys.js';
 import { businessMetrics } from '../domain/analytics.js';
+import { getTicket, staffReply, ticketQueue, updateTicket } from '../domain/support.js';
 import { requirePermission } from '../server.js';
 import { audit, listAudit } from '../domain/audit.js';
 import { createPromo, listPromos, setPromoActive } from '../domain/promos.js';
@@ -355,6 +356,39 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     requirePermission(req, 'fx.manage');
     return { positions: await fxPosition(ctx), conversions: await many(ctx.db, 'SELECT * FROM fx_conversions ORDER BY created_at DESC LIMIT 50') };
   });
+  // --- Support queue ------------------------------------------------------------------------
+  app.get('/admin/support/tickets', async (req) => {
+    const staff = requirePermission(req, 'support.manage');
+    const f = z.object({ status: z.enum(['active', 'open', 'pending', 'resolved']).optional(), mine: z.enum(['true', 'false']).optional() }).parse(req.query);
+    return ticketQueue(ctx.db, { status: f.status, assignedTo: f.mine === 'true' ? staff.id : undefined });
+  });
+  app.get('/admin/support/tickets/:id', async (req) => {
+    const staff = requirePermission(req, 'support.manage');
+    return getTicket(ctx.db, z.object({ id: z.string().uuid() }).parse(req.params).id, { id: staff.id, staff: true });
+  });
+  app.post('/admin/support/tickets/:id/messages', async (req) => {
+    const staff = requirePermission(req, 'support.manage');
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ body: z.string().trim().min(1).max(5_000), internal: z.boolean().default(false), resolve: z.boolean().default(false) }).parse(req.body);
+    await withTx(ctx.db, async (tx) => {
+      await staffReply(ctx, tx, staff.id, id, body.body, body.internal, body.resolve);
+      await audit(tx, req, body.internal ? 'support.note' : 'support.reply', { type: 'support_ticket', id }, { resolve: body.resolve });
+    });
+    return getTicket(ctx.db, id, { id: staff.id, staff: true });
+  });
+  app.patch('/admin/support/tickets/:id', async (req) => {
+    const staff = requirePermission(req, 'support.manage');
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const patch = z
+      .object({ status: z.enum(['open', 'pending', 'resolved']).optional(), priority: z.enum(['normal', 'high']).optional(), assignedTo: z.string().uuid().nullable().optional() })
+      .parse(req.body);
+    await withTx(ctx.db, async (tx) => {
+      await updateTicket(tx, id, patch);
+      await audit(tx, req, 'support.update', { type: 'support_ticket', id }, patch);
+    });
+    return getTicket(ctx.db, id, { id: staff.id, staff: true });
+  });
+
   app.get('/admin/analytics', async (req) => {
     requirePermission(req, 'analytics.view');
     const { days } = z.object({ days: z.coerce.number().pipe(z.union([z.literal(7), z.literal(30), z.literal(90), z.literal(365)])).default(30) }).parse(req.query);

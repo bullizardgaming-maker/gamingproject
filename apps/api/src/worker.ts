@@ -15,6 +15,7 @@ import { maybeLabelFraudOutcomes } from './domain/fraud.js';
 import { dispatchStatusEmails } from './domain/status.js';
 import { maybePlanTopUps } from './domain/fxtopups.js';
 import { maybeCheckWatches } from './domain/watches.js';
+import { autoResolveTickets } from './domain/support.js';
 
 /**
  * Background jobs. Every job is safe to run on several worker processes at
@@ -42,6 +43,7 @@ export async function runJobsOnce(ctx: Ctx) {
     job(ctx, 'protection_reminders', () => queueProtectionReminders(ctx), 0),
     job(ctx, 'late_deliveries', () => handleLateDeliveries(ctx), { notified: 0, refunded: 0 }),
     job(ctx, 'fx_rates', () => maybeRefreshRates(ctx), 0),
+    job(ctx, 'support_auto_resolve', () => autoResolveTickets(ctx), 0),
   ]);
   const reconciled = await job(ctx, 'reconciliation_scheduler', () => maybeRunScheduledReconciliation(ctx), false);
   await job(ctx, 'retention', () => maybeRunScheduledRetention(ctx), false);

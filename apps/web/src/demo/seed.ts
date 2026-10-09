@@ -265,6 +265,7 @@ export function seed() {
     withdrawals: [] as any[],
     apiKeys: [] as any[],
     watches: [] as any[],
+    tickets: [] as any[],
     webhooks: [] as any[],
     emailPrefs: {} as Record<string, Record<string, boolean>>,
     ownerProofs: [

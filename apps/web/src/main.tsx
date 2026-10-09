@@ -14,6 +14,7 @@ import { Admin } from './pages/Admin';
 import { GamePage, Games } from './pages/Games';
 import { SellerPage } from './pages/SellerPage';
 import { Watchlist } from './pages/Watchlist';
+import { HelpArticlePage, HelpCentre, SupportList, SupportNew, SupportTicket } from './pages/Help';
 import { StatusPage } from './pages/StatusPage';
 import { SiteHeader } from './components/SiteHeader';
 import { SiteFooter } from './components/SiteFooter';
@@ -49,6 +50,11 @@ function App() {
           <Route path="/sellers/:id" element={<SellerPage />} />
           <Route path="/status" element={<StatusPage />} />
           <Route path="/watchlist" element={<Watchlist />} />
+          <Route path="/help" element={<HelpCentre />} />
+          <Route path="/help/:slug" element={<HelpArticlePage />} />
+          <Route path="/support" element={<SupportList />} />
+          <Route path="/support/new" element={<SupportNew />} />
+          <Route path="/support/:id" element={<SupportTicket />} />
           <Route path="/offers/:id" element={<OfferPage />} />
           <Route path="/orders" element={<Orders />} />
           <Route path="/orders/:id" element={<OrderPage />} />
