@@ -66,6 +66,21 @@ const fr: LocalePack = {
       subject: () => 'Nouvelle déclaration dans votre litige',
       body: (d, link) => `${d.role === 'buyer' ? 'L’acheteur' : 'Le vendeur'} a ajouté une déclaration au litige. Lisez-la et répondez dans la discussion de la commande ou par votre propre déclaration avant la décision de l’arbitre.\n\n${link(`/orders/${d.order_id}`)}`,
     },
+    warranty_claim: {
+      subject: (d) => `Réclamation de garantie sur ${d.title}`,
+      body: (d, link) => {
+        const r = ({ recovered: "le propriétaire d’origine a récupéré le compte", banned: "le compte a été banni", locked: "le compte est verrouillé" } as Record<string, string>)[d.reason as string] ?? "le compte ne fonctionne plus";
+        return `L’acheteur indique que ${r}. Vous avez ${d.hours} heures pour corriger, rembourser ou contester ; ensuite un arbitre tranche. Le paiement de cette commande reste bloqué jusqu’au règlement.\n\n${link(`/orders/${d.order_id}`)}`;
+      },
+    },
+    warranty_update: {
+      subject: (d) => `Mise à jour de la réclamation de garantie : ${d.title}`,
+      body: (d, link) => {
+        const b = d.role === 'buyer';
+        const m: Record<string, string> = { seller_fixed: b ? "Le vendeur indique que le compte fonctionne de nouveau. Confirmez-le, ou transmettez la réclamation à un arbitre si ce n’est pas le cas." : "Vous avez signalé une correction. L’acheteur a 72 heures pour confirmer.", escalated: "La réclamation est transmise à un arbitre, qui lira la discussion de la commande et tranchera.", resolved: "Réclamation réglée : le compte fonctionne de nouveau.", refunded: b ? "Vous avez été remboursé au titre de la garantie." : "L’acheteur a été remboursé au titre de la garantie, sur le paiement bloqué de cette commande.", rejected: "Un arbitre a rejeté la réclamation.", withdrawn: "L’acheteur a retiré la réclamation." };
+        return `${m[d.status as string] ?? "La réclamation a été mise à jour."}\n\n${link(`/orders/${d.order_id}`)}`;
+      },
+    },
     dispute_resolved: {
       subject: (d) => `Litige tranché : ${d.title}`,
       body: (d, link) => `L’arbitre a tranché en faveur de ${d.outcome === 'buyer' ? 'l’acheteur' : 'du vendeur'}. Note : « ${d.note} »\n\n${link(`/orders/${d.order_id}`)}`,

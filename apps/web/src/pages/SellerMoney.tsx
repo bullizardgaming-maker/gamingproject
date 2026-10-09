@@ -12,7 +12,8 @@ interface Hold {
   availableCents: number;
   heldCents: number;
   withdrawableCents: number;
-  upcoming: Array<{ unlocksAt: string; cents: number }>;
+  /** unlocksAt null: held until a warranty claim is settled. */
+  upcoming: Array<{ unlocksAt: string | null; cents: number }>;
 }
 interface TaxProfile {
   country: string | null;
@@ -126,8 +127,8 @@ export function SellerMoney() {
           {hold.upcoming.length > 0 && (
             <div className="small">
               {hold.upcoming.slice(0, 4).map((u) => (
-                <div key={u.unlocksAt} className="row spread" style={{ borderTop: '1px solid var(--rule)', padding: '6px 0' }}>
-                  <span className="muted">{t('money.unlocks', { date: fmtDate(u.unlocksAt) })}</span>
+                <div key={u.unlocksAt ?? 'claim'} className="row spread" style={{ borderTop: '1px solid var(--rule)', padding: '6px 0' }}>
+                  <span className="muted">{u.unlocksAt ? t('money.unlocks', { date: fmtDate(u.unlocksAt) }) : t('money.unlocksClaim')}</span>
                   <span className="mono">{money(u.cents, currency)}</span>
                 </div>
               ))}

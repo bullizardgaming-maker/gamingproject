@@ -602,5 +602,18 @@ const ar: Messages = {
   "history.date": "التاريخ",
   "also.title": "اشترى المشترون أيضًا",
   "also.more": "رائج في {game}",
+  // Account warranty
+  "warranty.sellLabel": "ضمان بعد تحرير المبلغ",
+  "warranty.none": "بدون ضمان",
+  "warranty.days_one": "يوم واحد",
+  "warranty.days_other": "{count} يوم",
+  "warranty.days_zero": "{count} يوم",
+  "warranty.days_two": "يومان",
+  "warranty.days_few": "{count} أيام",
+  "warranty.days_many": "{count} يومًا",
+  "warranty.sellHint": "يبدأ عند تحرير الضمان. يبقى مبلغ ذلك الطلب معلقًا حتى ينتهي الضمان.",
+  "warranty.badge": "ضمان {days} يومًا",
+  "warranty.badgeHint": "إذا استعاد المالك الأصلي الحساب أو حُظر أو قُفل خلال {days} يومًا بعد تحرير المبلغ، يمكن للمشتري المطالبة بإصلاح أو استرداد.",
+  "money.unlocksClaim": "بعد حسم مطالبة الضمان",
 };
 export default ar;

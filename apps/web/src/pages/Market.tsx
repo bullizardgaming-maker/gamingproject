@@ -22,6 +22,8 @@ export interface Offer {
   status?: string;
   seller_trust_level?: 'new' | 'rising' | 'trusted' | 'top';
   is_bundle?: boolean;
+  /** Account listings: warranty after escrow releases, in days (0 = none). */
+  warranty_days?: number;
   /** A bundle's parts: what's inside and what each costs on its own. */
   bundle?: Array<{ offer_id: string; quantity: number; title: string; game: string; currency: string; price_cents: number }>;
   /** Set while a sale runs: the price before the sale (price_cents is the sale price). */
@@ -68,6 +70,7 @@ export function OfferBadges({ offer }: { offer: Offer }) {
         <>
           <span className="chip held">{t('badge.insurance')}</span>
           {offer.high_risk_secondary ? <span className="chip disputed">{t('badge.highRisk')}</span> : <span className="chip released">{t('badge.ownerVerified')}</span>}
+          {!!offer.warranty_days && <span className="chip released" title={t('warranty.badgeHint', { days: offer.warranty_days })}>{t('warranty.badge', { days: offer.warranty_days })}</span>}
         </>
       ) : (
         <span className="chip held">{t('badge.inspection')}</span>

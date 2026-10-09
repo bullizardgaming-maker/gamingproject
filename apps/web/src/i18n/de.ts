@@ -564,5 +564,14 @@ const de: Messages = {
   "history.date": "Datum",
   "also.title": "Käufer kauften auch",
   "also.more": "Beliebt in {game}",
+  // Account warranty
+  "warranty.sellLabel": "Garantie nach Freigabe",
+  "warranty.none": "Keine Garantie",
+  "warranty.days_one": "{count} Tag",
+  "warranty.days_other": "{count} Tage",
+  "warranty.sellHint": "Beginnt mit der Treuhand-Freigabe. Die Auszahlung dieser Bestellung bleibt bis zum Ende der Garantie zurückgehalten.",
+  "warranty.badge": "{days} Tage Garantie",
+  "warranty.badgeHint": "Holt der ursprüngliche Besitzer den Account zurück oder wird er innerhalb von {days} Tagen nach der Freigabe gebannt oder gesperrt, kann der Käufer eine Lösung oder Erstattung verlangen.",
+  "money.unlocksClaim": "Nach Abschluss eines Garantieanspruchs",
 };
 export default de;

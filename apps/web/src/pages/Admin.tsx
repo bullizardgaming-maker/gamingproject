@@ -11,9 +11,10 @@ import { SupportPanel } from './SupportPanel';
 import { DisputeCase } from './DisputeCase';
 import { DISPUTE_CATEGORY } from './OrderPage';
 import { ModerationPanel } from './ModerationPanel';
+import { WarrantyPanel } from './WarrantyPanel';
 
 type ListTab = 'disputes' | 'risk' | 'proofs' | 'chargebacks' | 'ledger' | 'recon' | 'audit';
-type PanelTab = 'business' | 'support' | 'moderation' | 'aml' | 'treasury' | 'tax' | 'staff' | 'status' | 'debts' | 'currency' | 'model' | 'privacy';
+type PanelTab = 'business' | 'support' | 'moderation' | 'warranty' | 'aml' | 'treasury' | 'tax' | 'staff' | 'status' | 'debts' | 'currency' | 'model' | 'privacy';
 type Tab = ListTab | PanelTab;
 
 /** Each tab is shown to whoever holds its permission (see the API's domain/permissions.ts). */
@@ -22,6 +23,7 @@ const TABS: Array<{ id: Tab; label: string; perm: string }> = [
   { id: 'support', label: 'Support', perm: 'support.manage' },
   { id: 'moderation', label: 'Moderation', perm: 'moderation.manage' },
   { id: 'disputes', label: 'Disputes', perm: 'disputes.manage' },
+  { id: 'warranty', label: 'Warranty claims', perm: 'disputes.manage' },
   { id: 'proofs', label: 'Owner proofs', perm: 'owner_proofs.review' },
   { id: 'risk', label: 'Fraud review', perm: 'risk.review' },
   { id: 'model', label: 'Fraud model', perm: 'risk.review' },
@@ -39,7 +41,7 @@ const TABS: Array<{ id: Tab; label: string; perm: string }> = [
   { id: 'privacy', label: 'Privacy', perm: 'retention.manage' },
 ];
 const PANELS: Record<PanelTab, () => React.ReactElement> = {
-  business: BusinessPanel, support: SupportPanel, moderation: ModerationPanel, aml: AmlPanel, treasury: TreasuryPanel, tax: TaxPanel, staff: StaffPanel,
+  business: BusinessPanel, support: SupportPanel, moderation: ModerationPanel, warranty: WarrantyPanel, aml: AmlPanel, treasury: TreasuryPanel, tax: TaxPanel, staff: StaffPanel,
   status: IncidentsPanel, debts: DebtsPanel, currency: CurrencyPanel, model: FraudModelPanel, privacy: PrivacyPanel,
 };
 const isPanel = (t: Tab): t is PanelTab => t in PANELS;

@@ -564,5 +564,14 @@ const es: Messages = {
   "history.date": "Fecha",
   "also.title": "Los compradores también compraron",
   "also.more": "Popular en {game}",
+  // Account warranty
+  "warranty.sellLabel": "Garantía tras la liberación",
+  "warranty.none": "Sin garantía",
+  "warranty.days_one": "{count} día",
+  "warranty.days_other": "{count} días",
+  "warranty.sellHint": "Empieza cuando se libera el depósito. El pago de ese pedido queda retenido hasta que termine la garantía.",
+  "warranty.badge": "Garantía de {days} días",
+  "warranty.badgeHint": "Si el propietario original recupera la cuenta, o se banea o bloquea en los {days} días tras la liberación, el comprador puede reclamar un arreglo o un reembolso.",
+  "money.unlocksClaim": "Cuando se resuelva una reclamación de garantía",
 };
 export default es;

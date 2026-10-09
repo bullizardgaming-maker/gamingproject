@@ -66,6 +66,21 @@ const es: LocalePack = {
       subject: () => 'Nueva declaración en tu disputa',
       body: (d, link) => `El ${d.role === 'buyer' ? 'comprador' : 'vendedor'} añadió una declaración a la disputa. Léela y responde en el chat del pedido o con tu propia declaración antes de que decida el árbitro.\n\n${link(`/orders/${d.order_id}`)}`,
     },
+    warranty_claim: {
+      subject: (d) => `Reclamación de garantía en ${d.title}`,
+      body: (d, link) => {
+        const r = ({ recovered: "el propietario original recuperó la cuenta", banned: "la cuenta fue baneada", locked: "la cuenta está bloqueada" } as Record<string, string>)[d.reason as string] ?? "la cuenta dejó de funcionar";
+        return `El comprador dice que ${r}. Tienes ${d.hours} horas para arreglarlo, reembolsar o impugnarlo; después decide un árbitro. El pago de este pedido queda retenido hasta que se resuelva.\n\n${link(`/orders/${d.order_id}`)}`;
+      },
+    },
+    warranty_update: {
+      subject: (d) => `Novedades de la reclamación de garantía: ${d.title}`,
+      body: (d, link) => {
+        const b = d.role === 'buyer';
+        const m: Record<string, string> = { seller_fixed: b ? "El vendedor dice que la cuenta vuelve a funcionar. Confírmalo o envía la reclamación a un árbitro si no es así." : "Has indicado que está arreglado. El comprador tiene 72 horas para confirmarlo.", escalated: "La reclamación ha pasado a un árbitro, que leerá el chat del pedido y decidirá.", resolved: "Reclamación resuelta: la cuenta vuelve a funcionar.", refunded: b ? "Se te ha reembolsado por la garantía." : "Se reembolsó al comprador por la garantía, con el pago retenido de este pedido.", rejected: "Un árbitro rechazó la reclamación.", withdrawn: "El comprador retiró la reclamación." };
+        return `${m[d.status as string] ?? "La reclamación se ha actualizado."}\n\n${link(`/orders/${d.order_id}`)}`;
+      },
+    },
     dispute_resolved: {
       subject: (d) => `Disputa resuelta: ${d.title}`,
       body: (d, link) => `El árbitro falló a favor del ${d.outcome === 'buyer' ? 'comprador' : 'vendedor'}. Nota: «${d.note}»\n\n${link(`/orders/${d.order_id}`)}`,

@@ -66,6 +66,21 @@ const de: LocalePack = {
       subject: () => 'Neue Stellungnahme in deinem Streitfall',
       body: (d, link) => `Der ${d.role === 'buyer' ? 'Käufer' : 'Verkäufer'} hat eine Stellungnahme zum Streitfall hinzugefügt. Lies sie und antworte im Bestell-Chat oder mit deiner eigenen Stellungnahme, bevor der Schlichter entscheidet.\n\n${link(`/orders/${d.order_id}`)}`,
     },
+    warranty_claim: {
+      subject: (d) => `Garantieanspruch zu ${d.title}`,
+      body: (d, link) => {
+        const r = ({ recovered: "der ursprüngliche Besitzer hat den Account zurückgeholt", banned: "der Account wurde gebannt", locked: "der Account ist gesperrt" } as Record<string, string>)[d.reason as string] ?? "der Account funktioniert nicht mehr";
+        return `Der Käufer meldet: ${r}. Du hast ${d.hours} Stunden, um es zu beheben, zu erstatten oder zu widersprechen; danach entscheidet ein Schlichter. Die Auszahlung dieser Bestellung bleibt bis dahin zurückgehalten.\n\n${link(`/orders/${d.order_id}`)}`;
+      },
+    },
+    warranty_update: {
+      subject: (d) => `Neuigkeiten zum Garantieanspruch: ${d.title}`,
+      body: (d, link) => {
+        const b = d.role === 'buyer';
+        const m: Record<string, string> = { seller_fixed: b ? "Der Verkäufer sagt, der Account funktioniert wieder. Bestätige das oder gib den Anspruch an einen Schlichter, falls nicht." : "Du hast eine Lösung gemeldet. Der Käufer hat 72 Stunden zum Bestätigen.", escalated: "Der Anspruch liegt jetzt bei einem Schlichter, der den Bestellchat liest und entscheidet.", resolved: "Anspruch erledigt: Der Account funktioniert wieder.", refunded: b ? "Du hast über die Garantie eine Erstattung erhalten." : "Der Käufer wurde über die Garantie aus der zurückgehaltenen Auszahlung dieser Bestellung erstattet.", rejected: "Ein Schlichter hat den Anspruch abgelehnt.", withdrawn: "Der Käufer hat den Anspruch zurückgezogen." };
+        return `${m[d.status as string] ?? "Der Anspruch wurde aktualisiert."}\n\n${link(`/orders/${d.order_id}`)}`;
+      },
+    },
     dispute_resolved: {
       subject: (d) => `Streitfall entschieden: ${d.title}`,
       body: (d, link) => `Der Schlichter hat zugunsten des ${d.outcome === 'buyer' ? 'Käufers' : 'Verkäufers'} entschieden. Hinweis: „${d.note}“\n\n${link(`/orders/${d.order_id}`)}`,

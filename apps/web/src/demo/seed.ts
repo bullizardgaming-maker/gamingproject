@@ -218,6 +218,7 @@ export function seed() {
   );
   const sellerId: Record<string, string> = { seller: users[1]!.id, seller2: users[3]!.id, seller3: users[4]!.id, seller4: users[5]!.id, seller5: users[6]!.id };
 
+  const WARRANTY: Record<string, number> = { 'Lvl 80 Warrior, full mythic gear, 2009 account': 30, 'OG account, Renegade Raider + 210 skins': 14 };
   const offers = LISTINGS.map(([cat, game, title, price, mode, stock, seller, proof, description, hours], i) => {
     const kind = CATEGORIES.find((c) => c.slug === cat)!.kind;
     return {
@@ -238,6 +239,8 @@ export function seed() {
       owner_proof_status: kind === 'account' ? proof ?? 'none' : 'none',
       attributes: ATTRS[title] ?? {},
       price_tiers: TIERS[title] ?? [],
+      // Account listings: a warranty that runs on after escrow releases.
+      warranty_days: WARRANTY[title] ?? 0,
       review_reasons: [] as string[],
       bundle: null as Array<{ offer_id: string; quantity: number }> | null,
       sale_price_cents: (SALES[title]?.[0] ?? null) as number | null,
@@ -274,6 +277,7 @@ export function seed() {
     users,
     offers,
     orders: [] as any[],
+    warrantyClaims: [] as any[],
     rooms: [flagRoom] as any[],
     messages: flagMsgs as any[],
     modTerms: DEFAULT_TERMS.map((t, k) => ({ id: `term-${k}`, ...t, created_at: ago(30 * day) })),

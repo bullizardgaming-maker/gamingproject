@@ -24,6 +24,7 @@ import { caseFile } from '../domain/disputes.js';
 import { addTerm, chatFlagQueue, decideChatFlag, decideListing, listTerms, moderationCounts, removeTerm, reviewQueue } from '../domain/moderation.js';
 import { requirePermission } from '../server.js';
 import { audit, listAudit } from '../domain/audit.js';
+import { decideClaim, escalatedClaims } from '../domain/warranty.js';
 import { createPromo, listPromos, setPromoActive } from '../domain/promos.js';
 import { withdrawable } from '../domain/payoutholds.js';
 import { retentionPolicy, runRetention } from '../domain/retention.js';
@@ -38,6 +39,22 @@ const Id = z.object({ id: z.string().uuid() });
 
 export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   // --- Arbitration -------------------------------------------------------------------
+  // Warranty claims sent to an arbiter (account warranty, after release).
+  app.get('/admin/warranty-claims', async (req) => {
+    requirePermission(req, 'disputes.manage');
+    return escalatedClaims(ctx.db);
+  });
+  app.post('/admin/warranty-claims/:id/decide', async (req) => {
+    const body = z
+      .object({ outcome: z.enum(['refund', 'reject']), note: z.string().trim().min(5).max(1_000), amountCents: z.number().int().positive().optional(), paidBy: z.enum(['seller', 'platform', 'reserve']).optional() })
+      .parse(req.body);
+    const staff = requirePermission(req, body.outcome === 'refund' ? 'orders.refund_after_release' : 'disputes.manage');
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const claim = await decideClaim(ctx, staff.id, id, body);
+    await audit(ctx.db, req, 'warranty_claim.decide', { type: 'warranty_claim', id }, body);
+    return claim;
+  });
+
   app.get('/admin/disputes', async (req) => {
     requirePermission(req, 'disputes.manage');
     return many(

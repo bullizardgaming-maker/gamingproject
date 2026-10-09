@@ -498,6 +498,7 @@ function NewOffer({ onCreated, offers }: { onCreated: () => void; offers: Seller
           attributes: Object.fromEntries(fields.map((d) => [d.key, f[`attr.${d.key}`] ?? '']).filter(([, v]) => v)),
           priceTiers: category === 'accounts' ? undefined : TIER_ROWS.filter((i) => f[`tierQty${i}`] && f[`tierPrice${i}`]).map((i) => ({ minQty: Number(f[`tierQty${i}`]), priceCents: Math.round(Number(f[`tierPrice${i}`]) * 100) })),
           ...(f.deliveryMode === 'manual' && f.categorySlug !== 'accounts' ? { stock: Number(f.stock || 1) } : {}),
+          ...(f.categorySlug === 'accounts' && Number(f.warrantyDays) ? { warrantyDays: Number(f.warrantyDays) } : {}),
           ...(bundleOn ? { bundle: Object.entries(parts).map(([offerId, quantity]) => ({ offerId, quantity })) } : {}),
         },
       });
@@ -534,6 +535,15 @@ function NewOffer({ onCreated, offers }: { onCreated: () => void; offers: Seller
           </select>
         </label>
         {category !== 'accounts' && <label className="field">{t('sell.f.stock')}<input name="stock" type="number" min="1" defaultValue="1" /></label>}
+        {category === 'accounts' && (
+          <label className="field">
+            {t('warranty.sellLabel')}
+            <select name="warrantyDays" defaultValue="0" aria-describedby="warranty-hint">
+              {[0, 7, 14, 30, 60, 90].map((d) => <option key={d} value={d}>{d ? t('warranty.days', { count: d }) : t('warranty.none')}</option>)}
+            </select>
+            <span id="warranty-hint" className="small muted">{t('warranty.sellHint')}</span>
+          </label>
+        )}
       </div>
       {fields.length > 0 && (
         <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0, gap: 8 }}>

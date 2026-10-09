@@ -748,6 +748,16 @@ const en = {
   "also.title": "Buyers also bought",
   "also.more": "Popular in {game}",
 
+  // Account warranty
+  "warranty.sellLabel": "Warranty after release",
+  "warranty.none": "No warranty",
+  "warranty.days_one": "{count} day",
+  "warranty.days_other": "{count} days",
+  "warranty.sellHint": "Starts when escrow releases. That order’s payout stays on hold until the warranty ends.",
+  "warranty.badge": "{days}-day warranty",
+  "warranty.badgeHint": "If the account is recovered by its original owner, banned or locked within {days} days after escrow releases, the buyer can claim a fix or a refund.",
+  "money.unlocksClaim": "After a warranty claim is settled",
+
   // Generic
   'common.notFound': 'Page not found',
   'common.englishOnly': 'This section is in English.',

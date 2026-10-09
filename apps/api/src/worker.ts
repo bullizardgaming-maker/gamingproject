@@ -22,6 +22,7 @@ import { maybeRefreshTrustLevels } from './domain/trust.js';
 import { maybeSendDigests } from './domain/savedSearches.js';
 import { maybeRepairCounters } from './domain/counters.js';
 import { maybeSnapshotMarketPrices } from './domain/priceHistory.js';
+import { expireClaims } from './domain/warranty.js';
 import { maybeRefreshResponseTimes } from './domain/presence.js';
 
 /**
@@ -57,6 +58,7 @@ export async function runJobsOnce(ctx: Ctx) {
     job(ctx, 'saved_search_digests', () => maybeSendDigests(ctx), null),
     job(ctx, 'search_counters', () => maybeRepairCounters(ctx), null),
     job(ctx, 'market_prices', () => maybeSnapshotMarketPrices(ctx), null),
+    job(ctx, 'warranty_claims', () => expireClaims(ctx), 0),
     job(ctx, 'response_times', () => maybeRefreshResponseTimes(ctx), null),
   ]);
   const reconciled = await job(ctx, 'reconciliation_scheduler', () => maybeRunScheduledReconciliation(ctx), false);

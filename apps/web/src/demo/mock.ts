@@ -10,7 +10,7 @@ import { CATEGORY_DEFAULTS, GAME_SETS, attributesFor, cleanAttributes } from '..
 import { checkTiers, effectivePrice, unitPriceFor } from '../../../api/src/domain/priceTiers';
 import { detectOffPlatform, matchTerms } from '../../../api/src/domain/safety';
 
-const KEY = 'bz.demo.v14';
+const KEY = 'bz.demo.v15';
 const day = 86_400_000;
 const now = () => new Date().toISOString();
 const rid = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2) + Date.now().toString(16));
@@ -208,6 +208,7 @@ function deliverOrder(o: any, payload?: string) {
 function releaseOrder(o: any, reason: string) {
   transition(o, 'completed', reason);
   o.completed_at = now();
+  if (o.warranty_days) o.warranty_ends_at = new Date(Date.now() + o.warranty_days * day).toISOString();
   state.balances[o.seller_id] = (state.balances[o.seller_id] ?? 0) + o.seller_net_cents;
   state.monthlySales[o.seller_id] = (state.monthlySales[o.seller_id] ?? 0) + o.amount_cents;
   state.platform.escrow -= o.amount_cents;
@@ -247,6 +248,7 @@ function orderDetail(o: any) {
     buyer_name: userById(o.buyer_id)?.display_name,
     seller_name: userById(o.seller_id)?.display_name,
     review: review ? { rating: review.rating, comment: review.comment, seller_reply: review.seller_reply } : null,
+    warranty_claims: state.warrantyClaims.filter((c) => c.order_id === o.id).sort((a, b) => b.created_at.localeCompare(a.created_at)),
   };
 }
 
@@ -287,6 +289,7 @@ function createOrderRecord(buyer: DemoUser, offer: any, quantity: number, rail: 
     checklist: isAccount ? { items: CHECKLIST.map(([key, label]) => ({ key, label, done: false })), completed_at: null } : null,
     dispute: null, events: [{ from_status: null, to_status: 'awaiting_payment', reason: 'order_created', created_at: now() }],
     created_at: now(), items: [],
+    warranty_days: rail === 'fiat' ? offer.warranty_days ?? 0 : 0, warranty_ends_at: null,
   };
   state.orders.push(o);
   if (offer.delivery_mode === 'manual') offer.stock -= quantity;
@@ -706,6 +709,87 @@ route('POST', '/orders/:id/deliver', ({ me, params, body }) => {
   notifyOrder(o.id);
   return orderDetail(o);
 });
+// --- Account warranty claims (after release) ---------------------------------------------
+const CLAIM_OPEN = ['open', 'seller_fixed', 'escalated'];
+const REASON_TEXT: Record<string, string> = { recovered: 'the account was taken back by its original owner', banned: 'the account was banned', locked: 'the account is locked', other: 'the account stopped working' };
+function claimFor(id: string) {
+  const c = state.warrantyClaims.find((x) => x.id === id) ?? fail(404, 'not_found', 'Warranty claim not found');
+  return { c, o: state.orders.find((x) => x.id === c.order_id)! };
+}
+function claimUpdate(c: any, o: any, status: string, extra: Record<string, unknown>, chat: string) {
+  Object.assign(c, { status, updated_at: now() }, extra);
+  live(appendMessage(o.room_id, null, 'system', chat));
+  for (const uid of [o.buyer_id, o.seller_id]) notify(uid, 'disputes', 'warranty_update', `Warranty claim update: ${o.offer_title}`, `Status: ${status.replace('_', ' ')}.`, `/orders/${o.id}`);
+}
+function warrantyRefund(o: any, c: any) {
+  // Refunded from the seller's balance (the warranty kept this payout on hold).
+  state.balances[o.seller_id] = (state.balances[o.seller_id] ?? 0) - o.seller_net_cents;
+  live(appendMessage(o.room_id, null, 'system', `${(o.amount_cents / 100).toFixed(2)} USD was refunded to the buyer under the warranty.`));
+  c.refunded_cents = o.amount_cents;
+}
+route('POST', '/orders/:id/warranty-claims', ({ me, params, body }) => {
+  const u = need(me);
+  const o = orderFor(u, params[0]!);
+  if (o.buyer_id !== u.id) fail(403, 'not_buyer', 'Only the buyer can claim on the warranty');
+  if (o.status !== 'completed' || !o.warranty_ends_at) fail(409, 'no_warranty', 'This order has no warranty');
+  if (Date.parse(o.warranty_ends_at) <= Date.now()) fail(409, 'warranty_expired', 'The warranty on this order has ended');
+  if (state.warrantyClaims.some((c) => c.order_id === o.id && CLAIM_OPEN.includes(c.status))) fail(409, 'claim_open', 'There is already an open claim on this order');
+  if (String(body.details ?? '').trim().length < 10) fail(400, 'validation_error', 'Describe what happened');
+  const c = {
+    id: rid(), order_id: o.id, buyer_id: o.buyer_id, seller_id: o.seller_id, reason: body.reason, details: String(body.details).trim(), status: 'open',
+    seller_message: null, respond_by: new Date(Date.now() + 48 * 3_600_000).toISOString(), confirm_by: null, decision_note: null, created_at: now(), updated_at: now(),
+  };
+  state.warrantyClaims.push(c);
+  live(appendMessage(o.room_id, null, 'system', `Warranty claim: the buyer says ${REASON_TEXT[c.reason] ?? REASON_TEXT.other}. The seller has 48 hours to fix it, refund, or contest it.`));
+  notify(o.seller_id, 'disputes', 'warranty_claim', `Warranty claim on ${o.offer_title}`, 'Fix it, refund, or contest it within 48 hours.', `/orders/${o.id}`);
+  return c;
+});
+route('POST', '/warranty-claims/:id/seller', ({ me, params, body }) => {
+  const u = need(me);
+  const { c, o } = claimFor(params[0]!);
+  if (c.seller_id !== u.id) fail(403, 'not_seller', 'Only the seller can answer this claim');
+  if (c.status !== 'open') fail(409, 'claim_not_open', 'This claim is no longer waiting for the seller');
+  const msg = body.message ? `: "${body.message}"` : '';
+  if (body.action === 'fixed') claimUpdate(c, o, 'seller_fixed', { seller_message: body.message ?? null, confirm_by: new Date(Date.now() + 72 * 3_600_000).toISOString() }, `The seller says the account is working again${msg}. The buyer has 72 hours to confirm or send it to an arbiter.`);
+  else if (body.action === 'contest') claimUpdate(c, o, 'escalated', { seller_message: body.message ?? null }, `The seller contests the warranty claim${msg}. An arbiter will decide.`);
+  else {
+    warrantyRefund(o, c);
+    claimUpdate(c, o, 'refunded', { seller_message: body.message ?? null }, 'The seller accepted the warranty claim and refunded the buyer.');
+  }
+  return c;
+});
+route('POST', '/warranty-claims/:id/buyer', ({ me, params, body }) => {
+  const u = need(me);
+  const { c, o } = claimFor(params[0]!);
+  if (c.buyer_id !== u.id) fail(403, 'not_buyer', 'Only the buyer can do this');
+  if (body.action === 'withdraw') {
+    if (!CLAIM_OPEN.includes(c.status)) fail(409, 'claim_closed', 'This claim is already closed');
+    claimUpdate(c, o, 'withdrawn', {}, 'The buyer withdrew the warranty claim.');
+  } else {
+    if (c.status !== 'seller_fixed') fail(409, 'nothing_to_confirm', 'The seller hasn’t reported a fix yet');
+    if (body.action === 'confirm') claimUpdate(c, o, 'resolved', {}, 'The buyer confirmed the account works again. Warranty claim resolved.');
+    else claimUpdate(c, o, 'escalated', {}, 'The buyer says the account still doesn’t work. An arbiter will decide.');
+  }
+  return c;
+});
+route('GET', '/admin/warranty-claims', ({ me }) => {
+  needPerm(me, 'disputes.manage');
+  return state.warrantyClaims.filter((c) => c.status === 'escalated').map((c) => {
+    const o = state.orders.find((x) => x.id === c.order_id)!;
+    return { ...c, title: o.offer_title, amount_cents: o.amount_cents, currency: o.currency, warranty_ends_at: o.warranty_ends_at, buyer_name: userById(o.buyer_id)?.display_name, seller_name: userById(o.seller_id)?.display_name };
+  });
+});
+route('POST', '/admin/warranty-claims/:id/decide', ({ me, params, body }) => {
+  needPerm(me, body.outcome === 'refund' ? 'orders.refund_after_release' : 'disputes.manage');
+  const { c, o } = claimFor(params[0]!);
+  if (c.status !== 'escalated') fail(409, 'not_escalated', 'Only claims sent to an arbiter can be decided here');
+  if (body.outcome === 'refund') {
+    if (body.paidBy === 'seller' || !body.paidBy) warrantyRefund(o, c);
+    claimUpdate(c, o, 'refunded', { decision_note: body.note }, `An arbiter refunded the buyer under the warranty: "${body.note}"`);
+  } else claimUpdate(c, o, 'rejected', { decision_note: body.note }, `An arbiter rejected the warranty claim: "${body.note}"`);
+  return c;
+});
+
 route('POST', '/orders/:id/confirm', ({ me, params }) => {
   const u = need(me);
   const o = orderFor(u, params[0]!);
@@ -894,6 +978,8 @@ route('POST', '/offers', ({ me, body }) => {
   const hits = matchTerms(text, state.modTerms);
   if (hits.some((h) => h.action === 'block')) fail(400, 'listing_blocked', 'This listing breaks the rules on prohibited goods and can’t be published');
   const reviewReasons = [...hits.map((h) => `term:${h.term}`), ...detectOffPlatform(text).map((x) => `contact:${x}`)];
+  if (body.warrantyDays && cat.kind !== 'account') fail(400, 'invalid_warranty', 'Only account listings can carry a warranty');
+  if (body.warrantyDays && ![7, 14, 30, 60, 90].includes(Number(body.warrantyDays))) fail(400, 'validation_error', 'Pick 7, 14, 30, 60 or 90 days');
   let bundle: Array<{ offer_id: string; quantity: number }> | null = null;
   if (body.bundle) {
     if (cat.kind === 'account') fail(400, 'invalid_bundle', 'Accounts are sold one at a time and can’t be bundled');
@@ -910,6 +996,7 @@ route('POST', '/offers', ({ me, body }) => {
     description: body.description ?? '', price_cents: body.priceCents, currency: 'USD', delivery_mode: body.deliveryMode, delivery_hours: body.deliveryMode === 'auto' ? 0 : Number(body.deliveryHours ?? 2),
     stock: body.deliveryMode === 'manual' ? Number(body.stock ?? 1) : 0, inventory: [] as string[], status: reviewReasons.length ? 'review' : 'active', review_reasons: reviewReasons, owner_proof_status: 'none', version: 1, created_at: now(),
     attributes: attrs.ok ? attrs.value : {}, reserved_for: null, request_id: null, price_tiers: tiers.ok ? tiers.value : [], sale_price_cents: null, sale_starts_at: null, sale_ends_at: null,
+    warranty_days: cat.kind === 'account' ? Number(body.warrantyDays ?? 0) : 0,
   };
   state.offers.unshift(o);
   if (reviewReasons.length) notify(u.id, 'selling', 'listing_review', 'Your listing is being reviewed', 'It mentions something our rules ask us to check, so it’s hidden until a moderator looks at it.', '/sell');
@@ -1211,7 +1298,7 @@ route('POST', '/requests/:id/proposals/:pid/accept', ({ me, params }) => {
     id: `offer-r-${rid().slice(0, 8)}`, seller_id: p.seller_id, category_slug: r.category_slug, category_kind: CATEGORIES.find((c) => c.slug === r.category_slug)!.kind, game: r.game,
     title: r.title, description: [r.description, p.message].filter(Boolean).join('\n\n'), price_cents: p.price_cents, currency: r.currency, delivery_mode: 'manual' as const,
     delivery_hours: p.delivery_hours, stock: 1, inventory: [] as string[], price_tiers: [], review_reasons: [] as string[], bundle: null, sale_price_cents: null, sale_starts_at: null, sale_ends_at: null, status: 'active', owner_proof_status: 'none', attributes: r.attributes ?? {}, version: 1, created_at: now(),
-    reserved_for: u.id, request_id: r.id,
+    reserved_for: u.id, request_id: r.id, warranty_days: 0,
   };
   state.offers.push(offer);
   Object.assign(p, { status: 'accepted', offer_id: offer.id, updated_at: now() });

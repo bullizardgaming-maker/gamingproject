@@ -66,6 +66,21 @@ const ar: LocalePack = {
       subject: () => 'بيان جديد في نزاعك',
       body: (d, link) => `أضاف ${d.role === 'buyer' ? 'المشتري' : 'البائع'} بيانًا إلى النزاع. اقرأه ورُدّ في محادثة الطلب أو ببيانك قبل أن يقرر المحكّم.\n\n${link(`/orders/${d.order_id}`)}`,
     },
+    warranty_claim: {
+      subject: (d) => `مطالبة ضمان على ${d.title}`,
+      body: (d, link) => {
+        const r = ({ recovered: "أن صاحب الحساب الأصلي استعاده", banned: "أن الحساب حُظر", locked: "أن الحساب مقفل" } as Record<string, string>)[d.reason as string] ?? "أن الحساب توقف عن العمل";
+        return `يقول المشتري ${r}. أمامك ${d.hours} ساعة لإصلاح المشكلة أو رد المبلغ أو الاعتراض؛ بعدها يقرر محكّم. يبقى مبلغ هذا الطلب معلقًا حتى تُحسم المطالبة.\n\n${link(`/orders/${d.order_id}`)}`;
+      },
+    },
+    warranty_update: {
+      subject: (d) => `تحديث مطالبة الضمان: ${d.title}`,
+      body: (d, link) => {
+        const b = d.role === 'buyer';
+        const m: Record<string, string> = { seller_fixed: b ? "يقول البائع إن الحساب يعمل مجددًا. أكّد ذلك، أو أرسل المطالبة إلى محكّم إن لم يعمل." : "أبلغت عن إصلاح. أمام المشتري 72 ساعة للتأكيد.", escalated: "انتقلت المطالبة إلى محكّم سيقرأ محادثة الطلب ويقرر.", resolved: "حُسمت المطالبة: الحساب يعمل مجددًا.", refunded: b ? "استرددت مبلغك بموجب الضمان." : "رُدّ للمشتري مبلغه بموجب الضمان من المبلغ المعلق لهذا الطلب.", rejected: "رفض محكّم المطالبة.", withdrawn: "سحب المشتري المطالبة." };
+        return `${m[d.status as string] ?? "حُدّثت المطالبة."}\n\n${link(`/orders/${d.order_id}`)}`;
+      },
+    },
     dispute_resolved: {
       subject: (d) => `حُسم النزاع: ${d.title}`,
       body: (d, link) => `قرر المحكّم لصالح ${d.outcome === 'buyer' ? 'المشتري' : 'البائع'}. ملاحظة: «${d.note}»\n\n${link(`/orders/${d.order_id}`)}`,

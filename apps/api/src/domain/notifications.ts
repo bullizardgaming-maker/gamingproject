@@ -110,6 +110,26 @@ export const TEMPLATES = {
     subject: (d) => `New statement in your dispute`,
     body: (d, link) => `The ${d.role} added a statement to the dispute. Read it and reply in the order chat or with your own statement before the arbiter decides.\n\n${link(`/orders/${d.order_id}`)}`,
   },
+  warranty_claim: {
+    category: 'disputes',
+    subject: (d) => `Warranty claim on ${d.title}`,
+    body: (d, link) =>
+      `The buyer says ${({ recovered: 'the account was taken back by its original owner', banned: 'the account was banned', locked: 'the account is locked' } as Record<string, string>)[d.reason as string] ?? 'the account stopped working'}. ` +
+      `You have ${d.hours} hours to fix it, refund, or contest it; after that an arbiter decides. This order's payout stays on hold until the claim is settled.\n\n${link(`/orders/${d.order_id}`)}`,
+  },
+  warranty_update: {
+    category: 'disputes',
+    subject: (d) => `Warranty claim update: ${d.title}`,
+    body: (d, link) =>
+      `${({
+        seller_fixed: d.role === 'buyer' ? 'The seller says the account works again. Confirm it, or send the claim to an arbiter if it doesn’t.' : 'You reported a fix. The buyer has 72 hours to confirm it.',
+        escalated: 'The claim has gone to an arbiter, who will read the order chat and decide.',
+        resolved: 'The claim is resolved: the account works again.',
+        refunded: d.role === 'buyer' ? 'You’ve been refunded under the warranty.' : 'The buyer was refunded under the warranty, from this order’s held payout.',
+        rejected: 'An arbiter rejected the claim.',
+        withdrawn: 'The buyer withdrew the claim.',
+      } as Record<string, string>)[d.status as string] ?? 'The claim was updated.'}\n\n${link(`/orders/${d.order_id}`)}`,
+  },
   dispute_resolved: {
     category: 'disputes',
     subject: (d) => `Dispute resolved: ${d.title}`,

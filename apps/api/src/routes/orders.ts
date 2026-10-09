@@ -10,6 +10,7 @@ import {
 import { buildEscrowTerms } from '../domain/web3.js';
 import { MAX_CART_ITEMS, cartView, createCartCheckout } from '../domain/cart.js';
 import { DISPUTE_CATEGORIES, addStatement } from '../domain/disputes.js';
+import { CLAIM_REASONS, buyerRespond, openClaim, sellerRespond } from '../domain/warranty.js';
 import { createReview, replyToReview, sellerProfile } from '../domain/reviews.js';
 import { badRequest, forbidden, notFound } from '../lib/errors.js';
 import { readAttachment, uploadAttachment } from '../domain/attachments.js';
@@ -130,6 +131,20 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/orders/:id/dispute/statements', async (req, reply) => {
     const { body } = z.object({ body: z.string().trim().min(10).max(2_000) }).parse(req.body);
     return reply.status(201).send(await addStatement(ctx, Id.parse(req.params).id, me(req).id, body));
+  });
+
+  // Account warranty claims (after release, while the order's warranty runs).
+  app.post('/orders/:id/warranty-claims', async (req, reply) => {
+    const body = z.object({ reason: z.enum(CLAIM_REASONS), details: z.string().trim().min(10).max(2_000) }).parse(req.body);
+    return reply.status(201).send(await openClaim(ctx, me(req).id, Id.parse(req.params).id, body));
+  });
+  app.post('/warranty-claims/:id/seller', async (req) => {
+    const body = z.object({ action: z.enum(['fixed', 'refund', 'contest']), message: z.string().trim().max(1_000).optional() }).parse(req.body);
+    return sellerRespond(ctx, me(req).id, Id.parse(req.params).id, body);
+  });
+  app.post('/warranty-claims/:id/buyer', async (req) => {
+    const { action } = z.object({ action: z.enum(['confirm', 'escalate', 'withdraw']) }).parse(req.body);
+    return buyerRespond(ctx, me(req).id, Id.parse(req.params).id, action);
   });
 
   app.patch('/orders/:id/checklist', async (req) => {

@@ -67,6 +67,21 @@ const pt: LocalePack = {
       subject: () => 'Nova declaração na sua disputa',
       body: (d, link) => `O ${d.role === 'buyer' ? 'comprador' : 'vendedor'} adicionou uma declaração à disputa. Leia e responda no chat do pedido ou com a sua própria declaração antes de o árbitro decidir.\n\n${link(`/orders/${d.order_id}`)}`,
     },
+    warranty_claim: {
+      subject: (d) => `Reclamação de garantia em ${d.title}`,
+      body: (d, link) => {
+        const r = ({ recovered: "o dono original recuperou a conta", banned: "a conta foi banida", locked: "a conta está bloqueada" } as Record<string, string>)[d.reason as string] ?? "a conta parou de funcionar";
+        return `O comprador diz que ${r}. Você tem ${d.hours} horas para corrigir, reembolsar ou contestar; depois um árbitro decide. O pagamento deste pedido fica retido até a reclamação ser resolvida.\n\n${link(`/orders/${d.order_id}`)}`;
+      },
+    },
+    warranty_update: {
+      subject: (d) => `Atualização da reclamação de garantia: ${d.title}`,
+      body: (d, link) => {
+        const b = d.role === 'buyer';
+        const m: Record<string, string> = { seller_fixed: b ? "O vendedor diz que a conta voltou a funcionar. Confirme, ou envie a reclamação a um árbitro se não funcionar." : "Você informou uma correção. O comprador tem 72 horas para confirmar.", escalated: "A reclamação foi para um árbitro, que vai ler o chat do pedido e decidir.", resolved: "Reclamação resolvida: a conta voltou a funcionar.", refunded: b ? "Você foi reembolsado pela garantia." : "O comprador foi reembolsado pela garantia, com o pagamento retido deste pedido.", rejected: "Um árbitro rejeitou a reclamação.", withdrawn: "O comprador retirou a reclamação." };
+        return `${m[d.status as string] ?? "A reclamação foi atualizada."}\n\n${link(`/orders/${d.order_id}`)}`;
+      },
+    },
     dispute_resolved: {
       subject: (d) => `Disputa resolvida: ${d.title}`,
       body: (d, link) => `O árbitro decidiu a favor do ${d.outcome === 'buyer' ? 'comprador' : 'vendedor'}. Observação: “${d.note}”\n\n${link(`/orders/${d.order_id}`)}`,

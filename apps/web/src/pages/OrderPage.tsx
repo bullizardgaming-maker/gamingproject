@@ -36,6 +36,124 @@ interface OrderDetail {
   dispute: { reason: string; status: string; category?: string; statements?: Array<{ id: string; role: 'buyer' | 'seller'; body: string; author_name: string; created_at: string }> } | null;
   review: { rating: number; comment: string; seller_reply: string | null } | null;
   events: Array<{ from_status: string | null; to_status: string; reason: string; created_at: string }>;
+  warranty_days?: number;
+  warranty_ends_at?: string | null;
+  warranty_claims?: WarrantyClaim[];
+}
+
+interface WarrantyClaim {
+  id: string;
+  reason: 'recovered' | 'banned' | 'locked' | 'other';
+  details: string;
+  status: 'open' | 'seller_fixed' | 'escalated' | 'resolved' | 'refunded' | 'rejected' | 'withdrawn';
+  seller_message: string | null;
+  respond_by: string;
+  confirm_by: string | null;
+  decision_note: string | null;
+  created_at: string;
+}
+
+const CLAIM_REASON: Record<WarrantyClaim['reason'], string> = {
+  recovered: 'Taken back by its original owner',
+  banned: 'Banned',
+  locked: 'Locked or can’t sign in',
+  other: 'Something else',
+};
+const CLAIM_STATUS: Record<WarrantyClaim['status'], string> = {
+  open: 'Waiting for the seller',
+  seller_fixed: 'Seller says it’s fixed',
+  escalated: 'With an arbiter',
+  resolved: 'Resolved',
+  refunded: 'Refunded',
+  rejected: 'Rejected by an arbiter',
+  withdrawn: 'Withdrawn',
+};
+
+/** Account warranty: its end date, the buyer's claim form, and each open claim's next step for whoever owes it. */
+function WarrantyCard({ order, isBuyer, isSeller, onDone }: { order: OrderDetail; isBuyer: boolean; isSeller: boolean; onDone: () => void }) {
+  const [reason, setReason] = useState<WarrantyClaim['reason']>('recovered');
+  const [details, setDetails] = useState('');
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const claims = order.warranty_claims ?? [];
+  const open = claims.find((c) => ['open', 'seller_fixed', 'escalated'].includes(c.status));
+  const running = !!order.warranty_ends_at && new Date(order.warranty_ends_at) > new Date();
+  if (!order.warranty_days || (!order.warranty_ends_at && !claims.length)) return null;
+  const run = async (path: string, body: object) => {
+    setError('');
+    try {
+      await api(path, { body });
+      setDetails('');
+      setMessage('');
+      onDone();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+  const when = (iso: string) => new Date(iso).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+  return (
+    <section className="card stack" aria-labelledby="warranty-title">
+      <div className="row spread">
+        <h3 id="warranty-title" style={{ margin: 0 }}>{order.warranty_days}-day account warranty</h3>
+        {order.warranty_ends_at && <span className={`chip ${running ? 'released' : ''}`}>{running ? `Until ${when(order.warranty_ends_at)}` : 'Ended'}</span>}
+      </div>
+      <p className="small muted" style={{ margin: 0 }}>
+        If the account is taken back by its original owner, banned or locked, claim here. The seller has 48 hours to fix it or refund; otherwise an arbiter decides.
+        {isSeller && ' This order’s payout stays on hold until the warranty ends or a claim is settled.'}
+      </p>
+      {claims.map((c) => (
+        <div key={c.id} className="stack small" style={{ gap: 6, padding: '10px 12px', border: '1px solid var(--rule)', borderRadius: 8 }}>
+          <div className="row spread">
+            <b>{CLAIM_REASON[c.reason]}</b>
+            <span className={`chip ${['refunded', 'resolved'].includes(c.status) ? 'released' : c.status === 'escalated' ? 'disputed' : 'held'}`}>{CLAIM_STATUS[c.status]}</span>
+          </div>
+          <div style={{ whiteSpace: 'pre-wrap' }}>{c.details}</div>
+          {c.seller_message && <div className="muted">Seller: {c.seller_message}</div>}
+          {c.decision_note && <div className="muted">Arbiter: {c.decision_note}</div>}
+          {c.status === 'open' && <div className="muted">Seller answers by {when(c.respond_by)}.</div>}
+          {c.status === 'seller_fixed' && c.confirm_by && <div className="muted">Buyer confirms by {when(c.confirm_by)}; after that the fix stands.</div>}
+          {isSeller && c.status === 'open' && (
+            <div className="stack" style={{ gap: 8 }}>
+              <label className="field">Message to the buyer (optional)<input value={message} onChange={(e) => setMessage(e.target.value)} maxLength={1000} /></label>
+              <div className="row">
+                <button className="btn" onClick={() => run(`/warranty-claims/${c.id}/seller`, { action: 'fixed', message: message || undefined })}>It’s fixed</button>
+                <button className="btn ghost" onClick={() => run(`/warranty-claims/${c.id}/seller`, { action: 'refund', message: message || undefined })}>Refund the buyer</button>
+                <button className="btn ghost" onClick={() => run(`/warranty-claims/${c.id}/seller`, { action: 'contest', message: message || undefined })}>Contest it</button>
+              </div>
+            </div>
+          )}
+          {isBuyer && c.status === 'seller_fixed' && (
+            <div className="row">
+              <button className="btn" onClick={() => run(`/warranty-claims/${c.id}/buyer`, { action: 'confirm' })}>Yes, it works</button>
+              <button className="btn ghost" onClick={() => run(`/warranty-claims/${c.id}/buyer`, { action: 'escalate' })}>Still broken: ask an arbiter</button>
+            </div>
+          )}
+          {isBuyer && ['open', 'seller_fixed', 'escalated'].includes(c.status) && (
+            <button className="btn ghost" style={{ alignSelf: 'start' }} onClick={() => run(`/warranty-claims/${c.id}/buyer`, { action: 'withdraw' })}>Withdraw claim</button>
+          )}
+        </div>
+      ))}
+      {isBuyer && running && !open && order.status === 'completed' && (
+        <details>
+          <summary className="cursor-pointer">Make a warranty claim</summary>
+          <div className="stack" style={{ marginTop: 10, gap: 8 }}>
+            <label className="field">
+              What happened?
+              <select value={reason} onChange={(e) => setReason(e.target.value as WarrantyClaim['reason'])}>
+                {Object.entries(CLAIM_REASON).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+            </label>
+            <label className="field">
+              Details for the seller
+              <textarea value={details} onChange={(e) => setDetails(e.target.value)} placeholder="When did it happen, and what do you see when you sign in? Put screenshots in the chat." />
+            </label>
+            <button className="btn" disabled={details.trim().length < 10} onClick={() => run(`/orders/${order.id}/warranty-claims`, { reason, details })}>Send claim</button>
+          </div>
+        </details>
+      )}
+      {error && <div className="alert" role="alert">{error}</div>}
+    </section>
+  );
 }
 
 const STATUS_TEXT: Record<string, string> = {
@@ -213,6 +331,7 @@ export function OrderPage() {
           )}
 
           {isBuyer && order.status === 'completed' && !order.review && <ReviewForm orderId={order.id} onDone={load} />}
+          <WarrantyCard order={order} isBuyer={isBuyer} isSeller={isSeller} onDone={load} />
           {order.review && (
             <div className="card stack">
               <h3>Review</h3>

@@ -564,5 +564,14 @@ const fr: Messages = {
   "history.date": "Date",
   "also.title": "Les acheteurs ont aussi acheté",
   "also.more": "Populaire dans {game}",
+  // Account warranty
+  "warranty.sellLabel": "Garantie après libération",
+  "warranty.none": "Sans garantie",
+  "warranty.days_one": "{count} jour",
+  "warranty.days_other": "{count} jours",
+  "warranty.sellHint": "Elle commence à la libération du séquestre. Le paiement de cette commande reste bloqué jusqu’à la fin de la garantie.",
+  "warranty.badge": "Garantie {days} jours",
+  "warranty.badgeHint": "Si le compte est récupéré par son propriétaire d’origine, banni ou verrouillé dans les {days} jours après la libération, l’acheteur peut demander une correction ou un remboursement.",
+  "money.unlocksClaim": "Après le règlement d’une réclamation de garantie",
 };
 export default fr;

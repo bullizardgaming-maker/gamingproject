@@ -49,16 +49,20 @@ export async function withdrawable(ctx: Ctx, q: Queryable, sellerId: string, cur
   const policy = await holdPolicy(ctx, q, sellerId);
   const available = await sellerAvailable(q, sellerId, currency);
   const account = await accountId(q, 'seller_available', currency, sellerId);
-  const releases = policy.holdDays
-    ? await many<{ unlocks_at: string; cents: number }>(
-        q,
-        `SELECT date_trunc('hour', created_at + make_interval(days => $2)) AS unlocks_at, SUM(amount_cents)::bigint AS cents
-           FROM ledger_entries
-          WHERE account_id = $1 AND memo = 'escrow_release' AND amount_cents > 0 AND created_at > now() - make_interval(days => $2)
-          GROUP BY 1 ORDER BY 1`,
-        [account, policy.holdDays],
-      )
-    : [];
+  // Held: releases inside the seller's hold period, plus any order still under an account warranty
+  // (until it ends) or with an open warranty claim (until it's decided, unlocks_at null).
+  const releases = await many<{ unlocks_at: string | null; cents: number }>(
+    q,
+    `SELECT CASE WHEN EXISTS (SELECT 1 FROM warranty_claims c WHERE c.order_id = o.id AND c.status IN ('open', 'seller_fixed', 'escalated')) THEN NULL
+                 ELSE date_trunc('hour', greatest(e.created_at + make_interval(days => $2), COALESCE(o.warranty_ends_at, '-infinity'))) END AS unlocks_at,
+            SUM(e.amount_cents)::bigint AS cents
+       FROM ledger_entries e LEFT JOIN orders o ON o.id = e.order_id
+      WHERE e.account_id = $1 AND e.memo = 'escrow_release' AND e.amount_cents > 0
+        AND (e.created_at > now() - make_interval(days => $2) OR o.warranty_ends_at > now()
+             OR EXISTS (SELECT 1 FROM warranty_claims c WHERE c.order_id = o.id AND c.status IN ('open', 'seller_fixed', 'escalated')))
+      GROUP BY 1 ORDER BY 1 NULLS LAST`,
+    [account, policy.holdDays],
+  );
   const recent = releases.reduce((sum, r) => sum + Number(r.cents), 0);
   // Refunds, chargebacks and earlier withdrawals already came out of the balance; never hold more than is there.
   const heldCents = Math.min(Math.max(available, 0), recent);
@@ -68,6 +72,6 @@ export async function withdrawable(ctx: Ctx, q: Queryable, sellerId: string, cur
     availableCents: available,
     heldCents,
     withdrawableCents: Math.max(0, available - heldCents),
-    upcoming: releases.map((r) => ({ unlocksAt: r.unlocks_at, cents: Number(r.cents) })),
+    upcoming: releases.map((r) => ({ unlocksAt: r.unlocks_at, cents: Number(r.cents) })), // unlocksAt null: waiting on a warranty claim
   };
 }
