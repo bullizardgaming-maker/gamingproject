@@ -516,6 +516,7 @@ function NewOffer({ onCreated, offers, linked }: { onCreated: () => void; offers
           ...(f.deliveryMode === 'manual' && f.categorySlug !== 'accounts' ? { stock: Number(f.stock || 1) } : {}),
           ...(f.categorySlug === 'accounts' && Number(f.warrantyDays) ? { warrantyDays: Number(f.warrantyDays) } : {}),
           ...(f.linkedAccountId ? { linkedAccountId: f.linkedAccountId } : {}),
+          ...(f.minBuyerReputation === 'on' ? { minBuyerReputation: 'good' } : {}),
           ...(bundleOn ? { bundle: Object.entries(parts).map(([offerId, quantity]) => ({ offerId, quantity })) } : {}),
         },
       });
@@ -561,6 +562,12 @@ function NewOffer({ onCreated, offers, linked }: { onCreated: () => void; offers
             <span id="warranty-hint" className="small muted">{t('warranty.sellHint')}</span>
           </label>
         )}
+        <label className="field">
+          <span>
+            <input name="minBuyerReputation" type="checkbox" aria-describedby="minrep-hint" /> {t('minRep.sellLabel')}
+          </span>
+          <span id="minrep-hint" className="small muted">{t('minRep.sellHint')}</span>
+        </label>
         {platform && (
           <label className="field">
             {t('linked.sellLabel', { platform: platformName(platform) })}

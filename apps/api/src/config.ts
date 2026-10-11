@@ -144,6 +144,10 @@ const Env = z.object({
   RETENTION_NOTIFICATIONS_DAYS: z.coerce.number().int().min(1).default(90),
   RETENTION_INBOX_DAYS: z.coerce.number().int().min(7).default(180),
   RETENTION_WEBHOOK_DELIVERIES_DAYS: z.coerce.number().int().min(1).default(90),
+  // Weekly retention digest to staff with analytics access (Monday, UTC), with alerts when a rate crosses a line.
+  COHORT_DIGEST_ENABLED: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
+  COHORT_ALERT_SELLER_CHURN_PCT: z.coerce.number().min(0).max(100).default(20), // alert when last month's seller churn is above this
+  COHORT_ALERT_REPEAT_PCT: z.coerce.number().min(0).max(100).default(25),       // alert when the 90-day repeat rate is below this
   RETENTION_SECURITY_LOGS_DAYS: z.coerce.number().int().min(1).default(90),  // CSP reports, one-time codes, reset links
   RECON_INTERVAL_HOURS: z.coerce.number().default(24),
   RECON_TOLERANCE_CENTS: z.coerce.number().default(0),

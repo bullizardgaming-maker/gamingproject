@@ -83,6 +83,73 @@ describe('linked game accounts', () => {
   });
 });
 
+describe('handover check', () => {
+  it('ticks the checklist when the buyer signs in to the account they bought and allows early release with consent', async () => {
+    const seller = await makeUser(h, { tier: 2 });
+    await link(seller, 'steam', '76561198000000777');
+    const [acct] = (await seller.api.get('/v1/seller/linked-accounts')).body;
+    const offer = (await seller.api.post('/v1/offers', { categorySlug: 'accounts', game: 'Counter-Strike 2', title: 'Global Elite, 5k hours', priceCents: 120_00, deliveryMode: 'manual', linkedAccountId: acct.id })).body;
+    const buyer = await makeUser(h, { tier: 2 });
+    const order = await buyAndPay(h, buyer, offer.id);
+
+    // Before delivery there is nothing to check.
+    expect((await buyer.api.post(`/v1/orders/${order.id}/handover/start`, {})).body.error.code).toBe('invalid_state');
+    await seller.api.post(`/v1/orders/${order.id}/deliver`, { payload: 'login:pass' });
+
+    let detail = (await buyer.api.get(`/v1/orders/${order.id}`)).body;
+    expect(detail.checklist.handover_platform).toBe('steam');
+    expect(detail.checklist.handover_at).toBeNull();
+    const auto = detail.checklist.items.find((i: any) => i.key === 'account_linked');
+    expect(auto).toMatchObject({ done: false, auto: true });
+    // The step can't be ticked by hand, and the order can't be confirmed yet.
+    expect((await buyer.api.patch(`/v1/orders/${order.id}/checklist`, { key: 'account_linked', done: true })).body.error.code).toBe('auto_item');
+    expect((await buyer.api.post(`/v1/orders/${order.id}/confirm`, {})).body.error.code).toBe('checklist_incomplete');
+
+    // Signing in with a different account proves nothing.
+    const follow = async (mockAccount: string) => {
+      const start = await buyer.api.post(`/v1/orders/${order.id}/handover/start`, { mockAccount });
+      expect(start.status, JSON.stringify(start.body)).toBe(200);
+      const u = new URL(start.body.url);
+      const res = await h.app.inject({ method: 'GET', url: `${u.pathname}${u.search}` });
+      return String(res.headers.location ?? '');
+    };
+    expect(await follow('76561198000000778')).toMatch(new RegExp(`/orders/${order.id}\\?handover=wrong_account$`));
+    expect((await buyer.api.get(`/v1/orders/${order.id}`)).body.checklist.handover_at).toBeNull();
+
+    // The right account: step ticked, link moves from seller to buyer, both sides told.
+    expect(await follow('76561198000000777')).toMatch(new RegExp(`/orders/${order.id}\\?handover=ok$`));
+    detail = (await buyer.api.get(`/v1/orders/${order.id}`)).body;
+    expect(detail.checklist.handover_at).not.toBeNull();
+    expect(detail.checklist.items.find((i: any) => i.key === 'account_linked').done).toBe(true);
+    expect(detail.checklist.completed_at).toBeNull();
+    expect((await seller.api.get('/v1/seller/linked-accounts')).body).toEqual([]);
+    expect((await buyer.api.get('/v1/seller/linked-accounts')).body).toMatchObject([{ provider: 'steam' }]);
+    const msgs = (await buyer.api.get(`/v1/chat/rooms/${detail.room_id}/messages`)).body;
+    expect(JSON.stringify(msgs)).toMatch(/Handover confirmed/);
+    expect((await buyer.api.post(`/v1/orders/${order.id}/handover/start`, {})).body.error.code).toBe('already_verified');
+
+    // Early release needs explicit consent while the rest of the checklist is open.
+    expect((await buyer.api.post(`/v1/orders/${order.id}/confirm`, {})).body.error.code).toBe('handover_consent_required');
+    const ok = await buyer.api.post(`/v1/orders/${order.id}/confirm`, { handoverConsent: true });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    detail = (await buyer.api.get(`/v1/orders/${order.id}`)).body;
+    expect(detail.status).toBe('completed');
+    expect(detail.events.at(-1).reason).toBe('buyer_confirmed_after_handover');
+  });
+
+  it('is not offered for listings without a linked account', async () => {
+    const seller = await makeUser(h, { tier: 2 });
+    const offer = (await seller.api.post('/v1/offers', { categorySlug: 'accounts', game: 'Counter-Strike 2', title: 'Plain account', priceCents: 20_00, deliveryMode: 'manual' })).body;
+    const buyer = await makeUser(h, { tier: 2 });
+    const order = await buyAndPay(h, buyer, offer.id);
+    await seller.api.post(`/v1/orders/${order.id}/deliver`, { payload: 'login:pass' });
+    const detail = (await buyer.api.get(`/v1/orders/${order.id}`)).body;
+    expect(detail.checklist.handover_platform).toBeNull();
+    expect(detail.checklist.items.some((i: any) => i.key === 'account_linked')).toBe(false);
+    expect((await buyer.api.post(`/v1/orders/${order.id}/handover/start`, {})).body.error.code).toBe('no_linked_account');
+  });
+});
+
 describe('Steam OpenID verification (live provider)', () => {
   const cb = 'https://api.example.com/v1/linked-accounts/steam/callback';
   const ret = (over: Record<string, string> = {}) => ({

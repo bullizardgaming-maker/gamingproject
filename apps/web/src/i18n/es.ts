@@ -572,6 +572,10 @@ const es: Messages = {
   "warranty.sellHint": "Empieza cuando se libera el depósito. El pago de ese pedido queda retenido hasta que termine la garantía.",
   "warranty.badge": "Garantía de {days} días",
   "warranty.badgeHint": "Si el propietario original recupera la cuenta, o se banea o bloquea en los {days} días tras la liberación, el comprador puede reclamar un arreglo o un reembolso.",
+  "minRep.sellLabel": "Solo compradores consolidados",
+  "minRep.sellHint": "Solo pueden comprar quienes tengan tres o más pedidos completados y un historial limpio. Disponible en anuncios de 100 $ o más.",
+  "minRep.badge": "Solo compradores consolidados",
+  "minRep.badgeHint": "El vendedor solo vende este anuncio a compradores con tres o más pedidos completados, sin contracargos ni disputas perdidas repetidas.",
   "money.unlocksClaim": "Cuando se resuelva una reclamación de garantía",
   // Accessibility
   "a11y.skip": "Saltar al contenido principal",

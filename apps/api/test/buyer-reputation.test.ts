@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { runJobsOnce } from '../src/worker.js';
-import { buyAndPay, makeOffer, makeUser, setup, type Harness } from './helpers.js';
+import { buyAndPay, client, makeOffer, makeUser, setup, type Harness } from './helpers.js';
 
 let h: Harness;
 beforeAll(async () => {
@@ -54,6 +54,42 @@ describe('buyer reputation', () => {
     await runJobsOnce(h.ctx);
     const rep = (await buyer.api.get('/v1/me/buyer-reputation')).body;
     expect(rep).toMatchObject({ disputesOpened: 2, disputesLost: 2, level: 'caution' });
+  });
+
+  it('lets sellers require an established buyer on high-value listings', async () => {
+    const seller = await makeUser(h, { tier: 2 });
+    // Only on listings of 100.00 or more, on create and on edit.
+    const cheap = await seller.api.post('/v1/offers', { categorySlug: 'currency', game: 'World of Warcraft', title: 'Small gold pack', priceCents: 20_00, deliveryMode: 'manual', stock: 5, minBuyerReputation: 'good' });
+    expect(cheap.body.error.code).toBe('not_high_value');
+    const offer = await makeOffer(seller, { deliveryMode: 'manual', stock: 5, categorySlug: 'currency', title: 'Huge gold pack', priceCents: 250_00 });
+    expect(offer.min_buyer_reputation).toBeNull();
+    const set = await seller.api.patch(`/v1/offers/${offer.id}`, { version: offer.version, minBuyerReputation: 'good' });
+    expect(set.status, JSON.stringify(set.body)).toBe(200);
+    expect(set.body.min_buyer_reputation).toBe('good');
+    expect((await seller.api.patch(`/v1/offers/${offer.id}`, { version: set.body.version, priceCents: 50_00 })).body.error.code).toBe('not_high_value');
+    expect((await client(h.app).get(`/v1/offers/${offer.id}`)).body.min_buyer_reputation).toBe('good');
+
+    // A new buyer is turned away with a reason; an established one gets through.
+    const newcomer = await makeUser(h, { tier: 1 });
+    const refused = await newcomer.api.post('/v1/orders', { offerId: offer.id, quantity: 1, acceptTos: true });
+    expect(refused.status).toBe(403);
+    expect(refused.body.error.code).toBe('buyer_reputation_required');
+    expect(refused.body.error.message).toMatch(/three orders/);
+
+    const regular = await makeUser(h, { tier: 1 });
+    const other = await makeUser(h, { tier: 2 });
+    for (let i = 0; i < 3; i++) {
+      const o = await completedOrder(other, regular);
+      await regular.api.post(`/v1/orders/${o.id}/confirm`, {});
+    }
+    expect((await regular.api.get('/v1/me/buyer-reputation')).body.level).toBe('good');
+    const order = await buyAndPay(h, regular, offer.id);
+    expect((await regular.api.get(`/v1/orders/${order.id}`)).body.status).toBe('paid');
+
+    // Removing the requirement opens the listing again.
+    const cur = (await seller.api.get(`/v1/offers/${offer.id}`)).body;
+    await seller.api.patch(`/v1/offers/${offer.id}`, { version: cur.version, minBuyerReputation: null });
+    expect((await newcomer.api.post('/v1/orders', { offerId: offer.id, quantity: 1, acceptTos: true })).status).toBe(201);
   });
 
   it('closes ratings 30 days after completion', async () => {

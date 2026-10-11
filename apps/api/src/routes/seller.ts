@@ -12,6 +12,7 @@ import { createSellerCode, endSale, listSellerCodes, setSale, setSellerCodeActiv
 import { trustSummary } from '../domain/trust.js';
 import { exportListings, importListings } from '../domain/bulkListings.js';
 import { listLinked, startLink, unlink } from '../domain/linkedAccounts.js';
+import { MIN_BUYER_REPUTATIONS } from '../domain/buyerReputation.js';
 import { ACCENTS, MAX_INTRO, MAX_PINNED, deleteBanner, storefront, updateStorefront, uploadBanner } from '../domain/storefront.js';
 import { requestWithdrawal } from '../domain/users.js';
 import { payoutStatus, startPayoutOnboarding } from '../domain/payouts.js';
@@ -44,6 +45,7 @@ export const OfferBody = z.object({
   deliveryHours: z.number().int().min(1).max(168).optional().describe('Promised delivery time for manual orders, in hours'),
   warrantyDays: z.union([z.literal(0), z.literal(7), z.literal(14), z.literal(30), z.literal(60), z.literal(90)]).optional().describe('Account listings only: a warranty after escrow releases, in days'),
   linkedAccountId: z.string().uuid().nullable().optional().describe('Account listings: a Steam/Riot account you linked (GET /v1/seller/linked-accounts); null detaches'),
+  minBuyerReputation: z.enum(MIN_BUYER_REPUTATIONS).nullable().optional().describe('Listings of 100.00 or more: "good" sells only to established buyers (3+ completed orders, no chargebacks); null removes it'),
   attributes: z.record(z.string().max(30), z.string().max(60)).optional().describe('Game-specific fields such as server, region, platform or rank (GET /v1/catalog/attributes)'),
   bundle: z
     .array(z.object({ offerId: z.string().uuid(), quantity: z.number().int().min(1).max(20) }))
@@ -175,7 +177,7 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/offers', async (req, reply) => reply.status(201).send(await createOffer(ctx, me(req), OfferBody.parse(req.body))));
 
   app.patch('/offers/:id', async (req) => {
-    const body = OfferBody.pick({ title: true, description: true, priceCents: true, stock: true, lowStockThreshold: true, deliveryHours: true, attributes: true, priceTiers: true, warrantyDays: true, linkedAccountId: true })
+    const body = OfferBody.pick({ title: true, description: true, priceCents: true, stock: true, lowStockThreshold: true, deliveryHours: true, attributes: true, priceTiers: true, warrantyDays: true, linkedAccountId: true, minBuyerReputation: true })
       .partial()
       .extend({ version: z.number().int().min(0), status: z.enum(['active', 'paused', 'removed']).optional() })
       .parse(req.body);

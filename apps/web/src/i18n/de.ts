@@ -572,6 +572,10 @@ const de: Messages = {
   "warranty.sellHint": "Beginnt mit der Treuhand-Freigabe. Die Auszahlung dieser Bestellung bleibt bis zum Ende der Garantie zurückgehalten.",
   "warranty.badge": "{days} Tage Garantie",
   "warranty.badgeHint": "Holt der ursprüngliche Besitzer den Account zurück oder wird er innerhalb von {days} Tagen nach der Freigabe gebannt oder gesperrt, kann der Käufer eine Lösung oder Erstattung verlangen.",
+  "minRep.sellLabel": "Nur erfahrene Käufer",
+  "minRep.sellHint": "Nur Käufer mit mindestens drei abgeschlossenen Bestellungen und sauberer Historie können kaufen. Verfügbar für Angebote ab 100 $.",
+  "minRep.badge": "Nur erfahrene Käufer",
+  "minRep.badgeHint": "Der Verkäufer verkauft dieses Angebot nur an Käufer mit mindestens drei abgeschlossenen Bestellungen, ohne Rückbuchungen und ohne wiederholt verlorene Streitfälle.",
   "money.unlocksClaim": "Nach Abschluss eines Garantieanspruchs",
   // Accessibility
   "a11y.skip": "Zum Hauptinhalt springen",

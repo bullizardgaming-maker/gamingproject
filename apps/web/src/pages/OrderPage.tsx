@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, money, realtime } from '../api';
 import { Chat } from '../components/Chat';
 import { AlsoBought } from '../components/AlsoBought';
@@ -34,7 +34,13 @@ interface OrderDetail {
   escrow_frozen: boolean;
   seller_protected: boolean;
   room_id: string;
-  checklist: { items: Array<{ key: string; label: string; done: boolean }>; completed_at: string | null } | null;
+  checklist: {
+    items: Array<{ key: string; label: string; done: boolean; auto?: boolean }>;
+    completed_at: string | null;
+    /** Handover check: set when the listing showed a linked Steam/Riot account; `handover_at` once the buyer signed in to it. */
+    handover_platform: 'steam' | 'riot' | null;
+    handover_at: string | null;
+  } | null;
   dispute: { reason: string; status: string; category?: string; statements?: Array<{ id: string; role: 'buyer' | 'seller'; body: string; author_name: string; created_at: string }> } | null;
   review: { rating: number; comment: string; seller_reply: string | null } | null;
   events: Array<{ from_status: string | null; to_status: string; reason: string; created_at: string }>;
@@ -193,6 +199,9 @@ export function OrderPage() {
   const [category, setCategory] = useState('not_delivered');
   const [statement, setStatement] = useState('');
   const [now, setNow] = useState(Date.now());
+  const [handoverConsent, setHandoverConsent] = useState(false);
+  const [params, setParams] = useSearchParams();
+  const handoverResult = params.get('handover');
 
   const load = useCallback(async () => {
     try {
@@ -238,6 +247,24 @@ export function OrderPage() {
     order.status === 'completed' ? 'released' : ['refunded', 'charged_back', 'cancelled'].includes(order.status) ? 'refunded' : order.status === 'disputed' || order.escrow_frozen ? 'disputed' : 'held';
   const clock = order.status === 'delivered' ? formatRemaining(ends - now) : STATUS_TEXT[order.status];
   const checklistDone = !order.checklist || !!order.checklist.completed_at;
+  const handoverVerified = !!order.checklist?.handover_at;
+  const platformName = order.checklist?.handover_platform === 'steam' ? 'Steam' : 'Riot';
+  const canConfirm = !order.escrow_frozen && (checklistDone || (handoverVerified && handoverConsent));
+  const startHandover = async () => {
+    setError('');
+    try {
+      const { url } = await api<{ url: string }>(`/orders/${order.id}/handover/start`, { method: 'POST', body: {} });
+      window.location.assign(url);
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+  const HANDOVER_MESSAGES: Record<string, string> = {
+    ok: 'Handover confirmed: you signed in to the account you bought.',
+    wrong_account: 'That is not the account this order delivered. Sign in with the account you bought.',
+    link_expired: 'The sign-in link expired. Start the handover check again.',
+    link_failed: `${platformName} did not confirm the sign-in. Try again.`,
+  };
   const names = { [order.buyer_id]: order.buyer_name, [order.seller_id]: order.seller_name };
 
   return (
@@ -269,6 +296,12 @@ export function OrderPage() {
       </div>
 
       {error && <div className="alert" role="alert">{error}</div>}
+      {handoverResult && (
+        <div className={handoverResult === 'ok' ? 'notice' : 'alert'} role="status">
+          {HANDOVER_MESSAGES[handoverResult] ?? HANDOVER_MESSAGES.link_failed}{' '}
+          <button className="btn ghost small" onClick={() => setParams({}, { replace: true })}>Dismiss</button>
+        </div>
+      )}
 
       <div className="order-layout">
         <div className="stack">
@@ -291,11 +324,23 @@ export function OrderPage() {
               <div>
                 {order.checklist.items.map((i) => (
                   <label key={i.key}>
-                    <input type="checkbox" checked={i.done} onChange={(e) => act('checklist', { key: i.key, done: e.target.checked })} />
+                    <input type="checkbox" checked={i.done} disabled={!!i.auto} aria-label={i.auto ? `${i.label} (confirmed by sign-in)` : undefined} onChange={(e) => act('checklist', { key: i.key, done: e.target.checked })} />
                     <span>{i.label}</span>
                   </label>
                 ))}
               </div>
+              {order.checklist.handover_platform && (
+                <div className="stack" style={{ gap: 6 }}>
+                  {handoverVerified ? (
+                    <p className="small muted">Handover confirmed by {platformName} sign-in. You can release the payment early below, or finish the checklist first.</p>
+                  ) : (
+                    <>
+                      <p className="small muted">This listing showed a {platformName} sign-in badge. Sign in with the account you received to prove it is yours now; that ticks the step above and lets you release the payment early if you choose.</p>
+                      <button type="button" className="btn" onClick={startHandover}>Sign in with {platformName} to confirm the handover</button>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -319,8 +364,14 @@ export function OrderPage() {
             <div className="card stack">
               <h3>Everything working?</h3>
               <p className="small muted">Confirming releases the payment to the seller now. You can't open a dispute after that.</p>
-              <button className="btn release" disabled={!checklistDone || order.escrow_frozen} onClick={() => act('confirm')}>Confirm and release payment</button>
-              {!checklistDone && <p className="small muted">Finish the security changeover first.</p>}
+              {!checklistDone && handoverVerified && (
+                <label className="small">
+                  <input type="checkbox" checked={handoverConsent} onChange={(e) => setHandoverConsent(e.target.checked)} />{' '}
+                  Release now, before the checklist is finished. I have confirmed I control the account and I understand the 14-day insurance ends today.
+                </label>
+              )}
+              <button className="btn release" disabled={!canConfirm} onClick={() => act('confirm', handoverConsent ? { handoverConsent: true } : undefined)}>Confirm and release payment</button>
+              {!checklistDone && !handoverVerified && <p className="small muted">Finish the security changeover first.</p>}
             </div>
           )}
 

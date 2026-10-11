@@ -170,6 +170,23 @@ export const TEMPLATES = {
     subject: (d) => `New ${d.rating}-star review`,
     body: (d, link) => `A buyer rated order "${d.title}" ${d.rating}/5${d.comment ? `: "${d.comment}"` : '.'}\n\nYou can post one public reply: ${link('/sell')}`,
   },
+  retention_digest: {
+    category: 'operations',
+    subject: (d) => `${d.alerts.length ? 'Alert: ' : ''}Weekly retention: ${d.active_buyers} active buyers (${d.active_buyers_delta_pct == null ? 'n/a' : `${d.active_buyers_delta_pct >= 0 ? '+' : ''}${d.active_buyers_delta_pct}%`} vs last week)`,
+    body: (d, link) =>
+      `Retention for the week ending ${d.week_ending}:\n\n` +
+      (d.alerts.length ? `ALERTS\n${(d.alerts as string[]).map((a) => `- ${a}`).join('\n')}\n\n` : '') +
+      `THIS WEEK (vs the week before)\n` +
+      `- Paid orders: ${d.orders} (${d.prev_orders})\n` +
+      `- Active buyers: ${d.active_buyers} (${d.prev_active_buyers}), of which returning: ${d.returning_buyers} (${d.prev_returning_buyers})\n` +
+      `- New buyers: ${d.new_buyers} (${d.prev_new_buyers})\n` +
+      `- Active sellers: ${d.active_sellers} (${d.prev_active_sellers}), new sellers: ${d.new_sellers} (${d.prev_new_sellers})\n\n` +
+      `LAST FULL MONTH (${d.month})\n` +
+      `- Seller churn: ${d.seller_churn_pct == null ? 'n/a' : `${d.seller_churn_pct}%`} (${d.churned_sellers ?? 0} of ${d.sellers_last_month ?? 0} sellers active the month before did not sell)\n` +
+      `- Returning buyers: ${d.returning_pct == null ? 'n/a' : `${d.returning_pct}%`} of ${d.month_active_buyers} active buyers\n` +
+      `- 90-day repeat rate (completed cohorts): ${d.repeat_90d_pct == null ? 'n/a' : `${d.repeat_90d_pct}%`}\n\n` +
+      `Cohorts and the full series: ${link('/admin/retention')}`,
+  },
   reconciliation_alert: {
     category: 'operations',
     subject: (d) => `Reconciliation ${d.status}: ${d.issues} issue(s)`,

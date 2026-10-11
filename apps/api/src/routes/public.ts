@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { Ctx } from '../context.js';
-import { many, one } from '../db.js';
+import { many, maybeOne, one } from '../db.js';
 import { SELLER_TIERS } from '../domain/commission.js';
 import { getOffer } from '../domain/offers.js';
 import { SORTS, gameDirectory, searchOffers, suggestGames, withDisplayPrices } from '../domain/search.js';
@@ -455,11 +455,17 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/linked-accounts/:provider/callback', async (req, reply) => {
     const { provider } = z.object({ provider: z.enum(['steam', 'riot']) }).parse(req.params);
     const web = `${ctx.cfg.PUBLIC_WEB_URL.replace(/\/+$/, '')}/sell`;
+    const orderPage = (id: string) => `${ctx.cfg.PUBLIC_WEB_URL.replace(/\/+$/, '')}/orders/${id}`;
+    let orderId: string | null = null;
     try {
-      await completeLink(ctx, provider, req.query as Record<string, string>);
+      const state = (req.query as Record<string, string>).state ?? '';
+      orderId = (await maybeOne<{ order_id: string | null }>(ctx.db, 'SELECT order_id FROM link_states WHERE nonce = $1', [state]))?.order_id ?? null;
+      const done = await completeLink(ctx, provider, req.query as Record<string, string>);
+      if (done.handover) return reply.redirect(`${orderPage(done.handover.orderId)}?handover=ok`);
       return reply.redirect(`${web}?linked=${provider}`);
     } catch (err) {
-      return reply.redirect(`${web}?link_error=${encodeURIComponent((err as any).code ?? 'link_failed')}`);
+      const code = encodeURIComponent((err as any).code ?? 'link_failed');
+      return reply.redirect(orderId ? `${orderPage(orderId)}?handover=${code}` : `${web}?link_error=${code}`);
     }
   });
 

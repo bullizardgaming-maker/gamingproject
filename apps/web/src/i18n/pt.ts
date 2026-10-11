@@ -573,6 +573,10 @@ const pt: Messages = {
   "warranty.sellHint": "Começa quando o pagamento sai da custódia. O pagamento desse pedido fica retido até o fim da garantia.",
   "warranty.badge": "Garantia de {days} dias",
   "warranty.badgeHint": "Se o dono original recuperar a conta, ou ela for banida ou bloqueada até {days} dias após a liberação, o comprador pode pedir correção ou reembolso.",
+  "minRep.sellLabel": "Só compradores estabelecidos",
+  "minRep.sellHint": "Só compradores com três ou mais pedidos concluídos e histórico limpo podem comprar. Disponível em anúncios de US$ 100 ou mais.",
+  "minRep.badge": "Só compradores estabelecidos",
+  "minRep.badgeHint": "O vendedor vende este anúncio apenas a compradores com três ou mais pedidos concluídos, sem estornos e sem disputas perdidas repetidas.",
   "money.unlocksClaim": "Após a resolução de uma reclamação de garantia",
   // Accessibility
   "a11y.skip": "Pular para o conteúdo principal",

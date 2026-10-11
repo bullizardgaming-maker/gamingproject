@@ -756,6 +756,10 @@ const en = {
   "warranty.sellHint": "Starts when escrow releases. That order’s payout stays on hold until the warranty ends.",
   "warranty.badge": "{days}-day warranty",
   "warranty.badgeHint": "If the account is recovered by its original owner, banned or locked within {days} days after escrow releases, the buyer can claim a fix or a refund.",
+  "minRep.sellLabel": "Established buyers only",
+  "minRep.sellHint": "Only buyers with three or more completed orders and a clean record can buy this. Available on listings of $100 or more.",
+  "minRep.badge": "Established buyers only",
+  "minRep.badgeHint": "The seller sells this listing only to buyers with three or more completed orders, no chargebacks and no pattern of lost disputes.",
   "money.unlocksClaim": "After a warranty claim is settled",
 
   // Accessibility

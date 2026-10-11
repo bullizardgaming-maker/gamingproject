@@ -24,6 +24,7 @@ import { maybeRepairCounters } from './domain/counters.js';
 import { maybeSnapshotMarketPrices } from './domain/priceHistory.js';
 import { expireClaims } from './domain/warranty.js';
 import { maybeRefreshResponseTimes } from './domain/presence.js';
+import { maybeSendRetentionDigest } from './domain/retentionDigest.js';
 
 /**
  * Background jobs. Every job is safe to run on several worker processes at
@@ -69,6 +70,7 @@ export async function runJobsOnce(ctx: Ctx) {
   await job(ctx, 'fraud_labels', () => maybeLabelFraudOutcomes(ctx), null);
   await job(ctx, 'fx_topups', () => maybePlanTopUps(ctx), null);
   await job(ctx, 'price_alerts', () => maybeCheckWatches(ctx), null);
+  await job(ctx, 'retention_digest', () => maybeSendRetentionDigest(ctx), null);
   // Send after the jobs above so emails they queued go out in the same tick.
   const emails = await job(ctx, 'emails', () => dispatchEmails(ctx), 0);
   await job(ctx, 'inbox', () => dispatchInbox(ctx), 0);

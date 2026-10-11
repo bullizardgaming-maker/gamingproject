@@ -12,6 +12,7 @@ import { MAX_CART_ITEMS, cartView, createCartCheckout } from '../domain/cart.js'
 import { DISPUTE_CATEGORIES, addStatement } from '../domain/disputes.js';
 import { CLAIM_REASONS, buyerRespond, openClaim, sellerRespond } from '../domain/warranty.js';
 import { postProgress } from '../domain/progress.js';
+import { startHandover } from '../domain/linkedAccounts.js';
 import { BUYER_TAGS, buyerReputation, rateBuyer } from '../domain/buyerReputation.js';
 import { createReview, replyToReview, sellerProfile } from '../domain/reviews.js';
 import { badRequest, forbidden, notFound } from '../lib/errors.js';
@@ -119,7 +120,16 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
     return deliverManually(ctx, Id.parse(req.params).id, me(req).id, payload);
   });
 
-  app.post('/orders/:id/confirm', async (req) => confirmOrder(ctx, Id.parse(req.params).id, me(req).id));
+  app.post('/orders/:id/confirm', async (req) => {
+    const body = z.object({ handoverConsent: z.boolean().optional() }).parse(req.body ?? {});
+    return confirmOrder(ctx, Id.parse(req.params).id, me(req).id, body);
+  });
+
+  /** Handover check: the buyer signs in to the account they bought; the callback ticks the checklist. */
+  app.post('/orders/:id/handover/start', async (req) => {
+    const body = z.object({ mockAccount: z.string().max(80).optional() }).parse(req.body ?? {});
+    return startHandover(ctx, Id.parse(req.params).id, me(req).id, body);
+  });
 
   app.post('/orders/:id/cancel', async (req) => cancelOrder(ctx, Id.parse(req.params).id, me(req).id, 'buyer_cancelled'));
 

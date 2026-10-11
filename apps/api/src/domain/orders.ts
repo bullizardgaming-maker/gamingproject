@@ -91,6 +91,8 @@ export const SECURITY_CHECKLIST = [
   { key: 'sessions_revoked', label: 'Sign out of all other sessions and devices' },
   { key: 'third_party_unlinked', label: 'Unlink social logins and third-party apps' },
 ] as const;
+/** Added when the listing showed a linked Steam/Riot account: ticked by the handover check, never by hand. */
+export const HANDOVER_ITEM = { key: 'account_linked', label: 'Sign in to the account from Bullizard to confirm it is yours now', auto: true } as const;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -327,6 +329,15 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
     if (offer.shop_paused) throw conflict('shop_paused', offer.shop_pause_message || 'This seller is away and not taking orders right now');
     if (offer.seller_id === buyer.id) throw forbidden('own_offer', 'You cannot buy your own offer');
     if (offer.category_kind === 'account' && input.quantity !== 1) throw badRequest('invalid_quantity', 'Accounts are sold one at a time');
+    if (offer.min_buyer_reputation) {
+      // The seller asked for an established buyer on this high-value listing.
+      const rep = await buyerReputation(s.tx, buyer.id);
+      if (rep.level !== 'good') {
+        throw forbidden('buyer_reputation_required', rep.level === 'new'
+          ? 'This seller only sells this listing to established buyers: complete three orders first'
+          : 'This seller only sells this listing to buyers in good standing');
+      }
+    }
 
     const { tier } = await sellerTier(s.tx, offer.seller_id);
     const rate = commissionBps(tier, { kind: offer.category_kind, promo_rate_bps: offer.promo_rate_bps });
@@ -646,8 +657,12 @@ async function deliver(ctx: Ctx, s: TxScope, order: Order & { category_kind: str
         : 'The 72-Hour Inspection Window has started. Confirm receipt or open a dispute if anything is wrong.'),
   );
   if (order.category_kind === 'account') {
-    await s.tx.query('INSERT INTO security_checklists (order_id, items) VALUES ($1, $2) ON CONFLICT DO NOTHING', [
-      order.id, JSON.stringify(SECURITY_CHECKLIST.map((i) => ({ ...i, done: false, done_at: null }))),
+    const linked = await maybeOne<{ provider: string }>(
+      s.tx, 'SELECT la.provider FROM offers f JOIN linked_accounts la ON la.id = f.linked_account_id AND la.unlinked_at IS NULL WHERE f.id = $1', [order.offer_id],
+    );
+    const items = [...SECURITY_CHECKLIST, ...(linked ? [HANDOVER_ITEM] : [])].map((i) => ({ ...i, done: false, done_at: null }));
+    await s.tx.query('INSERT INTO security_checklists (order_id, items, handover_platform) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [
+      order.id, JSON.stringify(items), linked?.provider ?? null,
     ]);
   }
   await enqueueWebhook(s.tx, order.seller_id, 'order.delivered', orderSummary(order));
@@ -716,19 +731,63 @@ async function releaseEscrow(ctx: Ctx, s: TxScope, order: Order & { title: strin
   s.notifyUser(order.buyer_id, 'order.completed', { orderId: order.id });
 }
 
-export async function confirmOrder(ctx: Ctx, orderId: string, buyerId: string) {
+/**
+ * Buyer confirmation. Account orders need the full Security Changeover checklist, except when the
+ * handover check has passed (the buyer signed in to the account from Bullizard): then the buyer may
+ * release early by sending `handoverConsent: true`, which ends the 14-day insurance now.
+ */
+export async function confirmOrder(ctx: Ctx, orderId: string, buyerId: string, opts: { handoverConsent?: boolean } = {}) {
   return withScope(ctx, async (s) => {
     const order = await lockOrder(s.tx, orderId);
     if (order.buyer_id !== buyerId) throw forbidden('not_buyer', 'Only the buyer can confirm this order');
     if (order.rail === 'crypto') throw conflict('onchain', 'Crypto escrow is released on-chain from your wallet');
     if (order.status !== 'delivered') throw conflict('invalid_state', `Cannot confirm an order that is ${order.status}`);
     if (order.escrow_frozen) throw new AppError(423, 'under_review', 'Order is under security review');
+    let reason = 'buyer_confirmed';
     if (order.category_kind === 'account') {
-      const cl = await maybeOne<{ completed_at: string | null }>(s.tx, 'SELECT completed_at FROM security_checklists WHERE order_id = $1', [orderId]);
-      if (cl && !cl.completed_at) throw conflict('checklist_incomplete', 'Complete the Security Changeover checklist before confirming');
+      const cl = await maybeOne<{ completed_at: string | null; handover_at: string | null }>(s.tx, 'SELECT completed_at, handover_at FROM security_checklists WHERE order_id = $1', [orderId]);
+      if (cl && !cl.completed_at) {
+        if (!cl.handover_at) throw conflict('checklist_incomplete', 'Complete the Security Changeover checklist before confirming');
+        if (!opts.handoverConsent) throw conflict('handover_consent_required', 'The checklist is not finished. Confirm that you want to release the payment now and end the insurance period early');
+        reason = 'buyer_confirmed_after_handover';
+      }
     }
-    await releaseEscrow(ctx, s, order, buyerId, 'buyer_confirmed');
+    await releaseEscrow(ctx, s, order, buyerId, reason);
     return order;
+  });
+}
+
+/**
+ * Handover check: the buyer of a delivered account order signed in to the platform account the
+ * listing showed. Called from the sign-in callback, which has already verified the account.
+ * Ticks the `account_linked` step, records the time and tells both sides in the order chat.
+ */
+export async function recordHandover(ctx: Ctx, orderId: string, buyerId: string, provider: string) {
+  return withScope(ctx, async (s) => {
+    const order = await lockOrder(s.tx, orderId);
+    if (order.buyer_id !== buyerId || order.status !== 'delivered') return null;
+    const cl = await maybeOne<{ items: Array<{ key: string; done: boolean; done_at: string | null }>; handover_at: string | null }>(
+      s.tx, 'SELECT items, handover_at FROM security_checklists WHERE order_id = $1 FOR UPDATE', [orderId],
+    );
+    if (!cl || cl.handover_at) return cl;
+    const item = cl.items.find((i) => i.key === HANDOVER_ITEM.key);
+    if (item) {
+      item.done = true;
+      item.done_at = new Date().toISOString();
+    }
+    const complete = cl.items.every((i) => i.done);
+    const row = await one(
+      s.tx,
+      `UPDATE security_checklists SET items = $2, handover_at = now(), handover_platform = $3,
+          completed_at = CASE WHEN $4 THEN COALESCE(completed_at, now()) ELSE completed_at END
+        WHERE order_id = $1 RETURNING *`,
+      [orderId, JSON.stringify(cl.items), provider, complete],
+    );
+    const room = await roomOf(s.tx, orderId);
+    await appendMessage(s, room.id, null, 'system', `Handover confirmed: the buyer signed in to the ${provider === 'steam' ? 'Steam' : 'Riot'} account from Bullizard.${complete ? ' The Security Changeover checklist is complete.' : ''}`);
+    s.notifyUser(order.seller_id, 'order.handover', { orderId });
+    s.notifyUser(order.buyer_id, 'order.handover', { orderId });
+    return row;
   });
 }
 
@@ -742,6 +801,7 @@ export async function updateChecklist(ctx: Ctx, orderId: string, buyerId: string
     if (!cl) throw notFound('Checklist');
     const item = cl.items.find((i) => i.key === key);
     if (!item) throw badRequest('unknown_item', 'Unknown checklist item');
+    if ((item as any).auto) throw badRequest('auto_item', 'This step is ticked by signing in to the account from Bullizard');
     item.done = done;
     item.done_at = done ? new Date().toISOString() : null;
     const complete = cl.items.every((i) => i.done);
@@ -947,7 +1007,7 @@ export async function getOrderFor(q: Queryable, orderId: string, user: { id: str
   // Sellers (and staff) see the buyer's reputation and their own rating of this order.
   const sellerView = staff || order.seller_id === user.id;
   const [checklist, dispute, events, review, warrantyClaims, progress, buyerRep, buyerRating] = await Promise.all([
-    maybeOne(q, 'SELECT items, completed_at FROM security_checklists WHERE order_id = $1', [orderId]),
+    maybeOne(q, 'SELECT items, completed_at, handover_platform, handover_at FROM security_checklists WHERE order_id = $1', [orderId]),
     maybeOne<any>(q, 'SELECT * FROM disputes WHERE order_id = $1', [orderId]).then(async (d) => d && { ...d, statements: await listStatements(q, d.id) }),
     many(q, 'SELECT from_status, to_status, reason, created_at FROM order_events WHERE order_id = $1 ORDER BY id', [orderId]),
     maybeOne(q, 'SELECT id, rating, comment, seller_reply, created_at FROM reviews WHERE order_id = $1', [orderId]),

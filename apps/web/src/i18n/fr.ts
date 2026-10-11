@@ -572,6 +572,10 @@ const fr: Messages = {
   "warranty.sellHint": "Elle commence à la libération du séquestre. Le paiement de cette commande reste bloqué jusqu’à la fin de la garantie.",
   "warranty.badge": "Garantie {days} jours",
   "warranty.badgeHint": "Si le compte est récupéré par son propriétaire d’origine, banni ou verrouillé dans les {days} jours après la libération, l’acheteur peut demander une correction ou un remboursement.",
+  "minRep.sellLabel": "Acheteurs confirmés uniquement",
+  "minRep.sellHint": "Seuls les acheteurs ayant au moins trois commandes terminées et un dossier propre peuvent acheter. Disponible pour les annonces de 100 $ et plus.",
+  "minRep.badge": "Acheteurs confirmés uniquement",
+  "minRep.badgeHint": "Le vendeur ne vend cette annonce qu’aux acheteurs ayant au moins trois commandes terminées, sans rétrofacturation ni litiges perdus à répétition.",
   "money.unlocksClaim": "Après le règlement d’une réclamation de garantie",
   // Accessibility
   "a11y.skip": "Aller au contenu principal",

@@ -6,15 +6,15 @@ State of the project for whoever picks it up next (a person or another Claude se
 ## Where things stand (Oct 9, 2026)
 
 - All work is on `main`. CI (api, web, e2e, load, contracts, fraud-gnn, sdk-python) is green.
-- 13 rounds of features are built: 81 of 89 suggestions. The tracker lives in the Claude report doc
+- 14 rounds of features are built: 84 of 92 suggestions. The tracker lives in the Claude report doc
   ("Bullizard report"), which has the full list with statuses.
-- Tests: 234 API tests (62 files), 96 browser tests (24 files), 14 contract tests.
+- Tests: 240 API tests (63 files), 98 browser tests (26 files), 14 contract tests.
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `apps/api` | Fastify 5 + Postgres API and worker. Migrations in `migrations/` (latest 050), business logic in `src/domain/`, routes in `src/routes/`, providers (payments, KYC, email, Steam/Riot…) in `src/providers/` |
+| `apps/api` | Fastify 5 + Postgres API and worker. Migrations in `migrations/` (latest 052), business logic in `src/domain/`, routes in `src/routes/`, providers (payments, KYC, email, Steam/Riot…) in `src/providers/` |
 | `apps/web` | React 19 + Vite + Tailwind v4 web app. `src/demo/` is an in-browser mock of the API used for previews and browser tests |
 | `contracts` | `MarketEscrow.sol` (Hardhat) |
 | `services/fraud-gnn` | Python fraud model service |
@@ -59,9 +59,22 @@ VITE_DEMO=true npm run build -w apps/web && npm run e2e -w apps/web
 - Google Play / Apple developer accounts and a decision on store payment rules (`docs/MOBILE.md`).
 - Translation review, game artwork, outside security test, contract audit, legal review.
 
+## Round 14 (Oct 10, 2026)
+
+Built and tested; migrations 051–052:
+1. Handover check (`domain/linkedAccounts.ts` `startHandover`, `domain/orders.ts` `recordHandover`): the buyer of a
+   delivered account signs in to it from the order page; the `account_linked` checklist step (auto, only on listings
+   that showed a linked account) is ticked, the link moves from seller to buyer, and `confirm` with
+   `handoverConsent: true` releases early. Demo: the "Diamond 1 smurf" Valorant order.
+2. Minimum buyer reputation (`min_buyer_reputation` on offers, `HIGH_VALUE_CENTS` in `domain/buyerReputation.ts`):
+   opt-in on listings of 100.00+, enforced in `createOrder`. Seller hub checkbox (6 languages), "Established buyers
+   only" badge.
+3. Weekly retention digest (`domain/retentionDigest.ts`, worker job `retention_digest`, template `retention_digest`):
+   Mondays UTC to staff with `analytics.view`; `COHORT_ALERT_*` thresholds in `.env`.
+
 ## Suggested next round
 
-1. Handover check: when the buyer links the account they bought, tick the matching changeover steps and allow
-   early release with their consent.
-2. Sellers can require a minimum buyer reputation on high-value listings (opt-in).
-3. Weekly retention email to staff, with alerts when seller churn or the repeat rate crosses a threshold.
+1. Handover check for Riot/Steam games without a linked listing: let the buyer link any account of the game's
+   platform and show "signed in" to staff in dispute case files.
+2. Seller-side view of a buyer's reputation before accepting a buyer request proposal.
+3. Retention digest: per-game breakdown and a link to the cohort that moved most.

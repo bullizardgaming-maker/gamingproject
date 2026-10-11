@@ -24,6 +24,7 @@ export interface Offer {
   is_bundle?: boolean;
   /** Account listings: warranty after escrow releases, in days (0 = none). */
   warranty_days?: number;
+  min_buyer_reputation?: 'good' | null;
   /** Account listings tied to a platform account the seller signed in to (the account name stays private). */
   linked_platform?: 'steam' | 'riot' | null;
   linked_account_created_at?: string | null;
@@ -90,6 +91,7 @@ export function OfferBadges({ offer }: { offer: Offer }) {
       ) : (
         <span className="chip held">{t('badge.inspection')}</span>
       )}
+      {offer.min_buyer_reputation && <span className="chip held" title={t('minRep.badgeHint')}>{t('minRep.badge')}</span>}
     </div>
   );
 }

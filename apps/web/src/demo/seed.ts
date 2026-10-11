@@ -126,6 +126,7 @@ const LISTINGS: Seed[] = [
   ['video-games', 'Nintendo', 'Mario Kart 8 Deluxe — eShop code (EU)', 41_00, 'auto', 6, 'seller5'],
   ['keys', 'Hogwarts Legacy', 'Hogwarts Legacy — Steam key (Global)', 21_90, 'auto', 16, 'seller5'],
   ['keys', 'Red Dead Redemption 2', 'Red Dead Redemption 2 — Rockstar key', 15_50, 'auto', 20, 'seller2'],
+  ['accounts', 'Valorant', 'Diamond 1 smurf, 12 skins, Riot sign-in verified', 55_00, 'manual', 1, 'seller3', 'none', 'Fresh email, no bans. Verified by Riot sign-in; you confirm the handover by signing in yourself.'],
 ];
 /** Game-specific fields per listing title (see apps/api/src/domain/attributeSets.ts). */
 /** Running sales: [sale price, days left]. */
@@ -153,6 +154,7 @@ const ATTRS: Record<string, Record<string, string>> = {
   '100M OSRS GP': { method: 'Trade' },
   'Lvl 80 Warrior, full mythic gear, 2009 account': { region: 'EU', faction: 'Horde' },
   'Immortal 2 account, 34 skins': { region: 'Europe', rank: 'Immortal' },
+  'Diamond 1 smurf, 12 skins, Riot sign-in verified': { region: 'Europe', rank: 'Diamond' },
   'OG account, Renegade Raider + 210 skins': { platform: 'PC' },
   'Gold IV → Platinum IV, duo queue': { server: 'EUW', rank_from: 'Gold', rank_to: 'Platinum' },
   'Premier 10k → 15k rating': { region: 'Europe' },
@@ -241,7 +243,9 @@ export function seed() {
       price_tiers: TIERS[title] ?? [],
       // Account listings: a warranty that runs on after escrow releases.
       warranty_days: WARRANTY[title] ?? 0,
-      linked_account_id: (title.startsWith('Immortal 2') ? 'la-1' : null) as string | null,
+      linked_account_id: (title.startsWith('Immortal 2') ? 'la-1' : title.startsWith('Diamond 1 smurf') ? 'la-3' : null) as string | null,
+      // High-value listings can be limited to established buyers (opt-in).
+      min_buyer_reputation: (title.startsWith('OG account') ? 'good' : null) as 'good' | null,
       review_reasons: [] as string[],
       bundle: null as Array<{ offer_id: string; quantity: number }> | null,
       sale_price_cents: (SALES[title]?.[0] ?? null) as number | null,
@@ -278,6 +282,7 @@ export function seed() {
   // Steam account linked but not yet on a listing.
   const linkedAccounts = [
     { id: 'la-1', user_id: users[3]!.id, provider: 'riot', display_name: 'RiftTrader#EUW', profile_url: null, account_created_at: null, linked_at: ago(3 * day), unlinked_at: null },
+    { id: 'la-3', user_id: users[4]!.id, provider: 'riot', display_name: 'ArcaneSmurf#EUW', profile_url: null, account_created_at: null, linked_at: ago(2 * day), unlinked_at: null },
     { id: 'la-2', user_id: users[1]!.id, provider: 'steam', display_name: 'keystone_shop', profile_url: 'https://steamcommunity.com/profiles/76561198000000001', account_created_at: '2014-06-01T00:00:00Z', linked_at: ago(10 * day), unlinked_at: null },
   ];
 

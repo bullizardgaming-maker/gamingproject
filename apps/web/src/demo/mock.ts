@@ -12,7 +12,7 @@ import { detectOffPlatform, matchTerms } from '../../../api/src/domain/safety';
 import { parseCsv } from '../../../api/src/domain/csv';
 import { platformForGame } from '../../../api/src/domain/platforms';
 
-const KEY = 'bz.demo.v17';
+const KEY = 'bz.demo.v18';
 const day = 86_400_000;
 const now = () => new Date().toISOString();
 const rid = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2) + Date.now().toString(16));
@@ -218,6 +218,12 @@ function deliverOrder(o: any, payload?: string) {
   else if (payload) o.items = [payload];
   o.delivered_at = now();
   o.protection_ends_at = new Date(Date.now() + (o.protection === 'insurance_14d' ? 14 * day : 3 * day)).toISOString();
+  // Handover check: a listing that showed a linked Steam/Riot account gets a step the buyer ticks by signing in.
+  const la = offer.linked_account_id ? state.linkedAccounts.find((a) => a.id === offer.linked_account_id && !a.unlinked_at) : null;
+  if (o.checklist && la) {
+    o.checklist.handover_platform = la.provider;
+    o.checklist.items.push({ key: 'account_linked', label: 'Sign in to the account from Bullizard to confirm it is yours now', done: false, auto: true });
+  }
   transition(o, 'delivered', offer.delivery_mode === 'auto' ? 'auto_delivery' : 'manual_delivery');
   notify(o.buyer_id, 'orders', 'order.delivered', 'Your order was delivered', `${o.offer_title}: check it within your protection window.`, `/orders/${o.id}`);
   live(appendMessage(o.room_id, null, 'delivery', offer.delivery_mode === 'auto' ? 'Delivered automatically. Your codes are on this order page.' : 'The seller marked this order as delivered.'));
@@ -323,6 +329,9 @@ function seedOrdersFor(buyer: DemoUser) {
   appendMessage(boost.room_id, null, 'system', 'Progress: 35% · Gold II now, 9 wins from 14 games');
   const acct = make(pick('Lvl 80 Warrior'), day);
   deliverOrder(acct, 'Login: arthas-2009@example.com\nPassword: ••••••••• (change it now)\nOriginal registration email included.');
+  // A delivered account that showed a Riot sign-in badge: the handover check is waiting for the buyer.
+  const hand = make(pick('Diamond 1 smurf'), 6 * 3_600_000);
+  deliverOrder(hand, 'Riot ID: ArcaneSmurf#EUW\nPassword: ••••••••• (change it now)\nEmail is unlinked, add yours first.');
   save();
 }
 
@@ -341,7 +350,7 @@ function createOrderRecord(buyer: DemoUser, offer: any, quantity: number, rail: 
     commission_bps: bps, seller_net_cents: amount - commission, seller_tier: tierOf(offer.seller_id).tier.name, rail,
     status: 'awaiting_payment', protection: isAccount ? 'insurance_14d' : 'inspection_72h', protection_ends_at: null, delivered_at: null,
     escrow_frozen: false, seller_protected: !isAccount || offer.owner_proof_status === 'verified', room_id: room.id,
-    checklist: isAccount ? { items: CHECKLIST.map(([key, label]) => ({ key, label, done: false })), completed_at: null } : null,
+    checklist: isAccount ? { items: CHECKLIST.map(([key, label]) => ({ key, label, done: false })), completed_at: null, handover_platform: null, handover_at: null } : null,
     dispute: null, events: [{ from_status: null, to_status: 'awaiting_payment', reason: 'order_created', created_at: now() }],
     created_at: now(), items: [],
     warranty_days: rail === 'fiat' ? offer.warranty_days ?? 0 : 0, warranty_ends_at: null,
@@ -684,6 +693,10 @@ route('POST', '/orders', ({ me, body }) => {
   if (u.kyc_tier < 1) fail(403, 'kyc_required', 'Verify your email and phone before purchasing');
   const offer = state.offers.find((x) => x.id === body.offerId && (!x.reserved_for || x.reserved_for === u.id)) ?? fail(404, 'not_found', 'Listing not found');
   if (offer.seller_id === u.id) fail(400, 'own_listing', 'You can’t buy your own listing');
+  if (offer.min_buyer_reputation) {
+    const level = buyerRepOf(u.id).level;
+    if (level !== 'good') fail(403, 'buyer_reputation_required', level === 'new' ? 'This seller only sells this listing to established buyers: complete three orders first' : 'This seller only sells this listing to buyers in good standing');
+  }
   const qty = Number(body.quantity ?? 1);
   const available = availableOf(offer);
   if (available < qty) fail(409, 'out_of_stock', 'Not enough stock for this order');
@@ -936,18 +949,48 @@ route('POST', '/admin/warranty-claims/:id/decide', ({ me, params, body }) => {
   return c;
 });
 
-route('POST', '/orders/:id/confirm', ({ me, params }) => {
+route('POST', '/orders/:id/confirm', ({ me, params, body }) => {
   const u = need(me);
   const o = orderFor(u, params[0]!);
   if (o.buyer_id !== u.id) fail(403, 'not_buyer', 'Only the buyer can confirm');
   if (o.status !== 'delivered') fail(409, 'invalid_state', `Cannot confirm an order that is ${o.status}`);
-  if (o.checklist && !o.checklist.completed_at) fail(409, 'checklist_incomplete', 'Finish the security changeover first');
-  releaseOrder(o, 'buyer_confirmed');
+  let reason = 'buyer_confirmed';
+  if (o.checklist && !o.checklist.completed_at) {
+    if (!o.checklist.handover_at) fail(409, 'checklist_incomplete', 'Finish the security changeover first');
+    if (!body?.handoverConsent) fail(409, 'handover_consent_required', 'The checklist is not finished. Confirm that you want to release the payment now and end the insurance period early');
+    reason = 'buyer_confirmed_after_handover';
+  }
+  releaseOrder(o, reason);
   return orderDetail(o);
+});
+// Handover check: the buyer signs in to the account they bought. The platform sign-in completes instantly in the demo.
+route('POST', '/orders/:id/handover/start', ({ me, params }) => {
+  const u = need(me);
+  const o = orderFor(u, params[0]!);
+  if (o.buyer_id !== u.id) fail(404, 'not_found', 'Order not found');
+  if (o.status !== 'delivered') fail(409, 'invalid_state', `The handover check runs while the order is delivered, not ${o.status}`);
+  if (!o.checklist?.handover_platform) fail(400, 'no_linked_account', 'This listing did not show a linked game account, so there is nothing to sign in to');
+  if (o.checklist.handover_at) fail(409, 'already_verified', 'The handover is already confirmed');
+  const offer = state.offers.find((f) => f.id === o.offer_id)!;
+  const la = state.linkedAccounts.find((a) => a.id === offer.linked_account_id && !a.unlinked_at);
+  if (la) {
+    la.unlinked_at = now();
+    offer.linked_account_id = null;
+    state.linkedAccounts.push({ ...la, id: `la-${rid().slice(0, 8)}`, user_id: u.id, linked_at: now(), unlinked_at: null });
+  }
+  const item = o.checklist.items.find((i: any) => i.key === 'account_linked');
+  if (item) item.done = true;
+  o.checklist.handover_at = now();
+  if (o.checklist.items.every((i: any) => i.done)) o.checklist.completed_at = now();
+  const name = o.checklist.handover_platform === 'steam' ? 'Steam' : 'Riot';
+  live(appendMessage(o.room_id, null, 'system', `Handover confirmed: the buyer signed in to the ${name} account from Bullizard.${o.checklist.completed_at ? ' The Security Changeover checklist is complete.' : ''}`));
+  notify(o.seller_id, 'orders', 'order.handover', 'Handover confirmed', `${o.offer_title}: the buyer signed in to the account.`, `/orders/${o.id}`);
+  return { url: `/orders/${o.id}?handover=ok` };
 });
 route('PATCH', '/orders/:id/checklist', ({ me, params, body }) => {
   const o = orderFor(need(me), params[0]!);
   const item = o.checklist?.items.find((i: any) => i.key === body.key) ?? fail(400, 'unknown_item', 'Unknown checklist item');
+  if (item.auto) fail(400, 'auto_item', 'This step is ticked by signing in to the account from Bullizard');
   item.done = !!body.done;
   o.checklist.completed_at = o.checklist.items.every((i: any) => i.done) ? now() : null;
   return o.checklist;
@@ -1144,7 +1187,9 @@ route('POST', '/offers', ({ me, body }) => {
     attributes: attrs.ok ? attrs.value : {}, reserved_for: null, request_id: null, price_tiers: tiers.ok ? tiers.value : [], sale_price_cents: null, sale_starts_at: null, sale_ends_at: null,
     warranty_days: cat.kind === 'account' ? Number(body.warrantyDays ?? 0) : 0,
     linked_account_id: null as string | null,
+    min_buyer_reputation: (body.minBuyerReputation ?? null) as 'good' | null,
   };
+  if (o.min_buyer_reputation && o.price_cents < 100_00) fail(400, 'not_high_value', 'A minimum buyer reputation can only be set on listings of 100 or more');
   if (body.linkedAccountId) {
     checkAttach(u, body.linkedAccountId, body.game, cat.kind);
     o.linked_account_id = body.linkedAccountId;
@@ -1516,7 +1561,7 @@ route('POST', '/requests/:id/proposals/:pid/accept', ({ me, params }) => {
     id: `offer-r-${rid().slice(0, 8)}`, seller_id: p.seller_id, category_slug: r.category_slug, category_kind: CATEGORIES.find((c) => c.slug === r.category_slug)!.kind, game: r.game,
     title: r.title, description: [r.description, p.message].filter(Boolean).join('\n\n'), price_cents: p.price_cents, currency: r.currency, delivery_mode: 'manual' as const,
     delivery_hours: p.delivery_hours, stock: 1, inventory: [] as string[], price_tiers: [], review_reasons: [] as string[], bundle: null, sale_price_cents: null, sale_starts_at: null, sale_ends_at: null, status: 'active', owner_proof_status: 'none', attributes: r.attributes ?? {}, version: 1, created_at: now(),
-    reserved_for: u.id, request_id: r.id, warranty_days: 0, linked_account_id: null,
+    reserved_for: u.id, request_id: r.id, warranty_days: 0, linked_account_id: null, min_buyer_reputation: null,
   };
   state.offers.push(offer);
   Object.assign(p, { status: 'accepted', offer_id: offer.id, updated_at: now() });

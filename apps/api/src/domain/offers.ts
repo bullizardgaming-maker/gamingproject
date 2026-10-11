@@ -11,6 +11,7 @@ import { notify } from './notifications.js';
 import { ONLINE_SQL } from './presence.js';
 import { EFFECTIVE_PRICE_SQL } from './discounts.js';
 import { checkAttach } from './linkedAccounts.js';
+import { checkMinBuyerReputation, type MinBuyerReputation } from './buyerReputation.js';
 export { unitPriceFor, type PriceTier } from './priceTiers.js';
 
 export interface OfferInput {
@@ -28,6 +29,8 @@ export interface OfferInput {
   warrantyDays?: number;
   /** Account listings: a Steam/Riot account the seller linked by signing in (linkedAccounts.ts); null detaches. */
   linkedAccountId?: string | null;
+  /** High-value listings (HIGH_VALUE_CENTS and up): require an established buyer; null removes the requirement. */
+  minBuyerReputation?: MinBuyerReputation | null;
   /** Game-specific fields (server, region, rank…); see attributeSets.ts. */
   attributes?: Record<string, string>;
   /** Cheaper unit prices for larger orders. */
@@ -74,7 +77,7 @@ export function cleanTiers(basePriceCents: number, tiers: PriceTier[] | undefine
 export const OFFER_LIST_SQL = `
   SELECT f.id, f.seller_id, f.category_slug, f.game, f.title, f.description, ${EFFECTIVE_PRICE_SQL} AS price_cents, f.price_cents AS regular_price_cents,
          CASE WHEN ${EFFECTIVE_PRICE_SQL} < f.price_cents THEN f.sale_ends_at END AS sale_ends_at, f.currency, f.price_settlement_cents, f.delivery_mode,
-         f.status, f.owner_proof_status, f.version, f.attributes, f.price_tiers, f.reserved_for, f.request_id, f.warranty_days, la.provider AS linked_platform, la.account_created_at AS linked_account_created_at, f.review_reasons, f.review_note, f.created_at, f.updated_at, f.low_stock_threshold,
+         f.status, f.owner_proof_status, f.version, f.attributes, f.price_tiers, f.reserved_for, f.request_id, f.warranty_days, f.min_buyer_reputation, la.provider AS linked_platform, la.account_created_at AS linked_account_created_at, f.review_reasons, f.review_note, f.created_at, f.updated_at, f.low_stock_threshold,
          c.kind AS category_kind, c.risk_class, u.display_name AS seller_name, f.delivery_hours,
          (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now())) AS shop_paused,
          u.shop_paused_until, u.shop_pause_message, ${ONLINE_SQL} AS seller_online, u.response_minutes AS seller_response_minutes, u.trust_level AS seller_trust_level,
@@ -99,6 +102,7 @@ export async function createOffer(ctx: Ctx, seller: { id: string; kyc_tier: numb
     throw badRequest('invalid_stock', 'Account listings with auto-delivery take stock from uploaded inventory');
   }
   if (input.warrantyDays && cat.kind !== 'account') throw badRequest('invalid_warranty', 'Only account listings can carry a warranty');
+  checkMinBuyerReputation(input.minBuyerReputation, input.priceCents);
   if (input.linkedAccountId) await checkAttach(ctx.db, seller.id, input.linkedAccountId, input.game, cat.kind);
   if (input.bundle) {
     if (cat.kind === 'account') throw badRequest('invalid_bundle', 'Accounts are sold one at a time and can’t be bundled');
@@ -126,6 +130,7 @@ export async function createOffer(ctx: Ctx, seller: { id: string; kyc_tier: numb
     }
   }
   if (input.warrantyDays) await ctx.db.query('UPDATE offers SET warranty_days = $2 WHERE id = $1', [offer.id, input.warrantyDays]);
+  if (input.minBuyerReputation) await ctx.db.query('UPDATE offers SET min_buyer_reputation = $2 WHERE id = $1', [offer.id, input.minBuyerReputation]);
   if (input.linkedAccountId) await ctx.db.query('UPDATE offers SET linked_account_id = $2 WHERE id = $1', [offer.id, input.linkedAccountId]);
   if (screen.review) await notify(ctx.db, seller.id, 'listing_review', { offer_id: offer.id, title: input.title }, `listing:${offer.id}:review:${Date.now()}`);
   return getOffer(ctx.db, offer.id);
@@ -148,7 +153,7 @@ export async function updateOffer(
   sellerId: string,
   offerId: string,
   version: number,
-  patch: Partial<Pick<OfferInput, 'title' | 'description' | 'priceCents' | 'stock' | 'lowStockThreshold' | 'deliveryHours' | 'attributes' | 'priceTiers' | 'warrantyDays' | 'linkedAccountId'>> & { status?: 'active' | 'paused' | 'removed' },
+  patch: Partial<Pick<OfferInput, 'title' | 'description' | 'priceCents' | 'stock' | 'lowStockThreshold' | 'deliveryHours' | 'attributes' | 'priceTiers' | 'warrantyDays' | 'linkedAccountId' | 'minBuyerReputation'>> & { status?: 'active' | 'paused' | 'removed' },
 ) {
   let attributes: string | null = null;
   if (patch.priceCents != null || patch.attributes || patch.title || patch.stock != null || patch.priceTiers || patch.warrantyDays != null) {
@@ -161,6 +166,12 @@ export async function updateOffer(
     if (!cur || cur.seller_id !== sellerId) throw notFound('Offer');
     if (patch.linkedAccountId) await checkAttach(ctx.db, sellerId, patch.linkedAccountId, cur.game, cur.kind, offerId);
     await ctx.db.query('UPDATE offers SET linked_account_id = $2 WHERE id = $1 AND seller_id = $3', [offerId, patch.linkedAccountId, sellerId]);
+  }
+  if (patch.minBuyerReputation !== undefined || patch.priceCents != null) {
+    const cur = await maybeOne(ctx.db, 'SELECT seller_id, price_cents, min_buyer_reputation FROM offers WHERE id = $1', [offerId]);
+    if (!cur || cur.seller_id !== sellerId) throw notFound('Offer');
+    checkMinBuyerReputation(patch.minBuyerReputation === undefined ? cur.min_buyer_reputation : patch.minBuyerReputation, patch.priceCents ?? cur.price_cents);
+    if (patch.minBuyerReputation !== undefined) await ctx.db.query('UPDATE offers SET min_buyer_reputation = $2 WHERE id = $1 AND seller_id = $3', [offerId, patch.minBuyerReputation, sellerId]);
   }
   if (patch.warrantyDays) {
     const cur = await maybeOne(ctx.db, 'SELECT f.seller_id, c.kind FROM offers f JOIN categories c ON c.slug = f.category_slug WHERE f.id = $1', [offerId]);
