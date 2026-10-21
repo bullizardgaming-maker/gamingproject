@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { z } from 'zod';
 
 const Env = z.object({
@@ -182,7 +184,26 @@ const Env = z.object({
 
 export type Config = z.infer<typeof Env>;
 
+/**
+ * Local development reads `.env` from the repo root (or the current directory). Variables already
+ * in the environment win, so Docker, Render and CI, which set them directly, are unaffected.
+ */
+function loadDotEnv() {
+  if (process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'test') return;
+  for (const dir of [process.cwd(), resolve(process.cwd(), '..', '..')]) {
+    const file = resolve(dir, '.env');
+    if (!existsSync(file)) continue;
+    try {
+      process.loadEnvFile(file);
+    } catch {
+      /* unreadable .env: run on the environment alone */
+    }
+    return;
+  }
+}
+
 export function loadConfig(overrides: Partial<Record<keyof Config, string>> = {}): Config {
+  loadDotEnv();
   const cfg = Env.parse({ ...process.env, ...overrides });
   if (cfg.SANDBOX_MODE && (cfg.PAYMENT_PROVIDER !== 'mock' || cfg.KYC_PROVIDER !== 'mock')) {
     throw new Error('SANDBOX_MODE requires PAYMENT_PROVIDER=mock and KYC_PROVIDER=mock');

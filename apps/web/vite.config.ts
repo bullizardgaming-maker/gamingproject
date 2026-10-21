@@ -130,7 +130,7 @@ export default defineConfig(({ mode }) => ({
   server: {
     port: 5173,
     proxy: {
-      '/v1': { target: 'http://localhost:4000', ws: true },
+      '/v1': { target: 'http://127.0.0.1:4000', ws: true }, // 127.0.0.1, not localhost: Node resolves localhost to ::1 first and the API listens on IPv4
     },
   },
 }));
