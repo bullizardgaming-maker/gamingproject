@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { signIn } from './helpers';
+import { signIn, signOut } from './helpers';
 
 test.describe('seller onboarding', () => {
   test('a new seller passes the rules test before the first listing and sees the ID deadline', async ({ page }) => {
@@ -54,7 +54,7 @@ test.describe('seller onboarding', () => {
     await page.getByLabel('Question 7 correct answer 2').check();
     await page.getByRole('button', { name: 'Save test' }).click();
     await expect(page.getByText('Saved. New sellers get the updated test at once.')).toBeVisible();
-    await page.getByRole('button', { name: 'Sign out' }).click();
+    await signOut(page);
     await signIn(page, 'Buyer');
     await page.goto('/sell');
     await expect(page.getByTestId('rules-test')).toContainText('80% is a pass');

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { signIn } from './helpers';
+import { signIn, signOut } from './helpers';
 
 test.describe('seller', () => {
   test('creates a listing with game-specific fields that buyers can filter by', async ({ page }) => {
@@ -35,7 +35,7 @@ test.describe('seller', () => {
     await expect(page.getByRole('heading', { name: 'Basilisk' })).toBeVisible();
     await expect(page.getByTestId('seller-rate')).toContainText('Commission 10.99%');
     await expect(page.getByRole('table', { name: 'Commission by seller rank' })).toContainText('Dragon');
-    await page.getByRole('button', { name: 'Sign out' }).click();
+    await signOut(page);
     // RiftTrader opened their shop three weeks ago: still inside the 60-day launch promo.
     await page.goto('/login');
     await page.locator('input[name=email]').fill('rift@demo.test');

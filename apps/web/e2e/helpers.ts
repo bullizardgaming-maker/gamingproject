@@ -49,3 +49,10 @@ export async function buy(page: Page, offerPath: string) {
   await page.waitForURL(/\/orders\/.*pay=crypto/);
   await payCrypto(page);
 }
+
+/** Sign out from the account menu in the top bar. */
+export async function signOut(page: Page) {
+  await page.getByRole('button', { name: 'Account menu' }).click();
+  await page.getByRole('menuitem', { name: 'Sign out' }).click();
+  await expect(page.getByRole('link', { name: 'Sign in' }).first()).toBeVisible();
+}

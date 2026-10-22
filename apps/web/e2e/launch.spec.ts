@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { signIn } from './helpers';
+import { signIn, signOut } from './helpers';
 
 test.describe('launch extras', () => {
   test('Founding Sellers carry a badge and feature listings for free; featured listings lead the market', async ({ page }) => {
@@ -56,7 +56,7 @@ test.describe('launch extras', () => {
     await card.getByRole('button', { name: 'Apply code' }).click();
     await expect(card.getByRole('status')).toContainText('Code ARCANE-TV is on your account');
 
-    await page.getByRole('button', { name: 'Sign out' }).click();
+    await signOut(page);
     await signIn(page, 'Admin');
     await page.goto('/admin');
     await page.getByRole('tab', { name: 'Creator codes' }).click();

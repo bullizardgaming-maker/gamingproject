@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { payCrypto, signIn } from './helpers';
+import { payCrypto, signIn, signOut } from './helpers';
 
 /** A tiny PNG (1×1) used as the seller's delivery proof. */
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
@@ -35,7 +35,7 @@ test.describe('launch games: in-game delivery', () => {
     await expect(field.getByRole('button', { name: 'Change' })).toBeVisible();
 
     // The seller must attach proof before the delivery counts.
-    await page.getByRole('button', { name: 'Sign out' }).click();
+    await signOut(page);
     await signIn(page, 'Seller');
     await page.goto(orderUrl);
     await expect(page.getByText('Deliver to Kaisinel_Pat')).toBeVisible();
@@ -47,7 +47,7 @@ test.describe('launch games: in-game delivery', () => {
     await expect(page.getByTestId('delivery-proof')).toBeVisible();
     await expect(page.getByTestId('delivery-proof')).toContainText('trade.png');
 
-    await page.getByRole('button', { name: 'Sign out' }).click();
+    await signOut(page);
     await signIn(page, 'Buyer');
     await page.goto(orderUrl);
     await expect(page.getByTestId('delivery-proof').getByRole('img')).toBeVisible();

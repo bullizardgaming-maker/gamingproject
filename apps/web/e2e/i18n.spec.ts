@@ -31,7 +31,7 @@ test.describe('languages', () => {
 
   test('buyer orders page is translated and right-to-left', async ({ page }) => {
     await signIn(page, 'Buyer');
-    await page.getByLabel('Language').first().selectOption('ar');
+    await page.getByLabel('Language', { exact: true }).first().selectOption('ar');
     await page.goto('/orders');
     await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
     await expect(page.getByRole('heading', { name: 'الطلبات', exact: true })).toBeVisible();
