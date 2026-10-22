@@ -43,19 +43,20 @@ describe('promo codes', () => {
     const offer = await stockedOffer(seller);
 
     const quote = (await buyer.api.post('/v1/orders/quote', { offerId: offer.id, promoCode: 'launch25' })).body;
-    expect(quote).toMatchObject({ amountCents: 20_00, discountCents: 5_00, chargedCents: 15_00, presentmentAmountCents: 15_00 });
+    // The seller's 20.00 is 21.06 to the buyer (5% launch-promo commission grossed up); 25% of that, floored.
+    expect(quote).toMatchObject({ amountCents: 21_06, sellerAmountCents: 20_00, discountCents: 5_26, chargedCents: 15_80, presentmentAmountCents: 15_80 });
 
     const t0 = await treasury();
     const o = (await order(buyer, offer.id, { promoCode: 'LAUNCH25' })).body.order;
-    expect(o).toMatchObject({ amount_cents: 20_00, discount_cents: 5_00, charged_cents: 15_00 });
-    expect(await treasury()).toBe(t0 - 5_00);
+    expect(o).toMatchObject({ amount_cents: 21_06, discount_cents: 5_26, charged_cents: 15_80 });
+    expect(await treasury()).toBe(t0 - 5_26);
 
     // Second use by the same buyer is refused.
     expect((await buyer.api.post('/v1/orders/quote', { offerId: offer.id, promoCode: 'LAUNCH25' })).body.error.code).toBe('promo_used');
 
     await buyer.api.post(`/v1/orders/${o.id}/confirm`);
-    // Seller is paid on the full price.
-    expect(await sellerAvailable(h.ctx.db, seller.id)).toBe(20_00 - 2_00);
+    // Seller is paid their full price.
+    expect(await sellerAvailable(h.ctx.db, seller.id)).toBe(20_00);
     await expectBooksBalanced();
   });
 
@@ -129,7 +130,7 @@ describe('referrals and store credit', () => {
 
     // Referrer spends the credit.
     const quote = (await referrer.api.post('/v1/orders/quote', { offerId: offer.id, useCredit: true })).body;
-    expect(quote).toMatchObject({ amountCents: 25_00, creditCents: 5_00, chargedCents: 20_00 });
+    expect(quote).toMatchObject({ amountCents: 26_32, creditCents: 5_00, chargedCents: 21_32 });
     const o3 = (await order(referrer, offer.id, { useCredit: true })).body.order;
     expect(o3.credit_cents).toBe(5_00);
     expect(await userCredit(h.ctx.db, referrer.id)).toBe(0);
@@ -171,9 +172,9 @@ describe('referrals and store credit', () => {
 
     const res = await order(buyer, offer.id, { useCredit: true });
     expect(res.body.checkoutUrl).toBeNull();
-    expect(res.body.order).toMatchObject({ status: 'paid', charged_cents: 0, credit_cents: 20_00, payment_provider: 'none' });
+    expect(res.body.order).toMatchObject({ status: 'paid', charged_cents: 0, credit_cents: 21_06, payment_provider: 'none' });
     // Credit already promised to an unpaid order can't be spent twice.
-    expect((await buyer.api.post('/v1/orders/quote', { offerId: offer.id, useCredit: true })).body.creditCents).toBe(10_00);
+    expect((await buyer.api.post('/v1/orders/quote', { offerId: offer.id, useCredit: true })).body.creditCents).toBe(8_94);
 
     await h.ctx.db.query(`UPDATE orders SET delivery_due_at = now() - interval '1 minute' WHERE id = $1`, [res.body.order.id]);
     await buyer.api.post(`/v1/orders/${res.body.order.id}/cancel-late`);
@@ -187,38 +188,38 @@ describe('referrals and store credit', () => {
     const { withTx } = await import('../src/db.js');
     await withTx(h.ctx.db, async (tx) =>
       post(tx, [
-        { account: await accountId(tx, 'treasury', 'USD'), amountCents: -19_80 },
-        { account: await accountId(tx, 'user_credit', 'USD', buyer.id), amountCents: 19_80 },
+        { account: await accountId(tx, 'treasury', 'USD'), amountCents: -20_86 },
+        { account: await accountId(tx, 'user_credit', 'USD', buyer.id), amountCents: 20_86 },
       ], 'test_credit'),
     );
     const seller = await makeUser(h, { tier: 2 });
     const offer = await stockedOffer(seller, { priceCents: 20_00 });
     const q = (await buyer.api.post('/v1/orders/quote', { offerId: offer.id, useCredit: true })).body;
-    expect(q).toMatchObject({ chargedCents: 50, creditCents: 19_50 });
+    expect(q).toMatchObject({ amountCents: 21_06, chargedCents: 50, creditCents: 20_56 });
   });
 });
 
 describe('multiple currencies', () => {
-  it('converts EUR listings and lets buyers pay in GBP at a rate locked when ordering', async () => {
+  it('converts EUR listings and lets buyers pay in EGP at a rate locked when ordering', async () => {
     const seller = await makeUser(h, { tier: 2 });
     const buyer = await makeUser(h, { tier: 1 });
     const offer = await stockedOffer(seller, { priceCents: 9_20, currency: 'EUR' }); // €9.20 = $10.00 at 0.92
-    expect((await client(h.app).get(`/v1/offers/${offer.id}`)).body).toMatchObject({ currency: 'EUR', price_cents: 9_20, price_settlement_cents: 10_00 });
+    expect((await client(h.app).get(`/v1/offers/${offer.id}`)).body).toMatchObject({ currency: 'EUR', price_cents: 9_69, seller_price_cents: 9_20, price_settlement_cents: 10_53 });
 
-    const q = (await buyer.api.post('/v1/orders/quote', { offerId: offer.id, currency: 'GBP' })).body;
-    // $10.00 × 0.79 GBP/USD × 1.01 spread = £7.98
-    expect(q).toMatchObject({ amountCents: 10_00, presentmentCurrency: 'GBP', presentmentAmountCents: 7_98, listingCurrency: 'EUR' });
+    const q = (await buyer.api.post('/v1/orders/quote', { offerId: offer.id, currency: 'EGP' })).body;
+    // $10.00 grossed up to $10.53 × 48.5 EGP/USD × 1.01 spread = EGP 515.81
+    expect(q).toMatchObject({ amountCents: 10_53, sellerAmountCents: 10_00, presentmentCurrency: 'EGP', presentmentAmountCents: 515_81, listingCurrency: 'EUR' });
 
     // Rates move after the order is placed: the order keeps its price.
-    const res = await buyer.api.post('/v1/orders', { offerId: offer.id, acceptTos: true, currency: 'GBP' });
-    await h.ctx.db.query(`UPDATE fx_rates SET rate = 0.5 WHERE currency = 'GBP'`);
-    expect((await buyer.api.get(`/v1/orders/${res.body.order.id}`)).body).toMatchObject({ presentment_amount_cents: 7_98, presentment_currency: 'GBP' });
-    // PSP converts the £7.98 to $10.07 (our spread): the $0.07 is FX gain.
-    await client(h.app).post(`/v1/payments/mock/checkout/${res.body.order.payment_ref}/pay`, { settledCents: '1007' }, { accept: 'application/json' });
+    const res = await buyer.api.post('/v1/orders', { offerId: offer.id, acceptTos: true, currency: 'EGP' });
+    await h.ctx.db.query(`UPDATE fx_rates SET rate = 30 WHERE currency = 'EGP'`);
+    expect((await buyer.api.get(`/v1/orders/${res.body.order.id}`)).body).toMatchObject({ presentment_amount_cents: 515_81, presentment_currency: 'EGP' });
+    // PSP converts the EGP 515.81 to $10.60 (our spread): the $0.07 is FX gain.
+    await client(h.app).post(`/v1/payments/mock/checkout/${res.body.order.payment_ref}/pay`, { settledCents: '1060' }, { accept: 'application/json' });
     expect(await balance(h.ctx.db, await accountId(h.ctx.db, 'fx_pnl', 'USD'))).toBe(7);
     await buyer.api.post(`/v1/orders/${res.body.order.id}/confirm`);
-    expect(await sellerAvailable(h.ctx.db, seller.id)).toBe(10_00 - 1_00);
-    await h.ctx.db.query(`UPDATE fx_rates SET rate = 0.79 WHERE currency = 'GBP'`);
+    expect(await sellerAvailable(h.ctx.db, seller.id)).toBe(10_00);
+    await h.ctx.db.query(`UPDATE fx_rates SET rate = 48.5 WHERE currency = 'EGP'`);
     await expectBooksBalanced();
   });
 
@@ -226,9 +227,9 @@ describe('multiple currencies', () => {
     const seller = await makeUser(h, { tier: 2 });
     await stockedOffer(seller, { title: 'Currency test item', priceCents: 50_00 });
     const eur = (await client(h.app).get('/v1/offers?q=currency%20test&currency=EUR')).body.items[0];
-    expect(eur).toMatchObject({ display_currency: 'EUR', display_price_cents: 46_00 });
+    expect(eur).toMatchObject({ display_currency: 'EUR', display_price_cents: 48_43 }); // $52.64 (50.00 grossed up) at 0.92
     expect((await client(h.app).get('/v1/offers?q=currency%20test&currency=EUR&maxPrice=4500')).body.items).toHaveLength(0);
-    expect((await client(h.app).get('/v1/offers?q=currency%20test&currency=EUR&maxPrice=4700')).body.items).toHaveLength(1);
+    expect((await client(h.app).get('/v1/offers?q=currency%20test&currency=EUR&maxPrice=4900')).body.items).toHaveLength(1);
   });
 
   it('refuses to price in a currency whose rate is stale, and rejects unsupported currencies', async () => {

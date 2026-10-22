@@ -30,12 +30,12 @@ describe('cart checkout', () => {
     const res = await buyer.api.post('/v1/orders/cart', { items: [{ offerId: key.id, quantity: 2 }, { offerId: gold.id, quantity: 10 }], acceptTos: true });
     expect(res.status, JSON.stringify(res.body)).toBe(201);
     expect(res.body.orders).toHaveLength(2);
-    expect(res.body.orders.map((o: any) => [o.seller_id, o.amount_cents])).toEqual([[s1.id, 20_00], [s2.id, 40_00]]);
-    expect(res.body.checkout).toMatchObject({ status: 'awaiting_payment', presentment_amount_cents: 60_00, presentment_currency: 'USD' });
+    expect(res.body.orders.map((o: any) => [o.seller_id, o.amount_cents])).toEqual([[s1.id, 21_06], [s2.id, 42_11]]); // seller prices 20.00 / 40.00 grossed up by 5%
+    expect(res.body.checkout).toMatchObject({ status: 'awaiting_payment', presentment_amount_cents: 63_17, presentment_currency: 'USD' });
     expect(res.body.checkoutUrl).toContain('/v1/payments/mock/checkout/');
     const ids = res.body.orders.map((o: any) => o.id);
 
-    const paid = await pay(res.body.checkout.payment_ref, { settledCents: '5999', feeCents: '180' });
+    const paid = await pay(res.body.checkout.payment_ref, { settledCents: '6316', feeCents: '180' });
     expect(paid.status, JSON.stringify(paid.body)).toBe(200);
     const st = await statuses(ids);
     expect(st[ids[0]]).toBe('delivered'); // instant keys
@@ -48,7 +48,7 @@ describe('cart checkout', () => {
         WHERE e.order_id = ANY($1) AND e.memo = 'payment_captured' AND a.kind = 'gateway_clearing'`,
       [ids],
     )).rows[0];
-    expect(Math.abs(captured.n)).toBe(5999);
+    expect(Math.abs(captured.n)).toBe(6316);
 
     // Replayed capture changes nothing.
     await pay(res.body.checkout.payment_ref);
@@ -89,15 +89,16 @@ describe('cart checkout', () => {
     const refund = vi.spyOn(h.ctx.payments, 'refund');
     const d = await buyer.api.post(`/v1/orders/${ob.id}/dispute`, { reason: 'Never received the item' });
     await arbiter.api.post(`/v1/admin/disputes/${d.body.id}/resolve`, { outcome: 'buyer', note: 'Seller did not deliver' });
-    expect(refund).toHaveBeenCalledWith(ref, 10_00, 'USD', `refund_order_${ob.id}`);
+    expect(refund).toHaveBeenCalledWith(ref, ob.amount_cents, 'USD', `refund_order_${ob.id}`);
+    expect(ob.amount_cents).toBe(10_53);
     expect(await statuses([oa.id, ob.id])).toEqual({ [oa.id]: 'paid', [ob.id]: 'refunded' });
     refund.mockRestore();
 
-    await processPaymentEvent(h.ctx, { type: 'chargeback.created', disputeRef: 'dp_cart_1', paymentRef: ref, network: 'visa', reasonCode: '13.1', amountCents: 40_00 });
+    await processPaymentEvent(h.ctx, { type: 'chargeback.created', disputeRef: 'dp_cart_1', paymentRef: ref, network: 'visa', reasonCode: '13.1', amountCents: oa.amount_cents + ob.amount_cents });
     const cbs = (await h.ctx.db.query(`SELECT order_id, amount_cents, provider_ref FROM chargebacks WHERE provider_ref LIKE 'dp_cart_1:%' ORDER BY amount_cents DESC`)).rows;
     expect(cbs.map((c) => c.order_id).sort()).toEqual([oa.id, ob.id].sort());
-    expect(cbs.reduce((n, c) => n + Number(c.amount_cents), 0)).toBeLessThanOrEqual(40_00);
-    expect(cbs.find((c) => c.order_id === oa.id).amount_cents).toBe(30_00);
+    expect(cbs.reduce((n, c) => n + Number(c.amount_cents), 0)).toBeLessThanOrEqual(oa.amount_cents + ob.amount_cents);
+    expect(cbs.find((c) => c.order_id === oa.id).amount_cents).toBe(oa.amount_cents);
     await processPaymentEvent(h.ctx, { type: 'chargeback.closed', disputeRef: 'dp_cart_1', won: true });
     const closed = (await h.ctx.db.query(`SELECT status FROM chargebacks WHERE provider_ref LIKE 'dp_cart_1:%'`)).rows.map((r) => r.status);
     expect(closed.every((s) => s === 'won')).toBe(true);

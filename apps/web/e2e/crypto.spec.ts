@@ -1,28 +1,29 @@
 import { expect, test } from '@playwright/test';
-import { buy, payCrypto, signIn } from './helpers';
+import { buy, payCrypto, signIn, fillCharacter } from './helpers';
 
 test.describe('crypto money paths', () => {
   test('buyer pays with a coin that fits the amount, the order funds, and the seller is held until confirmation', async ({ page }) => {
     await signIn(page, 'Buyer');
-    await page.goto('/offers/offer-1'); // Elden Ring key, $32.49
+    await page.goto('/offers/offer-1'); // Elden Ring key, $32.50 to the buyer
     await page.getByLabel(/I accept the Terms of Service/).check();
     await page.getByRole('button', { name: /Pay .* into escrow/ }).click();
     await page.waitForURL(/pay=crypto/);
     const checkout = page.locator('.crypto-checkout');
     await expect(checkout.getByRole('heading', { name: 'Pay with crypto' })).toBeVisible();
-    // Coins whose minimum exceeds $32.49 are not offered.
+    // Coins whose minimum exceeds $32.50 are not offered.
     await expect(checkout.getByRole('button', { name: /Bitcoin/ })).toBeVisible();
     await expect(checkout.getByRole('button', { name: /Ethereum/ })).toBeVisible();
     await checkout.getByRole('button', { name: /Bitcoin/ }).click();
     await expect(checkout.getByTestId('pay-address')).toContainText(/^bc1q/);
     await expect(checkout.getByTestId('pay-amount')).toContainText(/BTC$/);
     await expect(checkout).toHaveCount(0, { timeout: 20_000 });
-    await expect(page.getByText(/Paid \$32\.49 via crypto/)).toBeVisible();
+    await expect(page.getByText(/Paid \$32\.50 via crypto/)).toBeVisible();
   });
 
   test('a $1 coin minimum hides big-minimum coins on a small order', async ({ page }) => {
     await signIn(page, 'Buyer');
     await page.goto('/offers/offer-15'); // Diablo IV item, $12.50
+    await fillCharacter(page);
     await page.getByLabel(/I accept the Terms of Service/).check();
     await page.getByRole('button', { name: /Pay .* into escrow/ }).click();
     await page.waitForURL(/pay=crypto/);
@@ -79,7 +80,7 @@ test.describe('crypto money paths', () => {
     await signIn(page, 'Buyer');
     await buy(page, '/offers/offer-7'); // 100k Gold, manual delivery
     const orderUrl = page.url().replace(/\?.*$/, '');
-    await page.getByText('Open a dispute').click();
+    await page.getByText('Open a dispute', { exact: true }).click();
     await page.getByLabel("What's the problem?").selectOption('not_delivered');
     await page.getByPlaceholder(/What happened\?/).fill('No gold arrived and the seller stopped answering in the chat.');
     await page.getByRole('button', { name: 'Open dispute' }).click();

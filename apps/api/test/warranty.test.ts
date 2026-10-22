@@ -75,7 +75,7 @@ describe('account warranty', () => {
     const after = (await buyer.api.get(`/v1/orders/${order.id}`)).body;
     expect(after.warranty_claims[0]).toMatchObject({ status: 'refunded', decision_note: 'Chat shows the original owner recovered it' });
     const refunded = await h.ctx.db.query('SELECT paid_by, amount_cents FROM post_release_refunds WHERE order_id = $1', [order.id]);
-    expect(refunded.rows[0]).toMatchObject({ paid_by: 'seller', amount_cents: 100_00 });
+    expect(refunded.rows[0]).toMatchObject({ paid_by: 'seller', amount_cents: Number(order.amount_cents) });
     // The chat records every step.
     const msgs = (await buyer.api.get(`/v1/chat/rooms/${after.room_id}/messages`)).body;
     const text = JSON.stringify(msgs);

@@ -41,11 +41,11 @@ describe('buyer requests', () => {
     // Revising keeps one proposal per seller.
     await sellerB.api.post(`/v1/requests/${req.id}/proposals`, { priceCents: 25_00, deliveryHours: 2 });
     expect(await sent(buyer.id, 'request_proposal')).toHaveLength(3);
-    expect((await sent(buyer.id, 'request_proposal'))[2]).toMatchObject({ revised: true, price_cents: 25_00, seller_name: 'Seller B' });
+    expect((await sent(buyer.id, 'request_proposal'))[2]).toMatchObject({ revised: true, price_cents: 26_32, seller_name: 'Seller B' }); // the buyer sees 25.00 grossed up by 5%
 
     const view = await buyer.api.get(`/v1/requests/${req.id}`);
     expect(view.body.proposals).toBe(2);
-    expect(view.body.proposal_list.map((p: any) => [p.seller_name, p.price_cents])).toEqual([['Seller B', 25_00], ['Seller A', 28_00]]);
+    expect(view.body.proposal_list.map((p: any) => [p.seller_name, p.price_cents])).toEqual([['Seller B', 26_32], ['Seller A', 29_48]]);
     expect((await client(h.app).get(`/v1/requests/${req.id}`)).body.proposal_list).toEqual([]);
 
     // Accepting turns the proposal into a listing only this buyer can see and buy.
@@ -59,7 +59,7 @@ describe('buyer requests', () => {
     const offerId = acc.body.offerId;
 
     const asBuyer = await buyer.api.get(`/v1/offers/${offerId}`);
-    expect(asBuyer.body).toMatchObject({ price_cents: 25_00, delivery_mode: 'manual', stock: 1, reserved_for: buyer.id, delivery_hours: 2, game });
+    expect(asBuyer.body).toMatchObject({ price_cents: 26_32, seller_price_cents: 25_00, delivery_mode: 'manual', stock: 1, reserved_for: buyer.id, delivery_hours: 2, game });
     expect((await stranger.api.get(`/v1/offers/${offerId}`)).status).toBe(404);
     expect((await client(h.app).get(`/v1/offers/${offerId}`)).status).toBe(404);
     expect((await sellerB.api.get(`/v1/offers/${offerId}`)).status).toBe(200);
@@ -71,7 +71,7 @@ describe('buyer requests', () => {
 
     const order = await buyer.api.post('/v1/orders', { offerId, quantity: 1, acceptTos: true });
     expect(order.status, JSON.stringify(order.body)).toBe(201);
-    expect(order.body.order).toMatchObject({ seller_id: sellerB.id, amount_cents: 25_00, status: 'awaiting_payment' });
+    expect(order.body.order).toMatchObject({ seller_id: sellerB.id, amount_cents: 26_32, seller_net_cents: 25_00, status: 'awaiting_payment' });
 
     // Closed requests take no more proposals.
     expect((await sellerA.api.post(`/v1/requests/${req.id}/proposals`, { priceCents: 1_00, deliveryHours: 1 })).status).toBe(409);
@@ -123,7 +123,7 @@ describe('buyer requests', () => {
     expect((await seller.api.post(`/v1/requests/${r.id}/proposals`, { offerId: elsewhere.id })).body.error.code).toBe('listing_mismatch');
     const p = await seller.api.post(`/v1/requests/${r.id}/proposals`, { offerId: listing.id, message: 'In stock now' });
     expect(p.status, JSON.stringify(p.body)).toBe(201);
-    expect(p.body.proposal_list[0]).toMatchObject({ listing_offer_id: listing.id, price_cents: 12_00, delivery_hours: 4 });
+    expect(p.body.proposal_list[0]).toMatchObject({ listing_offer_id: listing.id, price_cents: 12_64, seller_price_cents: 12_00, delivery_hours: 4 });
 
     const proposal = (await buyer.api.get(`/v1/requests/${r.id}`)).body.proposal_list[0];
     const acc = await buyer.api.post(`/v1/requests/${r.id}/proposals/${proposal.id}/accept`);

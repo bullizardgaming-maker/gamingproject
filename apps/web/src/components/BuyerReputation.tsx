@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
+import { t } from '../i18n';
 
 export type BuyerTag = 'clear_communication' | 'quick_confirmation' | 'patient' | 'unresponsive' | 'rude' | 'changed_requirements' | 'asked_off_platform';
 const GOOD: BuyerTag[] = ['clear_communication', 'quick_confirmation', 'patient'];
@@ -17,17 +18,13 @@ export interface BuyerRep {
   topTags: Array<{ tag: BuyerTag; count: number }>;
 }
 
-// The order and account pages are English-only.
-const TAG_EN: Record<BuyerTag, string> = {
-  clear_communication: 'Clear communication',
-  quick_confirmation: 'Confirmed quickly',
-  patient: 'Patient',
-  unresponsive: 'Unresponsive',
-  rude: 'Rude',
-  changed_requirements: 'Changed the requirements',
-  asked_off_platform: 'Asked to trade off-platform',
+const tagText = (tag: BuyerTag) => t(`buyerRep.tag.${tag}`);
+const levelText = (l: BuyerRep['level']) => t(`buyerRep.level.${l}`);
+const memberSince = (iso: string) => new Date(iso).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+const positiveLine = (rep: BuyerRep) => {
+  const rated = rep.positive + rep.negative;
+  return rated ? t('buyerRep.positive', { pct: String(Math.round((rep.positive / rated) * 100)), count: rated }) : t('buyerRep.noRatings');
 };
-const LEVEL_EN = { new: 'New buyer', good: 'Good buyer', caution: 'Take care' } as const;
 const levelChip = (l: BuyerRep['level']) => (l === 'caution' ? 'disputed' : l === 'good' ? 'released' : 'held');
 
 /** Seller's view on an order: who they're dealing with, and (once complete) their rating of the buyer. */
@@ -42,7 +39,6 @@ export function BuyerCard({ orderId, name, rep, rating, canRate, onDone }: {
   const [positive, setPositive] = useState<boolean | null>(null);
   const [tags, setTags] = useState<BuyerTag[]>([]);
   const [error, setError] = useState('');
-  const rated = rep.positive + rep.negative;
   const submit = async () => {
     setError('');
     try {
@@ -55,45 +51,47 @@ export function BuyerCard({ orderId, name, rep, rating, canRate, onDone }: {
   return (
     <section className="card stack" aria-labelledby="buyer-title" style={{ gap: 10 }}>
       <div className="row spread">
-        <h3 id="buyer-title" style={{ margin: 0 }}>About the buyer</h3>
-        <span className={`chip ${levelChip(rep.level)}`}>{LEVEL_EN[rep.level]}</span>
+        <h3 id="buyer-title" style={{ margin: 0 }}>{t('buyerRep.about')}</h3>
+        <span className={`chip ${levelChip(rep.level)}`}>{levelText(rep.level)}</span>
       </div>
       <p className="small" style={{ margin: 0 }}>
-        <b>{name}</b> · member since {new Date(rep.memberSince).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })} · {rep.completedOrders} completed {rep.completedOrders === 1 ? 'purchase' : 'purchases'}
+        <b>{name}</b> · {t('buyerRep.memberSince', { date: memberSince(rep.memberSince) })} · {t('buyerRep.purchases', { count: rep.completedOrders })}
       </p>
       <ul className="m-0 flex list-none flex-wrap gap-x-4 gap-y-1 p-0 small muted">
-        <li>{rated ? `${Math.round((rep.positive / rated) * 100)}% positive from ${rated} ${rated === 1 ? 'seller rating' : 'seller ratings'}` : 'No seller ratings yet'}</li>
-        <li>Disputes lost: {rep.disputesLost} of {rep.disputesOpened}</li>
-        <li>Chargebacks: {rep.chargebacks}</li>
+        <li>{positiveLine(rep)}</li>
+        <li>{t('buyerRep.disputesLost', { lost: rep.disputesLost, opened: rep.disputesOpened })}</li>
+        <li>{t('buyerRep.chargebacks', { n: rep.chargebacks })}</li>
       </ul>
       {rep.topTags.length > 0 && (
         <div className="row" style={{ gap: 6 }}>
-          {rep.topTags.map((x) => <span key={x.tag} className={`chip ${GOOD.includes(x.tag) ? 'released' : 'disputed'}`}>{TAG_EN[x.tag]} ×{x.count}</span>)}
+          {rep.topTags.map((x) => <span key={x.tag} className={`chip ${GOOD.includes(x.tag) ? 'released' : 'disputed'}`}>{t('buyerRep.tagCount', { tag: tagText(x.tag), count: x.count })}</span>)}
         </div>
       )}
       {rating ? (
         <p className="small muted" style={{ margin: 0 }}>
-          You rated this buyer {rating.positive ? 'positive' : 'negative'}{rating.tags.length ? `: ${rating.tags.map((x) => TAG_EN[x]).join(', ')}` : ''}.
+          {rating.tags.length
+            ? t('buyerRep.youRatedTags', { verdict: rating.positive ? t('buyerRep.positiveWord') : t('buyerRep.negativeWord'), tags: rating.tags.map(tagText).join(', ') })
+            : t('buyerRep.youRated', { verdict: rating.positive ? t('buyerRep.positiveWord') : t('buyerRep.negativeWord') })}
         </p>
       ) : canRate ? (
         <div className="stack" style={{ gap: 8 }}>
-          <div className="row" role="radiogroup" aria-label="Rate this buyer">
-            <button type="button" role="radio" aria-checked={positive === true} className={`btn ${positive === true ? '' : 'ghost'}`} onClick={() => (setPositive(true), setTags([]))}>👍 Good buyer</button>
-            <button type="button" role="radio" aria-checked={positive === false} className={`btn ${positive === false ? '' : 'ghost'}`} onClick={() => (setPositive(false), setTags([]))}>👎 Problem buyer</button>
+          <div className="row" role="radiogroup" aria-label={t('buyerRep.rateAria')}>
+            <button type="button" role="radio" aria-checked={positive === true} className={`btn ${positive === true ? '' : 'ghost'}`} onClick={() => (setPositive(true), setTags([]))}>{t('buyerRep.good')}</button>
+            <button type="button" role="radio" aria-checked={positive === false} className={`btn ${positive === false ? '' : 'ghost'}`} onClick={() => (setPositive(false), setTags([]))}>{t('buyerRep.problem')}</button>
           </div>
           {positive !== null && (
             <fieldset className="row" style={{ border: 0, padding: 0, margin: 0, gap: 12 }}>
-              <legend className="small muted" style={{ marginBottom: 6 }}>Why? (optional)</legend>
+              <legend className="small muted" style={{ marginBottom: 6 }}>{t('buyerRep.why')}</legend>
               {(positive ? GOOD : BAD).map((x) => (
                 <label key={x} className="row small" style={{ gap: 6 }}>
                   <input type="checkbox" style={{ width: 'auto' }} checked={tags.includes(x)} onChange={(e) => setTags((cur) => (e.target.checked ? [...cur, x] : cur.filter((y) => y !== x)))} />
-                  {TAG_EN[x]}
+                  {tagText(x)}
                 </label>
               ))}
             </fieldset>
           )}
-          <button className="btn" disabled={positive === null} onClick={submit}>Rate buyer</button>
-          <p className="small muted" style={{ margin: 0 }}>Other sellers see the totals, never who rated. Disputes and chargebacks are counted from the order records.</p>
+          <button className="btn" disabled={positive === null} onClick={submit}>{t('buyerRep.rate')}</button>
+          <p className="small muted" style={{ margin: 0 }}>{t('buyerRep.privacy')}</p>
         </div>
       ) : null}
       {error && <div className="alert" role="alert">{error}</div>}
@@ -106,27 +104,26 @@ export function MyBuyerReputation() {
   const [rep, setRep] = useState<BuyerRep | null>(null);
   useEffect(() => void api<BuyerRep>('/me/buyer-reputation').then(setRep).catch(() => {}), []);
   if (!rep) return null;
-  const rated = rep.positive + rep.negative;
   return (
     <section className="card stack" aria-labelledby="my-rep-title" style={{ gap: 10 }}>
       <div className="row spread">
-        <h3 id="my-rep-title" style={{ margin: 0 }}>Your buyer reputation</h3>
-        <span className={`chip ${levelChip(rep.level)}`}>{LEVEL_EN[rep.level]}</span>
+        <h3 id="my-rep-title" style={{ margin: 0 }}>{t('buyerRep.mine')}</h3>
+        <span className={`chip ${levelChip(rep.level)}`}>{levelText(rep.level)}</span>
       </div>
-      <p className="small muted" style={{ margin: 0 }}>What sellers see when you order from them. Sellers rate buyers after an order completes; disputes and chargebacks come from the order records.</p>
+      <p className="small muted" style={{ margin: 0 }}>{t('buyerRep.mine.text')}</p>
       <ul className="m-0 flex list-none flex-wrap gap-x-4 gap-y-1 p-0 small">
-        <li>Member since {new Date(rep.memberSince).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}</li>
-        <li>{rep.completedOrders} completed {rep.completedOrders === 1 ? 'purchase' : 'purchases'}</li>
-        <li>{rated ? `${Math.round((rep.positive / rated) * 100)}% positive from ${rated} ${rated === 1 ? 'seller rating' : 'seller ratings'}` : 'No seller ratings yet'}</li>
-        <li>Disputes lost: {rep.disputesLost} of {rep.disputesOpened}</li>
-        <li>Chargebacks: {rep.chargebacks}</li>
+        <li>{t('buyerRep.memberSinceCap', { date: memberSince(rep.memberSince) })}</li>
+        <li>{t('buyerRep.purchases', { count: rep.completedOrders })}</li>
+        <li>{positiveLine(rep)}</li>
+        <li>{t('buyerRep.disputesLost', { lost: rep.disputesLost, opened: rep.disputesOpened })}</li>
+        <li>{t('buyerRep.chargebacks', { n: rep.chargebacks })}</li>
       </ul>
       {rep.topTags.length > 0 && (
         <div className="row" style={{ gap: 6 }}>
-          {rep.topTags.map((x) => <span key={x.tag} className={`chip ${GOOD.includes(x.tag) ? 'released' : 'disputed'}`}>{TAG_EN[x.tag]} ×{x.count}</span>)}
+          {rep.topTags.map((x) => <span key={x.tag} className={`chip ${GOOD.includes(x.tag) ? 'released' : 'disputed'}`}>{t('buyerRep.tagCount', { tag: tagText(x.tag), count: x.count })}</span>)}
         </div>
       )}
-      {rep.level === 'caution' && <p className="small" style={{ margin: 0 }}>Sellers may ask for more detail before they deliver. Keep trades in the order chat and open disputes only when something is really wrong.</p>}
+      {rep.level === 'caution' && <p className="small" style={{ margin: 0 }}>{t('buyerRep.caution.text')}</p>}
     </section>
   );
 }

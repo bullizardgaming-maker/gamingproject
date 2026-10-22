@@ -26,6 +26,7 @@ import { registerGateway } from './ws/gateway.js';
 import { touchPresence } from './domain/presence.js';
 import { sandboxRoutes } from './routes/sandbox.js';
 import { buildOpenApi } from './openapi.js';
+import { MAX_VIDEO_BYTES } from './domain/attachments.js';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 
@@ -127,6 +128,8 @@ export async function buildApp(ctx: Ctx, opts: { logger?: PinoLogger } = {}): Pr
   app.addContentTypeParser(['image/png', 'image/jpeg', 'image/webp', 'application/octet-stream'], { parseAs: 'buffer', bodyLimit: 8 * 1024 * 1024 }, (_req, body, done) =>
     done(null, body),
   );
+  // Delivery proof videos (sniffed too); larger than images, still capped.
+  app.addContentTypeParser(['video/mp4', 'video/webm'], { parseAs: 'buffer', bodyLimit: MAX_VIDEO_BYTES }, (_req, body, done) => done(null, body));
   app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (_req, body, done) =>
     done(null, Object.fromEntries(new URLSearchParams(body as string))),
   );

@@ -18,6 +18,8 @@ import { maybeCheckWatches } from './domain/watches.js';
 import { autoResolveTickets } from './domain/support.js';
 import { expireRequests } from './domain/requests.js';
 import { syncSales } from './domain/discounts.js';
+import { expireEndedLeagueListings } from './domain/leagues.js';
+import { enforceIdDeadlines } from './domain/onboarding.js';
 import { maybeRefreshTrustLevels } from './domain/trust.js';
 import { maybeSendDigests } from './domain/savedSearches.js';
 import { maybeRepairCounters } from './domain/counters.js';
@@ -25,6 +27,7 @@ import { maybeSnapshotMarketPrices } from './domain/priceHistory.js';
 import { expireClaims } from './domain/warranty.js';
 import { maybeRefreshResponseTimes } from './domain/presence.js';
 import { maybeSendRetentionDigest } from './domain/retentionDigest.js';
+import { refreshSellerRates } from './domain/commission.js';
 
 /**
  * Background jobs. Every job is safe to run on several worker processes at
@@ -71,6 +74,9 @@ export async function runJobsOnce(ctx: Ctx) {
   await job(ctx, 'fx_topups', () => maybePlanTopUps(ctx), null);
   await job(ctx, 'price_alerts', () => maybeCheckWatches(ctx), null);
   await job(ctx, 'retention_digest', () => maybeSendRetentionDigest(ctx), null);
+  await job(ctx, 'seller_rates', () => refreshSellerRates(ctx), null);
+  await job(ctx, 'league_expiry', () => expireEndedLeagueListings(ctx), 0);
+  await job(ctx, 'id_deadlines', () => enforceIdDeadlines(ctx), null);
   // Send after the jobs above so emails they queued go out in the same tick.
   const emails = await job(ctx, 'emails', () => dispatchEmails(ctx), 0);
   await job(ctx, 'inbox', () => dispatchInbox(ctx), 0);

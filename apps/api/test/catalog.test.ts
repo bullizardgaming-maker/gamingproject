@@ -25,7 +25,7 @@ describe('game directory', () => {
     const res = await client(h.app).get('/v1/catalog/games');
     expect(res.status).toBe(200);
     const row = res.body.find((g: any) => g.game === game);
-    expect(row).toMatchObject({ offers: 3, sellers: 1, min_price_cents: 5_00, instant: 0 });
+    expect(row).toMatchObject({ offers: 3, sellers: 1, min_price_cents: 5_27, instant: 0 }); // 5.00 grossed up by the 5% launch-promo commission
     expect(row.categories).toEqual([{ slug: 'currency', count: 2 }, { slug: 'boosting', count: 1 }]);
   });
 });

@@ -77,7 +77,7 @@ export async function deleteAccount(ctx: Ctx, user: User, password: string, code
     [user.id],
   );
   if (open?.n) throw new AppError(409, 'open_orders', `Finish or cancel your ${open.n} open order(s) first`);
-  // Every currency the seller holds money in (EUR/GBP sellers too).
+  // Every currency the seller holds money in (EUR/EGP sellers too).
   const balances = (await sellerBalances(ctx.db, user.id)).map((b) => Number(b.cents));
   if (balances.some((b) => b > 0)) throw new AppError(409, 'balance_remaining', 'Withdraw your remaining balance first');
   if (balances.some((b) => b < 0)) throw new AppError(409, 'balance_owed', 'Your balance is negative after a chargeback. Contact support to settle it first.');

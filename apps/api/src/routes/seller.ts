@@ -4,7 +4,9 @@ import { z } from 'zod';
 import type { Ctx } from '../context.js';
 import { many, maybeOne, one } from '../db.js';
 import { createApiKey, listApiKeys, revokeApiKey } from '../domain/apikeys.js';
-import { SELLER_TIERS, sellerTier } from '../domain/commission.js';
+import { featureListing, foundingStatus, listRanks, pricePreview, sellerTier, unfeatureListing } from '../domain/commission.js';
+import { relistExpired } from '../domain/leagues.js';
+import { onboardingStatus, rulesTestFor, submitRulesTest } from '../domain/onboarding.js';
 import { recordSignals } from '../domain/fraud.js';
 import { sellerAvailable } from '../domain/ledger.js';
 import { createOffer, getOffer, requireSeller, submitOwnerProof, updateOffer, uploadInventory } from '../domain/offers.js';
@@ -40,7 +42,7 @@ export const OfferBody = z.object({
   title: z.string().trim().min(3).max(140),
   description: z.string().max(5_000).optional(),
   priceCents: z.number().int().positive().max(100_000_00),
-  currency: z.string().length(3).toUpperCase().optional().describe('Listing currency (e.g. USD, EUR, GBP)'),
+  currency: z.string().length(3).toUpperCase().optional().describe('Listing currency (e.g. USD, EUR, EGP)'),
   deliveryMode: z.enum(['auto', 'manual']),
   stock: z.number().int().min(0).max(1_000_000).optional(),
   lowStockThreshold: z.number().int().min(0).max(100_000).optional(),
@@ -90,7 +92,12 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
       tier: tier.tier,
       monthlySalesCents: tier.monthlySalesCents,
       next: tier.next,
-      tiers: SELLER_TIERS,
+      rank: tier.rank,
+      rateBps: tier.rateBps,
+      promo: tier.promo,
+      tiers: (await listRanks(ctx.db)).map((r) => ({ ...r, accountRateBps: r.rateBps, otherRateBps: r.rateBps })),
+      onboarding: await onboardingStatus(ctx.db, user.id),
+      founding: await foundingStatus(ctx.db, user.id),
       payoutCurrency: currency,
       balances: { currency, availableCents: available, pendingEscrowCents: escrow.pending, withdrawableCents: hold.withdrawableCents, onHoldCents: hold.heldCents },
       allBalances: await sellerBalances(ctx.db, user.id),
@@ -178,6 +185,15 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.post('/offers', async (req, reply) => reply.status(201).send(await createOffer(ctx, me(req), OfferBody.parse(req.body))));
 
+  /** Founding Sellers: free featured spots during the launch (see dashboard.founding for the allowance). */
+  app.post('/offers/:id/feature', async (req) => featureListing(ctx, me(req).id, Id.parse(req.params).id));
+  app.delete('/offers/:id/feature', async (req) => unfeatureListing(ctx, me(req).id, Id.parse(req.params).id));
+  /** Bring a listing expired by a league ending back, in an open league. */
+  app.post('/offers/:id/relist', async (req) => {
+    const { league } = z.object({ league: z.string().trim().min(1).max(60) }).parse(req.body);
+    await relistExpired(ctx, me(req).id, Id.parse(req.params).id, league);
+    return getOffer(ctx.db, Id.parse(req.params).id);
+  });
   app.patch('/offers/:id', async (req) => {
     const body = OfferBody.pick({ title: true, description: true, priceCents: true, stock: true, lowStockThreshold: true, deliveryHours: true, attributes: true, priceTiers: true, warrantyDays: true, linkedAccountId: true, minBuyerReputation: true })
       .partial()
@@ -216,6 +232,20 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     const crypto = ctx.payments instanceof NowPaymentsProvider;
     return reply.status(201).send(crypto ? await requestCryptoWithdrawal(ctx, user.id, body.amountCents, currency) : await requestWithdrawal(ctx, user.id, body.amountCents, currency));
   });
+  /** Sell-form preview: buyer price at the seller's rate and what is left after the withdrawal fee. */
+  // ---- Onboarding: the rules test before the first listing; the ID deadline on the dashboard ----
+  app.get('/seller/rules-test', async (req) => rulesTestFor(ctx.db, me(req)));
+  app.post('/seller/rules-test', async (req) => {
+    const { answers } = z.object({ answers: z.record(z.string().uuid(), z.number().int().min(0).max(9)) }).parse(req.body);
+    return submitRulesTest(ctx, me(req), answers);
+  });
+  app.get('/seller/onboarding', async (req) => onboardingStatus(ctx.db, me(req).id));
+
+  app.get('/seller/price-preview', async (req) => {
+    const q = z.object({ priceCents: z.coerce.number().int().positive().max(100_000_00), currency: z.string().length(3).toUpperCase().optional() }).parse(req.query);
+    return pricePreview(ctx, me(req).id, q.priceCents, q.currency);
+  });
+
   /** What a withdrawal of this size costs (6%, at least 1.50) and what arrives. */
   app.get('/seller/withdrawals/quote', async (req) => {
     const { amountCents } = z.object({ amountCents: z.coerce.number().int().positive() }).parse(req.query);

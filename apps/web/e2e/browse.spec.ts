@@ -67,11 +67,27 @@ test.describe('browsing', () => {
 
   test('dark mode and display currency persist', async ({ page }) => {
     await page.goto('/games/genshin-impact');
+    await page.getByLabel('Show prices in').first().selectOption('EGP');
+    await expect(page.getByText(/≈ EGP/).first()).toBeVisible();
     await page.getByLabel('Show prices in').first().selectOption('EUR');
     await expect(page.getByText(/≈ €/).first()).toBeVisible();
     await page.getByRole('button', { name: 'Use dark theme' }).click();
     await page.reload();
     await expect(page.locator('html')).toHaveClass(/dark/);
+  });
+
+  test('prices default to the local currency on a first visit', async ({ browser }) => {
+    const cairo = await browser.newContext({ timezoneId: 'Africa/Cairo', locale: 'en-US' });
+    const page = await cairo.newPage();
+    await page.goto('/games/genshin-impact');
+    await expect(page.getByLabel('Show prices in').first()).toHaveValue('EGP');
+    await expect(page.getByText(/≈ EGP/).first()).toBeVisible();
+    await cairo.close();
+    const berlin = await browser.newContext({ timezoneId: 'Europe/Berlin', locale: 'de-DE' });
+    const p2 = await berlin.newPage();
+    await p2.goto('/games/genshin-impact');
+    await expect(p2.getByLabel('Preise anzeigen in').first()).toHaveValue('EUR');
+    await berlin.close();
   });
 
   test('quantity prices lower the unit price as you buy more', async ({ page }) => {

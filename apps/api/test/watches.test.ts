@@ -21,7 +21,7 @@ describe('watchlists and price alerts', () => {
     expect((await seller.api.post('/v1/me/watches', { offerId: offer.id })).status).toBe(400); // own listing
     const w = await buyer.api.post('/v1/me/watches', { offerId: offer.id, targetCents: 15_00 });
     expect(w.status).toBe(201);
-    expect(w.body).toMatchObject({ kind: 'offer', targetCents: 15_00, currentCents: 20_00, startCents: 20_00, available: true, reached: false });
+    expect(w.body).toMatchObject({ kind: 'offer', targetCents: 15_00, currentCents: 21_06, startCents: 21_06, available: true, reached: false }); // the seller's 20.00 grossed up by 5%
     expect((await buyer.api.post('/v1/me/watches', { offerId: offer.id })).status).toBe(409);
 
     const price = async (cents: number) => (offer = (await seller.api.patch(`/v1/offers/${offer.id}`, { version: offer.version, priceCents: cents })).body);
@@ -32,13 +32,13 @@ describe('watchlists and price alerts', () => {
     await price(14_00);
     await checkWatches(h.ctx);
     await checkWatches(h.ctx);
-    expect(await sent(buyer.id, 'watch_price_drop')).toEqual([expect.objectContaining({ price_cents: 14_00, target_cents: 15_00, offer_id: offer.id })]);
+    expect(await sent(buyer.id, 'watch_price_drop')).toEqual([expect.objectContaining({ price_cents: 14_74, target_cents: 15_00, offer_id: offer.id })]);
 
     await price(14_50); // up a little: no alert
     await checkWatches(h.ctx);
     await price(12_00); // new low: alert again
     await checkWatches(h.ctx);
-    expect((await sent(buyer.id, 'watch_price_drop')).map((d) => d.price_cents)).toEqual([14_00, 12_00]);
+    expect((await sent(buyer.id, 'watch_price_drop')).map((d) => d.price_cents)).toEqual([14_74, 12_64]);
 
     // Sold out, then restocked.
     offer = (await seller.api.patch(`/v1/offers/${offer.id}`, { version: offer.version, stock: 0 })).body;
@@ -66,7 +66,7 @@ describe('watchlists and price alerts', () => {
     expect(await sent(buyer.id, 'watch_price_drop')).toHaveLength(0);
     offer = (await seller.api.patch(`/v1/offers/${offer.id}`, { version: offer.version, priceCents: 8_99 })).body;
     await checkWatches(h.ctx);
-    expect(await sent(buyer.id, 'watch_price_drop')).toEqual([expect.objectContaining({ price_cents: 8_99, target_cents: null })]);
+    expect(await sent(buyer.id, 'watch_price_drop')).toEqual([expect.objectContaining({ price_cents: 9_47, target_cents: null })]);
   });
 
   it('watches a slice of a game market by category and game-specific fields', async () => {
@@ -88,8 +88,8 @@ describe('watchlists and price alerts', () => {
 
     const hit = await list('EUW', 14_00);
     await checkWatches(h.ctx);
-    expect(await sent(buyer.id, 'watch_game_low')).toEqual([expect.objectContaining({ offer_id: hit.body.id, price_cents: 14_00, game: 'League of Legends' })]);
-    expect((await buyer.api.get('/v1/me/watches')).body[0]).toMatchObject({ reached: true, currentCents: 14_00, cheapest: { id: hit.body.id } });
+    expect(await sent(buyer.id, 'watch_game_low')).toEqual([expect.objectContaining({ offer_id: hit.body.id, price_cents: 14_74, game: 'League of Legends' })]);
+    expect((await buyer.api.get('/v1/me/watches')).body[0]).toMatchObject({ reached: true, currentCents: 14_74, cheapest: { id: hit.body.id } });
 
     // A game with nothing listed and no target: the first listing is announced.
     await buyer.api.post('/v1/me/watches', { game: 'Brand New Game' });

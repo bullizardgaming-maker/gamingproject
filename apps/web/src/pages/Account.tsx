@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import QRCode from 'qrcode';
-import { DEMO, api, session } from '../api';
+import { DEMO, api, money, session } from '../api';
 import { DemoSignIn } from '../demo/DemoUi';
 import { PushSettings } from '../components/NotificationSettings';
 import { MyBuyerReputation } from '../components/BuyerReputation';
 import { useSession } from '../session';
-import { currentLocale } from '../i18n';
+import { currentLocale, t } from '../i18n';
 import { usePageMeta } from '@/lib/seo';
 
 export function Login() {
@@ -129,38 +129,42 @@ function TwoFactor() {
 
   return (
     <div className="card stack">
-      <div className="eyebrow">Sign-in security</div>
-      <h3>Two-factor login</h3>
+      <div className="eyebrow">{t('account.2fa.eyebrow')}</div>
+      <h3>{t('account.2fa.title')}</h3>
       {codes && (
         <div className="ok stack">
-          <b>Save these recovery codes somewhere safe. Each works once if you lose your phone. They won't be shown again.</b>
+          <b>{t('account.2fa.recovery')}</b>
           <div className="secret">{codes.join('\n')}</div>
         </div>
       )}
       {user.totp_enabled ? (
         <>
-          <div className="ok">On. Signing in asks for a code from your authenticator app.</div>
+          <div className="ok">{t('account.2fa.on')}</div>
           <div className="row">
-            <input className="mono" placeholder="Code or recovery code" value={code} onChange={(e) => setCode(e.target.value)} style={{ maxWidth: 220 }} />
-            <button className="btn ghost" disabled={!code} onClick={turnOff}>Turn off</button>
+            <input className="mono" placeholder={t('account.2fa.codePlaceholder')} value={code} onChange={(e) => setCode(e.target.value)} style={{ maxWidth: 220 }} />
+            <button className="btn ghost" disabled={!code} onClick={turnOff}>{t('account.2fa.turnOff')}</button>
           </div>
         </>
       ) : setup ? (
         <div className="stack">
-          <p className="muted small">Scan this with an authenticator app (Google Authenticator, 1Password, Authy), then enter the 6-digit code it shows.</p>
-          <img src={setup.qr} alt="QR code for your authenticator app" width={180} height={180} />
-          <p className="small muted">Can't scan? Enter this key: <span className="mono">{setup.secret}</span></p>
+          <p className="muted small">{t('account.2fa.scan')}</p>
+          <img src={setup.qr} alt={t('account.2fa.qrAlt')} width={180} height={180} />
+          <p className="small muted">
+            {t('account.2fa.cantScan', { key: '\u0000' }).split('\u0000')[0]}
+            <span className="mono">{setup.secret}</span>
+            {t('account.2fa.cantScan', { key: '\u0000' }).split('\u0000')[1]}
+          </p>
           <div className="row">
-            <input className="mono" inputMode="numeric" maxLength={6} placeholder="6-digit code" value={code} onChange={(e) => setCode(e.target.value)} style={{ maxWidth: 160 }} />
-            <button className="btn" disabled={code.length !== 6} onClick={turnOn}>Turn on</button>
+            <input className="mono" inputMode="numeric" maxLength={6} placeholder={t('account.sixDigit')} value={code} onChange={(e) => setCode(e.target.value)} style={{ maxWidth: 160 }} />
+            <button className="btn" disabled={code.length !== 6} onClick={turnOn}>{t('account.2fa.turnOn')}</button>
           </div>
         </div>
       ) : (
         <>
           <p className="muted small">
-            Protects your balance and listings if your password leaks.{user.role !== 'user' && ' Required for arbiter and admin tools.'}
+            {t('account.2fa.protects')}{user.role !== 'user' && ` ${t('account.2fa.staff')}`}
           </p>
-          <button className="btn ghost" onClick={start}>Set up two-factor login</button>
+          <button className="btn ghost" onClick={start}>{t('account.2fa.setUp')}</button>
         </>
       )}
       {error && <div className="alert" role="alert">{error}</div>}
@@ -173,11 +177,11 @@ function CodeStep({ channel, done, onDone }: { channel: 'email' | 'sms'; done: b
   const [sent, setSent] = useState(false);
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
-  if (done) return <div className="ok">{channel === 'email' ? 'Email verified.' : 'Phone verified.'}</div>;
+  if (done) return <div className="ok">{channel === 'email' ? t('account.emailVerified') : t('account.phoneVerified')}</div>;
   return (
     <div className="stack">
       {channel === 'sms' && !sent && (
-        <label className="field">Mobile number<input className="mono" placeholder="+14155550123" value={phone} onChange={(e) => setPhone(e.target.value)} /></label>
+        <label className="field">{t('account.mobile')}<input className="mono" placeholder="+14155550123" value={phone} onChange={(e) => setPhone(e.target.value)} /></label>
       )}
       {!sent ? (
         <button
@@ -192,11 +196,11 @@ function CodeStep({ channel, done, onDone }: { channel: 'email' | 'sms'; done: b
             }
           }}
         >
-          Send code
+          {t('account.sendCode')}
         </button>
       ) : (
         <div className="row">
-          <input className="mono" inputMode="numeric" maxLength={6} placeholder={DEMO ? 'Demo code: 123456' : '6-digit code'} value={code} onChange={(e) => setCode(e.target.value)} style={{ maxWidth: 180 }} />
+          <input className="mono" inputMode="numeric" maxLength={6} placeholder={DEMO ? t('account.demoCode') : t('account.sixDigit')} value={code} onChange={(e) => setCode(e.target.value)} style={{ maxWidth: 180 }} />
           <button
             className="btn"
             onClick={async () => {
@@ -209,7 +213,7 @@ function CodeStep({ channel, done, onDone }: { channel: 'email' | 'sms'; done: b
               }
             }}
           >
-            Verify
+            {t('account.verify')}
           </button>
         </div>
       )}
@@ -219,30 +223,30 @@ function CodeStep({ channel, done, onDone }: { channel: 'email' | 'sms'; done: b
 }
 
 export function Account() {
-  usePageMeta({ title: 'Your account', noindex: true });
+  usePageMeta({ title: t('account.meta'), noindex: true });
   const { user, refresh } = useSession();
   const [kyc, setKyc] = useState<string>('');
-  if (!user) return <p className="muted">Sign in to manage your account. <Link to="/login">Sign in</Link></p>;
+  if (!user) return <p className="muted">{t('account.signIn')} <Link to="/login">{t('nav.signIn')}</Link></p>;
 
   return (
     <div className="stack" style={{ maxWidth: 720 }}>
-      <h1 style={{ fontSize: 40 }}>Verification</h1>
-      <p className="lede">Level {user.kyc_tier} of 2. Buying needs level 1. Selling and withdrawals need level 2.</p>
+      <h1 style={{ fontSize: 40 }}>{t('account.title')}</h1>
+      <p className="lede">{t('account.lede', { tier: String(user.kyc_tier) })}</p>
 
       <div className="card stack">
-        <div className="eyebrow">Level 1 · buy</div>
-        <h3>Confirm your email</h3>
+        <div className="eyebrow">{t('account.level1')}</div>
+        <h3>{t('account.confirmEmail')}</h3>
         <CodeStep channel="email" done={!!user.email_verified_at} onDone={refresh} />
-        <h3>Confirm your phone</h3>
+        <h3>{t('account.confirmPhone')}</h3>
         <CodeStep channel="sms" done={!!user.phone_verified_at} onDone={refresh} />
       </div>
 
       <div className="card stack">
-        <div className="eyebrow">Level 2 · sell and withdraw</div>
-        <h3>Verify your identity</h3>
-        <p className="muted small">A government photo ID and a short selfie video, checked by our identity partner. Your name must match the billing name on any account you list with Original Owner Proof.</p>
+        <div className="eyebrow">{t('account.level2')}</div>
+        <h3>{t('sell.kyc.verify')}</h3>
+        <p className="muted small">{t('account.id.text')}</p>
         {user.kyc_tier >= 2 ? (
-          <div className="ok">Identity verified.</div>
+          <div className="ok">{t('account.id.verified')}</div>
         ) : (
           <button
             className="btn"
@@ -251,13 +255,13 @@ export function Account() {
               try {
                 const s = await api<{ externalId: string; url?: string }>('/kyc/start', { body: { level: 'tier2_individual' } });
                 if (s.url) window.location.assign(s.url);
-                else setKyc(`Verification started (reference ${s.externalId}). Finish it in the identity check window; this page updates when it's approved.`);
+                else setKyc(t('account.id.started', { ref: s.externalId }));
               } catch (e: any) {
                 setKyc(e.message);
               }
             }}
           >
-            Start identity check
+            {t('account.id.start')}
           </button>
         )}
         {kyc && <div className="notice">{kyc}</div>}
@@ -270,6 +274,8 @@ export function Account() {
       <div id="notifications" />
       <EmailPreferences />
       <PushSettings />
+      <CreditCard />
+      <CreatorCode />
       <PrivacyControls />
     </div>
   );
@@ -294,9 +300,9 @@ function Devices() {
   return (
     <div className="card stack">
       <div className="row spread">
-        <h3 style={{ margin: 0 }}>Signed-in devices</h3>
+        <h3 style={{ margin: 0 }}>{t('account.devices')}</h3>
         {devices && devices.length > 1 && (
-          <button className="btn ghost" onClick={() => run(() => api('/me/sessions/revoke-others', { body: {} }))}>Sign out all other devices</button>
+          <button className="btn ghost" onClick={() => run(() => api('/me/sessions/revoke-others', { body: {} }))}>{t('account.devices.signOutOthers')}</button>
         )}
       </div>
       {error && <div className="alert" role="alert">{error}</div>}
@@ -304,12 +310,12 @@ function Devices() {
         <div key={d.id} className="row spread small" style={{ borderTop: '1px solid var(--rule)', paddingTop: 10 }}>
           <span>
             <b>{d.device}</b>
-            {d.current && <span className="chip released" style={{ marginInlineStart: 8 }}>this device</span>}
+            {d.current && <span className="chip released" style={{ marginInlineStart: 8 }}>{t('account.devices.this')}</span>}
             <div className="muted">
-              {d.ip ?? 'unknown IP'} · last active {new Date(d.lastActiveAt).toLocaleString()}
+              {t('account.devices.lastActive', { ip: d.ip ?? t('account.devices.unknownIp'), when: new Date(d.lastActiveAt).toLocaleString() })}
             </div>
           </span>
-          {!d.current && <button className="btn ghost" onClick={() => run(() => api(`/me/sessions/${d.id}`, { method: 'DELETE' }))}>Sign out</button>}
+          {!d.current && <button className="btn ghost" onClick={() => run(() => api(`/me/sessions/${d.id}`, { method: 'DELETE' }))}>{t('nav.signOut')}</button>}
         </div>
       ))}
     </div>
@@ -325,21 +331,21 @@ function PasswordChange() {
     try {
       const r = await api<{ signedOutDevices: number }>('/me/password', { body: f });
       form.reset();
-      setMsg({ kind: 'ok', text: `Password changed. ${r.signedOutDevices} other device${r.signedOutDevices === 1 ? ' was' : 's were'} signed out.` });
+      setMsg({ kind: 'ok', text: t('account.password.changed', { count: r.signedOutDevices }) });
     } catch (err: any) {
-      setMsg({ kind: 'alert', text: err.code === 'validation_error' ? 'New password must be at least 10 characters.' : err.message });
+      setMsg({ kind: 'alert', text: err.code === 'validation_error' ? t('account.password.tooShort') : err.message });
     }
   };
   return (
     <form className="card stack" onSubmit={submit}>
-      <h3>Change password</h3>
+      <h3>{t('account.password.title')}</h3>
       <div className="grid two">
-        <label className="field">Current password<input name="currentPassword" type="password" required autoComplete="current-password" /></label>
-        <label className="field">New password<input name="newPassword" type="password" required minLength={10} autoComplete="new-password" /></label>
+        <label className="field">{t('account.password.current')}<input name="currentPassword" type="password" required autoComplete="current-password" /></label>
+        <label className="field">{t('account.password.new')}<input name="newPassword" type="password" required minLength={10} autoComplete="new-password" /></label>
       </div>
-      <p className="small muted">Changing your password signs out every other device.</p>
+      <p className="small muted">{t('account.password.note')}</p>
       {msg && <div className={msg.kind}>{msg.text}</div>}
-      <button className="btn ghost">Change password</button>
+      <button className="btn ghost">{t('account.password.title')}</button>
     </form>
   );
 }
@@ -352,14 +358,14 @@ function EmailPreferences() {
   const toggle = async (category: string, enabled: boolean) => setPrefs(await api('/me/email-preferences', { method: 'PATCH', body: { [category]: enabled } }));
   return (
     <div className="card stack checklist">
-      <h3>Email notifications</h3>
+      <h3>{t('account.email.title')}</h3>
       <div>
         {prefs.map((p) => (
           <label key={p.category}>
             <input type="checkbox" checked={p.enabled} disabled={p.mandatory} onChange={(e) => toggle(p.category, e.target.checked)} />
             <span>
               {p.label}
-              {p.mandatory && <span className="small muted"> · always on</span>}
+              {p.mandatory && <span className="small muted"> · {t('account.email.alwaysOn')}</span>}
             </span>
           </label>
         ))}
@@ -444,23 +450,121 @@ function PrivacyControls() {
   };
   return (
     <div className="card stack">
-      <h3>Your data</h3>
+      <h3>{t('account.data.title')}</h3>
       <div className="row">
-        <button className="btn ghost" onClick={download}>Download my data</button>
-        <button className="btn dispute" onClick={() => setOpen(!open)}>Delete my account</button>
+        <button className="btn ghost" onClick={download}>{t('account.data.download')}</button>
+        <button className="btn dispute" onClick={() => setOpen(!open)}>{t('account.data.delete')}</button>
       </div>
       {open && (
         <form className="stack" onSubmit={remove}>
           <p className="small muted">
-            Your profile, listings and sign-in details are erased and you can't undo this. Order and payment records and order chats are kept,
-            without your name or email, because the law and open disputes require them. Finish open orders and withdraw your balance first.
+            {t('account.data.text')}
           </p>
-          <label className="field">Password<input name="password" type="password" required autoComplete="current-password" /></label>
-          {user?.totp_enabled && <label className="field">Two-factor code<input name="code" className="mono" required /></label>}
+          <label className="field">{t('account.data.password')}<input name="password" type="password" required autoComplete="current-password" /></label>
+          {user?.totp_enabled && <label className="field">{t('account.data.code')}<input name="code" className="mono" required /></label>}
           {error && <div className="alert" role="alert">{error}</div>}
-          <button className="btn dispute">Delete my account permanently</button>
+          <button className="btn dispute">{t('account.data.deleteForever')}</button>
         </form>
       )}
+    </div>
+  );
+}
+
+
+interface AffiliateSummary {
+  code: string;
+  rate_bps: number;
+  status: string;
+  buyers: number;
+  orders: number;
+  earned_cents: number;
+  earned_month_cents: number;
+  recent: Array<{ order_id: string; commission_cents: number; earned_cents: number; currency: string; created_at: string }>;
+}
+
+/**
+ * Creator codes: a buyer enters a streamer's code once (their orders then earn the creator a share
+ * of the commission); a creator sees their own code and earnings here.
+ */
+function CreatorCode() {
+  const [mine, setMine] = useState<AffiliateSummary | null | undefined>(undefined);
+  const [code, setCode] = useState('');
+  const [msg, setMsg] = useState('');
+  const [error, setError] = useState('');
+  useEffect(() => {
+    api<AffiliateSummary | null>('/me/affiliate').then(setMine).catch(() => setMine(null));
+  }, []);
+  const attach = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setMsg('');
+    try {
+      await api('/me/affiliate', { body: { code: code.trim() } });
+      setMsg(t('creator.applied', { code: code.trim().toUpperCase() }));
+      setCode('');
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+  return (
+    <div className="card stack" id="creator-code" data-testid="creator-code">
+      <h3 style={{ margin: 0 }}>{t('creator.title')}</h3>
+      {mine ? (
+        <>
+          <p className="small muted" style={{ margin: 0 }}>{t('creator.yours', { pct: (mine.rate_bps / 100).toFixed(0) })}</p>
+          <div className="grid three">
+            <div><div className="eyebrow">{t('creator.code')}</div><b className="mono">{mine.code}</b>{mine.status === 'paused' && <span className="chip held" style={{ marginInlineStart: 6 }}>{t('creator.paused')}</span>}</div>
+            <div><div className="eyebrow">{t('creator.buyers')}</div><b className="mono">{mine.buyers}</b></div>
+            <div><div className="eyebrow">{t('creator.earned')}</div><b className="mono">{money(mine.earned_cents)}</b> <span className="small muted">{t('creator.month', { amount: money(mine.earned_month_cents), count: mine.orders })}</span></div>
+          </div>
+        </>
+      ) : (
+        <form className="row" style={{ gap: 8, alignItems: 'end', flexWrap: 'wrap' }} onSubmit={attach}>
+          <label className="field" style={{ margin: 0, flex: '1 1 220px' }}>
+            {t('creator.have')}
+            <input value={code} onChange={(e) => setCode(e.target.value)} maxLength={20} placeholder={t('creator.placeholder')} />
+          </label>
+          <button className="btn ghost" disabled={code.trim().length < 3}>{t('creator.apply')}</button>
+        </form>
+      )}
+      {msg && <div className="ok" role="status">{msg}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
+    </div>
+  );
+}
+
+
+/** Credit on the account (kept underpayments, referral rewards): spend at checkout or withdraw. */
+function CreditCard() {
+  const [credit, setCredit] = useState<{ balanceCents: number; availableCents: number; currency: string } | null>(null);
+  const [msg, setMsg] = useState('');
+  const [error, setError] = useState('');
+  const load = () => api<{ balanceCents: number; availableCents: number; currency: string }>('/me/credit').then(setCredit).catch(() => setCredit(null));
+  useEffect(() => {
+    load();
+  }, []);
+  if (!credit || credit.balanceCents <= 0) return null;
+  const withdraw = async () => {
+    setError('');
+    setMsg('');
+    try {
+      await api('/me/credit/withdraw', { body: { amountCents: credit.availableCents } });
+      setMsg(t('credit.requested'));
+      load();
+    } catch (e: any) {
+      setError(e.code === 'no_payout_address' ? t('credit.needAddress') : e.message);
+    }
+  };
+  return (
+    <div className="card stack" id="credit" data-testid="credit-card">
+      <h3 style={{ margin: 0 }}>{t('credit.title')}</h3>
+      <p className="small muted" style={{ margin: 0 }}>{t('credit.text')}</p>
+      <div className="row spread">
+        <span><span className="eyebrow">{t('credit.available')}</span> <b className="mono">{money(credit.availableCents, credit.currency)}</b></span>
+        <button className="btn ghost" disabled={credit.availableCents < 150} onClick={withdraw}>{t('credit.withdraw', { amount: money(credit.availableCents, credit.currency) })}</button>
+      </div>
+      {msg && <div className="ok" role="status">{msg}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
     </div>
   );
 }

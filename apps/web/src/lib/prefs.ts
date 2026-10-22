@@ -7,7 +7,7 @@ import { api, money } from '../api';
  * platform's published rates (checkout always shows the exact amount charged).
  */
 export type Theme = 'light' | 'dark' | 'system';
-export const DISPLAY_CURRENCIES = ['USD', 'EUR', 'GBP'] as const;
+export const DISPLAY_CURRENCIES = ['USD', 'EUR', 'EGP'] as const;
 export type DisplayCurrency = (typeof DISPLAY_CURRENCIES)[number];
 
 const read = (k: string) => {
@@ -26,7 +26,26 @@ const write = (k: string, v: string) => {
 };
 
 let theme: Theme = (read('bz.theme') as Theme) || 'system';
-let currency: DisplayCurrency = DISPLAY_CURRENCIES.includes(read('bz.currency') as DisplayCurrency) ? (read('bz.currency') as DisplayCurrency) : 'USD';
+/**
+ * First visit: the currency follows where the viewer seems to be (time zone, then language region):
+ * Egypt → EGP, the euro area → EUR, everywhere else USD. Their own choice is kept after that.
+ */
+const EURO_ZONES = /^Europe\/(Amsterdam|Andorra|Athens|Berlin|Bratislava|Brussels|Busingen|Dublin|Helsinki|Lisbon|Ljubljana|Luxembourg|Madrid|Malta|Monaco|Paris|Riga|Rome|San_Marino|Tallinn|Vaduz|Vatican|Vienna|Vilnius|Zagreb)$|^Atlantic\/(Azores|Canary|Madeira)$/;
+const EURO_REGIONS = new Set(['AT', 'BE', 'CY', 'DE', 'EE', 'ES', 'FI', 'FR', 'GR', 'HR', 'IE', 'IT', 'LT', 'LU', 'LV', 'MT', 'NL', 'PT', 'SI', 'SK', 'AD', 'MC', 'SM', 'VA', 'ME', 'XK']);
+export function defaultCurrency(): DisplayCurrency {
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? '';
+    if (zone === 'Africa/Cairo') return 'EGP';
+    if (EURO_ZONES.test(zone)) return 'EUR';
+    const region = (navigator.languages?.[0] ?? navigator.language ?? '').split('-')[1]?.toUpperCase();
+    if (region === 'EG') return 'EGP';
+    if (region && EURO_REGIONS.has(region)) return 'EUR';
+  } catch {
+    /* no Intl or navigator: USD */
+  }
+  return 'USD';
+}
+let currency: DisplayCurrency = DISPLAY_CURRENCIES.includes(read('bz.currency') as DisplayCurrency) ? (read('bz.currency') as DisplayCurrency) : defaultCurrency();
 let rates: Record<string, number> = { USD: 1 };
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((l) => l());

@@ -79,18 +79,27 @@ const help: HelpPack = {
       ],
     },
     'selling-fees': {
-      title: 'Taxas e níveis de vendedor',
-      summary: 'As taxas caem conforme suas vendas de 30 dias crescem; gift cards, recargas e videogames têm taxa menor.',
+      title: 'Comissão e patentes de vendedor',
+      summary: 'Você define o preço e o recebe integralmente; a comissão entra por cima para o comprador e cai conforme sua patente sobe.',
       body: [
-        'Cada venda paga uma comissão que depende do seu nível de vendedor, definido pelas vendas dos últimos 30 dias. Contas têm taxa própria; gift cards, recargas e videogames pagam 4,99%.',
-        'Você vê a taxa exata e o ganho líquido em cada pedido, e seu nível e progresso no painel do vendedor.',
+        'Você digita o preço que quer. A comissão da sua patente entra por cima para o comprador, então o valor digitado é exatamente o que cai no seu saldo quando o pedido é concluído. As patentes são definidas pelas vendas concluídas nos últimos 30 dias; vendedores novos pagam uma taxa de lançamento reduzida nos primeiros 60 dias.',
+        'O formulário de venda mostra, antes de publicar, o que os compradores pagarão em cada moeda e o que sobra para você após a taxa de saque. Sua patente e progresso ficam no painel do vendedor.',
+      ],
+    },
+    'delivery-in-game': {
+      title: 'Como funciona a entrega no jogo',
+      summary: 'Moeda e itens são negociados para o nome de personagem que você confirma no checkout; o vendedor anexa uma prova e você libera o pagamento.',
+      body: [
+        'Em jogos com entrega dentro do jogo (moeda, itens, recargas), você informa o nome de personagem ou UID exato com que o vendedor deve negociar. Ele é confirmado com um toque no checkout e lembrado para o próximo pedido; confira com cuidado, porque o vendedor entrega para esse nome e você é responsável por ele estar certo.',
+        'O vendedor negocia com esse personagem e anexa uma foto ou vídeo da troca antes de marcar o pedido como entregue. A prova fica visível na página do pedido.',
+        'O pagamento fica em custódia até você confirmar o recebimento. Se algo estiver errado, abra uma disputa na página do pedido em vez de confirmar; a equipe compara a prova com a troca e decide.',
       ],
     },
     'getting-paid': {
       title: 'Recebendo',
-      summary: 'Saque para o seu banco em USD, EUR ou GBP quando o prazo de proteção terminar.',
+      summary: 'Saque para sua carteira cripto (USDT) quando o prazo de proteção terminar; há uma taxa de 6%.',
       body: [
-        'O dinheiro de uma venda fica disponível quando o comprador confirma ou quando o prazo de proteção termina. Saque pelo painel do vendedor para a conta bancária cadastrada na página do nosso parceiro de pagamentos.',
+        'O dinheiro de uma venda fica disponível quando o comprador confirma ou o prazo de proteção termina. Saque pelo painel do vendedor para o endereço de recebimento confirmado por e-mail; a tesouraria aprova e envia em USDT.',
         'Vendedores novos podem ter uma breve retenção de saque enquanto criamos confiança; o painel mostra quando o valor retido é liberado.',
         'Se um reembolso ou chargeback deixar seu saldo negativo, novas vendas cobrem o valor primeiro e os saques ficam pausados até a quitação.',
       ],

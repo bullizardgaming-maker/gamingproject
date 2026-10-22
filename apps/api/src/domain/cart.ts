@@ -16,7 +16,7 @@ import { cancelOrder, createOrder, handlePaymentCaptured, type CreateOrderInput 
 export const MAX_CART_ITEMS = 20;
 
 export interface CartInput extends Omit<CreateOrderInput, 'offerId' | 'quantity' | 'checkoutId' | 'promoCode' | 'useCredit' | 'walletAddress'> {
-  items: Array<{ offerId: string; quantity: number }>;
+  items: Array<{ offerId: string; quantity: number; characterName?: string }>;
 }
 
 export async function checkoutByRef(q: Queryable, ref: string) {
@@ -57,7 +57,7 @@ export async function createCartCheckout(ctx: Ctx, input: CartInput) {
   };
   try {
     for (const item of input.items) {
-      const { order } = await createOrder(ctx, { ...input, idempotencyKey: undefined, currency, offerId: item.offerId, quantity: item.quantity, checkoutId: checkout.id });
+      const { order } = await createOrder(ctx, { ...input, idempotencyKey: undefined, currency, offerId: item.offerId, quantity: item.quantity, characterName: item.characterName, checkoutId: checkout.id });
       created.push(order as any);
     }
   } catch (err) {
@@ -92,7 +92,7 @@ export async function cartView(q: Queryable, checkoutId: string) {
   const orders = await many<any>(
     q,
     `SELECT o.id, o.status, o.seller_id, o.offer_id, o.quantity, o.amount_cents, o.currency, o.presentment_amount_cents, o.presentment_currency,
-            o.unit_price_cents, f.title AS offer_title, u.display_name AS seller_name
+            o.unit_price_cents, o.character_name, f.title AS offer_title, u.display_name AS seller_name
        FROM orders o JOIN offers f ON f.id = o.offer_id JOIN users u ON u.id = o.seller_id
       WHERE o.checkout_id = $1 ORDER BY o.created_at`,
     [checkoutId],

@@ -63,7 +63,10 @@ Game cover art is generated from each game's name; no publisher artwork is used.
 Also in the web app:
 - A public status page at `/status`, with email subscriptions.
 - Light and dark themes, following the system setting until the viewer picks one.
-- Prices shown in USD, EUR or GBP; conversions are approximate and checkout shows the exact amount.
+- Prices shown in USD, EUR or EGP (picked from the viewer's location on the first visit); conversions are approximate and checkout shows the exact amount, locked when it starts.
+- Launch games: Aion, Aion 2, Albion Online, Path of Exile 1 and 2, with the fields each uses (server/region, league + mode). Buyers confirm their character name in one tap at checkout; sellers attach a photo or video proof before marking an in-game delivery.
+- Sellers set their price and receive it in full: the commission (by rank, 5% launch promo) is added on top for the buyer, and the sell form previews the buyer price in each currency.
+- A rules test before the first listing; identity verification within 30 days. Founding Sellers get a badge and free featured spots. A game-voting page (`/games/vote`) and creator affiliate codes.
 - Per-page titles, descriptions and canonical URLs.
 - A `sitemap.xml` and `robots.txt` generated at build. Set `VITE_SITE_URL` to the production domain; private pages are excluded and marked noindex.
 
@@ -73,6 +76,7 @@ Staff screens under Operations:
 - Currency top-ups
 - The fraud model report
 - Chat erasure requests
+- Seller ranks and the launch phase/founding window, the seller rules test, Path of Exile leagues, creator codes, the chat safety text
 
 UI components: the web app has Tailwind CSS v4 and a shadcn `components.json` (aliases `@/components`, `@/lib/utils`;
 theme tokens mapped to the Bullizard palette in `src/tailwind.css`), so registry components drop in with
@@ -81,15 +85,15 @@ theme tokens mapped to the Bullizard palette in `src/tailwind.css`), so registry
 ## Tests
 
 ```bash
-npm test -w apps/api          # 223 tests, needs Postgres (TEST_DATABASE_URL, default market_test) and Redis for the multi-node and view-count tests
+npm test -w apps/api          # 70 test files, needs Postgres (TEST_DATABASE_URL, default market_test) and Redis for the multi-node and view-count tests
 npm test -w contracts         # 14 Hardhat tests
 cd services/fraud-gnn && pip install -r requirements.txt && pytest -q   # 9 tests
 npm run build -w apps/web     # includes the payment-page script inventory check
-VITE_DEMO=true npm run build -w apps/web && npm run e2e -w apps/web   # 91 Playwright browser tests (desktop + phone) against the demo build, including axe accessibility scans
+VITE_DEMO=true npm run build -w apps/web && npm run e2e -w apps/web   # 110+ Playwright browser tests (desktop + phone) against the demo build, including axe accessibility scans
 npm run loadtest -w apps/api && npm run loadtest:search -w apps/api   # load checks against a running API (CI runs both)
 ```
 
-The browser tests cover browsing and filters, buying and chatting, price alerts, support requests, buyer requests, quantity prices, the cart, sales and shop codes, bundles, trust badges, saved searches, dispute case files, listing moderation, staff tools, accessibility (axe), keyboard use, price history, account warranty claims, languages (including Arabic right-to-left), the installable app and phone layouts. CI runs them on every push and uploads the report when one fails.
+The browser tests cover browsing and filters, buying and chatting (with the official order card and the safety panel), in-game delivery with character names and proof, seller onboarding (rules test, ID deadline), ranks and the sell-form preview, leagues, founding sellers, game voting, creator codes, price alerts, support requests, buyer requests, quantity prices, the cart, sales and shop codes, bundles, trust badges, saved searches, dispute case files, listing moderation, staff tools, accessibility (axe), keyboard use, price history, account warranty claims, languages (including Arabic right-to-left), the installable app and phone layouts. CI runs them on every push and uploads the report when one fails.
 
 Highlights of what the tests prove: exactly one of 25 simultaneous buyers gets a single-stock item; chat sequence numbers stay gapless under 30 concurrent writers; a message sent to one API node reaches a socket on another node through Redis; webhook signatures verify with the merchant's secret and retries keep the same idempotency key; a buyer cluster sharing one device freezes a new seller's escrows and withdrawals; chargebacks produce reason-code-specific PDF packets and move money through the ledger correctly; the escrow contract rejects buyer-tampered terms and executes a commit-reveal validator verdict.
 

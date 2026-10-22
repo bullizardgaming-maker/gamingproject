@@ -163,11 +163,13 @@ export function OfferTable({ offers, showGame = false, showSeller = true, empty 
                       {o.seller_online && <OnlineDot />}
                     </span>
                     {o.seller_trust_level && o.seller_trust_level !== 'new' && <TrustBadge level={o.seller_trust_level} className="mb-0.5 px-1.5 py-0.5 text-[10px]" />}
+                    {o.seller_founding && <FoundingBadge className="mb-0.5 px-1.5 py-0.5 text-[10px]" />}
                     <Rating value={o.seller_rating} count={o.seller_review_count} />
                   </div>
                 </div>
               )}
               <div className="order-3 col-span-2 flex items-center gap-3 md:order-none md:col-span-1 md:block">
+                {o.featured && <span className="chip held mb-1 px-1.5 py-0.5 text-[10px]" data-testid="featured-chip"><Star className="size-3" /> {t('featured.chip')}</span>}
                 <DeliveryTag offer={o as any} />
                 <span className="font-mono text-xs text-muted-foreground md:hidden">· {t('table.inStock', { n: o.stock })}</span>
               </div>
@@ -233,6 +235,15 @@ export function TrustStrip({ className }: { className?: string }) {
 }
 
 /** Seller trust level badge (nothing for new sellers). */
+/** Founding Sellers opened their shop during the launch: the badge stays for good. */
+export function FoundingBadge({ className }: { className?: string }) {
+  return (
+    <span className={cn('chip border-transparent bg-violet-500/15 text-violet-700 dark:text-violet-300', className)} title={t('founding.hint')} data-testid="founding-badge">
+      <Rocket className="size-3.5" /> {t('founding.badge')}
+    </span>
+  );
+}
+
 export function TrustBadge({ level, className }: { level?: string | null; className?: string }) {
   if (!level || level === 'new') return null;
   const tone = level === 'top' ? 'border-transparent bg-amber-500/15 text-amber-700 dark:text-amber-300' : level === 'trusted' ? 'released' : 'held';

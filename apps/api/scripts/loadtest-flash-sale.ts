@@ -59,6 +59,7 @@ const pct = (xs: number[], p: number) => {
 
 async function main() {
   const run = Date.now();
+  await ctx.db.query('UPDATE launch_settings SET phase = 3'); // every category on sale for the load run
   const pw = await hashPassword('load-test-password');
   const { rows: [seller] } = await ctx.db.query(
     `INSERT INTO users (email, password_hash, display_name, kyc_tier, email_verified_at, phone_verified_at, legal_name)

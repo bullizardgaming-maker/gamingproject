@@ -1,5 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { grossUp } from '../src/domain/commission.js';
 import { buyAndPay, client, makeUser, setup, type Harness } from './helpers.js';
+
+/** Buyer price of a seller amount for a fresh (launch-promo, 5%) seller. */
+const gross = (cents: number) => grossUp(cents, 500);
 import { syncSales } from '../src/domain/discounts.js';
 
 let h: Harness;
@@ -23,26 +27,26 @@ describe('seller-funded discounts', () => {
     expect((await buyer.api.put(`/v1/offers/${offer.id}/sale`, { salePriceCents: 15_00, endsAt: inDays(3) })).status).toBe(403);
     const sale = await seller.api.put(`/v1/offers/${offer.id}/sale`, { salePriceCents: 15_00, endsAt: inDays(3) });
     expect(sale.status, JSON.stringify(sale.body)).toBe(200);
-    expect(sale.body).toMatchObject({ price_cents: 15_00, regular_price_cents: 20_00 });
+    expect(sale.body).toMatchObject({ price_cents: gross(15_00), regular_price_cents: gross(20_00), seller_price_cents: 15_00 });
     expect(sale.body.sale_ends_at).toBeTruthy();
     const found = (await client(h.app).get(`/v1/offers?game=${encodeURIComponent(offer.game)}`)).body.items[0];
-    expect(found).toMatchObject({ price_cents: 15_00, price_settlement_cents: 15_00 });
+    expect(found).toMatchObject({ price_cents: gross(15_00), price_settlement_cents: gross(15_00) });
 
     const order = await buyAndPay(h, buyer, offer.id, 2);
     const row = (await h.ctx.db.query('SELECT amount_cents, commission_cents, commission_bps FROM orders WHERE id = $1', [order.id])).rows[0];
-    expect(Number(row.amount_cents)).toBe(30_00);
-    expect(Number(row.commission_cents)).toBe(Math.round((30_00 * row.commission_bps) / 10_000));
+    expect(Number(row.amount_cents)).toBe(gross(30_00));
+    expect(Number(row.commission_cents)).toBe(gross(30_00) - 30_00);
 
     // The window closes: price and search go back.
     await h.ctx.db.query(`UPDATE offers SET sale_starts_at = now() - interval '2 days', sale_ends_at = now() - interval '1 minute' WHERE id = $1`, [offer.id]);
     await syncSales(h.ctx);
-    expect((await client(h.app).get(`/v1/offers/${offer.id}`)).body).toMatchObject({ price_cents: 20_00, sale_ends_at: null });
+    expect((await client(h.app).get(`/v1/offers/${offer.id}`)).body).toMatchObject({ price_cents: gross(20_00), sale_ends_at: null });
     expect(Number((await h.ctx.db.query('SELECT price_settlement_cents FROM offers WHERE id = $1', [offer.id])).rows[0].price_settlement_cents)).toBe(20_00);
 
     // A sale scheduled for later doesn't apply yet; ending it clears it.
     await seller.api.put(`/v1/offers/${offer.id}/sale`, { salePriceCents: 10_00, startsAt: inDays(1), endsAt: inDays(2) });
-    expect((await client(h.app).get(`/v1/offers/${offer.id}`)).body.price_cents).toBe(20_00);
-    expect((await seller.api.del(`/v1/offers/${offer.id}/sale`)).body.price_cents).toBe(20_00);
+    expect((await client(h.app).get(`/v1/offers/${offer.id}`)).body.price_cents).toBe(gross(20_00));
+    expect((await seller.api.del(`/v1/offers/${offer.id}/sale`)).body.price_cents).toBe(gross(20_00));
   });
 
   it('applies a seller code to that seller’s listings only, within its limits', async () => {
@@ -58,13 +62,13 @@ describe('seller-funded discounts', () => {
     expect((await seller.api.post('/v1/seller/codes', { code: 'spring10', percentOff: 5 })).status).toBe(409);
 
     const q = await buyer.api.post('/v1/orders/quote', { offerId: offer.id, quantity: 2, sellerCode: 'spring10' });
-    expect(q.body).toMatchObject({ sellerDiscountCents: 4_00, amountCents: 36_00 });
+    expect(q.body).toMatchObject({ sellerDiscountCents: 4_00, sellerAmountCents: 36_00, amountCents: gross(36_00) });
     expect((await buyer.api.post('/v1/orders/quote', { offerId: offer.id, quantity: 1, sellerCode: 'SPRING10' })).body.error.code).toBe('code_min_order');
     expect((await buyer.api.post('/v1/orders/quote', { offerId: otherOffer.id, quantity: 2, sellerCode: 'SPRING10' })).body.error.code).toBe('code_invalid');
 
     const res = await buyer.api.post('/v1/orders', { offerId: offer.id, quantity: 2, acceptTos: true, sellerCode: 'SPRING10' });
     expect(res.status, JSON.stringify(res.body)).toBe(201);
-    expect(res.body.order).toMatchObject({ amount_cents: 36_00, seller_discount_cents: 4_00, seller_code_id: c.body.id });
+    expect(res.body.order).toMatchObject({ amount_cents: gross(36_00), seller_discount_cents: 4_00, seller_code_id: c.body.id });
     expect((await buyer.api.post('/v1/orders', { offerId: offer.id, quantity: 2, acceptTos: true, sellerCode: 'SPRING10' })).body.error.code).toBe('code_used');
     await buyer2.api.post('/v1/orders', { offerId: offer.id, quantity: 2, acceptTos: true, sellerCode: 'SPRING10' });
     expect((await (await makeUser(h)).api.post('/v1/orders', { offerId: offer.id, quantity: 2, acceptTos: true, sellerCode: 'SPRING10' })).body.error.code).toBe('code_exhausted');

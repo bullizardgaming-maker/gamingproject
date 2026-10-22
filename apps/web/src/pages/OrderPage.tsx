@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { api, money, realtime } from '../api';
+import { api, apiUpload, money, realtime } from '../api';
 import { Chat } from '../components/Chat';
 import { AlsoBought } from '../components/AlsoBought';
 import { BoostProgress, type ProgressUpdate } from '../components/BoostProgress';
 import { BuyerCard, type BuyerRep, type BuyerTag } from '../components/BuyerReputation';
 import { EscrowTrack, formatRemaining, type TrackVariant } from '../components/EscrowTrack';
 import { CryptoCheckout, REFUND_COINS, RefundAddressForm } from '../components/CryptoCheckout';
+import { DeliveryProof, type ProofAttachment } from '../components/DeliveryProof';
 import { useSession } from '../session';
+import { t } from '../i18n';
 import { usePageMeta } from '@/lib/seo';
 
 interface OrderDetail {
@@ -36,6 +38,14 @@ interface OrderDetail {
   escrow_frozen: boolean;
   seller_protected: boolean;
   room_id: string;
+  /** Human order ID, e.g. order#7F3AK2Q. */
+  ref?: string;
+  /** The buyer's in-game character name / UID (games that deliver in-game). */
+  character_name?: string | null;
+  handover_field?: { key: string; label: string; hint: string } | null;
+  /** Set when the seller must attach a photo/video before marking delivered. */
+  proof_required?: boolean;
+  delivery_proof?: ProofAttachment | null;
   crypto_refund?: { id: string; amount_cents: number; currency: string; status: string; refund_address: string | null; refund_currency: string | null; tx_hash: string | null } | null;
   checklist: {
     items: Array<{ key: string; label: string; done: boolean; auto?: boolean }>;
@@ -68,21 +78,9 @@ interface WarrantyClaim {
   created_at: string;
 }
 
-const CLAIM_REASON: Record<WarrantyClaim['reason'], string> = {
-  recovered: 'Taken back by its original owner',
-  banned: 'Banned',
-  locked: 'Locked or can’t sign in',
-  other: 'Something else',
-};
-const CLAIM_STATUS: Record<WarrantyClaim['status'], string> = {
-  open: 'Waiting for the seller',
-  seller_fixed: 'Seller says it’s fixed',
-  escalated: 'With an arbiter',
-  resolved: 'Resolved',
-  refunded: 'Refunded',
-  rejected: 'Rejected by an arbiter',
-  withdrawn: 'Withdrawn',
-};
+const CLAIM_REASONS: WarrantyClaim['reason'][] = ['recovered', 'banned', 'locked', 'other'];
+const claimReason = (r: WarrantyClaim['reason']) => t(`order.claimReason.${r}`);
+const claimStatus = (s: WarrantyClaim['status']) => t(`order.claimStatus.${s}`);
 
 /** Account warranty: its end date, the buyer's claim form, and each open claim's next step for whoever owes it. */
 function WarrantyCard({ order, isBuyer, isSeller, onDone }: { order: OrderDetail; isBuyer: boolean; isSeller: boolean; onDone: () => void }) {
@@ -109,60 +107,60 @@ function WarrantyCard({ order, isBuyer, isSeller, onDone }: { order: OrderDetail
   return (
     <section className="card stack" aria-labelledby="warranty-title">
       <div className="row spread">
-        <h3 id="warranty-title" style={{ margin: 0 }}>{order.warranty_days}-day account warranty</h3>
-        {order.warranty_ends_at && <span className={`chip ${running ? 'released' : ''}`}>{running ? `Until ${when(order.warranty_ends_at)}` : 'Ended'}</span>}
+        <h3 id="warranty-title" style={{ margin: 0 }}>{t('order.warranty.title', { days: String(order.warranty_days) })}</h3>
+        {order.warranty_ends_at && <span className={`chip ${running ? 'released' : ''}`}>{running ? t('order.warranty.until', { when: when(order.warranty_ends_at) }) : t('order.warranty.ended')}</span>}
       </div>
       <p className="small muted" style={{ margin: 0 }}>
-        If the account is taken back by its original owner, banned or locked, claim here. The seller has 48 hours to fix it or refund; otherwise an arbiter decides.
-        {isSeller && ' This order’s payout stays on hold until the warranty ends or a claim is settled.'}
+        {t('order.warranty.lede')}
+        {isSeller && ` ${t('order.warranty.sellerHold')}`}
       </p>
       {claims.map((c) => (
         <div key={c.id} className="stack small" style={{ gap: 6, padding: '10px 12px', border: '1px solid var(--rule)', borderRadius: 8 }}>
           <div className="row spread">
-            <b>{CLAIM_REASON[c.reason]}</b>
-            <span className={`chip ${['refunded', 'resolved'].includes(c.status) ? 'released' : c.status === 'escalated' ? 'disputed' : 'held'}`}>{CLAIM_STATUS[c.status]}</span>
+            <b>{claimReason(c.reason)}</b>
+            <span className={`chip ${['refunded', 'resolved'].includes(c.status) ? 'released' : c.status === 'escalated' ? 'disputed' : 'held'}`}>{claimStatus(c.status)}</span>
           </div>
           <div style={{ whiteSpace: 'pre-wrap' }}>{c.details}</div>
-          {c.seller_message && <div className="muted">Seller: {c.seller_message}</div>}
-          {c.decision_note && <div className="muted">Arbiter: {c.decision_note}</div>}
-          {c.status === 'open' && <div className="muted">Seller answers by {when(c.respond_by)}.</div>}
-          {c.status === 'seller_fixed' && c.confirm_by && <div className="muted">Buyer confirms by {when(c.confirm_by)}; after that the fix stands.</div>}
+          {c.seller_message && <div className="muted">{t('order.claim.seller', { message: c.seller_message })}</div>}
+          {c.decision_note && <div className="muted">{t('order.claim.arbiter', { note: c.decision_note })}</div>}
+          {c.status === 'open' && <div className="muted">{t('order.claim.respondBy', { when: when(c.respond_by) })}</div>}
+          {c.status === 'seller_fixed' && c.confirm_by && <div className="muted">{t('order.claim.confirmBy', { when: when(c.confirm_by) })}</div>}
           {isSeller && c.status === 'open' && (
             <div className="stack" style={{ gap: 8 }}>
-              <label className="field">Message to the buyer (optional)<input value={message} onChange={(e) => setMessage(e.target.value)} maxLength={1000} /></label>
+              <label className="field">{t('order.claim.message')}<input value={message} onChange={(e) => setMessage(e.target.value)} maxLength={1000} /></label>
               <div className="row">
-                <button className="btn" onClick={() => run(`/warranty-claims/${c.id}/seller`, { action: 'fixed', message: message || undefined })}>It’s fixed</button>
-                <button className="btn ghost" onClick={() => run(`/warranty-claims/${c.id}/seller`, { action: 'refund', message: message || undefined })}>Refund the buyer</button>
-                <button className="btn ghost" onClick={() => run(`/warranty-claims/${c.id}/seller`, { action: 'contest', message: message || undefined })}>Contest it</button>
+                <button className="btn" onClick={() => run(`/warranty-claims/${c.id}/seller`, { action: 'fixed', message: message || undefined })}>{t('order.claim.fixed')}</button>
+                <button className="btn ghost" onClick={() => run(`/warranty-claims/${c.id}/seller`, { action: 'refund', message: message || undefined })}>{t('order.claim.refund')}</button>
+                <button className="btn ghost" onClick={() => run(`/warranty-claims/${c.id}/seller`, { action: 'contest', message: message || undefined })}>{t('order.claim.contest')}</button>
               </div>
             </div>
           )}
           {isBuyer && c.status === 'seller_fixed' && (
             <div className="row">
-              <button className="btn" onClick={() => run(`/warranty-claims/${c.id}/buyer`, { action: 'confirm' })}>Yes, it works</button>
-              <button className="btn ghost" onClick={() => run(`/warranty-claims/${c.id}/buyer`, { action: 'escalate' })}>Still broken: ask an arbiter</button>
+              <button className="btn" onClick={() => run(`/warranty-claims/${c.id}/buyer`, { action: 'confirm' })}>{t('order.claim.works')}</button>
+              <button className="btn ghost" onClick={() => run(`/warranty-claims/${c.id}/buyer`, { action: 'escalate' })}>{t('order.claim.escalate')}</button>
             </div>
           )}
           {isBuyer && ['open', 'seller_fixed', 'escalated'].includes(c.status) && (
-            <button className="btn ghost" style={{ alignSelf: 'start' }} onClick={() => run(`/warranty-claims/${c.id}/buyer`, { action: 'withdraw' })}>Withdraw claim</button>
+            <button className="btn ghost" style={{ alignSelf: 'start' }} onClick={() => run(`/warranty-claims/${c.id}/buyer`, { action: 'withdraw' })}>{t('order.claim.withdraw')}</button>
           )}
         </div>
       ))}
       {isBuyer && running && !open && order.status === 'completed' && (
         <details>
-          <summary className="cursor-pointer">Make a warranty claim</summary>
+          <summary className="cursor-pointer">{t('order.claim.make')}</summary>
           <div className="stack" style={{ marginTop: 10, gap: 8 }}>
             <label className="field">
-              What happened?
+              {t('order.claim.what')}
               <select value={reason} onChange={(e) => setReason(e.target.value as WarrantyClaim['reason'])}>
-                {Object.entries(CLAIM_REASON).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                {CLAIM_REASONS.map((k) => <option key={k} value={k}>{claimReason(k)}</option>)}
               </select>
             </label>
             <label className="field">
-              Details for the seller
-              <textarea value={details} onChange={(e) => setDetails(e.target.value)} placeholder="When did it happen, and what do you see when you sign in? Put screenshots in the chat." />
+              {t('order.claim.details')}
+              <textarea value={details} onChange={(e) => setDetails(e.target.value)} placeholder={t('order.claim.detailsHint')} />
             </label>
-            <button className="btn" disabled={details.trim().length < 10} onClick={() => run(`/orders/${order.id}/warranty-claims`, { reason, details })}>Send claim</button>
+            <button className="btn" disabled={details.trim().length < 10} onClick={() => run(`/orders/${order.id}/warranty-claims`, { reason, details })}>{t('order.claim.send')}</button>
           </div>
         </details>
       )}
@@ -171,16 +169,15 @@ function WarrantyCard({ order, isBuyer, isSeller, onDone }: { order: OrderDetail
   );
 }
 
-const STATUS_TEXT: Record<string, string> = {
-  awaiting_payment: 'Waiting for payment',
-  paid: 'Paid, awaiting delivery',
-  delivered: 'Delivered, in protection window',
-  completed: 'Completed',
-  disputed: 'Dispute open',
-  refunded: 'Refunded',
-  cancelled: 'Cancelled',
-  charged_back: 'Charged back',
-};
+const ORDER_STATUSES = ['awaiting_payment', 'paid', 'delivered', 'completed', 'disputed', 'refunded', 'cancelled', 'charged_back'] as const;
+/** Status chip text in the active language; unknown statuses fall back to the raw value. */
+function statusText(status: string): string {
+  return (ORDER_STATUSES as readonly string[]).includes(status) ? t(`order.status.${status as (typeof ORDER_STATUSES)[number]}`) : status;
+}
+
+const DISPUTE_CATEGORIES = ['not_delivered', 'not_as_described', 'not_working', 'account_recovered', 'other'] as const;
+/** Dispute category in the active language (the order page); staff screens use the English map below. */
+const disputeCategory = (c: string) => ((DISPUTE_CATEGORIES as readonly string[]).includes(c) ? t(`order.dispute.cat.${c as (typeof DISPUTE_CATEGORIES)[number]}`) : c);
 
 export const DISPUTE_CATEGORY: Record<string, string> = {
   not_delivered: 'Not delivered',
@@ -191,13 +188,15 @@ export const DISPUTE_CATEGORY: Record<string, string> = {
 };
 
 export function OrderPage() {
-  usePageMeta({ title: 'Order', noindex: true });
+  usePageMeta({ title: t('order.meta'), noindex: true });
   const { id } = useParams();
   const { user } = useSession();
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [items, setItems] = useState<Array<{ id: string; content: string }>>([]);
   const [error, setError] = useState('');
   const [payload, setPayload] = useState('');
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const [delivering, setDelivering] = useState(false);
   const [reason, setReason] = useState('');
   const [category, setCategory] = useState('not_delivered');
   const [statement, setStatement] = useState('');
@@ -229,7 +228,7 @@ export function OrderPage() {
     };
   }, [id, load]);
 
-  if (!order || !user) return <p className="muted">{error || 'Loading order…'}</p>;
+  if (!order || !user) return <p className="muted">{error || t('order.loading')}</p>;
   const isBuyer = user.id === order.buyer_id;
   const isSeller = user.id === order.seller_id;
 
@@ -254,7 +253,7 @@ export function OrderPage() {
     setError('');
     try {
       await api(`/orders/${order.id}/follow-up`, { body: {} });
-      setFollowUp('Support has your request and will review the delivery proof in the chat.');
+      setFollowUp(t('order.followUpSent'));
     } catch (e: any) {
       setError(e.message);
     }
@@ -262,7 +261,7 @@ export function OrderPage() {
   const stage: 0 | 1 | 2 = ['completed'].includes(order.status) ? 2 : ['awaiting_payment', 'cancelled'].includes(order.status) ? 0 : 1;
   const variant: TrackVariant =
     order.status === 'completed' ? 'released' : ['refunded', 'charged_back', 'cancelled'].includes(order.status) ? 'refunded' : order.status === 'disputed' || order.escrow_frozen ? 'disputed' : 'held';
-  const clock = order.status === 'delivered' ? (ends ? formatRemaining(ends - now) : isBuyer ? 'Until you confirm' : 'Until the buyer confirms') : STATUS_TEXT[order.status];
+  const clock = order.status === 'delivered' ? (ends ? formatRemaining(ends - now) : isBuyer ? t('order.untilYouConfirm') : t('order.untilBuyerConfirms')) : statusText(order.status);
   const checklistDone = !order.checklist || !!order.checklist.completed_at;
   const handoverVerified = !!order.checklist?.handover_at;
   const platformName = order.checklist?.handover_platform === 'steam' ? 'Steam' : 'Riot';
@@ -277,10 +276,10 @@ export function OrderPage() {
     }
   };
   const HANDOVER_MESSAGES: Record<string, string> = {
-    ok: 'Handover confirmed: you signed in to the account you bought.',
-    wrong_account: 'That is not the account this order delivered. Sign in with the account you bought.',
-    link_expired: 'The sign-in link expired. Start the handover check again.',
-    link_failed: `${platformName} did not confirm the sign-in. Try again.`,
+    ok: t('order.handover.ok'),
+    wrong_account: t('order.handover.wrong_account'),
+    link_expired: t('order.handover.link_expired'),
+    link_failed: t('order.handover.link_failed', { platform: platformName }),
   };
   const names = { [order.buyer_id]: order.buyer_name, [order.seller_id]: order.seller_name };
 
@@ -288,10 +287,13 @@ export function OrderPage() {
     <div className="stack">
       <div className="row spread">
         <div>
-          <div className="eyebrow">Order {order.id.slice(0, 8)} · {order.game}</div>
+          <div className="eyebrow mono" data-testid="order-ref">{order.ref ?? t('order.ref', { id: order.id.slice(0, 8) })} · {order.game}</div>
           <h1 style={{ fontSize: 36 }}>{order.offer_title}{order.quantity > 1 ? ` ×${order.quantity}` : ''}</h1>
+          {order.character_name && (
+            <div className="small muted" data-testid="order-character">{order.handover_field?.label ?? t('order.character')}: <b className="mono">{order.character_name}</b></div>
+          )}
         </div>
-        <span className={`chip ${variant}`}>{STATUS_TEXT[order.status]}</span>
+        <span className={`chip ${variant}`}>{statusText(order.status)}</span>
       </div>
 
       <div className="card">
@@ -300,17 +302,17 @@ export function OrderPage() {
           stage={stage}
           variant={variant}
           elapsed={elapsed}
-          windowLabel={order.protection === 'insurance_14d' ? '14-day asset insurance' : untilConfirmed ? 'Escrow until confirmed' : '72-hour inspection'}
+          windowLabel={order.protection === 'insurance_14d' ? t('order.window14') : untilConfirmed ? t('order.windowConfirmed') : t('order.window72')}
           clock={clock}
         />
         <p className="small muted" style={{ marginTop: 12 }}>
           {isSeller
-            ? `You receive ${money(order.seller_net_cents, order.currency)} after the ${(order.commission_bps / 100).toFixed(2)}% ${order.seller_tier} tier fee.`
+            ? t('order.sellerNet', { net: money(order.seller_net_cents, order.currency), rate: (order.commission_bps / 100).toFixed(2), tier: order.seller_tier })
             : order.status === 'awaiting_payment'
-              ? `${money(order.amount_cents, order.currency)} is held in escrow once your payment is confirmed.`
-              : `Paid ${money(order.amount_cents, order.currency)} via ${order.rail === 'crypto' ? 'on-chain escrow' : order.payment_provider === 'nowpayments' ? 'crypto' : 'card'}.`}
-          {order.escrow_frozen && order.status !== 'disputed' && ' This order is in a routine security review; funds stay in escrow until it finishes.'}{' '}
-          <Link to={`/support/new?category=order&order=${order.id}`}>Get help with this order</Link>
+              ? t('order.heldOnce', { amount: money(order.amount_cents, order.currency) })
+              : t('order.paidVia', { amount: money(order.amount_cents, order.currency), method: order.rail === 'crypto' ? t('order.rail.onchain') : order.payment_provider === 'nowpayments' ? t('order.rail.crypto') : t('order.rail.card') })}
+          {order.escrow_frozen && order.status !== 'disputed' && ` ${t('order.frozenNote')}`}{' '}
+          <Link to={`/support/new?category=order&order=${order.id}`}>{t('order.getHelp')}</Link>
         </p>
       </div>
 
@@ -318,7 +320,7 @@ export function OrderPage() {
       {handoverResult && (
         <div className={handoverResult === 'ok' ? 'notice' : 'alert'} role="status">
           {HANDOVER_MESSAGES[handoverResult] ?? HANDOVER_MESSAGES.link_failed}{' '}
-          <button className="btn ghost small" onClick={() => setParams({}, { replace: true })}>Dismiss</button>
+          <button className="btn ghost small" onClick={() => setParams({}, { replace: true })}>{t('order.dismiss')}</button>
         </div>
       )}
 
@@ -331,32 +333,32 @@ export function OrderPage() {
           {isBuyer && order.crypto_refund && <RefundAddressForm orderId={order.id} refund={order.crypto_refund} coins={REFUND_COINS} onDone={load} />}
           {isSeller && order.status === 'delivered' && untilConfirmed && (
             <div className="card stack">
-              <h3>Waiting for the buyer</h3>
+              <h3>{t('order.waitingBuyer')}</h3>
               <p className="small muted" style={{ margin: 0 }}>
-                The payment is released when the buyer confirms. If they go quiet, support can release it for you from 24 hours after delivery; keep your delivery proof in the chat.
+                {t('order.waitingBuyer.text')}
               </p>
-              {followUp ? <p className="small" role="status">{followUp}</p> : canFollowUp && <button className="btn ghost" type="button" onClick={askRelease}>Ask support to release the payment</button>}
+              {followUp ? <p className="small" role="status">{followUp}</p> : canFollowUp && <button className="btn ghost" type="button" onClick={askRelease}>{t('order.askRelease')}</button>}
             </div>
           )}
 
           {items.length > 0 && (
             <div className="card stack">
-              <h3>Your delivery</h3>
+              <h3>{t('order.yourDelivery')}</h3>
               {items.map((i) => (
                 <div key={i.id} className="secret">{i.content}</div>
               ))}
-              <p className="small muted">Only you can see this. Save it somewhere safe.</p>
+              <p className="small muted">{t('order.onlyYou')}</p>
             </div>
           )}
 
           {isBuyer && order.checklist && order.status === 'delivered' && (
             <div className="card stack checklist">
-              <h3>Security changeover</h3>
-              <p className="small muted">Secure the account before confirming. Each step takes the account further out of the previous owner's reach.</p>
+              <h3>{t('order.changeover')}</h3>
+              <p className="small muted">{t('order.changeover.text')}</p>
               <div>
                 {order.checklist.items.map((i) => (
                   <label key={i.key}>
-                    <input type="checkbox" checked={i.done} disabled={!!i.auto} aria-label={i.auto ? `${i.label} (confirmed by sign-in)` : undefined} onChange={(e) => act('checklist', { key: i.key, done: e.target.checked })} />
+                    <input type="checkbox" checked={i.done} disabled={!!i.auto} aria-label={i.auto ? t('order.checkAuto', { label: i.label }) : undefined} onChange={(e) => act('checklist', { key: i.key, done: e.target.checked })} />
                     <span>{i.label}</span>
                   </label>
                 ))}
@@ -364,11 +366,11 @@ export function OrderPage() {
               {order.checklist.handover_platform && (
                 <div className="stack" style={{ gap: 6 }}>
                   {handoverVerified ? (
-                    <p className="small muted">Handover confirmed by {platformName} sign-in. You can release the payment early below, or finish the checklist first.</p>
+                    <p className="small muted">{t('order.handover.confirmed', { platform: platformName })}</p>
                   ) : (
                     <>
-                      <p className="small muted">This listing showed a {platformName} sign-in badge. Sign in with the account you received to prove it is yours now; that ticks the step above and lets you release the payment early if you choose.</p>
-                      <button type="button" className="btn" onClick={startHandover}>Sign in with {platformName} to confirm the handover</button>
+                      <p className="small muted">{t('order.handover.explain', { platform: platformName })}</p>
+                      <button type="button" className="btn" onClick={startHandover}>{t('order.handover.signIn', { platform: platformName })}</button>
                     </>
                   )}
                 </div>
@@ -383,43 +385,81 @@ export function OrderPage() {
 
           {isSeller && order.status === 'paid' && order.delivery_mode === 'manual' && (
             <div className="card stack">
-              <h3>Deliver this order</h3>
+              <h3>{t('order.deliver')}</h3>
+              {order.character_name && (
+                <p className="small" style={{ margin: 0 }}>
+                  {t('order.deliverTo', { name: '\u0000', label: order.handover_field?.label ?? t('order.characterLower') }).split('\u0000')[0]}
+                  <b className="mono">{order.character_name}</b>
+                  {t('order.deliverTo', { name: '\u0000', label: order.handover_field?.label ?? t('order.characterLower') }).split('\u0000')[1]}
+                </p>
+              )}
               <label className="field">
-                Delivery details (stored encrypted, visible only to the buyer)
-                <textarea value={payload} onChange={(e) => setPayload(e.target.value)} placeholder="Login, password, recovery details or completion notes" />
+                {t('order.deliveryDetails')}
+                <textarea value={payload} onChange={(e) => setPayload(e.target.value)} placeholder={order.proof_required ? t('order.tradeNotes') : t('order.payloadHint')} />
               </label>
-              <button className="btn release" disabled={order.escrow_frozen} onClick={() => act('deliver', { payload: payload || undefined })}>Mark as delivered</button>
+              {order.proof_required && (
+                <label className="field">
+                  {t('order.proofLabel')}
+                  <input type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm" required onChange={(e) => setProofFile(e.target.files?.[0] ?? null)} aria-describedby="proof-hint" />
+                  <span id="proof-hint" className="small muted">{t('order.proofHint')}</span>
+                </label>
+              )}
+              <button
+                className="btn release"
+                disabled={order.escrow_frozen || delivering || (order.proof_required && !proofFile)}
+                onClick={async () => {
+                  setDelivering(true);
+                  setError('');
+                  try {
+                    const proof = proofFile ? await apiUpload<{ id: string }>(`/chat/rooms/${order.room_id}/attachments`, proofFile) : null;
+                    await api(`/orders/${order.id}/deliver`, { body: { payload: payload || undefined, ...(proof ? { proofAttachmentId: proof.id } : {}) } });
+                    setProofFile(null);
+                    await load();
+                  } catch (e: any) {
+                    setError(e.message);
+                  } finally {
+                    setDelivering(false);
+                  }
+                }}
+              >
+                {delivering ? t('order.delivering') : t('order.markDelivered')}
+              </button>
+            </div>
+          )}
+          {order.delivery_proof && (
+            <div className="card">
+              <DeliveryProof proof={order.delivery_proof} />
             </div>
           )}
 
           {isBuyer && order.status === 'delivered' && order.rail === 'fiat' && (
             <div className="card stack">
-              <h3>Everything working?</h3>
-              <p className="small muted">Confirming releases the payment to the seller now. You can't open a dispute after that.</p>
+              <h3>{t('order.working')}</h3>
+              <p className="small muted">{t('order.working.text')}</p>
               {!checklistDone && handoverVerified && (
                 <label className="small">
                   <input type="checkbox" checked={handoverConsent} onChange={(e) => setHandoverConsent(e.target.checked)} />{' '}
-                  Release now, before the checklist is finished. I have confirmed I control the account and I understand the 14-day insurance ends today.
+                  {t('order.releaseEarly')}
                 </label>
               )}
-              <button className="btn release" disabled={!canConfirm} onClick={() => act('confirm', handoverConsent ? { handoverConsent: true } : undefined)}>Confirm and release payment</button>
-              {!checklistDone && !handoverVerified && <p className="small muted">Finish the security changeover first.</p>}
+              <button className="btn release" disabled={!canConfirm} onClick={() => act('confirm', handoverConsent ? { handoverConsent: true } : undefined)}>{t('order.confirmRelease')}</button>
+              {!checklistDone && !handoverVerified && <p className="small muted">{t('order.finishFirst')}</p>}
             </div>
           )}
 
           {(isBuyer || isSeller) && ['paid', 'delivered'].includes(order.status) && order.rail === 'fiat' && (
             <details className="card">
-              <summary style={{ cursor: 'pointer' }}><b>Open a dispute</b></summary>
+              <summary style={{ cursor: 'pointer' }}><b>{t('order.openDispute')}</b></summary>
               <div className="stack" style={{ marginTop: 12 }}>
-                <p className="small muted">Escrow freezes and an arbiter reviews this order's chat. Describe what happened and add any proof in the chat.</p>
+                <p className="small muted">{t('order.dispute.text')}</p>
                 <label className="field">
-                  What's the problem?
+                  {t('order.dispute.problem')}
                   <select value={category} onChange={(e) => setCategory(e.target.value)}>
-                    {Object.entries(DISPUTE_CATEGORY).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                    {DISPUTE_CATEGORIES.map((k) => <option key={k} value={k}>{disputeCategory(k)}</option>)}
                   </select>
                 </label>
-                <textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="What happened? Be specific: what you expected, what you got, and when." />
-                <button className="btn dispute" disabled={reason.trim().length < 10} onClick={() => act('dispute', { reason, category })}>Open dispute</button>
+                <textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder={t('order.dispute.placeholder')} />
+                <button className="btn dispute" disabled={reason.trim().length < 10} onClick={() => act('dispute', { reason, category })}>{t('order.dispute.open')}</button>
               </div>
             </details>
           )}
@@ -428,43 +468,43 @@ export function OrderPage() {
           <WarrantyCard order={order} isBuyer={isBuyer} isSeller={isSeller} onDone={load} />
           {order.review && (
             <div className="card stack">
-              <h3>Review</h3>
+              <h3>{t('order.review')}</h3>
               <p><span className="mono">{'★'.repeat(order.review.rating)}{'☆'.repeat(5 - order.review.rating)}</span> {order.review.comment}</p>
-              {order.review.seller_reply && <p className="small muted">Seller replied: {order.review.seller_reply}</p>}
+              {order.review.seller_reply && <p className="small muted">{t('order.sellerReplied', { reply: order.review.seller_reply })}</p>}
             </div>
           )}
 
           {order.dispute && (
             <div className="card stack">
               <div className="row spread">
-                <h3 style={{ margin: 0 }}>Dispute</h3>
+                <h3 style={{ margin: 0 }}>{t('order.dispute')}</h3>
                 <span className={`chip ${order.dispute.status === 'open' ? 'disputed' : 'released'}`}>{order.dispute.status.replace('_', ' ')}</span>
               </div>
-              {order.dispute.category && <div className="small muted">{DISPUTE_CATEGORY[order.dispute.category] ?? order.dispute.category}</div>}
+              {order.dispute.category && <div className="small muted">{disputeCategory(order.dispute.category)}</div>}
               {(order.dispute.statements ?? []).map((s) => (
                 <div key={s.id} className="small" style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid var(--rule)', background: s.role === 'buyer' ? 'var(--paper)' : 'var(--held-soft)' }}>
-                  <b>{s.role === 'buyer' ? 'Buyer' : 'Seller'} statement</b> <span className="muted">· {s.author_name} · {new Date(s.created_at).toLocaleString()}</span>
+                  <b>{s.role === 'buyer' ? t('order.statement.buyer') : t('order.statement.seller')}</b> <span className="muted">· {s.author_name} · {new Date(s.created_at).toLocaleString()}</span>
                   <div style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>{s.body}</div>
                 </div>
               ))}
               {order.dispute.status === 'open' && (isBuyer || isSeller) && (
                 <div className="stack" style={{ gap: 8 }}>
-                  <textarea value={statement} onChange={(e) => setStatement(e.target.value)} placeholder="Add your statement for the arbiter (up to 5). Put screenshots in the chat." />
-                  <button className="btn ghost" disabled={statement.trim().length < 10} onClick={async () => (await act('dispute/statements', { body: statement }), setStatement(''))}>Add statement</button>
+                  <textarea value={statement} onChange={(e) => setStatement(e.target.value)} placeholder={t('order.statement.placeholder')} />
+                  <button className="btn ghost" disabled={statement.trim().length < 10} onClick={async () => (await act('dispute/statements', { body: statement }), setStatement(''))}>{t('order.statement.add')}</button>
                 </div>
               )}
             </div>
           )}
 
           <div className="card">
-            <h3>History</h3>
+            <h3>{t('order.history')}</h3>
             <div className="table-wrap">
               <table className="data">
                 <tbody>
                   {order.events.map((e, i) => (
                     <tr key={i}>
                       <td className="mono small">{new Date(e.created_at).toLocaleString()}</td>
-                      <td>{STATUS_TEXT[e.to_status] ?? e.to_status}</td>
+                      <td>{statusText(e.to_status)}</td>
                       <td className="small muted">{e.reason.replace(/_/g, ' ')}</td>
                     </tr>
                   ))}
@@ -472,9 +512,9 @@ export function OrderPage() {
               </table>
             </div>
           </div>
-          <Link to="/orders" className="small">All orders</Link>
+          <Link to="/orders" className="small">{t('order.allOrders')}</Link>
         </div>
-        <Chat roomId={order.room_id} meId={user.id} names={names} />
+        <Chat roomId={order.room_id} meId={user.id} names={names} accountOrder={order.category_kind === 'account'} />
       </div>
       {isBuyer && !['awaiting_payment', 'cancelled'].includes(order.status) && <AlsoBought offerId={order.offer_id} game={order.game} fillers />}
     </div>
@@ -495,14 +535,15 @@ function CryptoDeposit({ orderId }: { orderId: string }) {
   };
   return (
     <div className="card stack">
-      <h3>Deposit USDC into escrow</h3>
+      <h3>{t('order.crypto.title')}</h3>
       <p className="muted small">
-        Get the escrow terms signed for your wallet, then call <span className="mono">createEscrow(terms, signature)</span> on the escrow
-        contract. This order updates by itself once the deposit has 3 confirmations.
+        {t('order.crypto.text', { call: '\u0000' }).split('\u0000')[0]}
+        <span className="mono">createEscrow(terms, signature)</span>
+        {t('order.crypto.text', { call: '\u0000' }).split('\u0000')[1]}
       </p>
       <div className="row">
-        <input className="mono" placeholder="0x… (the wallet you will pay from)" value={wallet} onChange={(e) => setWallet(e.target.value.trim())} style={{ flex: 1 }} />
-        <button className="btn ghost" disabled={!/^0x[0-9a-fA-F]{40}$/.test(wallet)} onClick={fetchTerms}>Get signed terms</button>
+        <input className="mono" placeholder={t('order.crypto.wallet')} value={wallet} onChange={(e) => setWallet(e.target.value.trim())} style={{ flex: 1 }} />
+        <button className="btn ghost" disabled={!/^0x[0-9a-fA-F]{40}$/.test(wallet)} onClick={fetchTerms}>{t('order.crypto.terms')}</button>
       </div>
       {error && <div className="alert" role="alert">{error}</div>}
       {terms !== null && <pre className="secret" style={{ whiteSpace: 'pre-wrap', maxHeight: 260, overflow: 'auto' }}>{JSON.stringify(terms, null, 2)}</pre>}
@@ -525,17 +566,17 @@ function ReviewForm({ orderId, onDone }: { orderId: string; onDone: () => void }
   };
   return (
     <div className="card stack">
-      <h3>Rate this seller</h3>
-      <div className="row" role="radiogroup" aria-label="Rating">
+      <h3>{t('order.rate')}</h3>
+      <div className="row" role="radiogroup" aria-label={t('order.rating')}>
         {[1, 2, 3, 4, 5].map((n) => (
           <button key={n} type="button" className={`btn ${n <= rating ? '' : 'ghost'}`} aria-checked={n === rating} role="radio" onClick={() => setRating(n)}>
             {n}★
           </button>
         ))}
       </div>
-      <textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder="What went well or badly? (optional)" maxLength={1000} style={{ minHeight: 70 }} />
+      <textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder={t('order.reviewHint')} maxLength={1000} style={{ minHeight: 70 }} />
       {error && <div className="alert" role="alert">{error}</div>}
-      <button className="btn" onClick={submit}>Post review</button>
+      <button className="btn" onClick={submit}>{t('order.postReview')}</button>
     </div>
   );
 }

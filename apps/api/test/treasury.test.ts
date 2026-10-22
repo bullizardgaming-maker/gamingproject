@@ -21,22 +21,22 @@ describe('platform earnings withdrawals', () => {
     await buyer.api.post(`/v1/orders/${order.id}/confirm`);
 
     const bal = (await a1.api.get('/v1/admin/treasury')).body.balance;
-    // Commission minus the 10% reserve share (rounded down) and the VAT inside it (IE 23%: 9.99 * 23/123 = 1.87).
-    expect(bal.treasuryCents).toBe(9_99 - 99 - 1_87);
+    // 100.00 grossed up by 5% = 105.27: the 5.27 commission minus the 10% reserve share (rounded down) and the VAT inside it (IE 23%: 5.27 * 23/123 = 0.99).
+    expect(bal.treasuryCents).toBe(5_27 - 52 - 99);
     expect((await a1.api.post('/v1/admin/treasury/withdrawals', { amountCents: bal.treasuryCents + 1, note: 'too much' })).status).toBe(400);
 
-    const w = (await a1.api.post('/v1/admin/treasury/withdrawals', { amountCents: 5_00, note: 'October revenue' })).body;
+    const w = (await a1.api.post('/v1/admin/treasury/withdrawals', { amountCents: 3_00, note: 'October revenue' })).body;
     expect(w.status).toBe('pending_approval');
     expect((await a1.api.post(`/v1/admin/treasury/withdrawals/${w.id}/decide`, { approve: true })).body.error.code).toBe('four_eyes');
     const paid = (await a2.api.post(`/v1/admin/treasury/withdrawals/${w.id}/decide`, { approve: true })).body;
     expect(paid.status).toBe('paid');
     expect(paid.provider_ref).toMatch(/^mock_po_/);
     expect((await a2.api.post(`/v1/admin/treasury/withdrawals/${w.id}/decide`, { approve: true })).body.error.code).toBe('already_decided');
-    expect((await a1.api.get('/v1/admin/treasury')).body.balance.treasuryCents).toBe(9_99 - 99 - 1_87 - 5_00);
+    expect((await a1.api.get('/v1/admin/treasury')).body.balance.treasuryCents).toBe(5_27 - 52 - 99 - 3_00);
 
-    // PSP now holds: 100.00 captured - 5.00 paid to the company bank (the seller hasn't withdrawn).
+    // PSP now holds: 105.27 captured - 3.00 paid to the company bank (the seller hasn't withdrawn).
     const mock = h.ctx.payments as MockPaymentProvider;
-    mock.balanceOverride = 95_00;
+    mock.balanceOverride = 102_27;
     expect((await runReconciliation(h.ctx)).status).toBe('ok');
     mock.balanceOverride = null;
 

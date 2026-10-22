@@ -342,6 +342,30 @@ export const TEMPLATES = {
     body: (d, link) =>
       `The buyer accepted your ${money(d.price_cents, d.currency)} proposal. We've made a private listing for them; you'll get the usual new-order notice as soon as they pay.\n\n${link(`/requests/${d.request_id}`)}`,
   },
+  crypto_kept_in_balance: {
+    category: 'orders',
+    subject: (d) => `${money(d.amount_cents, d.currency)} kept in your balance`,
+    body: (d, link) =>
+      `The payment window for your order closed before the full amount arrived, so the ${money(d.amount_cents, d.currency)} you sent is now in your Bullizard balance. Use it on your next order at checkout, or withdraw it to your wallet (6% fee, minimum 1.50).\n\n${link('/account#credit')}`,
+  },
+  id_reminder: {
+    category: 'selling',
+    subject: (d) => (Number(d.days_left) <= 1 ? 'Verify your identity today to keep selling' : `Verify your identity within ${d.days_left} days`),
+    body: (d, link) =>
+      `New sellers have 30 days to verify their identity (photo ID + liveness). ${Number(d.days_left) <= 1 ? 'Your deadline is tomorrow' : `You have ${d.days_left} days left`}: after that your listings pause and withdrawals stop until it is done. It takes a few minutes.\n\n${link('/account')}`,
+  },
+  id_overdue: {
+    category: 'selling',
+    subject: () => 'Your listings are paused until you verify your identity',
+    body: (_d, link) =>
+      `The 30 days to verify your identity have passed, so your listings are paused and withdrawals are on hold. Verify now and everything comes back automatically; your balance is safe.\n\n${link('/account')}`,
+  },
+  listing_expired_league: {
+    category: 'selling',
+    subject: (d) => `${d.league} has ended: "${d.title}" is no longer listed`,
+    body: (d, link) =>
+      `The ${d.league} league is over, so your listing "${d.title}" has been taken off the market. Move it to an open league from your seller hub to list it again.\n\n${link('/sell')}`,
+  },
   listing_review: {
     category: 'selling',
     subject: () => 'Your listing is being reviewed',

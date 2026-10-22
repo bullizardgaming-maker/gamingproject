@@ -12,6 +12,7 @@ import { ONLINE_SQL } from './presence.js';
 import { EFFECTIVE_PRICE_SQL } from './discounts.js';
 import { checkAttach } from './linkedAccounts.js';
 import { checkMinBuyerReputation, type MinBuyerReputation } from './buyerReputation.js';
+import { GROSS_SQL, markSellerSince } from './commission.js';
 export { unitPriceFor, type PriceTier } from './priceTiers.js';
 
 export interface OfferInput {
@@ -74,11 +75,20 @@ export function cleanTiers(basePriceCents: number, tiers: PriceTier[] | undefine
   return r.value;
 }
 
+/**
+ * Prices in this view are what the BUYER pays: the seller's price grossed up by the seller's
+ * current commission rate (commission.ts). `seller_price_cents` is what the seller entered and
+ * receives; sellers' own screens show that one.
+ */
 export const OFFER_LIST_SQL = `
-  SELECT f.id, f.seller_id, f.category_slug, f.game, f.title, f.description, ${EFFECTIVE_PRICE_SQL} AS price_cents, f.price_cents AS regular_price_cents,
-         CASE WHEN ${EFFECTIVE_PRICE_SQL} < f.price_cents THEN f.sale_ends_at END AS sale_ends_at, f.currency, f.price_settlement_cents, f.delivery_mode,
-         f.status, f.owner_proof_status, f.version, f.attributes, f.price_tiers, f.reserved_for, f.request_id, f.warranty_days, f.min_buyer_reputation, la.provider AS linked_platform, la.account_created_at AS linked_account_created_at, f.review_reasons, f.review_note, f.created_at, f.updated_at, f.low_stock_threshold,
-         c.kind AS category_kind, c.risk_class, u.display_name AS seller_name, f.delivery_hours,
+  SELECT f.id, f.seller_id, f.category_slug, f.game, f.title, f.description, ${GROSS_SQL(EFFECTIVE_PRICE_SQL)} AS price_cents, ${GROSS_SQL('f.price_cents')} AS regular_price_cents,
+         ${EFFECTIVE_PRICE_SQL} AS seller_price_cents, u.commission_rate_bps AS seller_rate_bps,
+         CASE WHEN ${EFFECTIVE_PRICE_SQL} < f.price_cents THEN f.sale_ends_at END AS sale_ends_at, f.currency, ${GROSS_SQL('f.price_settlement_cents')} AS price_settlement_cents, f.delivery_mode,
+         f.status, f.owner_proof_status, f.version, f.attributes,
+         COALESCE((SELECT jsonb_agg(jsonb_set(t, '{priceCents}', to_jsonb(${GROSS_SQL("(t->>'priceCents')::numeric")})) ORDER BY (t->>'minQty')::int) FROM jsonb_array_elements(f.price_tiers) t), '[]'::jsonb) AS price_tiers,
+         f.price_tiers AS seller_price_tiers, f.reserved_for, f.request_id, f.warranty_days, f.min_buyer_reputation, la.provider AS linked_platform, la.account_created_at AS linked_account_created_at, f.review_reasons, f.review_note, f.created_at, f.updated_at, f.low_stock_threshold,
+         c.kind AS category_kind, c.risk_class, category_open(c.slug) AS category_open, u.display_name AS seller_name, f.delivery_hours,
+         u.founding AS seller_founding, (f.featured_until IS NOT NULL AND f.featured_until > now()) AS featured, f.featured_until,
          (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now())) AS shop_paused,
          u.shop_paused_until, u.shop_pause_message, ${ONLINE_SQL} AS seller_online, u.response_minutes AS seller_response_minutes, u.trust_level AS seller_trust_level,
          f.available AS stock, f.is_bundle,
@@ -87,17 +97,25 @@ export const OFFER_LIST_SQL = `
     FROM offers f JOIN categories c ON c.slug = f.category_slug JOIN users u ON u.id = f.seller_id
     LEFT JOIN linked_accounts la ON la.id = f.linked_account_id AND la.unlinked_at IS NULL`;
 
-export function requireSeller(user: { kyc_tier: number; status: string }) {
+/**
+ * Who may list and sell: Tier 1 (email + phone) plus a passed rules test; identity verification
+ * (Tier 2) is due within 30 days of the first listing (domain/onboarding.ts), after which selling
+ * is restricted until it is done.
+ */
+export function requireSeller(user: { kyc_tier: number; status: string; rules_passed_at?: string | null; selling_restricted_at?: string | null }) {
   if (user.status !== 'active') throw forbidden('suspended', 'Account suspended');
-  if (user.kyc_tier < 2) throw forbidden('kyc_required', 'Tier 2 identity verification (photo ID + liveness) is required to sell');
+  if (user.kyc_tier < 1) throw forbidden('tier1_required', 'Verify your email and phone before selling');
+  if (!user.rules_passed_at) throw forbidden('rules_test_required', 'Pass the seller rules test before your first listing');
+  if (user.selling_restricted_at && user.kyc_tier < 2) throw forbidden('kyc_overdue', 'Verify your identity to keep selling: the 30-day deadline has passed');
 }
 
 export async function createOffer(ctx: Ctx, seller: { id: string; kyc_tier: number; status: string }, input: OfferInput) {
   requireSeller(seller);
   // Loads (or refreshes) the listing currency's rate so the settlement price used by search is right.
   await getRate(ctx, ctx.db, (input.currency ?? ctx.cfg.SETTLEMENT_CURRENCY).toUpperCase());
-  const cat = await maybeOne(ctx.db, 'SELECT * FROM categories WHERE slug = $1', [input.categorySlug]);
+  const cat = await maybeOne(ctx.db, 'SELECT *, category_open(slug) AS open FROM categories WHERE slug = $1', [input.categorySlug]);
   if (!cat) throw badRequest('unknown_category', 'Unknown category');
+  if (!cat.open) throw badRequest('category_not_open', `${cat.name} opens in a later launch phase`);
   if (cat.kind === 'account' && input.deliveryMode === 'auto' && (input.stock ?? 0) > 0) {
     throw badRequest('invalid_stock', 'Account listings with auto-delivery take stock from uploaded inventory');
   }
@@ -132,6 +150,7 @@ export async function createOffer(ctx: Ctx, seller: { id: string; kyc_tier: numb
   if (input.warrantyDays) await ctx.db.query('UPDATE offers SET warranty_days = $2 WHERE id = $1', [offer.id, input.warrantyDays]);
   if (input.minBuyerReputation) await ctx.db.query('UPDATE offers SET min_buyer_reputation = $2 WHERE id = $1', [offer.id, input.minBuyerReputation]);
   if (input.linkedAccountId) await ctx.db.query('UPDATE offers SET linked_account_id = $2 WHERE id = $1', [offer.id, input.linkedAccountId]);
+  await markSellerSince(ctx.db, seller.id); // first listing starts the launch-promo clock
   if (screen.review) await notify(ctx.db, seller.id, 'listing_review', { offer_id: offer.id, title: input.title }, `listing:${offer.id}:review:${Date.now()}`);
   return getOffer(ctx.db, offer.id);
 }

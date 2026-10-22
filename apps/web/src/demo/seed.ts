@@ -32,6 +32,16 @@ export interface DemoUser {
   payout_address_currency?: string | null;
   payout_address_set_at?: string | null;
   legal_name: string | null;
+  /** First listing or proposal: the 60-day launch promo (5% commission) counts from here. */
+  seller_since?: string | null;
+  /** Character names / UIDs remembered per game after the first order. */
+  handover_names?: Record<string, string>;
+  /** Founding Seller: opened the shop during the launch window. */
+  founding?: boolean;
+  /** Seller onboarding: the rules test passed; selling restricted once the ID deadline passes. */
+  rules_passed_at?: string | null;
+  rules_attempts?: number;
+  selling_restricted_at?: string | null;
   created_at: string;
 }
 
@@ -52,6 +62,11 @@ const u = (id: string, email: string, name: string, role: DemoUser['role'], tier
   payout_address_currency: tier >= 2 ? 'usdttrc20' : null,
   payout_address_set_at: tier >= 2 ? ago(60 * day) : null,
   legal_name: tier >= 2 ? name : null,
+  seller_since: tier >= 2 ? ago(100 * day) : null,
+  rules_passed_at: tier >= 2 ? ago(100 * day) : null,
+  founding: tier >= 2,
+  rules_attempts: tier >= 2 ? 1 : 0,
+  selling_restricted_at: null,
   created_at: ago(120 * day),
   ...extra,
 });
@@ -118,6 +133,17 @@ const LISTINGS: Seed[] = [
   ['keys', 'Minecraft', 'Minecraft Java & Bedrock — PC key (Global)', 22_90, 'auto', 30, 'seller'],
   ['currency', 'Path of Exile 2', '100 Divine Orbs — Standard league', 17_00, 'manual', 18, 'seller5', 'none', '', 0.5],
   ['items', 'Path of Exile 2', 'Mirror-tier bow, crafted to order', 210_00, 'manual', 1, 'seller4', 'none', '', 24],
+  // Launch games: Aion, Aion 2, Albion Online, Path of Exile 1 & 2 (currency and items, delivered in-game).
+  ['currency', 'Path of Exile', '200 Divine Orbs — Mercenaries softcore', 24_00, 'manual', 30, 'seller5', 'none', 'Traded in your hideout within 15 minutes of the order. Whisper-free: we join your party.', 0.5],
+  ['currency', 'Path of Exile', '50 Divine Orbs — Standard', 6_50, 'manual', 40, 'seller2', 'none', '', 1],
+  ['items', 'Path of Exile', 'Headhunter — Mercenaries', 180_00, 'manual', 2, 'seller4', 'none', 'Legacy-free Headhunter, delivered by trade.', 2],
+  ['currency', 'Path of Exile', '10 Divine Orbs — Settlers (ended)', 1_40, 'manual', 5, 'seller5', 'none', 'Left over from the Settlers league.', 1],
+  ['currency', 'Albion Online', '10M silver — Europe', 11_50, 'manual', 60, 'seller5', 'none', 'Handed over at the Martlock bank or by direct trade.', 0.5],
+  ['currency', 'Albion Online', '10M silver — Americas', 11_90, 'manual', 25, 'seller2', 'none', '', 1],
+  ['items', 'Albion Online', 'T8 Bloodletter 8.3 — Europe', 42_00, 'manual', 3, 'seller4', 'none', '', 2],
+  ['currency', 'Aion', '100M kinah — Siel (NA)', 9_90, 'manual', 50, 'seller', 'none', 'Mailed in-game or traded in Sanctum.', 1],
+  ['currency', 'Aion 2', '50M kinah — Israphel (EU)', 14_00, 'manual', 30, 'seller2', 'none', '', 1],
+  ['items', 'Aion 2', 'Stigma bundle — Israphel (EU)', 29_00, 'manual', 6, 'seller4', 'none', '', 4],
   ['top-ups', 'Honkai: Star Rail', '6480 Oneiric Shards — UID top-up', 89_00, 'manual', 10, 'seller5', 'none', '', 0.5],
   ['accounts', 'Honkai: Star Rail', 'TL 65 · Acheron E1 + signature cone', 119_00, 'manual', 1, 'seller4', 'verified'],
   ['accounts', 'Apex Legends', 'Heirloom account, 3 heirlooms, Predator badge', 175_00, 'manual', 1, 'seller4', 'none'],
@@ -194,8 +220,18 @@ const ATTRS: Record<string, Record<string, string>> = {
   '500k FUT coins, player auction (PC)': { platform: 'PC', method: 'Player auction' },
   'Java + Bedrock, full access, OG name': { platform: 'PC', region: 'Global' },
   'Minecraft Java & Bedrock — PC key (Global)': { region: 'Global' },
-  '100 Divine Orbs — Standard league': { league: 'Standard' },
-  'Mirror-tier bow, crafted to order': { league: 'Challenge' },
+  '100 Divine Orbs — Standard league': { league: 'Standard', mode: 'Softcore' },
+  'Mirror-tier bow, crafted to order': { league: 'Dawn of the Hunt', mode: 'Softcore' },
+  '200 Divine Orbs — Mercenaries softcore': { league: 'Mercenaries', mode: 'Softcore' },
+  '50 Divine Orbs — Standard': { league: 'Standard', mode: 'Softcore' },
+  'Headhunter — Mercenaries': { league: 'Mercenaries', mode: 'Softcore' },
+  '10 Divine Orbs — Settlers (ended)': { league: 'Settlers', mode: 'Softcore' },
+  '10M silver — Europe': { server: 'Europe' },
+  '10M silver — Americas': { server: 'Americas' },
+  'T8 Bloodletter 8.3 — Europe': { server: 'Europe' },
+  '100M kinah — Siel (NA)': { server: 'Siel', region: 'North America' },
+  '50M kinah — Israphel (EU)': { server: 'Israphel', region: 'Europe' },
+  'Stigma bundle — Israphel (EU)': { server: 'Israphel', region: 'Europe' },
   '6480 Oneiric Shards — UID top-up': { server: 'America' },
   'TL 65 · Acheron E1 + signature cone': { server: 'Asia' },
   'Heirloom account, 3 heirlooms, Predator badge': { platform: 'PC', rank: 'Predator' },
@@ -218,14 +254,18 @@ export function seed() {
     u('u-buyer-0000-4000-8000-000000000001', 'buyer@demo.test', 'Pixel Pat', 'user', 1),
     u('u-sell1-0000-4000-8000-000000000002', 'seller@demo.test', 'NorthWind Keys', 'user', 2),
     u('u-admin-0000-4000-8000-000000000003', 'admin@demo.test', 'Arbiter Ada', 'admin', 2),
-    u('u-sell2-0000-4000-8000-000000000004', 'rift@demo.test', 'RiftTrader', 'user', 2),
+    u('u-sell2-0000-4000-8000-000000000004', 'rift@demo.test', 'RiftTrader', 'user', 2, { seller_since: ago(20 * day) }),
     u('u-sell3-0000-4000-8000-000000000005', 'arcane@demo.test', 'ArcaneBoost', 'user', 2),
   ];
   users.push(
-    u('u-sell4-0000-4000-8000-000000000006', 'vault@demo.test', 'VaultHopper', 'user', 2, { created_at: ago(700 * day) }),
-    u('u-sell5-0000-4000-8000-000000000007', 'koi@demo.test', 'KoiCurrency', 'user', 2, { created_at: ago(410 * day) }),
+    u('u-sell4-0000-4000-8000-000000000006', 'vault@demo.test', 'VaultHopper', 'user', 2, { created_at: ago(700 * day), seller_since: ago(690 * day) }),
+    u('u-sell5-0000-4000-8000-000000000007', 'koi@demo.test', 'KoiCurrency', 'user', 2, { created_at: ago(410 * day), seller_since: ago(400 * day) }),
   );
   const sellerId: Record<string, string> = { seller: users[1]!.id, seller2: users[3]!.id, seller3: users[4]!.id, seller4: users[5]!.id, seller5: users[6]!.id };
+  // Commission is grossed up on top of the seller's price (ranks below + the launch promo). The
+  // listing prices above are what buyers see, so the seller's own price is derived from them here.
+  const sellerRate: Record<string, number> = { seller: 1099, seller2: 500, seller3: 1199, seller4: 1399, seller5: 1399 };
+  const net = (seller: string, cents: number) => Math.round((cents * (10_000 - sellerRate[seller]!)) / 10_000);
 
   const WARRANTY: Record<string, number> = { 'Lvl 80 Warrior, full mythic gear, 2009 account': 30, 'OG account, Renegade Raider + 210 skins': 14 };
   const offers = LISTINGS.map(([cat, game, title, price, mode, stock, seller, proof, description, hours], i) => {
@@ -238,16 +278,19 @@ export function seed() {
       game,
       title,
       description: description ?? '',
-      price_cents: price,
+      price_cents: net(seller, price),
       currency: 'USD',
       delivery_mode: mode,
       delivery_hours: mode === 'auto' ? 0 : hours ?? DEFAULT_HOURS[cat] ?? 2,
       stock,
       inventory: mode === 'auto' ? Array.from({ length: stock }, (_, k) => `${game.slice(0, 4).toUpperCase().replace(/[^A-Z]/g, 'X')}-${String(k + 1).padStart(4, '0')}-${(i * 7919 + k * 104729).toString(36).toUpperCase().slice(-5).padStart(5, 'Q')}`) : [],
-      status: 'active',
+      // The Settlers listing belongs to a seller who went quiet: it expired when that league ended.
+      status: title.includes('(ended)') ? 'expired' : 'active',
+      expired_reason: (title.includes('(ended)') ? 'league_ended:Settlers' : null) as string | null,
+      featured_until: (title.startsWith('Elden Ring') ? ago(-5 * day) : null) as string | null,
       owner_proof_status: kind === 'account' ? proof ?? 'none' : 'none',
       attributes: ATTRS[title] ?? {},
-      price_tiers: TIERS[title] ?? [],
+      price_tiers: (TIERS[title] ?? []).map((t) => ({ ...t, priceCents: net(seller, t.priceCents) })),
       // Account listings: a warranty that runs on after escrow releases.
       warranty_days: WARRANTY[title] ?? 0,
       linked_account_id: (title.startsWith('Immortal 2') ? 'la-1' : title.startsWith('Diamond 1 smurf') ? 'la-3' : null) as string | null,
@@ -255,7 +298,7 @@ export function seed() {
       min_buyer_reputation: (title.startsWith('OG account') ? 'good' : null) as 'good' | null,
       review_reasons: [] as string[],
       bundle: null as Array<{ offer_id: string; quantity: number }> | null,
-      sale_price_cents: (SALES[title]?.[0] ?? null) as number | null,
+      sale_price_cents: (SALES[title] ? net(seller, SALES[title]![0]) : null) as number | null,
       sale_starts_at: (SALES[title] ? ago(day) : null) as string | null,
       sale_ends_at: (SALES[title] ? ago(-SALES[title]![1] * day) : null) as string | null,
       // Set on listings made from an accepted buyer request.
@@ -268,15 +311,15 @@ export function seed() {
   // A bundle: two of NorthWind's instant listings at one price, delivered from their stock.
   offers.push({
     ...offers.find((o) => o.title.startsWith('Elden Ring'))!, id: 'offer-bundle-1', title: 'Elden Ring + $50 Steam Wallet bundle',
-    description: 'The game key plus a $50 US Steam Wallet card, delivered together the moment you pay.', price_cents: 72_00, stock: 0, inventory: [],
-    attributes: {}, price_tiers: [], sale_price_cents: null, sale_starts_at: null, sale_ends_at: null, created_at: ago(5 * 3_600_000),
+    description: 'The game key plus a $50 US Steam Wallet card, delivered together the moment you pay.', price_cents: net('seller', 72_00), stock: 0, inventory: [],
+    attributes: {}, price_tiers: [], sale_price_cents: null, sale_starts_at: null, sale_ends_at: null, featured_until: null, created_at: ago(5 * 3_600_000),
     bundle: [{ offer_id: offers.find((o) => o.title.startsWith('Elden Ring'))!.id, quantity: 1 }, { offer_id: offers.find((o) => o.title.startsWith('Steam Wallet'))!.id, quantity: 1 }],
   });
   // Moderation samples: a listing held for review and a pre-sale chat flagged for off-platform contact.
   const template = offers.find((o) => o.title.startsWith('Premier 10k'))!;
   offers.push({
     ...template, id: 'offer-review-1', seller_id: users[5]!.id, category_slug: 'items', category_kind: 'item', title: 'CS2 rage config with aimbot settings, undetected',
-    description: 'Works on Premier. Add me on discord for the loader and updates.', price_cents: 14_99, stock: 50, attributes: {}, status: 'review', review_reasons: ['term:aimbot', 'contact:discord'], created_at: ago(3 * 3_600_000),
+    description: 'Works on Premier. Add me on discord for the loader and updates.', price_cents: net('seller4', 14_99), stock: 50, attributes: {}, status: 'review', review_reasons: ['term:aimbot', 'contact:discord'], created_at: ago(3 * 3_600_000),
   });
   const flagRoom = { id: 'room-flag-1', order_id: null, offer_id: 'offer-10', buyer_id: 'u-req-zed', seller_id: users[3]!.id, last_seq: 3 };
   const flagMsgs = [
@@ -307,7 +350,7 @@ export function seed() {
     buyerCompletedBefore: { [users[0]!.id]: 11 } as Record<string, number>,
     // Boosting milestones and chat screenshots (data: URLs in the demo).
     progress: [] as Array<{ id: string; order_id: string; percent: number; note: string; attachment_id: string | null; created_at: string }>,
-    attachments: [] as Array<{ id: string; room_id: string; uploader_id: string; data_url: string; mime: string; created_at: string }>,
+    attachments: [] as Array<{ id: string; room_id: string; uploader_id: string; data_url: string; mime: string; original_name?: string; created_at: string }>,
     rooms: [flagRoom] as any[],
     messages: flagMsgs as any[],
     modTerms: DEFAULT_TERMS.map((t, k) => ({ id: `term-${k}`, ...t, created_at: ago(30 * day) })),
@@ -348,6 +391,38 @@ export function seed() {
     withdrawals: [] as any[],
     cryptoPayments: [] as any[],
     cryptoRefunds: [] as any[],
+    // Challenge leagues (Path of Exile): one open, one that has ended.
+    leagues: [
+      { id: 'league-1', game: 'path of exile', name: 'Settlers', starts_at: ago(100 * day), ends_at: ago(2 * day), created_at: ago(100 * day), updated_at: ago(2 * day) },
+      { id: 'league-2', game: 'path of exile', name: 'Mercenaries', starts_at: ago(2 * day), ends_at: null, created_at: ago(2 * day), updated_at: ago(2 * day) },
+      { id: 'league-3', game: 'path of exile 2', name: 'Dawn of the Hunt', starts_at: ago(30 * day), ends_at: null, created_at: ago(30 * day), updated_at: ago(30 * day) },
+    ] as Array<{ id: string; game: string; name: string; starts_at: string | null; ends_at: string | null; created_at: string; updated_at: string }>,
+    handoverNames: {} as Record<string, Record<string, string>>,
+    rulesSettings: { passMarkPct: 100, idDueDays: 30 },
+    launchPhase: 3,
+    offplatformActions: ['warn', 'warn', 'ban'] as string[],
+    credit: {} as Record<string, number>,
+    texts: {
+      chat_safety: { key: 'chat_safety', body: 'Keep the whole trade in this chat. Never pay or deliver anywhere else: deals made outside Bullizard are not in escrow and not protected.\nSharing outside contacts can get your account banned right away.\nThe payment is released only when the buyer confirms delivery. If something is wrong, open a dispute from the order page.', link_label: 'Rules and policies', link_href: '/help/report-a-user', updated_at: ago(10 * day) },
+    } as Record<string, { key: string; body: string; link_label: string; link_href: string; updated_at: string }>,
+    launch: { foundingUntil: ago(-45 * day), featuredSlots: 2, featuredDays: 7 },
+    gameVotes: [
+      { id: 'gv-1', name: 'Lost Ark', votes: 184, status: 'planned', staff_note: 'Opening with the next wave of sellers.', suggested_by: null as string | null, voters: [] as string[], created_at: ago(30 * day) },
+      { id: 'gv-2', name: 'Throne and Liberty', votes: 97, status: 'open', staff_note: '', suggested_by: null as string | null, voters: [] as string[], created_at: ago(20 * day) },
+      { id: 'gv-3', name: 'Black Desert Online', votes: 61, status: 'open', staff_note: '', suggested_by: null as string | null, voters: [] as string[], created_at: ago(12 * day) },
+      { id: 'gv-4', name: 'Escape from Tarkov', votes: 40, status: 'declined', staff_note: 'Real-money trading is against that game’s rules; we do not list it.', suggested_by: null as string | null, voters: [] as string[], created_at: ago(8 * day) },
+    ],
+    affiliates: [{ id: 'aff-1', user_id: users[4]!.id, code: 'ARCANE-TV', rate_bps: 2000, status: 'active', note: 'Twitch, 40k followers', created_at: ago(20 * day) }] as Array<{ id: string; user_id: string; code: string; rate_bps: number; status: string; note: string; created_at: string }>,
+    affiliateOf: {} as Record<string, string>,
+    affiliateEarnings: [] as Array<{ id: string; affiliate_id: string; order_id: string; commission_cents: number; earned_cents: number; currency: string; created_at: string }>,
+    rulesQuestions: [
+      ['A buyer asks you to finish the trade on Discord so you both skip the fee. What do you do?', ['Agree, it saves money', 'Decline and keep the whole trade in the Bullizard order chat', 'Share your Discord but trade here', 'Ask them to pay half outside'], 1, 'Trading or sharing outside contacts anywhere on Bullizard can get your account banned right away. Everything stays in the order chat.'],
+      ['When does the payment reach your balance?', ['The moment the buyer pays', 'When you mark the order delivered', 'When the buyer confirms delivery, or staff release it after review', 'After 72 hours automatically'], 2, 'The payment is held in escrow until the buyer confirms. There is no automatic release; staff can release an unconfirmed order after review, never before 24 hours.'],
+      ['What must you attach before marking an in-game delivery as delivered?', ['Nothing', 'A photo or video of the trade (proof of delivery)', 'The buyer’s email', 'A screenshot of your inventory'], 1, 'Proof of delivery is required for currency, items, top-ups and boosting. It is what staff look at in a dispute.'],
+      ['Which price do you enter on the sell form?', ['The price you want to receive; the commission is added on top for the buyer', 'The buyer price; the commission is taken out', 'Any price plus the withdrawal fee', 'The price in the buyer’s currency'], 0, 'You set your price and receive it in full. The buyer sees it with your rank’s commission added on top.'],
+      ['A buyer’s character name on the order is wrong and the trade fails. What do you do?', ['Deliver to any character with a similar name', 'Message the buyer in the order chat and wait; do not deliver elsewhere', 'Cancel and ask them to pay you directly', 'Mark it delivered anyway'], 1, 'The buyer confirmed the name and is responsible for it. Sort it out in the order chat, or open a dispute; never deliver to another name.'],
+      ['What happens on a third off-platform warning?', ['Nothing', 'A listing is removed', 'Your account is banned automatically and reviewed by staff', 'You pay a fee'], 2, 'First and second offences are warnings; the third bans the account automatically pending staff review.'],
+    ].map(([question, options, correct, explanation], i) => ({ id: `rq-${i + 1}`, position: i + 1, question: question as string, options: options as string[], correct: correct as number, explanation: explanation as string, active: true })),
     apiKeys: [] as any[],
     watches: [] as any[],
     tickets: [] as any[],
@@ -494,7 +569,7 @@ export function seed() {
     ] as any[],
     fxTopups: [
       { id: 'fx-1', from_currency: 'USD', to_currency: 'EUR', to_cents: 2_400_00, est_from_cents: 2_621_00, from_cents: 2_618_44, status: 'completed', requested_by: null, requested_by_name: null, decided_by_name: 'Arbiter Ada', error: null, created_at: ago(9 * day) },
-      { id: 'fx-2', from_currency: 'USD', to_currency: 'GBP', to_cents: 900_00, est_from_cents: 1_140_00, from_cents: null, status: 'proposed', requested_by: null, requested_by_name: null, decided_by_name: null, error: null, created_at: ago(3 * 3_600_000) },
+      { id: 'fx-2', from_currency: 'USD', to_currency: 'EGP', to_cents: 41_710_00, est_from_cents: 860_00, from_cents: null, status: 'proposed', requested_by: null, requested_by_name: null, decided_by_name: null, error: null, created_at: ago(3 * 3_600_000) },
     ] as any[],
     platform: { escrow: 0, treasury: 18_432_10, reserve: 2_048_00, tax_payable: 3_118_40, withdrawn: 5_000_00, gateway_clearing: -24_960_00 },
     seq: 1,

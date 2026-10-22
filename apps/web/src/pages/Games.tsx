@@ -3,7 +3,7 @@ import { Link, NavLink, useNavigate, useParams, useSearchParams } from 'react-ro
 import { BadgeCheck, Search, ShieldCheck, Zap } from 'lucide-react';
 import { api } from '../api';
 import { CATEGORY_ICON, GameArt, OfferTable } from '../components/CatalogUi';
-import { CATEGORY_META, CATEGORY_ORDER, categoryLabel, slugify, useGames, type GameEntry } from '@/lib/catalog';
+import { CATEGORY_META, categoryLabel, slugify, useCategoryOrder, useGames, type GameEntry } from '@/lib/catalog';
 import { cn } from '@/lib/utils';
 import { usePrice } from '@/lib/prefs';
 import type { Offer } from './Market';
@@ -21,6 +21,7 @@ const letterOf = (g: string) => (/^[a-z]/i.test(g) ? g[0]!.toUpperCase() : '#');
 
 /** /games: every game with live offers, A–Z, each with direct links into its categories. */
 export function Games() {
+  const categoryOrder = useCategoryOrder();
   usePageMeta({ title: t('games.title'), description: 'Every game with live offers on Bullizard: accounts, currency, items, keys, top-ups and boosting, all escrow-protected.' });
   const { games, error } = useGames();
   const [params, setParams] = useSearchParams();
@@ -49,6 +50,7 @@ export function Games() {
           <div className="eyebrow">{t('games.eyebrow')}</div>
           <h1 style={{ fontSize: 44, margin: 0 }}>{t('games.title')}</h1>
         </div>
+        <Link className="btn ghost" to="/games/vote">{t('votes.link')}</Link>
         <label className="relative" style={{ flex: '0 1 340px' }}>
           <Search className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <input aria-label={t('games.filter')} placeholder={t('games.filter')} value={filter} onChange={(e) => set('q', e.target.value)} style={{ paddingInlineStart: 36 }} />
@@ -56,7 +58,7 @@ export function Games() {
       </div>
       <div className="filters" role="group" aria-label={t('market.category')} style={{ marginBottom: 0 }}>
         <button aria-pressed={!cat} onClick={() => set('category', '')}>{t('games.everything')}</button>
-        {CATEGORY_ORDER.map((slug) => (
+        {categoryOrder.map((slug) => (
           <button key={slug} aria-pressed={cat === slug} onClick={() => set('category', slug)}>{CATEGORY_META[slug]!.label}</button>
         ))}
       </div>
@@ -104,6 +106,7 @@ const SORTS = ['price_asc', 'rating', 'trust', 'best_selling', 'newest', 'price_
 
 /** /games/:slug(/:category): one game's market, split into category tabs, as a comparison table. */
 export function GamePage() {
+  const categoryOrder = useCategoryOrder();
   const { slug = '', category = '' } = useParams();
   const nav = useNavigate();
   const { games, error: gamesError } = useGames();
@@ -169,7 +172,7 @@ export function GamePage() {
       </div>
     );
 
-  const tabs = CATEGORY_ORDER.filter((s) => entry.categories.some((c) => c.slug === s));
+  const tabs = categoryOrder.filter((s) => entry.categories.some((c) => c.slug === s));
   const meta = category ? CATEGORY_META[category] : null;
   const prices = offers?.map((o) => o.price_cents) ?? [];
 

@@ -36,7 +36,7 @@ describe('refunds after release', () => {
     expect((await support.api.post(`/v1/admin/orders/${order.id}/refund-after-release`, { paidBy: 'seller', reason: 'Account reclaimed by original owner' })).status).toBe(403);
     const res = await arbiter.api.post(`/v1/admin/orders/${order.id}/refund-after-release`, { paidBy: 'seller', reason: 'Account reclaimed by original owner' });
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ fullyRefunded: true, refund: { amount_cents: 100_00, paid_by: 'seller' } });
+    expect(res.body).toMatchObject({ fullyRefunded: true, refund: { amount_cents: Number(order.amount_cents), paid_by: 'seller' } });
 
     // Seller now owes their share; withdrawals are impossible until future sales repay it.
     expect(await sellerAvailable(h.ctx.db, seller.id)).toBe(-Number(order.seller_net_cents));
@@ -84,14 +84,15 @@ describe('refunds after release', () => {
     const r2 = await finance.api.post(`/v1/admin/orders/${order.id}/refund-after-release`, { amountCents: 20_00, paidBy: 'platform', reason: 'Second goodwill gesture' });
     expect(r2.status).toBe(200);
     expect(r2.body.refund.provider_ref).not.toBe(r1.body.refund.provider_ref); // separate PSP refunds
-    expect((await finance.api.post(`/v1/admin/orders/${order.id}/refund-after-release`, { amountCents: 40_01, paidBy: 'platform', reason: 'Too much money here' })).body.error).toMatchObject({ code: 'invalid_amount' });
+    const left = Number(order.amount_cents) - 40_00; // the buyer paid the grossed-up price
+    expect((await finance.api.post(`/v1/admin/orders/${order.id}/refund-after-release`, { amountCents: left + 1, paidBy: 'platform', reason: 'Too much money here' })).body.error).toMatchObject({ code: 'invalid_amount' });
     expect(await sellerAvailable(h.ctx.db, seller.id)).toBe(sellerBefore); // platform paid
     expect((await h.ctx.db.query('SELECT status FROM orders WHERE id = $1', [order.id])).rows[0].status).toBe('completed');
 
     // The bank can only reverse what is still on the card.
-    const cb = await finance.api.post('/v1/admin/chargebacks', { orderId: order.id, network: 'visa', reasonCode: '13.1', amountCents: 80_00 });
+    const cb = await finance.api.post('/v1/admin/chargebacks', { orderId: order.id, network: 'visa', reasonCode: '13.1', amountCents: Number(order.amount_cents) });
     expect(cb.status).toBe(201);
-    expect(Number(cb.body.amount_cents)).toBe(40_00);
+    expect(Number(cb.body.amount_cents)).toBe(left);
     expect((await finance.api.post(`/v1/admin/orders/${order.id}/refund-after-release`, { paidBy: 'platform', reason: 'After chargeback' })).body.error.code).toBe('chargeback_exists');
     expect((await runReconciliation(h.ctx)).report.issues).toEqual([]);
   });

@@ -79,18 +79,27 @@ const help: HelpPack = {
       ],
     },
     'selling-fees': {
-      title: 'Comisiones y niveles de vendedor',
-      summary: 'Las comisiones bajan a medida que crecen tus ventas de 30 días; tarjetas regalo, recargas y videojuegos tienen una tarifa menor.',
+      title: 'Comisión y rangos de vendedor',
+      summary: 'Tú fijas tu precio y lo recibes íntegro; la comisión se añade encima para el comprador y baja a medida que sube tu rango.',
       body: [
-        'Cada venta paga una comisión que depende de tu nivel de vendedor, fijado por tus ventas de los últimos 30 días. Las cuentas tienen su propia tarifa; tarjetas regalo, recargas y videojuegos pagan un 4,99 %.',
-        'Ves la comisión exacta y tu ganancia neta en cada pedido, y tu nivel y progreso en el panel de vendedor.',
+        'Escribes el precio que quieres. La comisión de tu rango se añade encima para el comprador, así que la cantidad que escribiste es exactamente la que llega a tu saldo cuando el pedido se completa. Los rangos se fijan por tus ventas completadas en los últimos 30 días; los vendedores nuevos pagan una tasa de lanzamiento reducida durante sus primeros 60 días.',
+        'El formulario de venta muestra, antes de publicar, lo que pagarán los compradores en cada moneda y lo que te queda tras la comisión de retiro. Tu rango y progreso están en el panel de vendedor.',
+      ],
+    },
+    'delivery-in-game': {
+      title: 'Cómo funciona la entrega en el juego',
+      summary: 'La moneda y los objetos se intercambian al nombre de personaje que confirmas al pagar; el vendedor adjunta una prueba y tú liberas el pago.',
+      body: [
+        'En los juegos con entrega dentro del juego (moneda, objetos, recargas) indicas el nombre de personaje o UID exacto con el que debe comerciar el vendedor. Lo confirmas con un toque al pagar y se recuerda para tu próximo pedido; revísalo con cuidado, porque el vendedor entrega a ese nombre y tú eres responsable de que sea correcto.',
+        'El vendedor comercia con ese personaje y adjunta una foto o vídeo del intercambio antes de marcar el pedido como entregado. Puedes ver la prueba en la página del pedido.',
+        'El pago queda en custodia hasta que confirmes que recibiste los bienes. Si algo falla, abre una disputa desde la página del pedido en lugar de confirmar; el equipo compara la prueba con el intercambio y decide.',
       ],
     },
     'getting-paid': {
       title: 'Cobrar',
-      summary: 'Retira a tu banco en USD, EUR o GBP cuando termine el plazo de protección.',
+      summary: 'Retira a tu billetera cripto (USDT) cuando termine el plazo de protección; se aplica una comisión del 6 %.',
       body: [
-        'El dinero de una venta está disponible cuando el comprador confirma o termina el plazo de protección. Retíralo desde el panel de vendedor a la cuenta bancaria que añadiste en la página de nuestro socio de pagos.',
+        'El dinero de una venta queda disponible cuando el comprador confirma o termina el plazo de protección. Retíralo desde el panel de vendedor a la dirección de cobro que confirmaste por correo; tesorería lo aprueba y lo envía en USDT.',
         'Los vendedores nuevos pueden tener una breve retención de cobros mientras generamos confianza; el panel muestra cuándo se libera.',
         'Si un reembolso o contracargo deja tu saldo en negativo, las nuevas ventas lo cubren primero y los retiros se pausan hasta saldarlo.',
       ],

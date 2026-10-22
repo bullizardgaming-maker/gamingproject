@@ -33,6 +33,37 @@ export const CATEGORY_META: Record<string, { label: string; hint: string; protec
   'video-games': cat('video-games', '72h'),
 };
 export const CATEGORY_ORDER = Object.keys(CATEGORY_META);
+
+/**
+ * Launch phases: the API says which categories are open (GET /categories `open`); closed ones are
+ * hidden everywhere until staff move the phase forward. All are shown until the answer arrives.
+ */
+let openSlugs: Set<string> | null = null;
+let categoriesLoading: Promise<void> | null = null;
+const catListeners = new Set<() => void>();
+export function loadCategories() {
+  categoriesLoading ??= api<Array<{ slug: string; open?: boolean }>>('/categories')
+    .then((rows) => {
+      openSlugs = new Set(rows.filter((c) => c.open !== false).map((c) => c.slug));
+      catListeners.forEach((l) => l());
+    })
+    .catch(() => {
+      categoriesLoading = null;
+    });
+  return categoriesLoading;
+}
+export const isCategoryOpen = (slug: string) => !openSlugs || openSlugs.has(slug);
+/** CATEGORY_ORDER without the categories closed in the current launch phase; re-renders once known. */
+export function useCategoryOrder(): string[] {
+  const [, bump] = useState(0);
+  useEffect(() => {
+    const l = () => bump((n) => n + 1);
+    catListeners.add(l);
+    loadCategories();
+    return () => void catListeners.delete(l);
+  }, []);
+  return CATEGORY_ORDER.filter(isCategoryOpen);
+}
 export const categoryLabel = (slug: string) => CATEGORY_META[slug]?.label ?? slug;
 
 export const slugify = (game: string) =>

@@ -12,6 +12,7 @@ import { Developers } from './pages/Developers';
 import { Account, ForgotPassword, Login, ResetPassword } from './pages/Account';
 import { Admin } from './pages/Admin';
 import { GamePage, Games } from './pages/Games';
+import { GameVotes } from './pages/GameVotes';
 import { SellerPage } from './pages/SellerPage';
 import { Watchlist } from './pages/Watchlist';
 import { HelpArticlePage, HelpCentre, SupportList, SupportNew, SupportTicket } from './pages/Help';
@@ -83,6 +84,7 @@ function App() {
           <Route path="/" element={<Home />} />
           <Route path="/market" element={<Market />} />
           <Route path="/games" element={<Games />} />
+          <Route path="/games/vote" element={<GameVotes />} />
           <Route path="/games/:slug" element={<GamePage />} />
           <Route path="/games/:slug/:category" element={<GamePage />} />
           <Route path="/sellers/:id" element={<SellerPage />} />

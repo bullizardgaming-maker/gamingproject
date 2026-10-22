@@ -86,7 +86,7 @@ async function buildReport(ctx: Ctx, currency: string): Promise<ReconReport> {
     issues.push({ check: 'psp_balance_mismatch', detail: { expected, actual, difference } });
   }
 
-  // Other currencies the platform holds (sellers paid in EUR/GBP): same equation per currency.
+  // Other currencies the platform holds (sellers paid in EUR/EGP): same equation per currency.
   if (currency === ctx.cfg.SETTLEMENT_CURRENCY) {
     const others = await many<{ currency: string }>(ctx.db, `SELECT DISTINCT currency FROM ledger_accounts WHERE currency <> $1`, [currency]);
     for (const { currency: cur } of others) {

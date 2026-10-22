@@ -3,7 +3,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { accountId, balance, sellerAvailable } from '../src/domain/ledger.js';
 import { dispatchDueWebhooks } from '../src/domain/webhooks.js';
 import { runJobsOnce } from '../src/worker.js';
+import { grossUp } from '../src/domain/commission.js';
 import { buyAndPay, client, makeOffer, makeUser, mockKyc, setup, type Harness } from './helpers.js';
+
+/** Fresh sellers are in the launch promo: 5% commission, grossed up on top of their price. */
+const PROMO_BPS = 500;
 
 let h: Harness;
 beforeAll(async () => {
@@ -31,8 +35,8 @@ describe('verification tiers', () => {
     const confirmed = await u.api.post('/v1/verify/sms/confirm', { code: smsCode });
     expect(confirmed.body.user.kyc_tier).toBe(1);
 
-    // Tier 1 cannot sell.
-    expect((await u.api.post('/v1/offers', { categorySlug: 'keys', game: 'G', title: 'Key', priceCents: 100, deliveryMode: 'auto' })).status).toBe(403);
+    // Tier 1 cannot sell before passing the rules test (onboarding.test.ts).
+    expect((await u.api.post('/v1/offers', { categorySlug: 'keys', game: 'G', title: 'Key', priceCents: 100, deliveryMode: 'auto' })).body.error.code).toBe('rules_test_required');
 
     const kyc = await u.api.post('/v1/kyc/start', { level: 'tier2_individual' });
     expect(kyc.status).toBe(200);
@@ -70,25 +74,26 @@ describe('auto-delivery with escrow held until confirmation', () => {
     // Standard goods are held until the buyer confirms: no deadline, no auto-release (release-rule.test.ts).
     expect(detail.protection).toBe('until_confirmed');
     expect(detail.protection_ends_at).toBeNull();
-    expect(detail.commission_bps).toBe(999); // Normal tier, "other" rate
+    expect(detail.commission_bps).toBe(PROMO_BPS);
+    expect(detail.amount_cents).toBe(grossUp(50_00, PROMO_BPS)); // 52.64: the seller's 50.00 plus 5% grossed up
 
     const items = (await buyer.api.get(`/v1/orders/${order.id}/items`)).body;
     expect(items.map((i: any) => i.content)).toEqual(['KEY-AAA', 'KEY-BBB']);
     expect((await seller.api.get(`/v1/orders/${order.id}/items`)).status).toBe(404);
 
-    expect(await platformBalance('escrow')).toBe(50_00);
+    expect(await platformBalance('escrow')).toBe(52_64);
     expect(await sellerAvailable(h.ctx.db, seller.id)).toBe(0);
 
     const confirm = await buyer.api.post(`/v1/orders/${order.id}/confirm`);
     expect(confirm.status).toBe(200);
 
-    // 50.00 at 9.99% -> 5.00 commission (rounded), 45.00 to seller; 10% of commission to reserve.
-    expect(await sellerAvailable(h.ctx.db, seller.id)).toBe(45_00);
+    // The seller receives their price exactly; the 2.64 commission is split treasury / reserve (10%) / VAT.
+    expect(await sellerAvailable(h.ctx.db, seller.id)).toBe(50_00);
     expect(await platformBalance('escrow')).toBe(0);
-    // Commission is VAT-inclusive: the platform-country VAT inside it (IE 23%: 5.00 * 23/123) is owed to the tax office.
-    expect((await platformBalance('treasury')) + (await platformBalance('reserve')) + (await platformBalance('tax_payable'))).toBe(5_00);
-    expect(await platformBalance('reserve')).toBe(50);
-    expect(await platformBalance('tax_payable')).toBe(93);
+    // Commission is VAT-inclusive: the platform-country VAT inside it (IE 23%: 2.64 * 23/123) is owed to the tax office.
+    expect((await platformBalance('treasury')) + (await platformBalance('reserve')) + (await platformBalance('tax_payable'))).toBe(2_64);
+    expect(await platformBalance('reserve')).toBe(26);
+    expect(await platformBalance('tax_payable')).toBe(49);
 
     // Webhooks: signed, idempotency key, delivered.
     const received: Array<{ headers: Record<string, string>; body: string }> = [];
@@ -119,8 +124,9 @@ describe('auto-delivery with escrow held until confirmation', () => {
     await runJobsOnce(h.ctx);
     const done = (await buyer.api.get(`/v1/orders/${order.id}`)).body;
     expect(done.status).toBe('completed');
-    expect(done.commission_bps).toBe(499); // promotional flat rate for gift cards
-    expect(await sellerAvailable(h.ctx.db, seller.id)).toBe(95_01);
+    expect(done.commission_bps).toBe(PROMO_BPS);
+    expect(done.amount_cents).toBe(grossUp(100_00, PROMO_BPS));
+    expect(await sellerAvailable(h.ctx.db, seller.id)).toBe(100_00);
   });
 
   it('expires unpaid orders and returns reserved stock', async () => {
@@ -169,7 +175,7 @@ describe('game accounts: 14-day insurance, security changeover, disputes', () =>
     let detail = (await buyer.api.get(`/v1/orders/${order.id}`)).body;
     expect(detail.status).toBe('paid');
     expect(detail.protection).toBe('insurance_14d');
-    expect(detail.commission_bps).toBe(1299);
+    expect(detail.commission_bps).toBe(PROMO_BPS);
     expect(detail.seller_protected).toBe(true);
 
     expect((await buyer.api.post(`/v1/orders/${order.id}/deliver`, { payload: 'x' })).status).toBe(403);
@@ -186,7 +192,7 @@ describe('game accounts: 14-day insurance, security changeover, disputes', () =>
       await buyer.api.patch(`/v1/orders/${order.id}/checklist`, { key: item.key, done: true });
     }
     expect((await buyer.api.post(`/v1/orders/${order.id}/confirm`)).status).toBe(200);
-    expect(await sellerAvailable(h.ctx.db, seller.id)).toBe(300_00 - 38_97);
+    expect(await sellerAvailable(h.ctx.db, seller.id)).toBe(300_00);
   });
 
   it('freezes escrow on dispute and refunds the buyer when the arbiter rules for them', async () => {
@@ -211,7 +217,8 @@ describe('game accounts: 14-day insurance, security changeover, disputes', () =>
     expect(r.status).toBe(200);
     const final = (await buyer.api.get(`/v1/orders/${order.id}`)).body;
     expect(final.status).toBe('refunded');
-    expect(await platformBalance('escrow')).toBe(escrowBefore - 120_00);
+    expect(await platformBalance('escrow')).toBe(escrowBefore - order.amount_cents);
+    expect(order.amount_cents).toBe(grossUp(120_00, PROMO_BPS));
     expect(await sellerAvailable(h.ctx.db, seller.id)).toBe(0);
 
     // Chat contains the full, verifiable record.

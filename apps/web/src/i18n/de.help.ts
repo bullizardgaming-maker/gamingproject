@@ -79,18 +79,27 @@ const help: HelpPack = {
       ],
     },
     'selling-fees': {
-      title: 'Verkaufsgebühren und Stufen',
-      summary: 'Die Gebühren sinken mit deinem 30-Tage-Umsatz; Geschenkkarten, Aufladungen und Videospiele haben einen niedrigeren Satz.',
+      title: 'Verkäuferprovision und Ränge',
+      summary: 'Du legst deinen Preis fest und erhältst ihn vollständig; die Provision kommt für den Käufer obendrauf und sinkt mit deinem Rang.',
       body: [
-        'Jeder Verkauf zahlt eine Provision, die von deiner Verkäuferstufe abhängt – festgelegt durch deinen Umsatz der letzten 30 Tage. Accounts haben einen eigenen Satz; Geschenkkarten, Aufladungen und Videospiele zahlen 4,99 %.',
-        'Die genaue Gebühr und deinen Nettoerlös siehst du bei jeder Bestellung, Stufe und Fortschritt im Verkäuferbereich.',
+        'Du gibst den Preis ein, den du willst. Die Provision deines Rangs wird für den Käufer aufgeschlagen, sodass genau dein Betrag auf deinem Guthaben landet, wenn die Bestellung abgeschlossen ist. Ränge richten sich nach deinen abgeschlossenen Verkäufen der letzten 30 Tage; neue Verkäufer zahlen in den ersten 60 Tagen einen reduzierten Startsatz.',
+        'Das Verkaufsformular zeigt vor dem Veröffentlichen, was Käufer in jeder Währung zahlen und was dir nach der Auszahlungsgebühr bleibt. Rang und Fortschritt siehst du im Verkäuferbereich.',
+      ],
+    },
+    'delivery-in-game': {
+      title: 'So funktioniert die Lieferung im Spiel',
+      summary: 'Währung und Items werden an den Charakternamen gehandelt, den du beim Bezahlen bestätigst; der Verkäufer hängt einen Nachweis an und du gibst die Zahlung frei.',
+      body: [
+        'Bei Spielen mit Lieferung im Spiel (Währung, Items, Aufladungen) nennst du den genauen Charakternamen oder die UID, mit der der Verkäufer handeln soll. Beim Bezahlen bestätigst du sie mit einem Tipp, und sie wird für die nächste Bestellung gemerkt. Prüfe sie sorgfältig: Der Verkäufer liefert an diesen Namen, und du bist dafür verantwortlich, dass er stimmt.',
+        'Der Verkäufer handelt mit diesem Charakter und hängt ein Foto oder Video des Handels an, bevor er die Bestellung als geliefert markiert. Den Nachweis siehst du auf der Bestellseite.',
+        'Die Zahlung bleibt im Treuhandkonto, bis du den Erhalt bestätigst. Stimmt etwas nicht, eröffne auf der Bestellseite einen Streitfall statt zu bestätigen; das Team vergleicht den Nachweis mit dem Handel und entscheidet.',
       ],
     },
     'getting-paid': {
       title: 'Auszahlungen erhalten',
-      summary: 'Zahle nach Ende der Schutzfrist in USD, EUR oder GBP auf dein Bankkonto aus.',
+      summary: 'Zahle nach Ende der Schutzfrist auf dein Krypto-Wallet (USDT) aus; es gilt eine Gebühr von 6 %.',
       body: [
-        'Geld aus einem Verkauf wird verfügbar, wenn der Käufer bestätigt oder die Schutzfrist endet. Zahle es im Verkäuferbereich auf das Bankkonto aus, das du bei unserem Zahlungspartner hinterlegt hast.',
+        'Geld aus einem Verkauf wird verfügbar, wenn der Käufer bestätigt oder die Schutzfrist endet. Zahle es im Verkäuferbereich an die per E-Mail bestätigte Auszahlungsadresse aus; die Treasury gibt es frei und sendet es in USDT.',
         'Neue Verkäufer können eine kurze Auszahlungssperre haben, bis Vertrauen aufgebaut ist; der Verkäuferbereich zeigt, wann gesperrtes Geld frei wird.',
         'Bringt eine Erstattung oder Rückbuchung dein Guthaben unter null, gleichen neue Verkäufe es zuerst aus und Auszahlungen pausieren bis dahin.',
       ],

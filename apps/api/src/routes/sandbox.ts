@@ -53,7 +53,8 @@ export async function sandboxRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.post('/sandbox/verify-me', async (req) => {
     const user = await caller(req);
-    await ctx.db.query(`UPDATE users SET kyc_tier = 2, email_verified_at = now(), phone_verified_at = now(), payouts_enabled = true,
+    // The sandbox skips onboarding: verified, rules test passed.
+    await ctx.db.query(`UPDATE users SET kyc_tier = 2, email_verified_at = now(), phone_verified_at = now(), payouts_enabled = true, rules_passed_at = COALESCE(rules_passed_at, now()),
                           stripe_account_id = COALESCE(stripe_account_id, 'mock_acct_' || substr(id::text, 1, 8)) WHERE id = $1`, [user.id]);
     return { kyc_tier: 2, payouts_enabled: true };
   });

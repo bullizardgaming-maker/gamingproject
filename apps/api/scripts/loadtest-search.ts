@@ -79,6 +79,7 @@ const KINDS: Array<[string, (i: number) => string]> = [
 
 async function main() {
   const run = Date.now();
+  await ctx.db.query('UPDATE launch_settings SET phase = 3'); // every category on sale for the load run
   console.log(`Seeding ${LISTINGS} listings…`);
   await seed(run);
 

@@ -79,18 +79,27 @@ const help: HelpPack = {
       ],
     },
     'selling-fees': {
-      title: 'Frais et niveaux vendeur',
-      summary: 'Les frais baissent avec vos ventes sur 30 jours ; cartes cadeaux, recharges et jeux vidéo ont un taux réduit.',
+      title: 'Commission et rangs vendeur',
+      summary: 'Vous fixez votre prix et le recevez en entier ; la commission s’ajoute par-dessus pour l’acheteur et baisse avec votre rang.',
       body: [
-        'Chaque vente paie une commission qui dépend de votre niveau, fixé par vos ventes des 30 derniers jours. Les comptes ont leur propre taux ; cartes cadeaux, recharges et jeux vidéo paient 4,99 %.',
-        'Vous voyez les frais exacts et vos gains nets sur chaque commande, et votre niveau et votre progression dans l’espace vendeur.',
+        'Vous saisissez le prix que vous voulez. La commission de votre rang s’ajoute par-dessus pour l’acheteur : le montant saisi est exactement celui qui arrive sur votre solde quand la commande est terminée. Les rangs dépendent de vos ventes réalisées sur les 30 derniers jours ; les nouveaux vendeurs paient un taux de lancement réduit pendant leurs 60 premiers jours.',
+        'Le formulaire de vente montre, avant publication, ce que paieront les acheteurs dans chaque devise et ce qu’il vous reste après les frais de retrait. Votre rang et votre progression sont dans l’espace vendeur.',
+      ],
+    },
+    'delivery-in-game': {
+      title: 'Comment fonctionne la livraison en jeu',
+      summary: 'La monnaie et les objets sont échangés au nom de personnage que vous confirmez au paiement ; le vendeur joint une preuve et vous libérez le paiement.',
+      body: [
+        'Pour les jeux livrés en jeu (monnaie, objets, recharges), vous indiquez le nom de personnage ou l’UID exact avec lequel le vendeur doit échanger. Vous le confirmez d’un geste au paiement et il est mémorisé pour la commande suivante ; vérifiez-le bien, car le vendeur livre à ce nom et vous êtes responsable de son exactitude.',
+        'Le vendeur échange avec ce personnage et joint une photo ou une vidéo de l’échange avant de marquer la commande comme livrée. La preuve est visible sur la page de la commande.',
+        'Le paiement reste sous séquestre jusqu’à ce que vous confirmiez la réception. En cas de problème, ouvrez un litige depuis la page de la commande au lieu de confirmer ; l’équipe compare la preuve à l’échange et tranche.',
       ],
     },
     'getting-paid': {
       title: 'Être payé',
-      summary: 'Retirez vers votre banque en USD, EUR ou GBP à la fin du délai de protection.',
+      summary: 'Retirez vers votre portefeuille crypto (USDT) à la fin du délai de protection ; des frais de 6 % s’appliquent.',
       body: [
-        'L’argent d’une vente est disponible quand l’acheteur confirme ou à la fin du délai de protection. Retirez-le depuis l’espace vendeur vers le compte bancaire ajouté sur la page de notre partenaire de paiement.',
+        'L’argent d’une vente devient disponible quand l’acheteur confirme ou à la fin du délai de protection. Retirez-le depuis l’espace vendeur vers l’adresse de paiement confirmée par e-mail ; la trésorerie l’approuve et l’envoie en USDT.',
         'Les nouveaux vendeurs peuvent avoir un court délai de versement le temps d’établir la confiance ; l’espace vendeur indique quand les fonds sont libérés.',
         'Si un remboursement ou une rétrofacturation rend votre solde négatif, les nouvelles ventes le comblent d’abord et les retraits sont suspendus jusqu’au règlement.',
       ],

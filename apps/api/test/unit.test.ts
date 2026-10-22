@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { commissionBps, splitAmount, tierForVolume } from '../src/domain/commission.js';
+import { grossUp, nextRank, rankForVolume, splitGross } from '../src/domain/commission.js';
 import { classify } from '../src/domain/chargebacks.js';
 import { detectOffPlatform } from '../src/domain/chat.js';
 import { subnetOf } from '../src/domain/fraud.js';
@@ -9,36 +9,39 @@ import { Keyring, hashPassword, verifyPassword } from '../src/lib/crypto.js';
 import { createHmac } from 'node:crypto';
 import { describeUserAgent } from '../src/domain/sessions.js';
 
-describe('tiered commission', () => {
-  it('maps monthly volume to tiers', () => {
-    expect(tierForVolume(0).name).toBe('Normal');
-    expect(tierForVolume(299_99).name).toBe('Normal');
-    expect(tierForVolume(300_00).name).toBe('Common');
-    expect(tierForVolume(1_000_00).name).toBe('Uncommon');
-    expect(tierForVolume(5_000_00).name).toBe('Rare');
-    expect(tierForVolume(10_000_00).name).toBe('Epic');
-    expect(tierForVolume(20_000_00).name).toBe('Legendary');
-    expect(tierForVolume(1e9).name).toBe('Legendary');
+describe('commission: ranks and gross-up', () => {
+  const ranks = [
+    { position: 1, name: 'Hatchling', minMonthlySalesCents: 0, rateBps: 1399, perks: [] },
+    { position: 2, name: 'Scale', minMonthlySalesCents: 500_00, rateBps: 1299, perks: [] },
+    { position: 3, name: 'Fang', minMonthlySalesCents: 2_000_00, rateBps: 1199, perks: [] },
+    { position: 4, name: 'Basilisk', minMonthlySalesCents: 5_000_00, rateBps: 1099, perks: [] },
+    { position: 5, name: 'Dragon', minMonthlySalesCents: 15_000_00, rateBps: 999, perks: [] },
+  ];
+  it('maps monthly volume to ranks', () => {
+    expect(rankForVolume(ranks, 0).name).toBe('Hatchling');
+    expect(rankForVolume(ranks, 499_99).name).toBe('Hatchling');
+    expect(rankForVolume(ranks, 500_00).name).toBe('Scale');
+    expect(rankForVolume(ranks, 2_000_00).name).toBe('Fang');
+    expect(rankForVolume(ranks, 5_000_00).name).toBe('Basilisk');
+    expect(rankForVolume(ranks, 15_000_00).name).toBe('Dragon');
+    expect(rankForVolume(ranks, 1e9).name).toBe('Dragon');
+    expect(nextRank(ranks, ranks[4]!)).toBeNull();
+    expect(nextRank(ranks, ranks[0]!)!.name).toBe('Scale');
   });
 
-  it('applies account vs other vs promo rates', () => {
-    const normal = tierForVolume(0);
-    const legendary = tierForVolume(20_000_00);
-    expect(commissionBps(normal, { kind: 'account', promo_rate_bps: null })).toBe(1299);
-    expect(commissionBps(normal, { kind: 'currency', promo_rate_bps: null })).toBe(999);
-    expect(commissionBps(legendary, { kind: 'account', promo_rate_bps: null })).toBe(799);
-    expect(commissionBps(legendary, { kind: 'item', promo_rate_bps: null })).toBe(499);
-    expect(commissionBps(normal, { kind: 'gift_card', promo_rate_bps: 499 })).toBe(499);
-  });
-
-  it('splits without losing a cent', () => {
-    for (const amount of [1, 99, 1000, 12345, 999_999]) {
-      for (const bps of [499, 999, 1299]) {
-        const s = splitAmount(amount, bps);
-        expect(s.commissionCents + s.sellerNetCents).toBe(amount);
+  it('grosses the commission up on top of the seller price, never short-changing the seller', () => {
+    // The master plan's example: $10 → $11.63 at 13.99%, $10.53 in the 5% promo.
+    expect(grossUp(10_00, 1399)).toBe(11_63);
+    expect(grossUp(10_00, 500)).toBe(10_53);
+    for (const seller of [1, 99, 1000, 12345, 999_999]) {
+      for (const bps of [500, 999, 1399]) {
+        const buyer = grossUp(seller, bps);
+        const s = splitGross(buyer, seller);
+        expect(s.sellerNetCents).toBe(seller);
+        expect(s.commissionCents + s.sellerNetCents).toBe(buyer);
+        expect(s.commissionCents).toBeGreaterThanOrEqual(Math.floor((buyer * bps) / 10_000) - 1);
       }
     }
-    expect(splitAmount(10_000, 1299)).toEqual({ commissionCents: 1299, sellerNetCents: 8701 });
   });
 });
 
@@ -101,6 +104,24 @@ describe('misc domain helpers', () => {
     expect(detectOffPlatform('call +1 415 555 0123')).toContain('phone_number');
     expect(detectOffPlatform('pay via cashapp instead')).toContain('external_payment');
     expect(detectOffPlatform('Thanks, code works!')).toEqual([]);
+    // Launch rules: more platforms, disguised spellings, emails, links, handles and "add me".
+    expect(detectOffPlatform('hit me on fb messenger')).toContain('facebook');
+    expect(detectOffPlatform('my insta is gamer_99')).toEqual(expect.arrayContaining(['instagram', 'add_me']));
+    expect(detectOffPlatform('d1scord: gamer#1234')).toContain('discord');
+    expect(detectOffPlatform('d i s c o r d')).toContain('discord');
+    expect(detectOffPlatform('t.e.l.e.g.r.a.m me')).toContain('telegram');
+    expect(detectOffPlatform('mail me at john.doe@gmail.com')).toEqual(['email']);
+    expect(detectOffPlatform('check my shop at cheapgold.net')).toEqual(['link']);
+    expect(detectOffPlatform('see https://bullizard.com/orders/1')).toEqual([]); // our own links are fine
+    expect(detectOffPlatform('msg @cheapgold on tele')).toEqual(expect.arrayContaining(['telegram', 'handle']));
+    expect(detectOffPlatform('hmu')).toEqual(['add_me']);
+    expect(detectOffPlatform('ضيفني على واتس')).toEqual(expect.arrayContaining(['whatsapp', 'add_me']));
+    // Account handovers may carry the account's email; nothing else may.
+    expect(detectOffPlatform('Login: knight@proton.me Password: hunter2')).toEqual(['email']);
+    expect(detectOffPlatform('Login: knight@proton.me Password: hunter2', { allowEmail: true })).toEqual([]);
+    for (const clean of ['The sword is 450 gold', 'I will deliver in 10 minutes, please be online at 3 p.m.', 'server: Stormrage, faction: Alliance', 'Meet at the bank in Caerleon', 'Traded 100 divines, thanks!']) {
+      expect(detectOffPlatform(clean), clean).toEqual([]);
+    }
   });
 
   it('collapses IPs to subnets', () => {

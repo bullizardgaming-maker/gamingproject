@@ -7,9 +7,9 @@ import { AppError, badRequest } from '../lib/errors.js';
  * Exchange rates. Internally everything (escrow, ledger, seller balances,
  * commission tiers) is in the settlement currency. Other currencies appear at
  * two edges only:
- *  - listings may be priced in EUR/GBP; the price is converted at order time
- *  - buyers may pay in EUR/GBP; the card amount is fixed at order time with the
- *    rate plus a small spread, and never changes afterwards
+ *  - listings may be priced in EUR/EGP; the price is converted at order time
+ *  - buyers may pay in EUR/EGP; the amount is fixed at order time with the
+ *    rate plus a small spread, and never changes afterwards (locked at checkout)
  * Rates are stored as "units of X per 1 settlement unit".
  */
 export interface FxProvider {
@@ -37,6 +37,41 @@ export class EcbFxProvider implements FxProvider {
     const base = perEur[settlement];
     if (!base) throw new Error(`ECB has no rate for ${settlement}`);
     return Object.fromEntries(Object.entries(perEur).filter(([c]) => c !== settlement).map(([c, r]) => [c, r / base]));
+  }
+}
+
+/** open.er-api.com: free daily rates against any base, covering EGP and other non-ECB currencies. */
+export class OpenRatesFxProvider implements FxProvider {
+  readonly name = 'open-er-api';
+  async fetch(settlement: string) {
+    const res = await fetch(`https://open.er-api.com/v6/latest/${settlement}`, { signal: AbortSignal.timeout(10_000) });
+    if (!res.ok) throw new Error(`open.er-api ${res.status}`);
+    const body = (await res.json()) as { result?: string; rates?: Record<string, number> };
+    if (body.result !== 'success' || !body.rates) throw new Error('open.er-api: no rates');
+    return Object.fromEntries(Object.entries(body.rates).filter(([c]) => c !== settlement));
+  }
+}
+
+/** Several sources in order of trust: the first one that has a currency wins. */
+export class CompositeFxProvider implements FxProvider {
+  readonly name: string;
+  constructor(private readonly providers: FxProvider[]) {
+    this.name = providers.map((p) => p.name).join('+');
+  }
+  async fetch(settlement: string) {
+    const out: Record<string, number> = {};
+    let ok = false;
+    for (const p of this.providers) {
+      try {
+        const rates = await p.fetch(settlement);
+        for (const [c, r] of Object.entries(rates)) if (!(c in out)) out[c] = r;
+        ok = true;
+      } catch {
+        // a source being down must not block the others
+      }
+    }
+    if (!ok) throw new Error('no FX source answered');
+    return out;
   }
 }
 

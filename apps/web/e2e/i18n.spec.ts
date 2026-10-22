@@ -29,6 +29,17 @@ test.describe('languages', () => {
     await expect(page.getByRole('heading', { name: 'كيف يحمي الضمان طلبك' })).toBeVisible();
   });
 
+  test('buyer orders page is translated and right-to-left', async ({ page }) => {
+    await signIn(page, 'Buyer');
+    await page.getByLabel('Language').first().selectOption('ar');
+    await page.goto('/orders');
+    await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+    await expect(page.getByRole('heading', { name: 'الطلبات', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'مشترياتي' })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: 'الحالة' })).toBeVisible();
+    await expectNoHorizontalScroll(page);
+  });
+
   test('German and back to English', async ({ page }) => {
     await page.goto('/market');
     await page.getByLabel('Language').first().selectOption('de');

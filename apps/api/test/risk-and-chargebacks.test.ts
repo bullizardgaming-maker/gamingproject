@@ -149,14 +149,14 @@ describe('chargeback shield & automated representment', () => {
     const { runJobsOnce } = await import('../src/worker.js');
     await runJobsOnce(h.ctx);
     const net = await sellerAvailable(h.ctx.db, seller.id);
-    expect(net).toBe(80_00 - 10_39);
+    expect(net).toBe(80_00); // the seller keeps their price; the buyer paid 84.22
 
-    const cb = await admin.api.post('/v1/admin/chargebacks', { orderId: order.id, network: 'mastercard', reasonCode: '4853', amountCents: 80_00 });
+    const cb = await admin.api.post('/v1/admin/chargebacks', { orderId: order.id, network: 'mastercard', reasonCode: '4853', amountCents: order.amount_cents });
     expect(cb.body.category).toBe('not_as_described');
     expect(await sellerAvailable(h.ctx.db, seller.id)).toBe(0);
     const row = (await h.ctx.db.query('SELECT status, evidence FROM chargebacks WHERE id = $1', [cb.body.id])).rows[0];
     expect(row.status).toBe('packet_ready'); // no provider ref -> kept for manual submission
-    expect(row.evidence.allocation).toEqual({ seller_available: net, reserve: 80_00 - net });
+    expect(row.evidence.allocation).toEqual({ seller_available: net, reserve: order.amount_cents - net });
     expect(row.evidence.packet.specific.listing_snapshot_sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(row.evidence.packet.specific.customer_opened_platform_dispute).toBe(false);
   });

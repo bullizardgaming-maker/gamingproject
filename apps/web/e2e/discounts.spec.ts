@@ -14,8 +14,8 @@ test.describe('seller discounts', () => {
     await page.goto('/offers/offer-1');
     await page.getByLabel('Seller discount code').fill('northwind10');
     await page.getByRole('button', { name: 'Apply' }).click();
-    await expect(page.getByText('NORTHWIND10 applied: $3.24 off')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Pay $29.25 into escrow' })).toBeVisible();
+    await expect(page.getByText('NORTHWIND10 applied: $2.89 off')).toBeVisible(); // 10% of the seller's $28.92
+    await expect(page.getByRole('button', { name: 'Pay $29.61 into escrow' })).toBeVisible();
     await page.getByLabel('Seller discount code').fill('NOPE');
     await page.getByRole('button', { name: 'Apply' }).click();
     await expect(page.getByText('That code isn’t valid for this seller')).toBeVisible();

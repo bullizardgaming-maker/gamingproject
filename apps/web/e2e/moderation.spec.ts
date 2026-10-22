@@ -9,7 +9,7 @@ test.describe('safety and moderation', () => {
     await box.fill('thanks, all good');
     await expect(page.getByRole('status').filter({ hasText: /outside Bullizard/ })).toHaveCount(0);
     await box.fill('add me on telegram, I pay with paypal');
-    await expect(page.getByText(/looks like contact details or a payment method outside Bullizard/)).toBeVisible();
+    await expect(page.getByText(/Sharing outside contacts can get your account banned right away/).first()).toBeVisible();
     await expect(page.getByRole('button', { name: 'Send anyway' })).toBeVisible();
   });
 

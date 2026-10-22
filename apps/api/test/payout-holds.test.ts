@@ -47,7 +47,7 @@ describe('payout holds', () => {
     // Ten more completed sales (copies of the first order).
     for (let i = 0; i < 10; i++) {
       await h.ctx.db.query(
-        `INSERT INTO orders SELECT (jsonb_populate_record(NULL::orders, to_jsonb(o) || jsonb_build_object('id', gen_random_uuid(), 'idempotency_key', NULL, 'payment_ref', NULL))).* FROM orders o WHERE o.id = $1`,
+        `INSERT INTO orders SELECT (jsonb_populate_record(NULL::orders, to_jsonb(o) || jsonb_build_object('id', gen_random_uuid(), 'idempotency_key', NULL, 'payment_ref', NULL, 'ref', 'order#' || upper(substr(md5(random()::text), 1, 7))))).* FROM orders o WHERE o.id = $1`,
         [order.id],
       );
     }

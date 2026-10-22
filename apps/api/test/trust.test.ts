@@ -31,7 +31,7 @@ describe('seller trust levels', () => {
     await h.ctx.db.query(`UPDATE orders SET status = 'completed', completed_at = now() WHERE id = $1`, [first.id]);
     for (let i = 0; i < 11; i++) {
       await h.ctx.db.query(
-        `INSERT INTO orders SELECT (jsonb_populate_record(NULL::orders, to_jsonb(o) || jsonb_build_object('id', gen_random_uuid(), 'idempotency_key', NULL, 'payment_ref', NULL))).* FROM orders o WHERE o.id = $1`,
+        `INSERT INTO orders SELECT (jsonb_populate_record(NULL::orders, to_jsonb(o) || jsonb_build_object('id', gen_random_uuid(), 'idempotency_key', NULL, 'payment_ref', NULL, 'ref', 'order#' || upper(substr(md5(random()::text), 1, 7))))).* FROM orders o WHERE o.id = $1`,
         [first.id],
       );
     }

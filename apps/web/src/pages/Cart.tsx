@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { CryptoCheckout } from '../components/CryptoCheckout';
+import { CharacterField, handoverFieldFor } from '../components/CharacterField';
 import { ShieldCheck, ShoppingCart, Trash2 } from 'lucide-react';
 import { api, money } from '../api';
 import { useSession } from '../session';
@@ -20,6 +21,7 @@ export function CartPage() {
   const items = useCart();
   const [offers, setOffers] = useState<Record<string, Offer | null>>({});
   const [tos, setTos] = useState(false);
+  const [names, setNames] = useState<Record<string, { value: string; ok: boolean }>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -45,6 +47,9 @@ export function CartPage() {
     return [...m.values()];
   }, [lines]);
   const payable = lines.filter((l) => l.ok);
+  // Games that deliver in-game need the buyer's character name on each of their lines.
+  const needsName = (l: { offer: Offer | null }) => !!l.offer && !!handoverFieldFor(l.offer.game, l.offer.category_slug);
+  const namesOk = payable.every((l) => !needsName(l) || names[l.offerId]?.ok);
   const currencies = new Set(payable.map((l) => l.offer!.currency));
   const total = payable.reduce((s, l) => s + l.unit * l.quantity, 0);
   const loading = items.some((i) => !(i.offerId in offers));
@@ -54,7 +59,7 @@ export function CartPage() {
     setError('');
     try {
       const res = await api<{ checkoutUrl: string | null }>('/orders/cart', {
-        body: { items: payable.map((l) => ({ offerId: l.offerId, quantity: l.quantity })), acceptTos: true, currency: [...currencies][0] },
+        body: { items: payable.map((l) => ({ offerId: l.offerId, quantity: l.quantity, ...(needsName(l) ? { characterName: names[l.offerId]!.value.trim() } : {}) })), acceptTos: true, currency: [...currencies][0] },
         headers: { 'Idempotency-Key': `cart:${payable.map((l) => `${l.offerId}x${l.quantity}`).join(',')}:${Math.floor(Date.now() / 60_000)}` },
       });
       for (const l of payable) removeFromCart(l.offerId);
@@ -104,6 +109,9 @@ export function CartPage() {
                         {!l.ok && <span className="text-disputed"> · {l.offer.seller_id === user?.id ? t('offer.yours') : t('cart.unavailable')}</span>}
                       </div>
                     )}
+                    {l.offer && l.ok && needsName(l) && (
+                      <CharacterField compact game={l.offer.game} category={l.offer.category_slug} value={names[l.offerId]?.value ?? ''} onChange={(value, ok) => setNames((m) => ({ ...m, [l.offerId]: { value, ok } }))} />
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
                     {l.offer && l.offer.category_kind !== 'account' && (
@@ -143,7 +151,7 @@ export function CartPage() {
         {!user ? (
           <Link className="btn" to="/login?next=/cart">{t('offer.signInToBuy')}</Link>
         ) : (
-          <button className="btn" disabled={!tos || busy || loading || !payable.length || currencies.size > 1} onClick={checkout}>
+          <button className="btn" disabled={!tos || busy || loading || !payable.length || currencies.size > 1 || !namesOk} onClick={checkout}>
             {busy ? t('offer.opening') : t('offer.pay', { amount: currencies.size === 1 ? money(total, [...currencies][0]) : '' })}
           </button>
         )}

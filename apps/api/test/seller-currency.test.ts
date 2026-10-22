@@ -8,7 +8,7 @@ import { buyAndPay, client, makeOffer, makeUser, setup, type Harness } from './h
 let h: Harness;
 beforeAll(async () => {
   // Static rates: 1 USD = 0.92 EUR. Tax out of the way (US seller) to keep the arithmetic readable.
-  h = await setup({ FX_STATIC_RATES: '{"EUR":0.92,"GBP":0.79}', FX_SPREAD_BPS: '100' });
+  h = await setup({ FX_STATIC_RATES: '{"EUR":0.92,"EGP":48.5}', FX_SPREAD_BPS: '100' });
 });
 afterAll(async () => h.close());
 
@@ -27,7 +27,7 @@ describe('seller balances in their own currency', () => {
     const offer = await makeOffer(seller, { priceCents: 92_00, currency: 'EUR', categorySlug: 'boosting', deliveryMode: 'manual', stock: 1 } as any);
     const order = await buyAndPay(h, buyer, offer.id);
     const row = (await h.ctx.db.query('SELECT * FROM orders WHERE id = $1', [order.id])).rows[0];
-    expect(row).toMatchObject({ amount_cents: 100_00, seller_currency: 'EUR' });
+    expect(row).toMatchObject({ amount_cents: 105_27, seller_net_cents: 100_00, seller_currency: 'EUR' }); // 92.00 EUR = 100.00 USD, plus 5% grossed up
     expect(Number(row.seller_fx_rate)).toBeCloseTo(0.92, 10); // mid-market: no spread for the seller
 
     // EUR weakens before release: the seller is unaffected, the platform carries the move.
@@ -37,7 +37,7 @@ describe('seller balances in their own currency', () => {
     await h.ctx.db.query(`UPDATE fx_rates SET rate = 0.92 WHERE currency = 'EUR'`);
 
     const expectedEur = Math.round(Number(row.seller_net_cents) * 0.92);
-    expect(expectedEur).toBe(92_00 - Math.round(Number(row.commission_cents) * 0.92)); // one conversion only
+    expect(expectedEur).toBe(92_00); // the seller gets their EUR price exactly: one conversion only
     expect(await sellerAvailable(h.ctx.db, seller.id, 'EUR')).toBe(expectedEur);
     expect(await sellerAvailable(h.ctx.db, seller.id, 'USD')).toBe(0);
     const dash = (await seller.api.get('/v1/seller/dashboard')).body;
@@ -61,7 +61,7 @@ describe('seller balances in their own currency', () => {
     expect(pos.find((p: any) => p.currency === 'EUR')).toMatchObject({ positionCents: 0, pspExpectedCents: 0, shortfallCents: 0 });
     expect(pos.find((p: any) => p.currency === 'USD')).toMatchObject({ positionCents: 0 });
 
-    // USD at the PSP: 100.00 captured - 87.01 converted to EUR = the commission.
+    // USD at the PSP: 105.27 captured - 100.00 converted to EUR = the commission.
     const mock = h.ctx.payments as MockPaymentProvider;
     mock.balanceOverride = { USD: Number(row.commission_cents), EUR: 0 };
     expect((await runReconciliation(h.ctx)).report.issues).toEqual([]);
@@ -87,8 +87,8 @@ describe('seller balances in their own currency', () => {
     const credited = await sellerAvailable(h.ctx.db, seller.id, 'EUR');
     expect(credited).toBe(Math.round(Number(row.seller_net_cents) * 0.92));
 
-    // Full chargeback of $50.00: the seller's whole EUR balance (worth net USD) goes, the reserve covers the rest.
-    const cb = await admin.api.post('/v1/admin/chargebacks', { orderId: order.id, network: 'visa', reasonCode: '13.1', amountCents: 50_00, disputeRef: 'dp_eur_1' });
+    // Full chargeback: the seller's whole EUR balance (worth net USD) goes, the reserve covers the rest.
+    const cb = await admin.api.post('/v1/admin/chargebacks', { orderId: order.id, network: 'visa', reasonCode: '13.1', amountCents: Number(row.amount_cents), disputeRef: 'dp_eur_1' });
     expect(cb.status).toBe(201);
     const { rows: [c] } = await h.ctx.db.query('SELECT evidence FROM chargebacks WHERE id = $1', [cb.body.id]);
     expect(c.evidence.allocation.seller_available).toBe(Math.floor(credited / 0.92));

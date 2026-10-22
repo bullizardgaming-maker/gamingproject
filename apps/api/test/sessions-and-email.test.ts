@@ -111,7 +111,7 @@ describe('email notifications', () => {
     const toBuyer = (await emailsTo(buyer.email)).map((m) => m.subject);
     const toSeller = (await emailsTo(seller.email)).map((m) => m.subject);
     expect(toBuyer).toEqual(expect.arrayContaining(['Payment received for Test Key', 'Delivered: Test Key']));
-    expect(toSeller).toEqual(expect.arrayContaining(['Sold: Test Key', '$18.00 added to your balance']));
+    expect(toSeller).toEqual(expect.arrayContaining(['Sold: Test Key', '$20.00 added to your balance']));
     const delivered = (await emailsTo(buyer.email)).find((m) => m.subject === 'Delivered: Test Key');
     expect(delivered.body).toContain(`/orders/${order.id}`);
     expect(delivered.html).toContain('<a href=');

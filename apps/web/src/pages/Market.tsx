@@ -21,6 +21,8 @@ export interface Offer {
   reserved_for?: string | null;
   status?: string;
   seller_trust_level?: 'new' | 'rising' | 'trusted' | 'top';
+  seller_founding?: boolean;
+  featured?: boolean;
   is_bundle?: boolean;
   /** Account listings: warranty after escrow releases, in days (0 = none). */
   warranty_days?: number;

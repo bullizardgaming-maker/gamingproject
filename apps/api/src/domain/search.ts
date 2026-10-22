@@ -1,6 +1,7 @@
 import type { Queryable } from '../db.js';
 import { many } from '../db.js';
 import { OFFER_LIST_SQL } from './offers.js';
+import { GROSS_SQL } from './commission.js';
 
 export const SORTS = ['relevance', 'newest', 'price_asc', 'price_desc', 'rating', 'best_selling', 'trust'] as const;
 export type Sort = (typeof SORTS)[number];
@@ -48,6 +49,7 @@ export async function searchOffers(q: Queryable, p: SearchParams) {
   const where: string[] = [
     `f.status = 'active'`,
     `f.reserved_for IS NULL`,
+    `category_open(f.category_slug)`,
     `u.status = 'active'`,
     `u.deleted_at IS NULL`,
     `NOT (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now()))`,
@@ -61,8 +63,8 @@ export async function searchOffers(q: Queryable, p: SearchParams) {
     rank = `ts_rank(f.search, websearch_to_tsquery('simple', ${t})) + word_similarity(lower(${t}), lower(f.game))`;
   }
   if (p.game) where.push(`lower(f.game) = lower(${arg(p.game)})`);
-  if (p.minPriceCents != null) where.push(`f.price_settlement_cents >= ${arg(p.minPriceCents)}`);
-  if (p.maxPriceCents != null) where.push(`f.price_settlement_cents <= ${arg(p.maxPriceCents)}`);
+  if (p.minPriceCents != null) where.push(`${GROSS_SQL('f.price_settlement_cents')} >= ${arg(p.minPriceCents)}`);
+  if (p.maxPriceCents != null) where.push(`${GROSS_SQL('f.price_settlement_cents')} <= ${arg(p.maxPriceCents)}`);
   if (p.delivery) where.push(`f.delivery_mode = ${arg(p.delivery === 'instant' ? 'auto' : 'manual')}`);
   if (p.ownerVerified) where.push(`f.owner_proof_status = 'verified'`);
   if (p.sellerId) where.push(`f.seller_id = ${arg(p.sellerId)}`);
@@ -80,9 +82,10 @@ export async function searchOffers(q: Queryable, p: SearchParams) {
   const baseParams = [...params]; // everything up to here: shared by results, count and facets
 
   const sort: Sort = p.sort ?? (text ? 'relevance' : 'newest');
+  // Featured listings (founding sellers' free spots) lead every ordering.
   const order = {
-    relevance: 'rank DESC, created_at DESC',
-    newest: 'created_at DESC',
+    relevance: 'featured DESC, rank DESC, created_at DESC',
+    newest: 'featured DESC, created_at DESC',
     price_asc: 'price_settlement_cents ASC, created_at DESC',
     price_desc: 'price_settlement_cents DESC, created_at DESC',
     rating: 'seller_rating DESC NULLS LAST, seller_review_count DESC, created_at DESC',
@@ -165,9 +168,9 @@ export async function gameDirectory(q: Queryable) {
   return many<{ game: string; offers: number; sellers: number; min_price_cents: number; instant: number; categories: Array<{ slug: string; count: number }> }>(
     q,
     `WITH live AS (
-       SELECT f.game, f.category_slug, f.seller_id, f.price_settlement_cents, f.delivery_mode
+       SELECT f.game, f.category_slug, f.seller_id, ${GROSS_SQL('f.price_settlement_cents')} AS price_settlement_cents, f.delivery_mode
          FROM offers f JOIN users u ON u.id = f.seller_id
-        WHERE f.status = 'active' AND f.reserved_for IS NULL AND u.status = 'active' AND u.deleted_at IS NULL
+        WHERE f.status = 'active' AND f.reserved_for IS NULL AND category_open(f.category_slug) AND u.status = 'active' AND u.deleted_at IS NULL
           AND NOT (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now()))
           AND f.available > 0
      ), per_cat AS (
@@ -187,7 +190,7 @@ export async function suggestGames(q: Queryable, prefix: string, limit = 8) {
   return many<{ game: string; offers: number }>(
     q,
     `SELECT f.game, count(*)::int AS offers FROM offers f
-      WHERE f.status = 'active' AND f.reserved_for IS NULL AND (lower(f.game) LIKE lower($3) || '%' OR lower($1) <% lower(f.game))
+      WHERE f.status = 'active' AND f.reserved_for IS NULL AND category_open(f.category_slug) AND (lower(f.game) LIKE lower($3) || '%' OR lower($1) <% lower(f.game))
       GROUP BY f.game ORDER BY max(word_similarity(lower($1), lower(f.game))) DESC, offers DESC LIMIT $2`,
     [prefix, Math.min(limit, 20), prefix.replace(/[\\%_]/g, '\\$&')],
   );

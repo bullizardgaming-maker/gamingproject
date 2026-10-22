@@ -45,8 +45,8 @@ describe('Web3 stablecoin escrow rail', () => {
     const t = await buyer.api.get(`/v1/orders/${orderId}/crypto-terms?token=USDC&wallet=${buyerWallet.address}`);
     expect(t.status).toBe(200);
     expect(t.body.terms.milestoneBps).toEqual([3000, 7000]);
-    expect(t.body.terms.feeBps).toBe(1299);
-    expect(t.body.terms.amount).toBe(centsToTokenUnits(250_00).toString());
+    expect(t.body.terms.feeBps).toBe(500); // launch promo for a fresh seller
+    expect(t.body.terms.amount).toBe(centsToTokenUnits(263_16).toString()); // 250.00 grossed up
     expect(verifyTypedData(t.body.domain, t.body.types, t.body.terms, t.body.signature)).toBe(platform.address);
 
     // Fiat-only actions are refused for crypto orders.

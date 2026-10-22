@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, apiBlob, money } from '../api';
 import { useSession } from '../session';
-import { AmlPanel, StaffPanel, TaxPanel, TreasuryPanel } from './AdminPanels';
+import { AffiliatesPanel, AmlPanel, LeaguesPanel, RanksPanel, RulesTestPanel, StaffPanel, TaxPanel, TreasuryPanel } from './AdminPanels';
 import { CurrencyPanel, DebtsPanel, FraudModelPanel, IncidentsPanel, PrivacyPanel } from './OpsPanels';
 import { CryptoRefundsPanel, PayoutsPanel, ReleasesPanel } from './CryptoOpsPanels';
 import { usePageMeta } from '@/lib/seo';
@@ -16,7 +16,7 @@ import { ModerationPanel } from './ModerationPanel';
 import { WarrantyPanel } from './WarrantyPanel';
 
 type ListTab = 'disputes' | 'risk' | 'proofs' | 'chargebacks' | 'ledger' | 'recon' | 'audit';
-type PanelTab = 'business' | 'retention' | 'support' | 'releases' | 'moderation' | 'warranty' | 'aml' | 'treasury' | 'payouts' | 'refunds' | 'tax' | 'staff' | 'status' | 'debts' | 'currency' | 'model' | 'privacy';
+type PanelTab = 'business' | 'retention' | 'support' | 'releases' | 'moderation' | 'warranty' | 'aml' | 'treasury' | 'payouts' | 'refunds' | 'tax' | 'staff' | 'status' | 'debts' | 'currency' | 'model' | 'privacy' | 'ranks' | 'leagues' | 'rules' | 'affiliates';
 type Tab = ListTab | PanelTab;
 
 /** Each tab is shown to whoever holds its permission (see the API's domain/permissions.ts). */
@@ -36,12 +36,16 @@ const TABS: Array<{ id: Tab; label: string; perm: string }> = [
   { id: 'treasury', label: 'Treasury', perm: 'treasury.request' },
   { id: 'payouts', label: 'Payouts', perm: 'treasury.request' },
   { id: 'refunds', label: 'Crypto refunds', perm: 'treasury.request' },
+  { id: 'affiliates', label: 'Creator codes', perm: 'promos.manage' },
   { id: 'currency', label: 'Currency', perm: 'fx.manage' },
   { id: 'debts', label: 'Seller debts', perm: 'ledger.view' },
   { id: 'tax', label: 'Tax', perm: 'tax.manage' },
   { id: 'ledger', label: 'Ledger', perm: 'ledger.view' },
   { id: 'recon', label: 'Reconciliation', perm: 'reconciliation.run' },
   { id: 'audit', label: 'Audit log', perm: 'audit.view' },
+  { id: 'rules', label: 'Rules test', perm: 'rules.manage' },
+  { id: 'leagues', label: 'Leagues', perm: 'leagues.manage' },
+  { id: 'ranks', label: 'Seller ranks', perm: 'ranks.manage' },
   { id: 'staff', label: 'Staff', perm: 'staff.manage' },
   { id: 'status', label: 'Status page', perm: 'status.manage' },
   { id: 'privacy', label: 'Privacy', perm: 'retention.manage' },
@@ -49,7 +53,7 @@ const TABS: Array<{ id: Tab; label: string; perm: string }> = [
 const PANELS: Record<PanelTab, () => React.ReactElement> = {
   business: BusinessPanel, retention: RetentionPanel, support: SupportPanel, moderation: ModerationPanel, warranty: WarrantyPanel, aml: AmlPanel, treasury: TreasuryPanel, tax: TaxPanel, staff: StaffPanel,
   status: IncidentsPanel, debts: DebtsPanel, currency: CurrencyPanel, model: FraudModelPanel, privacy: PrivacyPanel,
-  releases: ReleasesPanel, payouts: PayoutsPanel, refunds: CryptoRefundsPanel,
+  releases: ReleasesPanel, payouts: PayoutsPanel, refunds: CryptoRefundsPanel, ranks: RanksPanel, leagues: LeaguesPanel, rules: RulesTestPanel, affiliates: AffiliatesPanel,
 };
 const isPanel = (t: Tab): t is PanelTab => t in PANELS;
 

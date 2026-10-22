@@ -4,7 +4,7 @@ import { many, maybeOne, one } from '../db.js';
 import { hasPermission } from './permissions.js';
 import { sha256, type Keyring } from '../lib/crypto.js';
 import { bodyMac, seal, systemMac, unseal, userChatKey } from './chatkeys.js';
-import { forbidden, notFound } from '../lib/errors.js';
+import { AppError, forbidden, notFound } from '../lib/errors.js';
 import type { TxScope } from './events.js';
 import { withScope } from './events.js';
 import { enqueueWebhook } from './webhooks.js';
@@ -24,7 +24,7 @@ export interface ChatMessage {
   room_id: string;
   seq: number;
   sender_id: string | null;
-  kind: 'text' | 'system' | 'delivery' | 'warning' | 'attachment';
+  kind: 'text' | 'system' | 'delivery' | 'warning' | 'attachment' | 'system_order';
   /** null when the sender's chat key was destroyed (the message is erased). */
   body: string | null;
   erased?: boolean;
@@ -139,6 +139,8 @@ export async function appendMessage(
   flags: string[] = [],
   /** Required for messages from a user: their text is sealed with their own chat key. */
   keyring?: Keyring,
+  /** A blocked attempt: stored for staff (and the hash chain), never shown to the room or pushed. */
+  opts: { hidden?: boolean } = {},
 ): Promise<ChatMessage> {
   if (senderId && !keyring) throw new Error('appendMessage: a user message needs the keyring to seal it');
   const createdAt = new Date().toISOString();
@@ -162,47 +164,64 @@ export async function appendMessage(
   const hash = messageHashV2(room.last_hash, seq, senderId, kind, mac, createdAt);
   const { body_sealed: _sealed, ...stored } = await one<StoredMessage>(
     s.tx,
-    `INSERT INTO chat_messages (room_id, seq, sender_id, kind, body, flags, prev_hash, hash, created_at, hash_version, body_mac, body_sealed)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 2, $10, $11) RETURNING *`,
-    [roomId, seq, senderId, kind, sealed ? '' : body, flags, room.last_hash, hash, createdAt, mac, sealed],
+    `INSERT INTO chat_messages (room_id, seq, sender_id, kind, body, flags, prev_hash, hash, created_at, hash_version, body_mac, body_sealed, hidden)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 2, $10, $11, $12) RETURNING *`,
+    [roomId, seq, senderId, kind, sealed ? '' : body, flags, room.last_hash, hash, createdAt, mac, sealed, !!opts.hidden],
   );
   const msg: ChatMessage = { ...stored, body };
   await s.tx.query('UPDATE chat_rooms SET last_hash = $2 WHERE id = $1', [roomId, hash]);
-  s.publishRoom(roomId, { type: 'message', roomId, message: msg });
+  if (!opts.hidden) s.publishRoom(roomId, { type: 'message', roomId, message: msg });
   return msg;
+}
+
+/** Staff-set action per offence (1st, 2nd, …); the last entry repeats. OFFPLATFORM_SUSPEND_STRIKES seeds nothing: the table rules. */
+export type OffplatformAction = 'warn' | 'suspend' | 'ban';
+export const OFFPLATFORM_BLOCKED_TEXT = 'Not sent. Sharing outside contacts can get your account banned right away.';
+export async function offplatformPolicy(q: Queryable): Promise<OffplatformAction[]> {
+  const r = await maybeOne<{ offplatform_actions: string[] }>(q, 'SELECT offplatform_actions FROM moderation_settings');
+  return (r?.offplatform_actions?.length ? r.offplatform_actions : ['warn', 'warn', 'ban']) as OffplatformAction[];
+}
+export async function setOffplatformPolicy(q: Queryable, actions: OffplatformAction[], staffId: string) {
+  await q.query('UPDATE moderation_settings SET offplatform_actions = $1, updated_by = $2, updated_at = now()', [actions, staffId]);
+  return offplatformPolicy(q);
 }
 
 export async function postUserMessage(ctx: Ctx, roomId: string, user: { id: string; role: string; status: string }, body: string) {
   if (user.status !== 'active') throw forbidden('suspended', 'Account suspended');
-  return withScope(ctx, async (s) => {
-    const room = await roomForParticipant(s.tx, roomId, user);
-    const violations = detectOffPlatform(body);
-    const flags = violations.map((v) => `offplatform:${v}`);
-    const msg = await appendMessage(s, roomId, user.id, 'text', body, flags, ctx.keyring);
+  const room0 = await roomForParticipant(ctx.db, roomId, user);
+  // Email addresses are part of an account handover (credentials live in the encrypted box); nowhere else.
+  const accountOrder = room0.order_id
+    ? !!(await maybeOne(ctx.db, `SELECT 1 FROM orders o JOIN offers f ON f.id = o.offer_id JOIN categories c ON c.slug = f.category_slug WHERE o.id = $1 AND c.kind = 'account'`, [room0.order_id]))
+    : false;
+  const violations = detectOffPlatform(body, { allowEmail: accountOrder });
+  const flags = violations.map((v) => `offplatform:${v}`);
 
-    if (violations.length && user.role === 'user') {
-      // Into the staff queue (Admin → Moderation) to confirm or dismiss.
+  if (violations.length && user.role === 'user') {
+    // Not delivered: kept hidden for the staff queue (Admin → Moderation) with the context around it.
+    // Recorded in its own transaction, then refused, so the offence stands even though nothing was sent.
+    const action = await withScope(ctx, async (s) => {
+      const msg = await appendMessage(s, roomId, user.id, 'text', body, ['blocked', ...flags], ctx.keyring, { hidden: true });
       await s.tx.query(`INSERT INTO chat_flags (room_id, seq, user_id, reasons) VALUES ($1, $2, $3, $4) ON CONFLICT (room_id, seq) DO NOTHING`, [roomId, msg.seq, user.id, violations]);
       const { offplatform_strikes } = await one<{ offplatform_strikes: number }>(
         s.tx,
         'UPDATE users SET offplatform_strikes = offplatform_strikes + 1 WHERE id = $1 RETURNING offplatform_strikes',
         [user.id],
       );
-      const limit = ctx.cfg.OFFPLATFORM_SUSPEND_STRIKES;
-      if (offplatform_strikes >= limit) {
-        await s.tx.query(`UPDATE users SET status = 'suspended', suspension_reason = 'off_platform_contact' WHERE id = $1`, [user.id]);
-        await appendMessage(s, roomId, null, 'warning', 'This user has been suspended for repeatedly attempting to move the deal off-platform. Do not continue this trade outside the marketplace.');
-      } else {
-        await appendMessage(
-          s,
-          roomId,
-          null,
-          'warning',
-          `Warning (${offplatform_strikes}/${limit}): sharing external contacts or payment methods is prohibited. ` +
-            'Trades completed off-platform are not covered by escrow or the Trust Protocol.',
-        );
+      const policy = await offplatformPolicy(s.tx);
+      const act = policy[Math.min(offplatform_strikes, policy.length) - 1]!;
+      if (act !== 'warn') {
+        await s.tx.query(`UPDATE users SET status = 'suspended', suspension_reason = $2 WHERE id = $1`, [user.id, act === 'ban' ? 'off_platform_ban' : 'off_platform_contact']);
+        await appendMessage(s, roomId, null, 'warning', act === 'ban'
+          ? 'This account has been banned for trying to move the deal outside Bullizard. Do not continue this trade anywhere else; staff will review the case.'
+          : 'This account has been suspended for trying to move the deal outside Bullizard. Do not continue this trade anywhere else; staff will review the case.');
       }
-    }
+      return act;
+    });
+    throw new AppError(422, 'offplatform_blocked', OFFPLATFORM_BLOCKED_TEXT, { action });
+  }
+  return withScope(ctx, async (s) => {
+    const room = await roomForParticipant(s.tx, roomId, user);
+    const msg = await appendMessage(s, roomId, user.id, 'text', body, flags, ctx.keyring);
 
     const counterpart = room.buyer_id === user.id ? room.seller_id : room.buyer_id;
     s.notifyUser(counterpart, 'chat.message', { roomId, seq: msg.seq });
@@ -213,8 +232,8 @@ export async function postUserMessage(ctx: Ctx, roomId: string, user: { id: stri
   });
 }
 
-export async function listMessages(keyring: Keyring, q: Queryable, roomId: string, afterSeq = 0, limit = 200): Promise<ChatMessage[]> {
-  const rows = await many<StoredMessage>(q, 'SELECT * FROM chat_messages WHERE room_id = $1 AND seq > $2 ORDER BY seq LIMIT $3', [roomId, afterSeq, Math.min(limit, 500)]);
+export async function listMessages(keyring: Keyring, q: Queryable, roomId: string, afterSeq = 0, limit = 200, opts: { includeHidden?: boolean } = {}): Promise<ChatMessage[]> {
+  const rows = await many<StoredMessage>(q, `SELECT * FROM chat_messages WHERE room_id = $1 AND seq > $2 ${opts.includeHidden ? '' : 'AND NOT hidden'} ORDER BY seq LIMIT $3`, [roomId, afterSeq, Math.min(limit, 500)]);
   return openMessages(keyring, q, rows);
 }
 

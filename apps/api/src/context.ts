@@ -11,7 +11,7 @@ import type { PaymentProvider } from './providers/payments/types.js';
 import { MockKycProvider } from './providers/kyc/mock.js';
 import { SumsubKycProvider } from './providers/kyc/sumsub.js';
 import type { KycProvider } from './providers/kyc/types.js';
-import { EcbFxProvider, StaticFxProvider, getRate, type FxProvider } from './domain/fx.js';
+import { CompositeFxProvider, EcbFxProvider, OpenRatesFxProvider, StaticFxProvider, getRate, type FxProvider } from './domain/fx.js';
 import { MockFxExchange, WiseFxExchange, type FxExchange } from './providers/fxexchange.js';
 import { ClamdScanner, EicarOnlyScanner, LocalEncryptedStorage, S3Storage, type FileStorage, type MalwareScanner } from './providers/files.js';
 import { AwsKmsSigner, LocalKeySigner, type EscrowSigner } from './providers/signer.js';
@@ -129,7 +129,7 @@ export function createContext(cfg: Config, log: Logger, overrides: Partial<Ctx> 
           : cfg.ESCROW_SIGNER_PRIVATE_KEY
             ? new LocalKeySigner(cfg.ESCROW_SIGNER_PRIVATE_KEY)
             : null,
-    fx: overrides.fx ?? (cfg.FX_PROVIDER === 'ecb' ? new EcbFxProvider() : new StaticFxProvider(JSON.parse(cfg.FX_STATIC_RATES))),
+    fx: overrides.fx ?? (cfg.FX_PROVIDER === 'live' ? new CompositeFxProvider([new EcbFxProvider(), new OpenRatesFxProvider()]) : cfg.FX_PROVIDER === 'ecb' ? new EcbFxProvider() : new StaticFxProvider(JSON.parse(cfg.FX_STATIC_RATES))),
     phoneChecker:
       overrides.phoneChecker ??
       (cfg.SMS_PROVIDER === 'twilio'

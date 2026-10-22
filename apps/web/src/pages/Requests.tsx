@@ -5,7 +5,7 @@ import { api, money } from '../api';
 import { useSession } from '../session';
 import { GameArt } from '../components/CatalogUi';
 import { attrLabel, attributePairs, attributesFor } from '@/lib/attributes';
-import { CATEGORY_ORDER, categoryLabel, useGames } from '@/lib/catalog';
+import { categoryLabel, useCategoryOrder, useGames } from '@/lib/catalog';
 import { usePageMeta } from '@/lib/seo';
 import { t, type MessageKey } from '../i18n';
 
@@ -37,7 +37,10 @@ export interface Proposal {
   seller_name: string;
   seller_rating: number | string | null;
   seller_completed_orders: number;
+  /** What the buyer pays (the seller's price with their commission grossed up). */
   price_cents: number;
+  /** The seller's own price; present on proposals the viewer made. */
+  seller_price_cents?: number;
   delivery_hours: number;
   message: string;
   status: 'pending' | 'accepted' | 'declined' | 'withdrawn';
@@ -62,7 +65,7 @@ function Tabs() {
     <nav className="game-tabs" aria-label={t('req.title')}>
       <NavLink to="/requests" end>{t('req.tab.board')}</NavLink>
       {user && <NavLink to="/requests/mine">{t('req.tab.mine')}</NavLink>}
-      {user && user.kyc_tier >= 2 && <NavLink to="/requests/proposals">{t('req.tab.proposals')}</NavLink>}
+      {user && !!user.rules_passed_at && <NavLink to="/requests/proposals">{t('req.tab.proposals')}</NavLink>}
     </nav>
   );
 }
@@ -112,6 +115,7 @@ function List({ items, empty }: { items: BuyerRequest[] | null; empty: React.Rea
 
 /** /requests: open requests anyone can browse, filtered by game and category. */
 export function RequestsBoard() {
+  const categoryOrder = useCategoryOrder();
   usePageMeta({ title: t('req.title'), description: t('req.lede') });
   const { games } = useGames();
   const [params, setParams] = useSearchParams();
@@ -145,7 +149,7 @@ export function RequestsBoard() {
         </select>
         <select aria-label={t('market.category')} value={category} onChange={(e) => set('category', e.target.value)} style={{ width: 190, height: 38, padding: '6px 10px' }}>
           <option value="">{t('req.anyCategory')}</option>
-          {CATEGORY_ORDER.map((c) => <option key={c} value={c}>{categoryLabel(c)}</option>)}
+          {categoryOrder.map((c) => <option key={c} value={c}>{categoryLabel(c)}</option>)}
         </select>
       </div>
       <List
@@ -207,7 +211,7 @@ export function MyProposals() {
                 <Link to={`/requests/${p.request_id}`} className="block truncate font-medium no-underline hover:underline">{p.request_title}</Link>
                 <div className="truncate text-xs text-muted-foreground">{p.game}</div>
               </div>
-              <span className="font-mono font-semibold">{money(p.price_cents, p.currency)}</span>
+              <span className="font-mono font-semibold" title={t('ranks.buyersPay', { price: money(p.price_cents, p.currency) })}>{money(p.seller_price_cents ?? p.price_cents, p.currency)}</span>
               <span className={`chip ${chipClass(p.status)}`}>{t(`req.pstatus.${p.status}` as MessageKey)}</span>
             </li>
           ))}
@@ -219,6 +223,7 @@ export function MyProposals() {
 
 /** /requests/new: describe what you want; game fields are optional ("any server"). */
 export function RequestNew() {
+  const categoryOrder = useCategoryOrder();
   usePageMeta({ title: t('req.new.title'), noindex: true });
   const { user } = useSession();
   const nav = useNavigate();
@@ -264,7 +269,7 @@ export function RequestNew() {
         <label className="field">
           {t('market.category')}
           <select value={category} onChange={(e) => setCategory(e.target.value)}>
-            {CATEGORY_ORDER.map((c) => <option key={c} value={c}>{categoryLabel(c)}</option>)}
+            {categoryOrder.map((c) => <option key={c} value={c}>{categoryLabel(c)}</option>)}
           </select>
         </label>
         <label className="field">{t('req.f.game')}<input required maxLength={80} value={game} onChange={(e) => setGame(e.target.value)} list="req-games" /></label>
@@ -323,7 +328,7 @@ function ProposalForm({ r, mine, onSaved }: { r: BuyerRequest; mine?: Proposal; 
     <form className="card stack" onSubmit={submit}>
       <h3 style={{ margin: 0 }}>{live ? t('req.p.update') : t('req.p.send')}</h3>
       <div className="grid two">
-        <label className="field">{t('req.p.price', { currency: r.currency })}<input name="price" type="number" step="0.01" min="0.5" required defaultValue={live ? mine.price_cents / 100 : r.budget_cents ? r.budget_cents / 100 : undefined} /></label>
+        <label className="field">{t('req.p.price', { currency: r.currency })}<input name="price" type="number" step="0.01" min="0.5" required defaultValue={live ? (mine.seller_price_cents ?? mine.price_cents) / 100 : r.budget_cents ? r.budget_cents / 100 : undefined} /></label>
         <label className="field">{t('req.p.hours')}<input name="hours" type="number" min={1} max={168} required defaultValue={live ? mine.delivery_hours : 24} /></label>
       </div>
       <label className="field">{t('req.p.message')}<textarea name="message" maxLength={1000} rows={3} defaultValue={live ? mine.message : ''} placeholder={t('req.p.messageHint')} /></label>
@@ -354,7 +359,10 @@ function ProposalCard({ p, r, onAccept }: { p: Proposal; r: BuyerRequest; onAcce
         {p.message && <p className="small" style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap' }}>{p.message}</p>}
       </div>
       <div className="flex items-center gap-3">
-        <span className="font-mono text-lg font-semibold">{money(p.price_cents, r.currency)}</span>
+        <span className="font-mono text-lg font-semibold">
+          {money(onAccept || p.seller_price_cents == null ? p.price_cents : p.seller_price_cents, r.currency)}
+          {!onAccept && p.seller_price_cents != null && p.seller_price_cents !== p.price_cents && <div className="small muted font-sans font-normal">{t('ranks.buyersPay', { price: money(p.price_cents, r.currency) })}</div>}
+        </span>
         {onAccept ? <button className="btn" onClick={onAccept}>{t('req.p.accept')}</button> : <span className={`chip ${chipClass(p.status)}`}>{t(`req.pstatus.${p.status}` as MessageKey)}</span>}
       </div>
     </li>
@@ -438,7 +446,7 @@ export function RequestPage() {
         </>
       ) : !user ? (
         <p className="muted"><Link to={`/login?next=/requests/${r.id}`}>{t('req.signInPropose')}</Link></p>
-      ) : user.kyc_tier < 2 ? (
+      ) : !user.rules_passed_at ? (
         <p className="muted">{t('req.sellersOnly')} <Link to="/sell">{t('req.becomeSeller')}</Link></p>
       ) : (
         <>

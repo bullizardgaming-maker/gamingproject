@@ -6,6 +6,7 @@ import { AppError, badRequest, conflict, forbidden, notFound } from '../lib/erro
 import type { PaymentEvent } from '../providers/payments/types.js';
 import { NowPaymentsProvider } from '../providers/payments/nowpayments.js';
 import { accountId, post } from './ledger.js';
+import { availableCredit } from './referrals.js';
 import { enqueueEmail } from './notifications.js';
 import { enqueueWebhook } from './webhooks.js';
 import { withScope } from './events.js';
@@ -100,7 +101,8 @@ export async function removePayoutAddress(ctx: Ctx, userId: string) {
 }
 
 /** A withdrawal request: fee computed, gross moved out of the balance, waits for the CFO. */
-export async function requestCryptoWithdrawal(ctx: Ctx, userId: string, amountCents: number, currency = ctx.cfg.SETTLEMENT_CURRENCY) {
+export async function requestCryptoWithdrawal(ctx: Ctx, userId: string, amountCents: number, currency = ctx.cfg.SETTLEMENT_CURRENCY, opts: { source?: 'balance' | 'credit' } = {}) {
+  const source = opts.source ?? 'balance';
   if (!(ctx.payments instanceof NowPaymentsProvider)) throw new AppError(503, 'payouts_unavailable', 'Crypto payouts are not configured');
   await ensureScreenedForPayout(ctx, userId);
   return withScope(ctx, async (s) => {
@@ -118,27 +120,33 @@ export async function requestCryptoWithdrawal(ctx: Ctx, userId: string, amountCe
       [userId],
     );
     if (owing) throw new AppError(409, 'debt_outstanding', `Your ${owing.currency} balance is below zero; settle it before withdrawing`);
-    const bal = await withdrawable(ctx, s.tx, userId, currency);
-    if (amountCents > bal.withdrawableCents) {
-      throw badRequest(
-        'insufficient_funds',
-        bal.heldCents ? `You can withdraw ${bal.withdrawableCents} cents now; ${bal.heldCents} cents from recent sales is on a ${bal.holdDays}-day payout hold` : `Available balance is ${bal.availableCents} cents`,
-        { withdrawableCents: bal.withdrawableCents, heldCents: bal.heldCents, upcoming: bal.upcoming },
-      );
+    if (source === 'credit') {
+      // Buyer credit (refund-free underpayments, promo credit): no payout hold, just what is not promised to unpaid orders.
+      const credit = await availableCredit(s.tx, userId, currency);
+      if (amountCents > credit) throw badRequest('insufficient_funds', `Available credit is ${credit} cents`, { availableCents: credit });
+    } else {
+      const bal = await withdrawable(ctx, s.tx, userId, currency);
+      if (amountCents > bal.withdrawableCents) {
+        throw badRequest(
+          'insufficient_funds',
+          bal.heldCents ? `You can withdraw ${bal.withdrawableCents} cents now; ${bal.heldCents} cents from recent sales is on a ${bal.holdDays}-day payout hold` : `Available balance is ${bal.availableCents} cents`,
+          { withdrawableCents: bal.withdrawableCents, heldCents: bal.heldCents, upcoming: bal.upcoming },
+        );
+      }
     }
     const fee = withdrawalFee(ctx, amountCents);
     const net = amountCents - fee;
     if (net <= 0) throw badRequest('amount_too_small', `The fee (${(ctx.cfg.WITHDRAWAL_FEE_MIN_CENTS / 100).toFixed(2)} ${currency} minimum) would take the whole amount`);
     const w = await one(
       s.tx,
-      `INSERT INTO withdrawals (user_id, amount_cents, currency, status, fee_cents, net_cents, destination_address, destination_currency)
-       VALUES ($1, $2, $3, 'pending_approval', $4, $5, $6, $7) RETURNING *`,
-      [userId, amountCents, currency, fee, net, user.payout_address, user.payout_address_currency],
+      `INSERT INTO withdrawals (user_id, amount_cents, currency, status, fee_cents, net_cents, destination_address, destination_currency, source)
+       VALUES ($1, $2, $3, 'pending_approval', $4, $5, $6, $7, $8) RETURNING *`,
+      [userId, amountCents, currency, fee, net, user.payout_address, user.payout_address_currency, source],
     );
     await post(
       s.tx,
       [
-        { account: await accountId(s.tx, 'seller_available', currency, userId), amountCents: -amountCents },
+        { account: await accountId(s.tx, source === 'credit' ? 'user_credit' : 'seller_available', currency, userId), amountCents: -amountCents },
         { account: await accountId(s.tx, 'withdrawals_pending', currency), amountCents },
       ],
       `withdrawal:${w.id}`,
@@ -174,7 +182,7 @@ export async function decideWithdrawal(ctx: Ctx, id: string, staffId: string, ap
         s.tx,
         [
           { account: await accountId(s.tx, 'withdrawals_pending', w.currency), amountCents: -amount },
-          { account: await accountId(s.tx, 'seller_available', w.currency, w.user_id), amountCents: amount },
+          { account: await accountId(s.tx, w.source === 'credit' ? 'user_credit' : 'seller_available', w.currency, w.user_id), amountCents: amount },
         ],
         `withdrawal_rejected:${id}`,
       );
@@ -223,7 +231,7 @@ async function failWithdrawal(ctx: Ctx, id: string, reason: string) {
       [
         { account: await accountId(s.tx, 'payouts', w.currency), amountCents: -Number(w.net_cents) },
         { account: await accountId(s.tx, 'treasury', w.currency), amountCents: -Number(w.fee_cents) },
-        { account: await accountId(s.tx, 'seller_available', w.currency, w.user_id), amountCents: Number(w.amount_cents) },
+        { account: await accountId(s.tx, w.source === 'credit' ? 'user_credit' : 'seller_available', w.currency, w.user_id), amountCents: Number(w.amount_cents) },
       ],
       `withdrawal_failed:${id}`,
     );

@@ -31,23 +31,26 @@ describe('quantity price tiers', () => {
 
     const created = await seller.api.post('/v1/offers', { ...base, priceTiers: [{ minQty: 50, priceCents: 4_00 }, { minQty: 10, priceCents: 4_50 }] });
     expect(created.status, JSON.stringify(created.body)).toBe(201);
-    expect(created.body.price_tiers).toEqual([{ minQty: 10, priceCents: 4_50 }, { minQty: 50, priceCents: 4_00 }]);
+    expect(created.body.seller_price_tiers).toEqual([{ minQty: 10, priceCents: 4_50 }, { minQty: 50, priceCents: 4_00 }]);
+    // Buyers see each tier grossed up by the seller's 5% launch-promo commission.
+    expect(created.body.price_tiers).toEqual([{ minQty: 10, priceCents: 4_74 }, { minQty: 50, priceCents: 4_22 }]);
 
     const quote = await buyer.api.post('/v1/orders/quote', { offerId: created.body.id, quantity: 20 });
-    expect(quote.body).toMatchObject({ unitPriceCents: 4_50, listingUnitPriceCents: 4_50, amountCents: 90_00 });
-    expect((await buyer.api.post('/v1/orders/quote', { offerId: created.body.id, quantity: 3 })).body.amountCents).toBe(15_00);
+    expect(quote.body).toMatchObject({ unitPriceCents: 4_74, listingUnitPriceCents: 4_50, sellerAmountCents: 90_00, amountCents: 94_74 });
+    expect((await buyer.api.post('/v1/orders/quote', { offerId: created.body.id, quantity: 3 })).body.amountCents).toBe(15_79);
 
     const order = await buyAndPay(h, buyer, created.body.id, 60);
-    expect(order.amount_cents).toBe(240_00);
+    expect(order.amount_cents).toBe(252_64);
     const row = (await h.ctx.db.query('SELECT unit_price_cents, listing_unit_price_cents FROM orders WHERE id = $1', [order.id])).rows[0];
-    expect(row).toMatchObject({ unit_price_cents: 4_00, listing_unit_price_cents: 4_00 });
+    expect(row).toMatchObject({ unit_price_cents: 4_21, listing_unit_price_cents: 4_00 });
 
     // Edit: replace and remove tiers; a new base price is checked against the tiers sent with it.
     const v = (await seller.api.get(`/v1/offers/${created.body.id}`)).body.version;
     expect((await seller.api.patch(`/v1/offers/${created.body.id}`, { version: v, priceCents: 4_00, priceTiers: [{ minQty: 10, priceCents: 4_50 }] })).status).toBe(400);
     const edited = await seller.api.patch(`/v1/offers/${created.body.id}`, { version: v, priceTiers: [{ minQty: 5, priceCents: 4_80 }] });
-    expect(edited.body.price_tiers).toEqual([{ minQty: 5, priceCents: 4_80 }]);
+    expect(edited.body.seller_price_tiers).toEqual([{ minQty: 5, priceCents: 4_80 }]);
     const cleared = await seller.api.patch(`/v1/offers/${created.body.id}`, { version: edited.body.version, priceTiers: [] });
     expect(cleared.body.price_tiers).toEqual([]);
+    expect(cleared.body.seller_price_tiers).toEqual([]);
   });
 });

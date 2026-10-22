@@ -5,10 +5,13 @@ import { many, maybeOne, one, withTx } from '../db.js';
 import { badRequest, conflict, forbidden, notFound, AppError } from '../lib/errors.js';
 import type { PaymentEvent } from '../providers/payments/types.js';
 import { appendMessage, createOrderRoom } from './chat.js';
-import { commissionBps, sellerTier, splitAmount } from './commission.js';
+import { grossUp, refreshSellerRate, sellerTier, splitGross } from './commission.js';
 import type { TxScope } from './events.js';
 import { withScope } from './events.js';
 import { applyRiskActions, assessOrder, recordSignals, subnetOf } from './fraud.js';
+import { randomBytes } from 'node:crypto';
+import { handoverFieldFor, handoverKey } from './attributeSets.js';
+import { maybePayAffiliate } from './affiliates.js';
 import { availableCount, markDelivered, releaseReservation, reserveInventory, reserveManualStock, storeManualDelivery } from './inventory.js';
 import { accountId, orderEscrowBalance, post } from './ledger.js';
 import { centsToTokenUnits, orderIdToBytes32 } from './web3.js';
@@ -27,12 +30,14 @@ import { listStatements, type DisputeCategory } from './disputes.js';
 import { claimsForOrder } from './warranty.js';
 import { progressFor } from './progress.js';
 import { buyerReputation, ratingForOrder } from './buyerReputation.js';
-import { paymentsForOrder, queueCryptoRefund, refundForOrder } from './cryptoPayments.js';
+import { creditPartialPayments, paymentsForOrder, queueCryptoRefund, refundForOrder } from './cryptoPayments.js';
 
 export type OrderStatus = 'awaiting_payment' | 'paid' | 'delivered' | 'completed' | 'disputed' | 'refunded' | 'cancelled' | 'charged_back';
 
 export interface Order {
   id: string;
+  /** Human order ID, e.g. order#7F3AK2Q. */
+  ref: string;
   buyer_id: string;
   seller_id: string;
   offer_id: string;
@@ -137,6 +142,31 @@ export async function transition(
   order.status = to;
 }
 
+/** Human order ID: order# plus 7 unambiguous upper-case letters/digits (no 0/O, 1/I/L). */
+const REF_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+export function newOrderRef() {
+  const bytes = randomBytes(7);
+  let out = 'order#';
+  for (const b of bytes) out += REF_ALPHABET[b % REF_ALPHABET.length];
+  return out;
+}
+
+/**
+ * The official order message (kind `system_order`): a server-only card the chat renders in a frame
+ * users cannot imitate, posted when the order is created and on each status change. The body is
+ * JSON: the order ref (linked), item, character and a status chip; never a money amount.
+ */
+export async function postOrderCard(s: TxScope, order: Pick<Order, 'id' | 'status' | 'quantity'> & { ref?: string | null; title?: string; character_name?: string | null }, status?: string) {
+  const row = await one<{ ref: string; title: string; character_name: string | null; quantity: number; status: string }>(
+    s.tx,
+    'SELECT o.ref, f.title, o.character_name, o.quantity, o.status FROM orders o JOIN offers f ON f.id = o.offer_id WHERE o.id = $1',
+    [order.id],
+  );
+  const room = await roomOf(s.tx, order.id);
+  const chip = status ?? row.status;
+  return appendMessage(s, room.id, null, 'system_order', JSON.stringify({ order_id: order.id, ref: row.ref, title: row.title, quantity: row.quantity, character_name: row.character_name, status: chip }));
+}
+
 export function roomOf(tx: Queryable, orderId: string) {
   return one<{ id: string }>(tx, 'SELECT id FROM chat_rooms WHERE order_id = $1', [orderId]);
 }
@@ -151,6 +181,7 @@ export function emailData(o: Order & { title: string }, extra: Record<string, un
 export function orderSummary(o: Order) {
   return {
     id: o.id,
+    ref: o.ref,
     offer_id: o.offer_id,
     buyer_id: o.buyer_id,
     quantity: o.quantity,
@@ -184,6 +215,8 @@ export interface CreateOrderInput {
   currency?: string;
   /** A seller's discount code (seller-funded: lowers the order price itself). */
   sellerCode?: string;
+  /** The in-game character name / UID the seller delivers to (games that deliver in-game). */
+  characterName?: string;
   /** Part of a cart checkout (domain/cart.ts): the cart creates one payment for all its orders. */
   checkoutId?: string;
 }
@@ -199,7 +232,11 @@ export interface PriceBreakdown {
   /** Seller-code discount in the listing currency, already taken off listingTotalCents. */
   sellerDiscountCents: number;
   sellerCodeId: string | null;
+  /** What the buyer pays before promo/credit: the seller's price plus commission. */
   amountCents: number;
+  /** The seller's price in the settlement currency: what they receive on release. */
+  sellerAmountCents: number;
+  commissionBps: number;
   unitPriceCents: number;
   discountCents: number;
   creditCents: number;
@@ -235,7 +272,10 @@ export async function priceOrder(
     sellerCodeId = c.codeId;
     listingTotal -= sellerDiscount;
   }
-  const amount = Math.round(listingTotal / listingRate);
+  // The seller's price in the settlement currency, then the commission grossed up on top of it.
+  const sellerAmount = Math.round(listingTotal / listingRate);
+  const rateBps = (await refreshSellerRate(tx, offer.seller_id)).rateBps;
+  const amount = grossUp(sellerAmount, rateBps);
   if (amount < MIN_CARD_CHARGE_CENTS) throw badRequest('amount_too_small', 'Order total is below the minimum');
 
   if (input.rail === 'crypto' && (input.promoCode || input.useCredit)) {
@@ -276,6 +316,8 @@ export async function priceOrder(
     sellerDiscountCents: sellerDiscount,
     sellerCodeId,
     amountCents: amount,
+    sellerAmountCents: sellerAmount,
+    commissionBps: rateBps,
     unitPriceCents: Math.round(amount / input.quantity),
     discountCents: discount,
     creditCents: credit,
@@ -345,15 +387,19 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
       }
     }
 
-    const { tier } = await sellerTier(s.tx, offer.seller_id);
-    const rate = commissionBps(tier, { kind: offer.category_kind, promo_rate_bps: offer.promo_rate_bps });
     const price = await priceOrder(ctx, s.tx, offer, buyer.id, input);
     const amount = price.amountCents;
-    const split = splitAmount(amount, rate);
+    const rate = price.commissionBps;
+    const split = splitGross(amount, price.sellerAmountCents);
+    const { rank } = await sellerTier(s.tx, offer.seller_id);
     const protection = offer.risk_class === 'high' ? 'insurance_14d' : 'until_confirmed';
     // "High Risk - Secondary Market": account listings without verified Original Owner Proof.
     const sellerProtected = offer.category_kind !== 'account' || offer.owner_proof_status === 'verified';
 
+    // Games that deliver in-game need the buyer's character name (or UID), confirmed at checkout.
+    const handover = handoverFieldFor(offer.game, offer.category_slug);
+    const characterName = input.characterName?.trim().slice(0, 60) || null;
+    if (handover && !characterName) throw badRequest('character_name_required', `${handover.label} is required for ${offer.game}`);
     const sellerFx = await sellerRateFor(ctx, s.tx, offer.seller_id, input.rail);
     const order = await one<Order>(
       s.tx,
@@ -362,22 +408,28 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
                            seller_protected, payment_expires_at, tos_version, tos_accepted_at, buyer_ip, buyer_ip_country,
                            buyer_device, idempotency_key, discount_cents, credit_cents, charged_cents, presentment_currency,
                            presentment_amount_cents, fx_rate, fx_locked_at, listing_currency, listing_unit_price_cents, promo_code_id,
-                           seller_currency, seller_fx_rate)
+                           seller_currency, seller_fx_rate, ref)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'awaiting_payment', $13, $14,
                now() + make_interval(mins => $15), $16, now(), $17, $18, $19, $20,
-               $21, $22, $23, $24, $25, $26, now(), $27, $28, $29, $30, $31)
+               $21, $22, $23, $24, $25, $26, now(), $27, $28, $29, $30, $31, $32)
        RETURNING *`,
       [
         buyer.id, offer.seller_id, offer.id, input.quantity, price.unitPriceCents, amount, price.settlementCurrency,
-        rate, split.commissionCents, split.sellerNetCents, tier.name, input.rail, protection, sellerProtected,
+        rate, split.commissionCents, split.sellerNetCents, rank.name, input.rail, protection, sellerProtected,
         ctx.cfg.ORDER_PAYMENT_TTL_MINUTES, ctx.cfg.TOS_VERSION, input.ip ?? null, input.ipCountry ?? null,
         input.device ?? null, input.idempotencyKey ?? null,
         price.discountCents, price.creditCents, price.chargedCents, price.presentmentCurrency,
         price.presentmentAmountCents, price.fxRate, price.listingCurrency, price.listingUnitPriceCents, price.promoId,
-        sellerFx.currency, sellerFx.rate,
+        sellerFx.currency, sellerFx.rate, newOrderRef(),
       ],
     );
     if (price.promoId) await reserveRedemption(s.tx, price.promoId, order.id, buyer.id, price.discountCents);
+    if (handover && characterName) {
+      await s.tx.query('UPDATE orders SET character_name = $2 WHERE id = $1', [order.id, characterName]);
+      Object.assign(order, { character_name: characterName });
+      // Remembered for next time: one tap to confirm instead of typing it again.
+      await s.tx.query(`UPDATE users SET handover_names = handover_names || jsonb_build_object($2::text, $3::text) WHERE id = $1`, [buyer.id, handoverKey(offer.game), characterName]);
+    }
     if (input.checkoutId) {
       await s.tx.query('UPDATE orders SET checkout_id = $2 WHERE id = $1', [order.id, input.checkoutId]);
       order.checkout_id = input.checkoutId;
@@ -413,6 +465,7 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
     ]);
 
     const room = await createOrderRoom(s.tx, order.id, offer.id, buyer.id, offer.seller_id);
+    await postOrderCard(s, order, 'awaiting_payment');
     await appendMessage(
       s, room.id, null, 'system',
       `Order created for "${offer.title}" x${input.quantity}. All communication for this order must stay in this chat — ` +
@@ -630,6 +683,7 @@ async function onFunded(ctx: Ctx, s: TxScope, order: Order & { delivery_mode: st
   );
   const room = await roomOf(s.tx, order.id);
   await appendMessage(s, room.id, null, 'system', `Payment received: ${(order.amount_cents / 100).toFixed(2)} ${order.currency} is locked in escrow.`);
+  await postOrderCard(s, order, 'paid');
 
   const risk = await assessOrder(ctx, s.tx, order.id);
   const { action } = await applyRiskActions(ctx, s, order, risk);
@@ -671,6 +725,7 @@ async function deliver(ctx: Ctx, s: TxScope, order: Order & { category_kind: str
           ? 'The payment stays in escrow until the buyer confirms. Buyer: check your order and confirm, or open a dispute if anything is wrong.'
           : 'The 72-Hour Inspection Window has started. Confirm receipt or open a dispute if anything is wrong.'),
   );
+  await postOrderCard(s, order, 'delivered');
   if (order.category_kind === 'account') {
     const linked = await maybeOne<{ provider: string }>(
       s.tx, 'SELECT la.provider FROM offers f JOIN linked_accounts la ON la.id = f.linked_account_id AND la.unlinked_at IS NULL WHERE f.id = $1', [order.offer_id],
@@ -688,12 +743,26 @@ async function deliver(ctx: Ctx, s: TxScope, order: Order & { category_kind: str
 }
 
 /** Seller-side manual delivery (accounts, boosting, anything not auto-delivered). */
-export async function deliverManually(ctx: Ctx, orderId: string, sellerId: string, payload?: string) {
+/** Proof of delivery is required for goods handed over in-game (currency, items, top-ups, boosting). */
+export const PROOF_REQUIRED_KINDS = new Set(['currency', 'item', 'topup', 'boosting']);
+
+export async function deliverManually(ctx: Ctx, orderId: string, sellerId: string, payload?: string, proofAttachmentId?: string) {
   return withScope(ctx, async (s) => {
     const order = await lockOrder(s.tx, orderId);
     if (order.seller_id !== sellerId) throw forbidden('not_seller', 'Only the seller can deliver this order');
     if (order.status !== 'paid') throw conflict('invalid_state', `Cannot deliver an order that is ${order.status}`);
     if (order.escrow_frozen) throw new AppError(423, 'under_review', 'Order is under security review');
+    if (ctx.cfg.DELIVERY_PROOF_REQUIRED && PROOF_REQUIRED_KINDS.has(order.category_kind) && !proofAttachmentId) {
+      throw badRequest('proof_required', 'Attach a photo or video of the delivery (trade window, mail or confirmation) before marking it delivered');
+    }
+    if (proofAttachmentId) {
+      // The proof is a chat attachment on this order's room, uploaded by the seller and scanned clean.
+      const room = await roomOf(s.tx, order.id);
+      const att = await maybeOne(s.tx, `SELECT id FROM chat_attachments WHERE id = $1 AND room_id = $2 AND uploader_id = $3 AND status = 'clean'`, [proofAttachmentId, room.id, sellerId]);
+      if (!att) throw badRequest('invalid_proof', 'Upload the proof to this order’s chat first, then mark it delivered');
+      await s.tx.query('UPDATE orders SET delivery_proof_id = $2 WHERE id = $1', [order.id, proofAttachmentId]);
+      Object.assign(order, { delivery_proof_id: proofAttachmentId });
+    }
     if (payload) await storeManualDelivery(ctx, s.tx, order, payload);
     await deliver(ctx, s, order, sellerId, 'manual_delivery');
     return order;
@@ -737,10 +806,12 @@ async function releaseEscrow(ctx: Ctx, s: TxScope, order: Order & { title: strin
   await transition(s.tx, order, 'completed', actorId, reason, ', completed_at = now()');
   const room = await roomOf(s.tx, order.id);
   await appendMessage(s, room.id, null, 'system', `Order completed. ${(order.seller_net_cents / 100).toFixed(2)} ${order.currency} released to the seller (commission ${(order.commission_bps / 100).toFixed(2)}%).`);
+  await postOrderCard(s, order, 'completed');
   await enqueueWebhook(s.tx, order.seller_id, 'order.completed', orderSummary(order));
   if (order.rail === 'fiat') {
     await enqueueEmail(s.tx, order.seller_id, 'seller_paid', emailData(order));
     await maybeGrantReferral(ctx, s, order);
+    await maybePayAffiliate(ctx, s, order);
   }
   s.notifyUser(order.seller_id, 'order.completed', { orderId: order.id });
   s.notifyUser(order.buyer_id, 'order.completed', { orderId: order.id });
@@ -912,6 +983,8 @@ export async function cancelOrder(ctx: Ctx, orderId: string, actorId: string | n
     await releaseReservation(s.tx, order);
     await setRedemptionStatus(s.tx, order.id, 'released');
     await transition(s.tx, order, 'cancelled', actorId, reason);
+    // A crypto underpayment that never got its top-up stays with the buyer as credit (never refunded).
+    await creditPartialPayments(ctx, s, order);
     await enqueueWebhook(s.tx, order.seller_id, 'order.cancelled', orderSummary(order));
     return order;
   });
@@ -949,6 +1022,7 @@ export async function openDispute(ctx: Ctx, orderId: string, userId: string, rea
       throw conflict('window_closed', 'The protection window for this order has ended');
     }
     await transition(s.tx, order, 'disputed', userId, 'dispute_opened', '', [], { reason });
+    await postOrderCard(s, order, 'disputed');
     const dispute = await one(s.tx, 'INSERT INTO disputes (order_id, opened_by, reason, category) VALUES ($1, $2, $3, $4) RETURNING *', [orderId, userId, reason, category]);
     // The opening reason is also the opener's first statement.
     await s.tx.query('INSERT INTO dispute_statements (dispute_id, user_id, role, body) VALUES ($1, $2, $3, $4)', [dispute.id, userId, userId === order.buyer_id ? 'buyer' : 'seller', reason]);
@@ -1004,6 +1078,7 @@ async function refundOrder(ctx: Ctx, s: TxScope, order: Order & { delivery_mode:
   await transition(s.tx, order, 'refunded', actorId, reason);
   const room = await roomOf(s.tx, order.id);
   await appendMessage(s, room.id, null, 'system', `Order refunded to the buyer (${(order.amount_cents / 100).toFixed(2)} ${order.currency}).`);
+  await postOrderCard(s, order, 'refunded');
   await enqueueWebhook(s.tx, order.seller_id, 'order.refunded', orderSummary(order));
   if (order.rail === 'fiat') await enqueueEmail(s.tx, order.buyer_id, 'order_refunded', emailData(order));
   s.notifyUser(order.buyer_id, 'order.refunded', { orderId: order.id });
@@ -1050,10 +1125,11 @@ export async function handleChainEvent(ctx: Ctx, ev: ChainEvent) {
 // ---------------------------------------------------------------------------
 // Reads
 // ---------------------------------------------------------------------------
-export async function getOrderFor(q: Queryable, orderId: string, user: { id: string; role: string }) {
+export async function getOrderFor(ctx: Ctx, orderId: string, user: { id: string; role: string }) {
+  const q = ctx.db;
   const order = await maybeOne(
     q,
-    `SELECT o.*, f.title AS offer_title, f.game, f.delivery_mode, c.kind AS category_kind,
+    `SELECT o.*, f.title AS offer_title, f.game, f.category_slug, f.delivery_mode, c.kind AS category_kind,
             r.id AS room_id, b.display_name AS buyer_name, sl.display_name AS seller_name
        FROM orders o JOIN offers f ON f.id = o.offer_id JOIN categories c ON c.slug = f.category_slug
        JOIN chat_rooms r ON r.order_id = o.id JOIN users b ON b.id = o.buyer_id JOIN users sl ON sl.id = o.seller_id
@@ -1078,7 +1154,15 @@ export async function getOrderFor(q: Queryable, orderId: string, user: { id: str
     crypto && order.buyer_id === user.id ? paymentsForOrder(q, orderId) : Promise.resolve([]),
     crypto ? refundForOrder(q, orderId) : Promise.resolve(null),
   ]);
-  return { ...order, checklist, dispute, events, review, warranty_claims: warrantyClaims, progress, buyer_reputation: buyerRep, buyer_rating: buyerRating, crypto_payments: cryptoPayments, crypto_refund: cryptoRefund };
+  const deliveryProof = order.delivery_proof_id
+    ? await maybeOne(q, 'SELECT id, mime, original_name, bytes, width, height, created_at FROM chat_attachments WHERE id = $1', [order.delivery_proof_id])
+    : null;
+  return {
+    ...order, checklist, dispute, events, review, warranty_claims: warrantyClaims, progress, buyer_reputation: buyerRep, buyer_rating: buyerRating,
+    crypto_payments: cryptoPayments, crypto_refund: cryptoRefund, delivery_proof: deliveryProof,
+    handover_field: handoverFieldFor(order.game, order.category_slug ?? ''),
+    proof_required: ctx.cfg.DELIVERY_PROOF_REQUIRED && PROOF_REQUIRED_KINDS.has(order.category_kind) && order.delivery_mode === 'manual',
+  };
 }
 
 export async function listOrders(q: Queryable, userId: string, role: 'buyer' | 'seller', status?: string, limit = 50) {

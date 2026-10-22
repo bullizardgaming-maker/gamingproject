@@ -8,7 +8,7 @@ import { handlePaymentCaptured, lockOrder, type Order } from './orders.js';
 import { checkoutByRef, handleCheckoutCaptured } from './cart.js';
 import { accountId, post } from './ledger.js';
 import { enqueueEmail } from './notifications.js';
-import { withScope } from './events.js';
+import { withScope, type TxScope } from './events.js';
 import { appendMessage } from './chat.js';
 
 /**
@@ -19,8 +19,10 @@ import { appendMessage } from './chat.js';
  *  - partially_paid: the shortfall is shown and the buyer creates a top-up payment that shares the
  *    first payment's purchase id; once the payments together cover the price, the order is funded.
  *  - expired/failed: nothing happens here; the unpaid-order reaper cancels the order when its
- *    payment window lapses (a late deposit is still accepted and refunded by hand).
- * Refunds are manual: a queue for the CFO, booked as `refunds_payable` until the coins are sent.
+ *    payment window lapses. Anything that did arrive (a partial payment) is then credited to the
+ *    buyer's balance (creditPartialPayments): never refunded, spendable on a later order or
+ *    withdrawable under the withdrawal rules.
+ * Refunds (of funded orders) are manual: a queue for the CFO, booked as `refunds_payable` until the coins are sent.
  */
 const COIN_NAMES: Record<string, string> = {
   btc: 'Bitcoin', eth: 'Ethereum', ltc: 'Litecoin', usdttrc20: 'Tether (TRC-20)', usdterc20: 'Tether (ERC-20)', usdtbsc: 'Tether (BEP-20)',
@@ -250,6 +252,43 @@ async function settledCents(q: Queryable, p: { kind: string; id: string }, fallb
     sum += Number(r.outcome_amount);
   }
   return rows.length ? toCents(sum) : fallback;
+}
+
+/**
+ * An order (or cart) lapsed with money on it: what reached the wallet goes to the buyer's credit
+ * (gateway_clearing → user_credit), the payments are marked credited, and the buyer is told. Called
+ * from cancelOrder for NOWPayments orders; idempotent per payment row.
+ */
+export async function creditPartialPayments(ctx: Ctx, s: TxScope, order: { id: string; buyer_id: string; currency: string; checkout_id?: string | null; payment_provider?: string | null }) {
+  if (order.payment_provider !== 'nowpayments') return 0;
+  const ref = order.checkout_id ? { kind: 'checkout', id: order.checkout_id } : { kind: 'order', id: order.id };
+  const rows = await many<{ id: string; actually_paid_usd: string | null; outcome_amount: string | null; outcome_currency: string | null }>(
+    s.tx,
+    `SELECT id, actually_paid_usd::text, outcome_amount::text, outcome_currency FROM crypto_payments WHERE ${whereRef(ref)} AND status = 'partially_paid' FOR UPDATE`,
+    [ref.id],
+  );
+  let total = 0;
+  for (const r of rows) {
+    // Settled at what reached the wallet (USDT/USDC), else at what NOWPayments valued the deposit.
+    const settled = r.outcome_amount != null && r.outcome_currency && /^usd[tc]/.test(r.outcome_currency) ? toCents(Number(r.outcome_amount)) : toCents(Number(r.actually_paid_usd ?? 0));
+    await s.tx.query(`UPDATE crypto_payments SET status = 'credited', credited_cents = $2 WHERE id = $1`, [r.id, settled]);
+    if (settled <= 0) continue;
+    total += settled;
+  }
+  if (!total) return 0;
+  await post(
+    s.tx,
+    [
+      { account: await accountId(s.tx, 'gateway_clearing', order.currency), amountCents: -total },
+      { account: await accountId(s.tx, 'user_credit', order.currency, order.buyer_id), amountCents: total },
+    ],
+    'crypto_kept_in_balance',
+    order.id,
+  );
+  const room = await maybeOne<{ id: string }>(s.tx, 'SELECT id FROM chat_rooms WHERE order_id = $1', [order.id]);
+  if (room) await appendMessage(s, room.id, null, 'system', `The payment window closed with ${(total / 100).toFixed(2)} ${order.currency} received. It is kept in the buyer's balance to spend on a later order or withdraw.`);
+  await enqueueEmail(s.tx, order.buyer_id, 'crypto_kept_in_balance', { order_id: order.id, amount_cents: total, currency: order.currency }, `crypto_kept:${order.id}`);
+  return total;
 }
 
 // ---------------------------------------------------------------------------

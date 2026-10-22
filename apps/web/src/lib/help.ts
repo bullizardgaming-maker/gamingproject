@@ -73,6 +73,18 @@ const BASE_ARTICLES: HelpArticle[] = [
     ticket: 'order',
   },
   {
+    slug: 'delivery-in-game',
+    topic: 'buying',
+    title: 'How in-game delivery works',
+    summary: 'Currency and items are traded to the character name you confirm at checkout; the seller attaches proof and you release the payment.',
+    body: [
+      'For games that deliver in-game (currency, items, top-ups), you give the exact character name or UID the seller should trade with. It is confirmed in one tap at checkout and remembered for your next order; check it carefully, because the seller delivers to that name and you are responsible for it being right.',
+      'The seller trades with that character and attaches a photo or video of the trade before marking the order delivered. You can watch the proof on the order page.',
+      'The payment stays in escrow until you confirm you received the goods. If something is wrong, open a dispute from the order page instead of confirming; staff compare the proof with the trade and decide.',
+    ],
+    ticket: 'order',
+  },
+  {
     slug: 'game-fields-and-filters',
     topic: 'buying',
     title: 'Filtering by server, region, platform and rank',
@@ -118,24 +130,24 @@ const BASE_ARTICLES: HelpArticle[] = [
   {
     slug: 'selling-fees',
     topic: 'selling',
-    title: 'Seller fees and levels',
-    summary: 'Fees fall as your 30-day sales grow; gift cards, top-ups and video games have a lower rate.',
+    title: 'Seller commission and ranks',
+    summary: 'You set your price and receive it in full; the commission is added on top for the buyer and falls as your rank grows.',
     body: [
-      'Each sale pays a commission that depends on your seller level, which is set by your sales over the last 30 days. Accounts have their own rate; gift cards, top-ups and video games pay 4.99%.',
-      'You see the exact fee and your net earnings on each order, and your level and progress on the seller hub.',
-    ],
+        'You enter the price you want. The commission for your rank is added on top for the buyer, so the amount you typed is exactly what lands in your balance when the order completes. Ranks are set by your completed sales over the last 30 days; new sellers pay a reduced launch rate for their first 60 days.',
+        'The sell form shows what buyers will pay in each currency, and what you keep after the withdrawal fee, before you publish. Your rank and progress are on the seller hub.',
+      ],
     ticket: 'selling',
   },
   {
     slug: 'getting-paid',
     topic: 'selling',
     title: 'Getting paid',
-    summary: 'Withdraw to your bank in USD, EUR or GBP once the protection window ends.',
+    summary: 'Withdraw to your crypto wallet (USDT) once the protection window ends; a 6% fee applies.',
     body: [
-      'Money from a sale becomes available when the buyer confirms or the protection window ends. Withdraw it from the seller hub to the bank account you added on our payment partner’s page.',
-      'New sellers may have a short payout hold while we build trust; the hub shows when held money is released.',
-      'If a refund or chargeback takes your balance below zero, new sales pay it down first and withdrawals pause until it is settled.',
-    ],
+        'Money from a sale becomes available when the buyer confirms or the protection window ends. Withdraw it from the seller hub to the payout address you confirmed by email; the treasury approves and sends it in USDT.',
+        'New sellers may have a short payout hold while we build trust; the hub shows when held money is released.',
+        'If a refund or chargeback takes your balance below zero, new sales pay it down first and withdrawals pause until it is settled.',
+      ],
     ticket: 'selling',
   },
   {

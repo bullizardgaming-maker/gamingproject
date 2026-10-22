@@ -142,7 +142,7 @@ describe('money reconciliation', () => {
     const run = await runReconciliation(h.ctx);
     expect(run.status).toBe('mismatch');
     expect(run.report.issues.find((i) => i.check === 'order_escrow_mismatch')!.detail).toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: order.id, held: 10_00 })]),
+      expect.arrayContaining([expect.objectContaining({ id: order.id, held: 10_53 })]),
     );
     expect((await emailsTo(admin.email)).some((m) => m.subject.startsWith('Reconciliation mismatch'))).toBe(true);
     await h.ctx.db.query(`UPDATE orders SET status = 'paid' WHERE id = $1`, [order.id]);

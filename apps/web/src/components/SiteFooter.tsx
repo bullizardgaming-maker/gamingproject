@@ -4,10 +4,10 @@ import { Download, Share } from 'lucide-react';
 import { useInstall } from '@/lib/pwa';
 import { LOCALES, setLocale, t, useLocale, type Locale } from '../i18n';
 import { DISPLAY_CURRENCIES, setCurrency, useDisplayCurrency, type DisplayCurrency } from '@/lib/prefs';
-import { CATEGORY_META, CATEGORY_ORDER } from '@/lib/catalog';
+import { CATEGORY_META, useCategoryOrder } from '@/lib/catalog';
 
-const columns = (): Array<[string, Array<[string, string]>]> => [
-  [t('footer.buy'), CATEGORY_ORDER.slice(0, 6).map((slug) => [CATEGORY_META[slug]!.label, `/market?category=${slug}`])],
+const columns = (categoryOrder: string[]): Array<[string, Array<[string, string]>]> => [
+  [t('footer.buy'), categoryOrder.slice(0, 6).map((slug) => [CATEGORY_META[slug]!.label, `/market?category=${slug}`])],
   [t('footer.sell'), [[t('footer.openShop'), '/sell'], [t('footer.buyerRequests'), '/requests'], [t('footer.money'), '/sell/money'], [t('footer.fees'), '/#fees'], [t('footer.api'), '/developers']]],
   [t('footer.protection'), [[t('footer.escrow'), '/help/how-escrow-works'], [t('footer.dispute'), '/help/open-a-dispute'], [t('footer.insurance'), '/help/account-insurance'], [t('footer.orders'), '/orders']]],
   [t('footer.account'), [[t('nav.signIn'), '/login'], [t('footer.settings'), '/account'], [t('footer.notifications'), '/account#notifications'], [t('footer.watchlist'), '/watchlist'], [t('footer.games'), '/games']]],
@@ -52,6 +52,7 @@ function FooterPrefs() {
 }
 
 export function SiteFooter() {
+  const categoryOrder = useCategoryOrder();
   return (
     <footer className="site-footer">
       <div className="shell">
@@ -64,7 +65,7 @@ export function SiteFooter() {
             <FooterPrefs />
             <InstallApp />
           </div>
-          {columns().map(([title, links]) => (
+          {columns(categoryOrder).map(([title, links]) => (
             <div key={title}>
               <div className="eyebrow">{title}</div>
               <ul className="m-0 list-none space-y-2 p-0">

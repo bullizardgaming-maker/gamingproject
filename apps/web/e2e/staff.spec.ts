@@ -47,6 +47,7 @@ test.describe('staff operations', () => {
       ['Seller debts', 'RiftTrader'],
       ['Fraud model', 'Model 3f9a1c0e7b21'],
       ['Staff', 'Finley'],
+      ['Seller ranks', 'Launch promo for new sellers'],
       ['Support', 'Needs reply'],
     ] as const) {
       await page.getByRole('tab', { name: tab }).click();

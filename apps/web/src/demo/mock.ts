@@ -6,13 +6,13 @@
  * and identity verification. Nothing here talks to a server.
  */
 import { CATEGORIES, DEMO_CODE, seed, type DemoState, type DemoUser } from './seed';
-import { CATEGORY_DEFAULTS, GAME_SETS, attributesFor, cleanAttributes } from '../../../api/src/domain/attributeSets';
+import { CATEGORY_DEFAULTS, GAME_SETS, LEAGUES, PERMANENT_LEAGUES, attributesFor, cleanAttributes, handoverFieldFor, handoverKey, setLeagues } from '../../../api/src/domain/attributeSets';
 import { checkTiers, effectivePrice, unitPriceFor } from '../../../api/src/domain/priceTiers';
 import { detectOffPlatform, matchTerms } from '../../../api/src/domain/safety';
 import { parseCsv } from '../../../api/src/domain/csv';
 import { platformForGame } from '../../../api/src/domain/platforms';
 
-const KEY = 'bz.demo.v19';
+const KEY = 'bz.demo.v26';
 const day = 86_400_000;
 const now = () => new Date().toISOString();
 const rid = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2) + Date.now().toString(16));
@@ -68,26 +68,34 @@ const fail = (status: number, code: string, message: string): never => {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-const TIERS = [
-  { name: 'Normal', minMonthlySalesCents: 0, accountRateBps: 1299, otherRateBps: 999 },
-  { name: 'Common', minMonthlySalesCents: 300_00, accountRateBps: 1199, otherRateBps: 899 },
-  { name: 'Uncommon', minMonthlySalesCents: 1_000_00, accountRateBps: 1099, otherRateBps: 799 },
-  { name: 'Rare', minMonthlySalesCents: 5_000_00, accountRateBps: 999, otherRateBps: 699 },
-  { name: 'Epic', minMonthlySalesCents: 10_000_00, accountRateBps: 899, otherRateBps: 599 },
-  { name: 'Legendary', minMonthlySalesCents: 20_000_00, accountRateBps: 799, otherRateBps: 499 },
+/** Seller ranks (staff-editable in the real API): the commission rate by 30-day sales. */
+const RANKS = [
+  { position: 1, name: 'Hatchling', minMonthlySalesCents: 0, rateBps: 1399, perks: [] as string[] },
+  { position: 2, name: 'Scale', minMonthlySalesCents: 500_00, rateBps: 1299, perks: [] as string[] },
+  { position: 3, name: 'Fang', minMonthlySalesCents: 2_000_00, rateBps: 1199, perks: [] as string[] },
+  { position: 4, name: 'Basilisk', minMonthlySalesCents: 5_000_00, rateBps: 1099, perks: [] as string[] },
+  { position: 5, name: 'Dragon', minMonthlySalesCents: 15_000_00, rateBps: 999, perks: [] as string[] },
 ];
-const FLAT = new Set(['gift-cards', 'top-ups', 'video-games']);
+const PROMO = { promoRateBps: 500, promoDays: 60 };
+const asTier = (r: (typeof RANKS)[number]) => ({ ...r, accountRateBps: r.rateBps, otherRateBps: r.rateBps });
 
 function tierOf(sellerId: string) {
   const sales = state.monthlySales[sellerId] ?? 0;
   let i = 0;
-  TIERS.forEach((t, k) => sales >= t.minMonthlySalesCents && (i = k));
-  return { tier: TIERS[i]!, next: TIERS[i + 1] ?? null, sales };
+  RANKS.forEach((t, k) => sales >= t.minMonthlySalesCents && (i = k));
+  const rank = RANKS[i]!;
+  const next = RANKS[i + 1] ?? null;
+  const since = userById(sellerId)?.seller_since;
+  const promoEnds = since ? Date.parse(since) + PROMO.promoDays * day : null;
+  const promo = !!promoEnds && promoEnds > Date.now();
+  const rateBps = promo ? Math.min(PROMO.promoRateBps, rank.rateBps) : rank.rateBps;
+  return { tier: asTier(rank), rank, rateBps, promo: promo ? { rateBps: PROMO.promoRateBps, endsAt: new Date(promoEnds!).toISOString() } : null, next: next ? { tier: asTier(next), rank: next, remainingCents: next.minMonthlySalesCents - sales } : null, sales };
 }
+/** Buyer price: the seller's price with their commission grossed up on top (ceil, so the seller never gets less). */
+const grossUp = (cents: number, rateBps: number) => Math.ceil((cents * 10_000) / (10_000 - rateBps));
+const gross = (sellerId: string, cents: number) => grossUp(cents, tierOf(sellerId).rateBps);
 function rateFor(offer: any) {
-  if (FLAT.has(offer.category_slug)) return 499;
-  const t = tierOf(offer.seller_id).tier;
-  return offer.category_kind === 'account' ? t.accountRateBps : t.otherRateBps;
+  return tierOf(offer.seller_id).rateBps;
 }
 
 const userById = (id: string) => state.users.find((u) => u.id === id);
@@ -138,10 +146,17 @@ function offerView(o: any) {
   const s = sellerStats(o.seller_id);
   const pr = presenceOf(o.seller_id);
   const price = effectivePrice(o);
+  const rate = tierOf(o.seller_id).rateBps;
   return {
     ...o,
-    price_cents: price,
-    regular_price_cents: o.price_cents,
+    price_cents: grossUp(price, rate),
+    regular_price_cents: grossUp(o.price_cents, rate),
+    seller_price_cents: price,
+    seller_rate_bps: rate,
+    price_tiers: (o.price_tiers ?? []).map((t: any) => ({ ...t, priceCents: grossUp(t.priceCents, rate) })),
+    seller_price_tiers: o.price_tiers ?? [],
+    seller_founding: !!userById(o.seller_id)?.founding,
+    featured: !!o.featured_until && Date.parse(o.featured_until) > Date.now(),
     sale_ends_at: price < o.price_cents ? o.sale_ends_at : null,
     seller_online: pr.online,
     seller_trust_level: state.trust[o.seller_id] ?? 'new',
@@ -151,7 +166,7 @@ function offerView(o: any) {
     is_bundle: !!o.bundle?.length,
     bundle: o.bundle?.map((b: any) => {
       const f = state.offers.find((x) => x.id === b.offer_id);
-      return { offer_id: b.offer_id, quantity: b.quantity, title: f?.title, game: f?.game, currency: f?.currency, price_cents: f ? effectivePrice(f) : 0 };
+      return { offer_id: b.offer_id, quantity: b.quantity, title: f?.title, game: f?.game, currency: f?.currency, price_cents: f ? gross(f.seller_id, effectivePrice(f)) : 0 };
     }),
     seller_name: userById(o.seller_id)?.display_name ?? 'Seller',
     high_risk_secondary: o.category_kind === 'account' && o.owner_proof_status !== 'verified',
@@ -206,9 +221,16 @@ const CHECKLIST = [
   ['security_q', 'Changed security questions / recovery codes'],
 ] as const;
 
+const REF_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const newOrderRef = () => 'order#' + Array.from({ length: 7 }, () => REF_ALPHABET[Math.floor(Math.random() * REF_ALPHABET.length)]).join('');
+/** The official order message (server-only kind): posted at creation and on each status change. */
+function postOrderCard(o: any, status: string) {
+  live(appendMessage(o.room_id, null, 'system_order', JSON.stringify({ order_id: o.id, ref: o.ref, title: o.offer_title, quantity: o.quantity, character_name: o.character_name ?? null, status })));
+}
 function transition(o: any, to: string, reason: string) {
   o.events.push({ from_status: o.status, to_status: to, reason, created_at: now() });
   o.status = to;
+  postOrderCard(o, to);
 }
 
 function deliverOrder(o: any, payload?: string) {
@@ -242,9 +264,19 @@ function releaseOrder(o: any, reason: string) {
     sold.linked_account_id = null;
   }
   state.balances[o.seller_id] = (state.balances[o.seller_id] ?? 0) + o.seller_net_cents;
-  state.monthlySales[o.seller_id] = (state.monthlySales[o.seller_id] ?? 0) + o.amount_cents;
+  state.monthlySales[o.seller_id] = (state.monthlySales[o.seller_id] ?? 0) + o.seller_net_cents;
   state.platform.escrow -= o.amount_cents;
   state.platform.treasury += o.amount_cents - o.seller_net_cents;
+  // A creator's share of the commission, when the buyer came through their code.
+  const aff = state.affiliateOf[o.buyer_id] ? state.affiliates.find((a) => a.id === state.affiliateOf[o.buyer_id] && a.status === 'active') : null;
+  if (aff && !state.affiliateEarnings.some((e) => e.order_id === o.id)) {
+    const earned = Math.floor(((o.amount_cents - o.seller_net_cents) * aff.rate_bps) / 10_000);
+    if (earned > 0) {
+      state.affiliateEarnings.push({ id: rid(), affiliate_id: aff.id, order_id: o.id, commission_cents: o.amount_cents - o.seller_net_cents, earned_cents: earned, currency: 'USD', created_at: now() });
+      state.balances[aff.user_id] = (state.balances[aff.user_id] ?? 0) + earned;
+      state.platform.treasury -= earned;
+    }
+  }
   notify(o.seller_id, 'selling', 'order.released', 'Payment released', `$${(o.seller_net_cents / 100).toFixed(2)} from “${o.offer_title}” was added to your balance.`, '/sell/money');
   live(appendMessage(o.room_id, null, 'system', `Order completed. $${(o.seller_net_cents / 100).toFixed(2)} released to the seller (fee ${(o.commission_bps / 100).toFixed(2)}%).`));
 }
@@ -306,6 +338,9 @@ function orderDetail(o: any, viewer?: DemoUser) {
     warranty_claims: state.warrantyClaims.filter((c) => c.order_id === o.id).sort((a, b) => b.created_at.localeCompare(a.created_at)),
     progress: state.progress.filter((p) => p.order_id === o.id),
     crypto_refund: refundOf(o.id),
+    delivery_proof: o.delivery_proof_id ? (() => { const a = state.attachments.find((x) => x.id === o.delivery_proof_id); return a ? { id: a.id, mime: a.mime, original_name: a.original_name, created_at: a.created_at } : null; })() : null,
+    handover_field: handoverFieldFor(o.game, state.offers.find((f) => f.id === o.offer_id)?.category_slug ?? ''),
+    proof_required: PROOF_KINDS.has(o.category_kind) && o.delivery_mode === 'manual',
     buyer_reputation: sellerView ? buyerRepOf(o.buyer_id) : null,
     buyer_rating: sellerView && rating ? { positive: rating.positive, tags: rating.tags, created_at: rating.created_at } : null,
   };
@@ -341,17 +376,29 @@ function seedOrdersFor(buyer: DemoUser) {
   save();
 }
 
+/** Games that deliver in-game need the buyer's character name (or UID), confirmed at checkout. */
+function characterFor(u: DemoUser, offer: any, given: unknown) {
+  const field = handoverFieldFor(offer.game, offer.category_slug);
+  const name = String(given ?? '').trim().slice(0, 60);
+  if (field && !name) fail(400, 'character_name_required', `${field.label} is required for ${offer.game}`);
+  return field ? name : null;
+}
+function rememberCharacter(u: DemoUser, offer: any, o: any, name: string) {
+  o.character_name = name;
+  u.handover_names = { ...(u.handover_names ?? {}), [handoverKey(offer.game)]: name };
+}
 function createOrderRecord(buyer: DemoUser, offer: any, quantity: number, rail: 'fiat' | 'crypto', sellerDiscount = 0) {
-  const amount = unitPriceFor({ price_cents: effectivePrice(offer), price_tiers: offer.price_tiers }, quantity) * quantity - sellerDiscount;
+  const sellerAmount = unitPriceFor({ price_cents: effectivePrice(offer), price_tiers: offer.price_tiers }, quantity) * quantity - sellerDiscount;
   // (a cart sets checkout_id on the orders it creates)
   const bps = rateFor(offer);
-  const commission = Math.round((amount * bps) / 10_000);
+  const amount = grossUp(sellerAmount, bps);
+  const commission = amount - sellerAmount;
   const isAccount = offer.category_kind === 'account';
   const id = rid();
   const room = { id: rid(), order_id: id, offer_id: offer.id, buyer_id: buyer.id, seller_id: offer.seller_id, last_seq: 0 };
   state.rooms.push(room);
   const o: any = {
-    id, buyer_id: buyer.id, seller_id: offer.seller_id, offer_id: offer.id, offer_title: offer.title, game: offer.game,
+    id, ref: newOrderRef(), buyer_id: buyer.id, seller_id: offer.seller_id, offer_id: offer.id, offer_title: offer.title, game: offer.game,
     category_kind: offer.category_kind, delivery_mode: offer.delivery_mode, quantity, amount_cents: amount, currency: 'USD',
     commission_bps: bps, seller_net_cents: amount - commission, seller_tier: tierOf(offer.seller_id).tier.name, rail,
     status: 'awaiting_payment', protection: isAccount ? 'insurance_14d' : 'until_confirmed', protection_ends_at: null, delivered_at: null,
@@ -363,6 +410,7 @@ function createOrderRecord(buyer: DemoUser, offer: any, quantity: number, rail: 
     warranty_days: rail === 'fiat' ? offer.warranty_days ?? 0 : 0, warranty_ends_at: null,
   };
   state.orders.push(o);
+  postOrderCard(o, 'awaiting_payment');
   if (offer.delivery_mode === 'manual') offer.stock -= quantity;
   appendMessage(room.id, null, 'system', `Order placed for "${offer.title}". Keep every message about this trade here: it's the record an arbiter reads if anything goes wrong.`);
   return o;
@@ -498,7 +546,23 @@ route('GET', '/me/export', ({ me }) => {
 route('POST', '/me/delete', () => fail(409, 'demo', 'Demo accounts can’t be deleted. Use “Reset demo” in the banner instead.'));
 
 // --- Catalog ---------------------------------------------------------------------------
-route('GET', '/categories', () => CATEGORIES);
+// The demo previews every phase: all categories are open (production starts at phase 1).
+const PHASE_OF: Record<string, number> = { accounts: 2, boosting: 2, keys: 3, 'gift-cards': 3, 'video-games': 3 };
+route('GET', '/categories', () => CATEGORIES.map((c) => ({ ...c, phase: PHASE_OF[c.slug] ?? 1, open: (PHASE_OF[c.slug] ?? 1) <= state.launchPhase, current_phase: state.launchPhase })));
+route('GET', '/admin/launch', ({ me }) => (needPerm(me, 'ranks.manage'), { phase: state.launchPhase, foundingUntil: state.launch.foundingUntil, foundingFeaturedSlots: state.launch.featuredSlots, featuredDays: state.launch.featuredDays, categories: CATEGORIES.map((c) => ({ slug: c.slug, name: c.name, phase: PHASE_OF[c.slug] ?? 1 })) }));
+route('PUT', '/admin/launch', ({ me, body }) => {
+  needPerm(me, 'ranks.manage');
+  if (body.phase != null) {
+    const phase = Number(body.phase);
+    if (!(phase >= 1 && phase <= 3)) fail(400, 'validation_error', 'phase is 1, 2 or 3');
+    state.launchPhase = phase;
+  }
+  if (body.foundingUntil) state.launch.foundingUntil = body.foundingUntil;
+  if (body.foundingFeaturedSlots != null) state.launch.featuredSlots = Number(body.foundingFeaturedSlots);
+  if (body.featuredDays != null) state.launch.featuredDays = Number(body.featuredDays);
+  save();
+  return { phase: state.launchPhase, foundingUntil: state.launch.foundingUntil, foundingFeaturedSlots: state.launch.featuredSlots, featuredDays: state.launch.featuredDays };
+});
 route('GET', '/offers', ({ query }) => {
   const q = (query.get('q') ?? '').toLowerCase().trim();
   let items = state.offers.filter(listed).map(offerView);
@@ -539,15 +603,197 @@ route('GET', '/offers', ({ query }) => {
     best_selling: (a, b) => b.seller_completed_orders - a.seller_completed_orders,
     trust: (a, b) => TRUST_ORDER.indexOf(a.seller_trust_level) - TRUST_ORDER.indexOf(b.seller_trust_level) || (b.seller_rating ?? 0) - (a.seller_rating ?? 0),
   };
-  if (by[sort]) items.sort(by[sort]);
+  if (by[sort]) items.sort((a, b) => Number(b.featured) - Number(a.featured) || by[sort]!(a, b)); // featured spots lead every ordering
   const page = Math.max(1, Number(query.get('page') ?? 1));
   const pageSize = Number(query.get('pageSize') ?? 12);
   return { items: items.slice((page - 1) * pageSize, page * pageSize), total: items.length, page, pageSize, hasMore: page * pageSize < items.length, facets };
 });
+/** Open challenge leagues become sell-form choices (the shared attribute sets read them live). */
+function syncLeagues() {
+  for (const game of ['path of exile', 'path of exile 2']) {
+    setLeagues(game, state.leagues.filter((l) => l.game === game && (!l.ends_at || Date.parse(l.ends_at) > Date.now())).map((l) => l.name));
+  }
+}
+syncLeagues();
 route('GET', '/catalog/attributes', ({ query }) => {
   const game = query.get('game');
   const category = query.get('category');
-  return game && category ? { game, category, fields: attributesFor(game, category) } : { defaults: CATEGORY_DEFAULTS, games: GAME_SETS };
+  return game && category ? { game, category, fields: attributesFor(game, category), handover: handoverFieldFor(game, category) } : { defaults: CATEGORY_DEFAULTS, games: GAME_SETS, leagues: LEAGUES };
+});
+route('GET', '/leagues', () => (syncLeagues(), { open: LEAGUES, leagues: state.leagues }));
+route('GET', '/texts/:key', ({ params }) => state.texts[params[0]!] ?? fail(404, 'not_found', 'Text not found'));
+route('PUT', '/admin/texts/:key', ({ me, params, body }) => {
+  needPerm(me, 'support.manage');
+  const key = params[0]!;
+  if (!state.texts[key]) fail(404, 'not_found', 'Text not found');
+  const text = String(body.body ?? '').trim();
+  if (text.length < 10) fail(400, 'validation_error', 'Write at least a sentence');
+  if (body.linkHref && !String(body.linkHref).startsWith('/')) fail(400, 'validation_error', 'Links point inside Bullizard');
+  Object.assign(state.texts[key]!, { body: text, link_label: body.linkLabel ?? '', link_href: body.linkHref ?? '', updated_at: now() });
+  save();
+  return state.texts[key];
+});
+
+// --- Founding Sellers: badge + free featured spots during the launch -----------------------------
+const foundingOf = (u: DemoUser) => {
+  const windowOpen = Date.parse(state.launch.foundingUntil) > Date.now();
+  const used = state.offers.filter((o) => o.seller_id === u.id && o.featured_until && Date.parse(o.featured_until) > Date.now()).length;
+  return { founding: !!u.founding, foundingUntil: state.launch.foundingUntil, windowOpen, featuredSlots: u.founding && windowOpen ? state.launch.featuredSlots : 0, featuredUsed: used, featuredDays: state.launch.featuredDays };
+};
+route('POST', '/offers/:id/feature', ({ me, params }) => {
+  const u = needSeller(me);
+  const st = foundingOf(u);
+  if (!st.founding) fail(400, 'not_founding', 'Featured spots are free for Founding Sellers during the launch; paid spots come later');
+  if (!st.windowOpen) fail(400, 'promo_over', 'The launch promo has ended, so free featured spots are closed');
+  const o = state.offers.find((x) => x.id === params[0] && x.seller_id === u.id && x.status === 'active') ?? fail(400, 'invalid_offer', 'Feature one of your active listings');
+  const live = o.featured_until && Date.parse(o.featured_until) > Date.now();
+  if (!live && st.featuredUsed >= st.featuredSlots) fail(400, 'no_slots', `You can feature ${st.featuredSlots} listings at a time; unfeature one first`);
+  o.featured_until = new Date(Date.now() + st.featuredDays * day).toISOString();
+  o.version++;
+  save();
+  return foundingOf(u);
+});
+route('DELETE', '/offers/:id/feature', ({ me, params }) => {
+  const u = needSeller(me);
+  const o = state.offers.find((x) => x.id === params[0] && x.seller_id === u.id);
+  if (o) (o.featured_until = null), o.version++;
+  save();
+  return foundingOf(u);
+});
+
+// --- Game voting -------------------------------------------------------------------------------
+const voteView = (s: any, viewer?: string) => ({ id: s.id, name: s.name, votes: s.votes, status: s.status, staff_note: s.staff_note, created_at: s.created_at, voted: !!viewer && s.voters.includes(viewer) });
+const voteOrder = (a: any, b: any) => ['planned', 'open', 'added', 'declined'].indexOf(a.status) - ['planned', 'open', 'added', 'declined'].indexOf(b.status) || b.votes - a.votes || a.created_at.localeCompare(b.created_at);
+route('GET', '/games/votes', ({ me, query }) => state.gameVotes.filter((s) => !query.get('status') || s.status === query.get('status')).sort(voteOrder).map((s) => voteView(s, me?.id)));
+route('POST', '/games/votes', ({ me, body }) => {
+  const u = need(me);
+  const name = String(body.name ?? '').trim().replace(/\s+/g, ' ');
+  if (name.length < 2 || name.length > 80) fail(400, 'invalid_name', 'Give the game’s name (2 to 80 characters)');
+  if (state.offers.some((o) => listed(o) && o.game.toLowerCase() === name.toLowerCase())) fail(400, 'already_listed', `${name} is already on the market`);
+  if (state.gameVotes.filter((s) => s.suggested_by === u.id && Date.parse(s.created_at) > Date.now() - day).length >= 3) fail(429, 'too_many_suggestions', 'You can suggest three games a day');
+  let s = state.gameVotes.find((x) => x.name.toLowerCase() === name.toLowerCase());
+  if (!s) {
+    s = { id: rid(), name, votes: 0, status: 'open', staff_note: '', suggested_by: u.id, voters: [] as string[], created_at: now() };
+    state.gameVotes.push(s);
+  }
+  if (!s.voters.includes(u.id)) (s.voters.push(u.id), s.votes++);
+  save();
+  return voteView(s, u.id);
+});
+route('POST', '/games/votes/:id/vote', ({ me, params, body }) => {
+  const u = need(me);
+  const s = state.gameVotes.find((x) => x.id === params[0]) ?? fail(404, 'not_found', 'Suggestion not found');
+  const on = body.on !== false;
+  if (on && !s.voters.includes(u.id)) (s.voters.push(u.id), s.votes++);
+  if (!on && s.voters.includes(u.id)) (s.voters.splice(s.voters.indexOf(u.id), 1), s.votes--);
+  save();
+  return { id: s.id, name: s.name, votes: s.votes, status: s.status };
+});
+route('PATCH', '/admin/games/votes/:id', ({ me, params, body }) => {
+  needPerm(me, 'moderation.manage');
+  const s = state.gameVotes.find((x) => x.id === params[0]) ?? fail(404, 'not_found', 'Suggestion not found');
+  Object.assign(s, { status: body.status, staff_note: body.note ?? '' });
+  save();
+  return voteView(s);
+});
+
+// --- Creator affiliate codes -------------------------------------------------------------------
+const affiliateView = (a: any) => {
+  const earned = state.affiliateEarnings.filter((e) => e.affiliate_id === a.id);
+  const u = userById(a.user_id);
+  return { ...a, display_name: u?.display_name, email: u?.email, buyers: Object.values(state.affiliateOf).filter((id) => id === a.id).length, orders: earned.length, earned_cents: earned.reduce((s, e) => s + e.earned_cents, 0) };
+};
+route('GET', '/admin/affiliates', ({ me }) => (needPerm(me, 'promos.manage'), state.affiliates.map(affiliateView)));
+route('POST', '/admin/affiliates', ({ me, body }) => {
+  needPerm(me, 'promos.manage');
+  const code = String(body.code ?? '').trim().toUpperCase();
+  if (!/^[A-Z0-9][A-Z0-9_-]{2,19}$/.test(code)) fail(400, 'invalid_code', 'Codes are 3 to 20 letters, digits, - or _');
+  if (!userById(body.userId)) fail(404, 'not_found', 'User not found');
+  if (state.affiliates.some((a) => a.code === code)) fail(409, 'code_taken', 'That code is already in use');
+  if (state.affiliates.some((a) => a.user_id === body.userId)) fail(409, 'already_affiliate', 'This user already has a code');
+  const a = { id: rid(), user_id: body.userId, code, rate_bps: Number(body.rateBps), status: 'active', note: String(body.note ?? ''), created_at: now() };
+  state.affiliates.push(a);
+  save();
+  return affiliateView(a);
+});
+route('PATCH', '/admin/affiliates/:id', ({ me, params, body }) => {
+  needPerm(me, 'promos.manage');
+  const a = state.affiliates.find((x) => x.id === params[0]) ?? fail(404, 'not_found', 'Affiliate not found');
+  Object.assign(a, { rate_bps: body.rateBps ?? a.rate_bps, status: body.status ?? a.status, note: body.note ?? a.note });
+  save();
+  return affiliateView(a);
+});
+route('GET', '/me/affiliate', ({ me }) => {
+  const u = need(me);
+  const a = state.affiliates.find((x) => x.user_id === u.id);
+  if (!a) return null;
+  const earned = state.affiliateEarnings.filter((e) => e.affiliate_id === a.id);
+  const month = new Date();
+  month.setUTCDate(1);
+  month.setUTCHours(0, 0, 0, 0);
+  return { ...affiliateView(a), earned_month_cents: earned.filter((e) => Date.parse(e.created_at) >= month.getTime()).reduce((s, e) => s + e.earned_cents, 0), recent: earned.slice(-50).reverse() };
+});
+route('POST', '/me/affiliate', ({ me, body }) => {
+  const u = need(me);
+  const a = state.affiliates.find((x) => x.code === String(body.code ?? '').trim().toUpperCase() && x.status === 'active') ?? fail(400, 'invalid_affiliate_code', 'That creator code is not valid');
+  if (a.user_id === u.id) fail(400, 'own_code', 'You cannot use your own code');
+  if (state.affiliateOf[u.id]) fail(409, 'already_attributed', 'A creator code is already on this account');
+  state.affiliateOf[u.id] = a.id;
+  save();
+  return { affiliateId: a.id };
+});
+route('GET', '/admin/leagues', ({ me }) => (needPerm(me, 'leagues.manage'), { leagues: state.leagues, games: ['path of exile', 'path of exile 2'], inactiveSellerDays: 14 }));
+route('POST', '/admin/leagues', ({ me, body }) => {
+  needPerm(me, 'leagues.manage');
+  const game = String(body.game ?? '').trim().toLowerCase();
+  const name = String(body.name ?? '').trim();
+  if (!['path of exile', 'path of exile 2'].includes(game)) fail(400, 'invalid_game', 'Leagues exist for path of exile and path of exile 2');
+  if ((PERMANENT_LEAGUES as readonly string[]).some((p) => p.toLowerCase() === name.toLowerCase())) fail(400, 'invalid_league', `${name} is a permanent league`);
+  if (state.leagues.some((l) => l.game === game && l.name.toLowerCase() === name.toLowerCase())) fail(409, 'league_exists', 'That league is already listed');
+  const l = { id: rid(), game, name, starts_at: body.startsAt ?? now(), ends_at: body.endsAt ?? null, created_at: now(), updated_at: now() };
+  state.leagues.push(l);
+  syncLeagues();
+  save();
+  return l;
+});
+route('PATCH', '/admin/leagues/:id', ({ me, params, body }) => {
+  needPerm(me, 'leagues.manage');
+  const l = state.leagues.find((x) => x.id === params[0]) ?? fail(404, 'not_found', 'League not found');
+  if ('endsAt' in body) l.ends_at = body.endsAt ?? null;
+  if ('startsAt' in body) l.starts_at = body.startsAt ?? null;
+  l.updated_at = now();
+  syncLeagues();
+  save();
+  return l;
+});
+/** Listings in an ended league whose seller has not been seen for two weeks expire. */
+function expireLeagueListings() {
+  let n = 0;
+  for (const l of state.leagues.filter((x) => x.ends_at && Date.parse(x.ends_at) <= Date.now())) {
+    for (const o of state.offers.filter((f) => f.status === 'active' && f.game.toLowerCase() === l.game && f.attributes?.league === l.name)) {
+      const seen = state.presence[o.seller_id]?.last_seen_at ? Date.parse(state.presence[o.seller_id]!.last_seen_at) : Date.parse(userById(o.seller_id)?.created_at ?? now());
+      if (seen > Date.now() - 14 * day) continue;
+      o.status = 'expired';
+      o.expired_reason = `league_ended:${l.name}`;
+      o.version++;
+      notify(o.seller_id, 'selling', 'listing_expired_league', `${l.name} has ended: “${o.title}” is no longer listed`, 'Move it to an open league from your seller hub to list it again.', '/sell');
+      n++;
+    }
+  }
+  save();
+  return n;
+}
+route('POST', '/admin/leagues/expire', ({ me }) => (needPerm(me, 'leagues.manage'), { expired: expireLeagueListings() }));
+route('POST', '/offers/:id/relist', ({ me, params, body }) => {
+  const u = needSeller(me);
+  const o = state.offers.find((x) => x.id === params[0] && x.seller_id === u.id && x.status === 'expired') ?? fail(404, 'not_found', 'Offer not found');
+  syncLeagues();
+  const open = LEAGUES[o.game.toLowerCase()] ?? [];
+  const match = open.find((x) => x.toLowerCase() === String(body.league ?? '').trim().toLowerCase()) ?? fail(400, 'invalid_league', `Pick an open league: ${open.join(', ')}`);
+  Object.assign(o, { status: 'active', expired_reason: null, attributes: { ...o.attributes, league: match } });
+  o.version++;
+  save();
+  return offerView(o);
 });
 route('GET', '/catalog/games', () => {
   const live = state.offers.filter(listed).map(offerView).filter((o) => o.stock > 0);
@@ -585,7 +831,7 @@ route('GET', '/sellers/:id', ({ params, query }) => {
     });
   const before = state.reviewsBefore[u.id];
   return {
-    id: u.id, display_name: u.display_name, member_since: u.created_at, identity_verified: u.kyc_tier >= 2, completed_orders: s.completed,
+    id: u.id, display_name: u.display_name, member_since: u.created_at, identity_verified: u.kyc_tier >= 2, founding: !!u.founding, completed_orders: s.completed,
     active_listings: state.offers.filter((o) => o.seller_id === u.id && listed(o)).length,
     on_time_delivery_pct: before ? Math.min(100, 93 + (before.count % 7)) : null, shop_paused: false, shop_paused_until: null, shop_pause_message: null,
     ...presenceOf(u.id),
@@ -708,7 +954,9 @@ route('POST', '/orders', ({ me, body }) => {
   const available = availableOf(offer);
   if (available < qty) fail(409, 'out_of_stock', 'Not enough stock for this order');
   const code = body.sellerCode ? sellerCodeQuote(offer, u, qty, body.sellerCode) : null;
+  const characterName = characterFor(u, offer, body.characterName);
   const o = createOrderRecord(u, offer, qty, body.rail ?? 'fiat', code?.discount ?? 0);
+  if (characterName) rememberCharacter(u, offer, o, characterName);
   if (code) Object.assign(o, { seller_code_id: code.c.id, seller_discount_cents: code.discount });
   return { order: orderDetail(o), checkoutUrl: o.rail === 'fiat' ? `/orders/${o.id}?pay=crypto` : null };
 });
@@ -831,6 +1079,53 @@ route('DELETE', '/seller/payout-address', ({ me }) => {
 const WITHDRAWAL_FEE_BPS = 600;
 const WITHDRAWAL_FEE_MIN = 150;
 const feeFor = (cents: number) => Math.min(cents, Math.max(WITHDRAWAL_FEE_MIN, Math.ceil((cents * WITHDRAWAL_FEE_BPS) / 10_000)));
+route('GET', '/ranks', () => ({ ranks: RANKS, settings: PROMO }));
+route('GET', '/tiers', () => RANKS.map((r) => ({ ...asTier(r), rate: r.rateBps / 100, accountRate: r.rateBps / 100, otherRate: r.rateBps / 100, promo: PROMO })));
+route('GET', '/admin/ranks', ({ me }) => (needPerm(me, 'ranks.manage'), { ranks: RANKS, settings: PROMO }));
+route('PUT', '/admin/ranks', ({ me, body }) => {
+  needPerm(me, 'ranks.manage');
+  const ranks = [...(body.ranks ?? [])].sort((a: any, b: any) => a.position - b.position);
+  if (ranks.length !== 5 || ranks.some((r: any, i: number) => r.position !== i + 1)) fail(400, 'invalid_ranks', 'Send all five ranks, positions 1 to 5');
+  if (ranks[0].minMonthlySalesCents !== 0) fail(400, 'invalid_ranks', 'The first rank starts at 0');
+  for (let i = 1; i < ranks.length; i++) {
+    if (ranks[i].minMonthlySalesCents <= ranks[i - 1].minMonthlySalesCents) fail(400, 'invalid_ranks', 'Thresholds must increase with each rank');
+    if (ranks[i].rateBps > ranks[i - 1].rateBps) fail(400, 'invalid_ranks', 'Rates must not rise with rank');
+  }
+  ranks.forEach((r: any, i: number) => Object.assign(RANKS[i]!, { name: String(r.name).trim(), minMonthlySalesCents: Number(r.minMonthlySalesCents), rateBps: Number(r.rateBps), perks: r.perks ?? [] }));
+  if (body.settings) Object.assign(PROMO, { promoRateBps: body.settings.promoRateBps ?? PROMO.promoRateBps, promoDays: body.settings.promoDays ?? PROMO.promoDays });
+  return { ranks: RANKS, settings: PROMO };
+});
+/** Sell form preview: what buyers pay (in each currency) and what the seller keeps after the withdrawal fee. */
+route('GET', '/seller/price-preview', ({ me, query }) => {
+  const u = needSeller(me);
+  const sellerCents = Number(query.get('priceCents'));
+  if (!(sellerCents > 0)) fail(400, 'validation_error', 'priceCents must be positive');
+  const listingCurrency = (query.get('currency') ?? 'USD').toUpperCase();
+  const settlementCents = Math.round(sellerCents / (RATES[listingCurrency] ?? 1));
+  const t = tierOf(u.id);
+  const buyer = grossUp(settlementCents, t.rateBps);
+  const fee = feeFor(settlementCents);
+  const buyerIn = Object.fromEntries(Object.entries(RATES).map(([c, r]) => [c, Math.round(buyer * (c === 'USD' ? 1 : r * 1.01))]));
+  return { sellerCents, listingCurrency, settlementCurrency: 'USD', settlementCents, rateBps: t.rateBps, promo: t.promo, rank: t.rank.name, buyerCents: buyer, buyerIn, commissionCents: buyer - settlementCents, withdrawalFeeBps: WITHDRAWAL_FEE_BPS, withdrawalFeeCents: fee, afterWithdrawalCents: settlementCents - fee };
+});
+// Buyer credit (the demo seeds none; a kept underpayment would land here).
+route('GET', '/me/credit', ({ me }) => {
+  const u = need(me);
+  const cents = state.credit[u.id] ?? 0;
+  return { currency: 'USD', balanceCents: cents, availableCents: cents, history: [] };
+});
+route('POST', '/me/credit/withdraw', ({ me, body }) => {
+  const u = need(me);
+  const amount = Number(body.amountCents);
+  if (!u.payout_address) fail(400, 'no_payout_address', 'Add and confirm a payout address first');
+  if (!(amount > 0) || amount > (state.credit[u.id] ?? 0)) fail(400, 'insufficient_funds', `Available credit is ${state.credit[u.id] ?? 0} cents`);
+  const fee = feeFor(amount);
+  state.credit[u.id] = (state.credit[u.id] ?? 0) - amount;
+  const w = { id: rid(), user_id: u.id, amount_cents: amount, currency: 'USD', status: 'pending_approval', fee_cents: fee, net_cents: amount - fee, destination_address: u.payout_address, destination_currency: u.payout_address_currency, source: 'credit', created_at: now(), updated_at: now() };
+  state.withdrawals.unshift(w);
+  save();
+  return w;
+});
 route('GET', '/seller/withdrawals/quote', ({ query }) => {
   const amountCents = Number(query.get('amountCents'));
   if (!(amountCents > 0)) fail(400, 'validation_error', 'amountCents must be positive');
@@ -924,8 +1219,9 @@ route('POST', '/orders/quote', ({ me, body }) => {
   const qty = Number(body.quantity ?? 1);
   const code = body.sellerCode ? sellerCodeQuote(offer, u, qty, body.sellerCode) : null;
   const subtotal = unitPriceFor({ price_cents: effectivePrice(offer), price_tiers: offer.price_tiers }, qty) * qty;
-  const amount = subtotal - (code?.discount ?? 0);
-  return { listingCurrency: offer.currency, amountCents: amount, chargedCents: amount, sellerDiscountCents: code?.discount ?? 0, discountCents: 0, creditCents: 0, presentmentCurrency: offer.currency, presentmentAmountCents: amount };
+  const sellerAmount = subtotal - (code?.discount ?? 0);
+  const amount = gross(offer.seller_id, sellerAmount);
+  return { listingCurrency: offer.currency, amountCents: amount, sellerAmountCents: sellerAmount, commissionBps: rateFor(offer), chargedCents: amount, sellerDiscountCents: code?.discount ?? 0, discountCents: 0, creditCents: 0, presentmentCurrency: offer.currency, presentmentAmountCents: amount };
 });
 const ownOffer = (me: DemoUser | null, id: string) => {
   const u = needSeller(me);
@@ -970,7 +1266,7 @@ route('PATCH', '/seller/codes/:id', ({ me, params, body }) => {
 route('POST', '/orders/cart', ({ me, body }) => {
   const u = need(me);
   if (u.kyc_tier < 1) fail(403, 'kyc_required', 'Verify your email and phone before purchasing');
-  const items: Array<{ offerId: string; quantity: number }> = body.items ?? [];
+  const items: Array<{ offerId: string; quantity: number; characterName?: string }> = body.items ?? [];
   if (!items.length || items.length > 20) fail(400, 'invalid_cart', 'A cart holds 1 to 20 listings');
   if (new Set(items.map((i) => i.offerId)).size !== items.length) fail(400, 'invalid_cart', 'Each listing can appear once; change its quantity instead');
   // Check everything first so a cart either fully goes through or not at all.
@@ -979,9 +1275,13 @@ route('POST', '/orders/cart', ({ me, body }) => {
     if (offer.seller_id === u.id) fail(403, 'own_offer', 'You cannot buy your own offer');
     const qty = Number(i.quantity ?? 1);
     if (availableOf(offer) < qty) fail(409, 'out_of_stock', `Not enough stock for "${offer.title}"`);
-    return { offer, qty };
+    return { offer, qty, characterName: characterFor(u, offer, (i as any).characterName) };
   });
-  const checkout = { id: `cart-${rid().slice(0, 8)}`, buyer_id: u.id, order_ids: lines.map(({ offer, qty }) => createOrderRecord(u, offer, qty, 'fiat').id), created_at: now() };
+  const checkout = { id: `cart-${rid().slice(0, 8)}`, buyer_id: u.id, order_ids: lines.map(({ offer, qty, characterName }) => {
+    const o = createOrderRecord(u, offer, qty, 'fiat');
+    if (characterName) rememberCharacter(u, offer, o, characterName);
+    return o.id;
+  }), created_at: now() };
   for (const id of checkout.order_ids) state.orders.find((o) => o.id === id)!.checkout_id = checkout.id;
   state.checkouts.push(checkout);
   return { ...checkoutView(checkout), checkoutUrl: `/checkouts/${checkout.id}/pay`, replayed: false };
@@ -1030,22 +1330,29 @@ route('POST', '/orders/:id/deliver', ({ me, params, body }) => {
   const o = orderFor(u, params[0]!);
   if (o.seller_id !== u.id) fail(403, 'not_seller', 'Only the seller can deliver this order');
   if (o.status !== 'paid') fail(409, 'invalid_state', `Cannot deliver an order that is ${o.status}`);
+  if (PROOF_KINDS.has(o.category_kind) && !body.proofAttachmentId) fail(400, 'proof_required', 'Attach a photo or video of the delivery (trade window, mail or confirmation) before marking it delivered');
+  if (body.proofAttachmentId) {
+    const att = state.attachments.find((a) => a.id === body.proofAttachmentId && a.room_id === o.room_id && a.uploader_id === u.id) ?? fail(400, 'invalid_proof', 'Upload the proof to this order’s chat first, then mark it delivered');
+    o.delivery_proof_id = att.id;
+  }
   deliverOrder(o, body.payload);
   notifyOrder(o.id);
   return orderDetail(o);
 });
+const PROOF_KINDS = new Set(['currency', 'item', 'topup', 'boosting']);
 // --- Boosting progress and chat screenshots ----------------------------------------------
 route('POST', '/chat/rooms/:id/attachments', ({ me, params, body }) => {
   const u = need(me);
   const room = state.rooms.find((x) => x.id === params[0]) ?? fail(404, 'not_found', 'Chat not found');
   if (room.buyer_id !== u.id && room.seller_id !== u.id) fail(403, 'not_participant', 'Only the buyer and seller can add evidence');
-  if (!/^image\/(png|jpeg|webp)$/.test(body.type ?? '')) fail(400, 'unsupported_file', 'Only PNG, JPEG and WebP images can be attached');
-  // The demo keeps images in this browser's storage, so they have to stay small.
-  if (body.size > 600_000) fail(413, 'file_too_large', 'In the demo, screenshots can be up to 600 KB');
-  const att = { id: rid(), room_id: room.id, uploader_id: u.id, data_url: body.dataUrl, mime: body.type, created_at: now() };
+  if (!/^(image\/(png|jpeg|webp)|video\/(mp4|webm))$/.test(body.type ?? '')) fail(400, 'unsupported_file', 'Only PNG, JPEG and WebP images or MP4/WebM videos can be attached');
+  // The demo keeps files in this browser's storage, so they have to stay small.
+  if (body.size > 600_000) fail(413, 'file_too_large', 'In the demo, proof files can be up to 600 KB');
+  const video = body.type.startsWith('video/');
+  const att = { id: rid(), room_id: room.id, uploader_id: u.id, data_url: body.dataUrl, mime: body.type, original_name: body.name ?? (video ? 'proof.mp4' : 'screenshot.png'), created_at: now() };
   state.attachments.push(att);
-  const m = appendMessage(room.id, u.id, 'attachment', '📎 screenshot');
-  return { id: att.id, mime: att.mime, created_at: att.created_at, seq: m.seq };
+  const m = appendMessage(room.id, u.id, 'attachment', video ? '🎬 video proof' : '📎 screenshot');
+  return { id: att.id, mime: att.mime, width: video ? null : 0, created_at: att.created_at, seq: m.seq };
 });
 route('POST', '/orders/:id/progress', ({ me, params, body }) => {
   const u = need(me);
@@ -1282,23 +1589,89 @@ route('POST', '/chat/rooms/:id/messages', ({ me, params, body }) => {
   const r = roomFor(u, params[0]!);
   const text = String(body.body ?? '').trim();
   if (!text) fail(400, 'validation_error', 'Write a message');
-  const reasons = detectOffPlatform(text);
+  const accountOrder = !!r.order_id && state.orders.find((o) => o.id === r.order_id)?.category_kind === 'account';
+  const reasons = detectOffPlatform(text, { allowEmail: accountOrder });
   const flagged = reasons.length > 0;
-  const m = appendMessage(r.id, u.id, 'text', text, reasons.map((x) => `offplatform:${x}`));
-  if (flagged) {
-    state.chatFlags.unshift({ id: rid(), room_id: r.id, seq: m.seq, user_id: u.id, reasons, status: 'open', note: null, created_at: now() });
-    live(appendMessage(r.id, null, 'warning', 'Contact details or outside payment apps were detected. Trades moved off the platform lose escrow protection, and repeated attempts suspend accounts.'));
+  if (flagged && u.role === 'user') {
+    // Not delivered: kept hidden for the staff queue; the action per offence is staff-set.
+    const seq = (state.messages.filter((m) => m.room_id === r.id).length || 0) + 1;
+    state.chatFlags.unshift({ id: rid(), room_id: r.id, seq, user_id: u.id, reasons, status: 'open', note: null, created_at: now(), attempted: text });
+    const strikes = state.chatFlags.filter((x) => x.user_id === u.id && x.status !== 'dismissed').length;
+    const action = state.offplatformActions[Math.min(strikes, state.offplatformActions.length) - 1] ?? 'warn';
+    if (action !== 'warn') {
+      u.status = 'suspended';
+      live(appendMessage(r.id, null, 'warning', `This account has been ${action === 'ban' ? 'banned' : 'suspended'} for trying to move the deal outside Bullizard. Do not continue this trade anywhere else; staff will review the case.`));
+    }
+    save();
+    fail(422, 'offplatform_blocked', 'Not sent. Sharing outside contacts can get your account banned right away.');
   }
+  const m = appendMessage(r.id, u.id, 'text', text, reasons.map((x) => `offplatform:${x}`));
   scheduleReply(r.id, u.id === r.buyer_id ? r.seller_id : r.buyer_id);
   return m;
 });
 
 // --- Selling ---------------------------------------------------------------------------
+/** Who may sell: Tier 1 plus a passed rules test; identity (Tier 2) within 30 days or selling pauses. */
 const needSeller = (me: DemoUser | null) => {
   const u = need(me);
-  if (u.kyc_tier < 2) fail(403, 'kyc_required', 'Tier 2 identity verification is required to sell');
+  if (u.kyc_tier < 1) fail(403, 'tier1_required', 'Verify your email and phone before selling');
+  if (!u.rules_passed_at) fail(403, 'rules_test_required', 'Pass the seller rules test before your first listing');
+  if (u.selling_restricted_at && u.kyc_tier < 2) fail(403, 'kyc_overdue', 'Verify your identity to keep selling: the 30-day deadline has passed');
   return u;
 };
+const onboardingOf = (u: DemoUser) => {
+  const idDueAt = u.seller_since && u.kyc_tier < 2 ? new Date(Date.parse(u.seller_since) + state.rulesSettings.idDueDays * day).toISOString() : null;
+  return { tier1: u.kyc_tier >= 1, rulesPassedAt: u.rules_passed_at ?? null, identityVerified: u.kyc_tier >= 2, sellerSince: u.seller_since ?? null, idDueAt, idDueDays: state.rulesSettings.idDueDays, sellingRestrictedAt: u.selling_restricted_at ?? null, canSell: u.kyc_tier >= 1 && !!u.rules_passed_at && !u.selling_restricted_at };
+};
+route('GET', '/seller/onboarding', ({ me }) => onboardingOf(need(me)));
+route('GET', '/seller/rules-test', ({ me }) => {
+  const u = need(me);
+  return { passMarkPct: state.rulesSettings.passMarkPct, passedAt: u.rules_passed_at ?? null, attempts: u.rules_attempts ?? 0, tier1: u.kyc_tier >= 1, questions: state.rulesQuestions.filter((q) => q.active).map(({ id, position, question, options }) => ({ id, position, question, options })) };
+});
+route('POST', '/seller/rules-test', ({ me, body }) => {
+  const u = need(me);
+  if (u.kyc_tier < 1) fail(403, 'tier1_required', 'Verify your email and phone before taking the rules test');
+  const qs = state.rulesQuestions.filter((q) => q.active);
+  const results = qs.map((q) => ({ id: q.id, correct: body.answers?.[q.id] === q.correct, explanation: body.answers?.[q.id] === q.correct ? null : q.explanation }));
+  const scorePct = Math.round((results.filter((r) => r.correct).length * 100) / qs.length);
+  const passed = scorePct >= state.rulesSettings.passMarkPct;
+  u.rules_attempts = (u.rules_attempts ?? 0) + 1;
+  if (passed && !u.rules_passed_at) u.rules_passed_at = now();
+  save();
+  return { passed, scorePct, passMarkPct: state.rulesSettings.passMarkPct, results };
+});
+route('GET', '/admin/rules-test', ({ me }) => (needPerm(me, 'rules.manage'), { questions: state.rulesQuestions, settings: state.rulesSettings }));
+route('PUT', '/admin/rules-test', ({ me, body }) => {
+  needPerm(me, 'rules.manage');
+  const keep = new Set<string>();
+  for (const q of body.questions ?? []) {
+    if (!Array.isArray(q.options) || q.options.length < 2 || q.options.length > 6) fail(400, 'invalid_question', 'Each question has 2 to 6 options');
+    if (q.correct < 0 || q.correct >= q.options.length) fail(400, 'invalid_question', 'The correct answer must be one of the options');
+    const cur = q.id ? state.rulesQuestions.find((x) => x.id === q.id) : null;
+    const row = { id: cur?.id ?? rid(), position: Number(q.position), question: String(q.question).trim(), options: q.options.map(String), correct: Number(q.correct), explanation: String(q.explanation ?? ''), active: q.active ?? true };
+    if (cur) Object.assign(cur, row);
+    else state.rulesQuestions.push(row);
+    keep.add(row.id);
+  }
+  for (const q of state.rulesQuestions) if (!keep.has(q.id)) q.active = false;
+  if (body.settings) Object.assign(state.rulesSettings, { passMarkPct: body.settings.passMarkPct ?? state.rulesSettings.passMarkPct, idDueDays: body.settings.idDueDays ?? state.rulesSettings.idDueDays });
+  save();
+  return { questions: state.rulesQuestions, settings: state.rulesSettings };
+});
+route('POST', '/admin/rules-test/enforce', ({ me }) => {
+  needPerm(me, 'rules.manage');
+  let restricted = 0;
+  for (const u of state.users) {
+    if (!u.seller_since || u.kyc_tier >= 2 || u.selling_restricted_at) continue;
+    if (Date.parse(u.seller_since) + state.rulesSettings.idDueDays * day > Date.now()) continue;
+    u.selling_restricted_at = now();
+    for (const o of state.offers.filter((f) => f.seller_id === u.id && f.status === 'active')) Object.assign(o, { status: 'paused', expired_reason: 'id_overdue' });
+    notify(u.id, 'selling', 'id_overdue', 'Your listings are paused until you verify your identity', 'Verify now and everything comes back automatically.', '/account');
+    restricted++;
+  }
+  save();
+  return { reminded: 0, restricted };
+});
 const TRUST_ORDER = ['top', 'trusted', 'rising', 'new'];
 const TRUST_REQ: Record<string, { completed: number; ageDays: number; onTimePct: number; disputePct: number; chargebackPct: number }> = {
   rising: { completed: 10, ageDays: 30, onTimePct: 85, disputePct: 5, chargebackPct: 1 },
@@ -1331,9 +1704,14 @@ route('GET', '/seller/dashboard', ({ me }) => {
   const mine = state.orders.filter((o) => o.seller_id === u.id);
   return {
     tier: t.tier,
+    rank: t.rank,
+    rateBps: t.rateBps,
+    promo: t.promo,
     monthlySalesCents: t.sales,
-    next: t.next ? { tier: t.next, remainingCents: t.next.minMonthlySalesCents - t.sales } : null,
-    tiers: TIERS,
+    next: t.next,
+    tiers: RANKS.map(asTier),
+    onboarding: onboardingOf(u),
+    founding: foundingOf(u),
     payoutCurrency: state.payoutCurrency[u.id] ?? 'USD',
     debts: state.debts.filter((d) => d.seller_id === u.id && !d.closed_at).map((d) => ({ id: d.id, currency: d.currency, owedCents: d.owed_cents, openedAt: d.opened_at, shopPausedAt: d.paused_at, pausesAt: d.paused_at ? null : new Date(Date.parse(d.opened_at) + 14 * day).toISOString() })),
     allBalances: [{ currency: 'USD', cents: state.balances[u.id] ?? 0 }],
@@ -1387,6 +1765,8 @@ route('POST', '/offers', ({ me, body }) => {
     stock: body.deliveryMode === 'manual' ? Number(body.stock ?? 1) : 0, inventory: [] as string[], status: reviewReasons.length ? 'review' : 'active', review_reasons: reviewReasons, owner_proof_status: 'none', version: 1, created_at: now(),
     attributes: attrs.ok ? attrs.value : {}, reserved_for: null, request_id: null, price_tiers: tiers.ok ? tiers.value : [], sale_price_cents: null, sale_starts_at: null, sale_ends_at: null,
     warranty_days: cat.kind === 'account' ? Number(body.warrantyDays ?? 0) : 0,
+    expired_reason: null as string | null,
+    featured_until: null as string | null,
     linked_account_id: null as string | null,
     min_buyer_reputation: (body.minBuyerReputation ?? null) as 'good' | null,
   };
@@ -1394,6 +1774,10 @@ route('POST', '/offers', ({ me, body }) => {
   if (body.linkedAccountId) {
     checkAttach(u, body.linkedAccountId, body.game, cat.kind);
     o.linked_account_id = body.linkedAccountId;
+  }
+  if (!u.seller_since) {
+    u.seller_since = now(); // the launch promo and the ID deadline count from here
+    u.founding = Date.parse(state.launch.foundingUntil) > Date.now();
   }
   state.offers.unshift(o);
   if (reviewReasons.length) notify(u.id, 'selling', 'listing_review', 'Your listing is being reviewed', 'It mentions something our rules ask us to check, so it’s hidden until a moderator looks at it.', '/sell');
@@ -1535,7 +1919,7 @@ function holdOf(sellerId: string) {
 route('GET', '/seller/payout-hold', ({ me }) => holdOf(needSeller(me).id));
 route('PUT', '/seller/payout-currency', ({ me, body }) => {
   const u = needSeller(me);
-  if (!['USD', 'EUR', 'GBP'].includes(body.currency)) fail(400, 'unsupported_currency', 'Choose USD, EUR or GBP');
+  if (!['USD', 'EUR', 'EGP'].includes(body.currency)) fail(400, 'unsupported_currency', 'Choose USD, EUR or EGP');
   state.payoutCurrency[u.id] = body.currency;
   return { payoutCurrency: body.currency };
 });
@@ -1611,7 +1995,7 @@ route('GET', '/admin/moderation/chats', ({ me, query }) => {
         ...f, user_name: u?.display_name ?? f.user_name ?? 'User', user_email: u?.email ?? f.user_email ?? '', offplatform_strikes: state.chatFlags.filter((x) => x.user_id === f.user_id && x.status !== 'dismissed').length,
         user_status: 'active', order_id: room?.order_id ?? null, offer_id: room?.offer_id, role: room?.seller_id === f.user_id ? 'seller' : 'buyer',
         confirmed_before: state.chatFlags.filter((x) => x.user_id === f.user_id && x.status === 'confirmed' && x.id !== f.id).length,
-        context: state.messages.filter((m) => m.room_id === f.room_id && m.seq <= f.seq && m.seq >= f.seq - 2).sort((a, b) => a.seq - b.seq).map((m) => ({ ...m, erased: false })),
+        context: [...state.messages.filter((m) => m.room_id === f.room_id && m.seq <= f.seq && m.seq >= f.seq - 2).sort((a, b) => a.seq - b.seq).map((m) => ({ ...m, erased: false })), ...(f.attempted ? [{ seq: f.seq, sender_id: f.user_id, kind: 'text', body: f.attempted, flags: ['blocked'], created_at: f.created_at, erased: false }] : [])],
       };
     });
 });
@@ -1620,6 +2004,15 @@ route('POST', '/admin/moderation/chats/:id', ({ me, params, body }) => {
   const f = state.chatFlags.find((x) => x.id === params[0] && x.status === 'open') ?? fail(404, 'not_found', 'Open flag not found');
   Object.assign(f, { status: body.confirm ? 'confirmed' : 'dismissed', note: body.note ?? null, reviewed_by: u.id });
   return { id: f.id, status: f.status, user_id: f.user_id };
+});
+route('GET', '/admin/moderation/offplatform-policy', ({ me }) => (needPerm(me, 'moderation.manage'), { actions: state.offplatformActions }));
+route('PUT', '/admin/moderation/offplatform-policy', ({ me, body }) => {
+  needPerm(me, 'moderation.manage');
+  const actions = (body.actions ?? []).map(String);
+  if (!actions.length || actions.length > 5 || actions.some((a: string) => !['warn', 'suspend', 'ban'].includes(a))) fail(400, 'validation_error', 'One to five steps: warn, suspend or ban');
+  state.offplatformActions = actions;
+  save();
+  return { actions };
 });
 route('GET', '/admin/moderation/terms', ({ me }) => (needPerm(me, 'moderation.manage'), [...state.modTerms].sort((a, b) => a.action.localeCompare(b.action) || a.term.localeCompare(b.term))));
 route('POST', '/admin/moderation/terms', ({ me, body }) => {
@@ -1642,7 +2035,7 @@ route('DELETE', '/admin/moderation/terms/:id', ({ me, params }) => {
 const reqOpen = (r: any) => r.status === 'open' && r.expires_at > now();
 const propView = (p: any) => {
   const s = sellerStats(p.seller_id);
-  return { ...p, seller_name: userById(p.seller_id)?.display_name ?? 'Seller', seller_completed_orders: s.completed, seller_rating: s.rating };
+  return { ...p, price_cents: gross(p.seller_id, p.price_cents), seller_price_cents: p.price_cents, seller_name: userById(p.seller_id)?.display_name ?? 'Seller', seller_completed_orders: s.completed, seller_rating: s.rating };
 };
 const reqView = (r: any, viewer?: string) => {
   const ps = state.proposals.filter((p) => p.request_id === r.id);
@@ -1769,7 +2162,7 @@ route('POST', '/requests/:id/proposals/:pid/accept', ({ me, params }) => {
     id: `offer-r-${rid().slice(0, 8)}`, seller_id: p.seller_id, category_slug: r.category_slug, category_kind: CATEGORIES.find((c) => c.slug === r.category_slug)!.kind, game: r.game,
     title: r.title, description: [r.description, p.message].filter(Boolean).join('\n\n'), price_cents: p.price_cents, currency: r.currency, delivery_mode: 'manual' as const,
     delivery_hours: p.delivery_hours, stock: 1, inventory: [] as string[], price_tiers: [], review_reasons: [] as string[], bundle: null, sale_price_cents: null, sale_starts_at: null, sale_ends_at: null, status: 'active', owner_proof_status: 'none', attributes: r.attributes ?? {}, version: 1, created_at: now(),
-    reserved_for: u.id, request_id: r.id, warranty_days: 0, linked_account_id: null, min_buyer_reputation: null,
+    reserved_for: u.id, request_id: r.id, warranty_days: 0, expired_reason: null as string | null, featured_until: null as string | null, linked_account_id: null, min_buyer_reputation: null,
   };
   state.offers.push(offer);
   Object.assign(p, { status: 'accepted', offer_id: offer.id, updated_at: now() });
@@ -1820,13 +2213,15 @@ route('DELETE', '/me/saved-searches/:id', ({ me, params }) => {
   state.savedSearches.splice(i, 1);
 });
 // --- Watchlist & price alerts ------------------------------------------------------------
-const RATES: Record<string, number> = { USD: 1, EUR: 0.92, GBP: 0.79 };
+const RATES: Record<string, number> = { USD: 1, EUR: 0.92, EGP: 48.5 };
 const onSale = (o: any) => listed(o) && availableOf(o) > 0;
 const cheapestFor = (w: any) =>
   state.offers
     .filter((o) => onSale(o) && o.game.toLowerCase() === w.game.toLowerCase() && (!w.category || o.category_slug === w.category))
     .filter((o) => Object.entries(w.attributes ?? {}).every(([k, v]) => String(o.attributes?.[k] ?? '').toLowerCase() === String(v).toLowerCase()))
-    .sort((a, b) => a.price_cents - b.price_cents)[0];
+    .sort((a, b) => buyerPrice(a) - buyerPrice(b))[0];
+/** What a buyer pays for one unit of a listing (seller price plus their commission). */
+const buyerPrice = (o: any) => gross(o.seller_id, effectivePrice(o));
 function watchView(w: any) {
   const conv = (c: number | null | undefined) => (c == null ? null : Math.round(c * (RATES[w.currency] ?? 1)));
   if (w.kind === 'offer') {
@@ -1835,14 +2230,14 @@ function watchView(w: any) {
     return {
       id: w.id, kind: 'offer', currency: w.currency, targetCents: w.targetCents, createdAt: w.createdAt,
       offer: o ? { id: o.id, title: o.title, game: o.game, category_slug: o.category_slug, seller_name: userById(o.seller_id)?.display_name ?? 'Seller', attributes: o.attributes } : null,
-      currentCents: o ? conv(o.price_cents) : null, startCents: conv(w.start), available: ok, reached: ok && w.targetCents != null && conv(o!.price_cents)! <= w.targetCents,
+      currentCents: o ? conv(buyerPrice(o)) : null, startCents: conv(w.start), available: ok, reached: ok && w.targetCents != null && conv(buyerPrice(o!))! <= w.targetCents,
     };
   }
   const low = cheapestFor(w);
   return {
     id: w.id, kind: 'game', currency: w.currency, targetCents: w.targetCents, createdAt: w.createdAt, game: w.game, category: w.category, attributes: w.attributes,
     cheapest: low ? { id: low.id, title: low.title, seller_name: userById(low.seller_id)?.display_name ?? 'Seller' } : null,
-    currentCents: low ? conv(low.price_cents) : null, startCents: conv(w.start), available: !!low, reached: !!low && w.targetCents != null && conv(low.price_cents)! <= w.targetCents,
+    currentCents: low ? conv(buyerPrice(low)) : null, startCents: conv(w.start), available: !!low, reached: !!low && w.targetCents != null && conv(buyerPrice(low))! <= w.targetCents,
   };
 }
 const fmt = (c: number, cur: string) => new Intl.NumberFormat('en-US', { style: 'currency', currency: cur }).format(c / 100);
@@ -1856,7 +2251,9 @@ function simulateAlert(w: any) {
     if (w.targetCents == null || !v.available) return;
     if (!v.reached && w.kind === 'offer') {
       const o = state.offers.find((x) => x.id === w.offer_id)!;
-      o.price_cents = Math.max(1, Math.floor(w.targetCents / (RATES[w.currency] ?? 1)));
+      // The seller drops their price so the buyer price lands on the target.
+      const rate = tierOf(o.seller_id).rateBps;
+      o.price_cents = Math.max(1, Math.floor((Math.floor(w.targetCents / (RATES[w.currency] ?? 1)) * (10_000 - rate)) / 10_000));
       o.version++;
     }
     const after = watchView(w);
@@ -1877,12 +2274,13 @@ route('POST', '/me/watches', ({ me, body }) => {
     const o = state.offers.find((x) => x.id === body.offerId) ?? fail(404, 'not_found', 'Listing not found');
     if (o.seller_id === u.id) fail(400, 'own_offer', 'You can’t watch your own listing');
     if (state.watches.some((x) => x.user_id === u.id && x.offer_id === o.id)) fail(409, 'already_watching', 'You’re already watching this listing');
-    w = { id: rid(), user_id: u.id, kind: 'offer', offer_id: o.id, targetCents: body.targetCents ?? null, currency, start: o.price_cents, createdAt: now() };
+    w = { id: rid(), user_id: u.id, kind: 'offer', offer_id: o.id, targetCents: body.targetCents ?? null, currency, start: buyerPrice(o), createdAt: now() };
   } else {
     if (!body.game) fail(400, 'invalid_watch', 'Give an offer or a game to watch');
     if (body.attributes && Object.keys(body.attributes).length && !body.category) fail(400, 'invalid_watch', 'Pick a category to watch specific fields');
     w = { id: rid(), user_id: u.id, kind: 'game', game: body.game, category: body.category ?? null, attributes: body.attributes ?? {}, targetCents: body.targetCents ?? null, currency, createdAt: now() };
-    w.start = cheapestFor(w)?.price_cents ?? null;
+    const low0 = cheapestFor(w);
+    w.start = low0 ? buyerPrice(low0) : null;
   }
   state.watches.unshift(w);
   simulateAlert(w);
@@ -2115,14 +2513,14 @@ route('POST', '/seller/debts/:id/pay', ({ me, params }) => {
   Object.assign(d, { owed_cents: 0, closed_at: now(), closed_reason: 'repaid' });
   return { paymentId: rid(), amountCents: d.peak_cents, currency: d.currency, checkoutUrl: '/sell/money?repaid=1' };
 });
-route('GET', '/fx/rates', () => ({ settlement: 'USD', spreadBps: 100, rates: [{ currency: 'EUR', rate: 0.92, fetched_at: now() }, { currency: 'GBP', rate: 0.79, fetched_at: now() }] }));
+route('GET', '/fx/rates', () => ({ settlement: 'USD', spreadBps: 100, rates: [{ currency: 'EUR', rate: 0.92, fetched_at: now() }, { currency: 'EGP', rate: 48.5, fetched_at: now() }] }));
 route('GET', '/admin/fx/position', ({ me }) => {
   needStaff(me);
   return {
     positions: [
       { currency: 'USD', positionCents: 0, sellerBalancesCents: Object.values(state.balances).reduce((s, b) => s + b, 0), pspExpectedCents: Object.values(state.balances).reduce((s, b) => s + b, 0) + state.platform.treasury, shortfallCents: 0 },
       { currency: 'EUR', positionCents: -2_310_00, sellerBalancesCents: 2_310_00, pspExpectedCents: 2_400_00, shortfallCents: 0 },
-      { currency: 'GBP', positionCents: -860_00, sellerBalancesCents: 860_00, pspExpectedCents: 0, shortfallCents: 860_00 },
+      { currency: 'EGP', positionCents: -41_710_00, sellerBalancesCents: 41_710_00, pspExpectedCents: 0, shortfallCents: 41_710_00 },
     ],
     conversions: [],
   };
@@ -2445,11 +2843,11 @@ const ALL_PERMS = [
   'orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'risk.review', 'users.suspend', 'aml.review', 'aml.sar',
   'chargebacks.manage', 'orders.refund_after_release', 'orders.release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view',
   'ledger.adjust', 'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'keys.manage', 'retention.manage', 'audit.view', 'staff.manage', 'status.manage',
-  'analytics.view', 'support.manage', 'moderation.manage',
+  'analytics.view', 'support.manage', 'moderation.manage', 'ranks.manage', 'leagues.manage', 'rules.manage',
 ];
 const ROLE_PERMS: Record<string, string[]> = {
   arbiter: ['orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'orders.refund_after_release', 'orders.release', 'moderation.manage'],
-  support: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage', 'support.manage', 'moderation.manage', 'orders.release'],
+  support: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage', 'support.manage', 'moderation.manage', 'orders.release', 'leagues.manage', 'rules.manage'],
   finance: ['chargebacks.manage', 'orders.refund_after_release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view', 'ledger.adjust', 'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'analytics.view'],
   compliance: ['orders.view_any', 'risk.review', 'users.suspend', 'aml.review', 'aml.sar', 'payout_holds.set', 'ledger.view', 'audit.view', 'retention.manage', 'analytics.view'],
   admin: ALL_PERMS,

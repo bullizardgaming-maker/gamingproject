@@ -8,6 +8,7 @@ import { notify } from './notifications.js';
 import { requireSeller } from './offers.js';
 import { detectOffPlatform } from './safety.js';
 import { EFFECTIVE_PRICE_SQL } from './discounts.js';
+import { GROSS_SQL, grossUp, markSellerSince, refreshSellerRate } from './commission.js';
 
 const noContact = (...texts: Array<string | undefined>) => {
   if (detectOffPlatform(texts.filter(Boolean).join('\n')).length) throw badRequest('offplatform_contact', 'Keep contact details and outside payment methods off Bullizard: deals made elsewhere aren’t protected');
@@ -39,7 +40,8 @@ const REQUEST_COLS = `r.id, r.buyer_id, r.game, r.category_slug, r.title, r.desc
   (SELECT count(*)::int FROM request_proposals p WHERE p.request_id = r.id AND p.status IN ('pending', 'accepted')) AS proposals`;
 const REQUEST_FROM = `buyer_requests r JOIN users b ON b.id = r.buyer_id JOIN categories c ON c.slug = r.category_slug`;
 
-const PROPOSAL_COLS = `p.id, p.request_id, p.seller_id, p.price_cents, p.delivery_hours, p.message, p.status, p.offer_id, p.listing_offer_id, p.created_at, p.updated_at,
+// Proposals are priced by the seller; buyers see the price with the seller's commission grossed up on top (commission.ts).
+const PROPOSAL_COLS = `p.id, p.request_id, p.seller_id, ${GROSS_SQL('p.price_cents', 's')} AS price_cents, p.price_cents AS seller_price_cents, p.delivery_hours, p.message, p.status, p.offer_id, p.listing_offer_id, p.created_at, p.updated_at,
   s.display_name AS seller_name, s.completed_orders AS seller_completed_orders, s.rating_avg AS seller_rating`;
 
 export async function createRequest(ctx: Ctx, buyer: { id: string; kyc_tier: number; status: string }, input: RequestInput) {
@@ -179,6 +181,7 @@ export async function propose(ctx: Ctx, seller: { id: string; kyc_tier: number; 
       input = { ...input, priceCents: Number(f.price_cents), deliveryHours: f.delivery_mode === 'auto' ? 1 : f.delivery_hours };
     }
     if (input.priceCents == null || input.deliveryHours == null) throw badRequest('validation_error', 'Give a price and a delivery time, or offer one of your listings');
+    await markSellerSince(tx, seller.id); // a first proposal starts the seller's launch promo like a first listing does
     const p = await maybeOne(
       tx,
       `INSERT INTO request_proposals (request_id, seller_id, price_cents, delivery_hours, message, listing_offer_id)
@@ -191,8 +194,9 @@ export async function propose(ctx: Ctx, seller: { id: string; kyc_tier: number; 
       [requestId, seller.id, input.priceCents, input.deliveryHours, input.message ?? '', listingId],
     );
     if (!p) throw conflict('proposal_closed', 'Your proposal on this request can no longer be changed');
+    const buyerPrice = grossUp(input.priceCents, (await refreshSellerRate(tx, seller.id)).rateBps);
     await notify(tx, r.buyer_id, 'request_proposal', {
-      request_id: requestId, title: r.title, seller_name: seller.display_name ?? 'A seller', price_cents: input.priceCents, currency: r.currency,
+      request_id: requestId, title: r.title, seller_name: seller.display_name ?? 'A seller', price_cents: buyerPrice, currency: r.currency,
       delivery_hours: input.deliveryHours, revised: !p.created,
     }, `request:${requestId}:proposal:${p.id}:${Date.now()}`);
     return getRequest(tx, requestId, seller.id);
@@ -220,12 +224,12 @@ export async function acceptProposal(ctx: Ctx, buyerId: string, requestId: strin
     if (r.status !== 'open' || new Date(r.expires_at) <= new Date()) throw conflict('not_open', 'This request is no longer open');
     const p = await maybeOne<any>(
       tx,
-      `SELECT p.*, u.status AS seller_status, u.kyc_tier, u.display_name AS seller_name FROM request_proposals p JOIN users u ON u.id = p.seller_id
+      `SELECT p.*, u.status AS seller_status, u.kyc_tier, u.rules_passed_at, u.selling_restricted_at, u.display_name AS seller_name FROM request_proposals p JOIN users u ON u.id = p.seller_id
         WHERE p.id = $1 AND p.request_id = $2 FOR UPDATE OF p`,
       [proposalId, requestId],
     );
     if (!p || p.status !== 'pending') throw notFound('Proposal');
-    if (p.seller_status !== 'active' || p.kyc_tier < 2) throw conflict('seller_unavailable', 'This seller can no longer sell');
+    if (p.seller_status !== 'active' || p.kyc_tier < 1 || !p.rules_passed_at || (p.selling_restricted_at && p.kyc_tier < 2)) throw conflict('seller_unavailable', 'This seller can no longer sell');
 
     if (p.listing_offer_id) {
       // An existing listing: the buyer checks it out like anyone else, nothing private is created.

@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { Ctx } from '../context.js';
 import { many, maybeOne, one } from '../db.js';
-import { SELLER_TIERS } from '../domain/commission.js';
+import { commissionSettings, listRanks } from '../domain/commission.js';
 import { getOffer } from '../domain/offers.js';
 import { SORTS, gameDirectory, searchOffers, suggestGames, withDisplayPrices } from '../domain/search.js';
 import { currentRates, getRate } from '../domain/fx.js';
@@ -13,7 +13,11 @@ import { changePassword, requestPasswordReset, resetPassword, completeMfaLogin, 
 import { REFRESH_TTL_DAYS, issueAccessToken, listSessions, refreshSession, revokeByRefreshToken, revokeFamily, revokeOtherSessions, revokeSessionById } from '../domain/sessions.js';
 import { enqueueEmail, getPreferences, setPreferences } from '../domain/notifications.js';
 import { AppError, badRequest, notFound, unauthorized } from '../lib/errors.js';
-import { ATTR_KEY, ATTR_VALUE_MAX, CATEGORY_DEFAULTS, GAME_SETS, attributesFor } from '../domain/attributeSets.js';
+import { ATTR_KEY, ATTR_VALUE_MAX, CATEGORY_DEFAULTS, GAME_SETS, attributesFor, handoverFieldFor, LEAGUES } from '../domain/attributeSets.js';
+import { listLeagues } from '../domain/leagues.js';
+import { affiliateSummary, attributeBuyer } from '../domain/affiliates.js';
+import { requestCryptoWithdrawal } from '../domain/cryptoPayouts.js';
+import { listSuggestions, suggestGame, vote } from '../domain/gameVotes.js';
 import { deleteAccount, exportData } from '../domain/privacy.js';
 import { isStaff as isStaffUser, permissionsOf } from '../domain/permissions.js';
 import {
@@ -69,7 +73,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   }));
 
   app.post('/auth/register', strict, async (req, reply) => {
-    const body = Credentials.extend({ displayName: z.string().trim().min(2).max(40), referralCode: z.string().trim().max(20).optional(), locale: z.enum(LOCALES).optional() }).parse(req.body);
+    const body = Credentials.extend({ displayName: z.string().trim().min(2).max(40), referralCode: z.string().trim().max(20).optional(), creatorCode: z.string().trim().max(20).optional(), locale: z.enum(LOCALES).optional() }).parse(req.body);
     await requireCaptcha(req, body.captchaToken);
     const res = await register(ctx, { ...body, ...meta(req) });
     return reply.status(201).send(deliver(req, reply, res));
@@ -260,11 +264,15 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   // --- Catalog ------------------------------------------------------------------
-  app.get('/categories', async () => many(ctx.dbRead, 'SELECT * FROM categories ORDER BY name'));
+  /** Categories with whether they are open in the current launch phase (closed ones are hidden from buyers). */
+  app.get('/categories', async () => many(ctx.dbRead, 'SELECT c.*, category_open(c.slug) AS open, (SELECT phase FROM launch_settings) AS current_phase FROM categories c ORDER BY name'));
 
-  app.get('/tiers', async () =>
-    SELLER_TIERS.map((t) => ({ ...t, accountRate: t.accountRateBps / 100, otherRate: t.otherRateBps / 100 })),
-  );
+  /** Ranks and the launch promo: what sellers pay and what buyers see added on top of the seller's price. */
+  app.get('/tiers', async () => {
+    const [ranks, settings] = await Promise.all([listRanks(ctx.dbRead), commissionSettings(ctx.dbRead)]);
+    return ranks.map((r) => ({ ...r, accountRateBps: r.rateBps, otherRateBps: r.rateBps, rate: r.rateBps / 100, accountRate: r.rateBps / 100, otherRate: r.rateBps / 100, promo: settings }));
+  });
+  app.get('/ranks', async () => ({ ranks: await listRanks(ctx.dbRead), settings: await commissionSettings(ctx.dbRead) }));
 
   app.get('/offers', async (req) => {
     const bool = z.enum(['true', 'false']).transform((v) => v === 'true');
@@ -309,6 +317,11 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     return withDisplayPrices(ctx, res, display);
   });
 
+  /** Withdraw credit (kept underpayments, promo credit) to the confirmed payout address, under the usual fee. */
+  app.post('/me/credit/withdraw', async (req, reply) => {
+    const { amountCents } = z.object({ amountCents: z.number().int().positive() }).parse(req.body);
+    return reply.status(201).send(await requestCryptoWithdrawal(ctx, me(req).id, amountCents, ctx.cfg.SETTLEMENT_CURRENCY, { source: 'credit' }));
+  });
   app.get('/me/credit', async (req) => {
     const user = me(req);
     const cur = ctx.cfg.SETTLEMENT_CURRENCY;
@@ -326,6 +339,26 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   app.get('/me/referral', async (req) => referralSummary(ctx, me(req).id));
+  /** Creator affiliate: the creator's own stats; a buyer attaches a creator code once. */
+  app.get('/me/affiliate', async (req) => affiliateSummary(ctx.db, me(req).id));
+  app.post('/me/affiliate', async (req) => {
+    const { code } = z.object({ code: z.string().trim().min(3).max(20) }).parse(req.body);
+    return attributeBuyer(ctx.db, me(req).id, code);
+  });
+
+  // ---- Game voting: suggest a game, vote for one ----
+  app.get('/games/votes', async (req) => {
+    const { status } = z.object({ status: z.enum(['open', 'planned', 'added', 'declined']).optional() }).parse(req.query);
+    return listSuggestions(ctx.dbRead, req.user?.id, status);
+  });
+  app.post('/games/votes', async (req, reply) => {
+    const { name } = z.object({ name: z.string().trim().min(1).max(80) }).parse(req.body);
+    return reply.status(201).send(await suggestGame(ctx, me(req), name));
+  });
+  app.post('/games/votes/:id/vote', async (req) => {
+    const { on } = z.object({ on: z.boolean().default(true) }).parse(req.body ?? {});
+    return vote(ctx, me(req).id, z.object({ id: z.string().uuid() }).parse(req.params).id, on);
+  });
 
   // --- Help centre support tickets --------------------------------------------------------------
   const Body = z.string().trim().min(2).max(5_000);
@@ -407,8 +440,19 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/catalog/attributes', async (req, reply) => {
     const { game, category } = z.object({ game: z.string().trim().min(1).max(80).optional(), category: z.string().max(40).optional() }).parse(req.query);
     reply.header('Cache-Control', 'public, max-age=300');
-    if (game && category) return { game, category, fields: attributesFor(game, category) };
-    return { defaults: CATEGORY_DEFAULTS, games: GAME_SETS };
+    if (game && category) return { game, category, fields: attributesFor(game, category), handover: handoverFieldFor(game, category) };
+    return { defaults: CATEGORY_DEFAULTS, games: GAME_SETS, leagues: LEAGUES };
+  });
+  /** Staff-managed texts shown in the product (the "Stay safe" panel in order chats). */
+  app.get('/texts/:key', async (req, reply) => {
+    const { key } = z.object({ key: z.enum(['chat_safety']) }).parse(req.params);
+    reply.header('Cache-Control', 'public, max-age=60');
+    return one(ctx.dbRead, 'SELECT key, body, link_label, link_href, updated_at FROM site_texts WHERE key = $1', [key]);
+  });
+  /** Challenge leagues per game (Path of Exile): what the sell form offers and when each ends. */
+  app.get('/leagues', async (req, reply) => {
+    reply.header('Cache-Control', 'public, max-age=60');
+    return { open: LEAGUES, leagues: await listLeagues(ctx.dbRead) };
   });
 
   app.get('/catalog/games', async (_req, reply) => {
@@ -442,7 +486,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     if (offer.reserved_for && ![offer.reserved_for, offer.seller_id].includes(req.user?.id) && !staffViewer) throw notFound('Offer');
     // Listings waiting for moderation are only for their seller and staff, and only they see why.
     const insider = offer.seller_id === req.user?.id || staffViewer;
-    if (offer.status === 'review' && !insider) throw notFound('Offer');
+    if ((offer.status === 'review' || offer.status === 'expired' || offer.category_open === false) && !insider) throw notFound('Offer');
     if (!insider) {
       delete offer.review_reasons;
       delete offer.review_note;

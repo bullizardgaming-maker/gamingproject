@@ -8,18 +8,25 @@ import { appendMessage, roomForParticipant } from './chat.js';
 import { withScope } from './events.js';
 
 export const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+/** Delivery proof videos (a trade window recording) may be larger than screenshots. */
+export const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
 const MAX_PIXELS = 40_000_000;
 const MAX_EDGE = 2560;
 const UPLOADS_PER_HOUR = 20;
 
-type Kind = 'png' | 'jpeg' | 'webp';
-const MIME: Record<Kind, string> = { png: 'image/png', jpeg: 'image/jpeg', webp: 'image/webp' };
+type Kind = 'png' | 'jpeg' | 'webp' | 'mp4' | 'webm';
+const MIME: Record<Kind, string> = { png: 'image/png', jpeg: 'image/jpeg', webp: 'image/webp', mp4: 'video/mp4', webm: 'video/webm' };
+const VIDEO: ReadonlySet<Kind> = new Set<Kind>(['mp4', 'webm']);
 
-/** Identify the image by its bytes, never by the declared type or file name. */
+/** Identify the file by its bytes, never by the declared type or file name. */
 export function sniffImage(buf: Buffer): Kind | null {
   if (buf.length >= 8 && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'png';
   if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpeg';
   if (buf.length >= 12 && buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') return 'webp';
+  // ISO base media: a size then 'ftyp' (MP4, M4V, MOV-style brands).
+  if (buf.length >= 12 && buf.toString('ascii', 4, 8) === 'ftyp') return 'mp4';
+  // Matroska/WebM EBML header.
+  if (buf.length >= 4 && buf.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))) return 'webm';
   return null;
 }
 
@@ -49,15 +56,17 @@ export async function uploadAttachment(ctx: Ctx, roomId: string, user: { id: str
   const room = await roomForParticipant(ctx.db, roomId, user);
   if (room.buyer_id !== user.id && room.seller_id !== user.id) throw forbidden('not_participant', 'Only the buyer and seller can add evidence');
   if (body.length === 0) throw badRequest('empty_file', 'The file is empty');
-  if (body.length > MAX_ATTACHMENT_BYTES) throw new AppError(413, 'file_too_large', 'Images can be up to 8 MB');
+  const kind = sniffImage(body);
+  if (!kind) throw badRequest('unsupported_file', 'Only PNG, JPEG and WebP images or MP4/WebM videos can be attached');
+  const isVideo = VIDEO.has(kind);
+  if (!isVideo && body.length > MAX_ATTACHMENT_BYTES) throw new AppError(413, 'file_too_large', 'Images can be up to 8 MB');
+  if (isVideo && body.length > MAX_VIDEO_BYTES) throw new AppError(413, 'file_too_large', 'Videos can be up to 50 MB');
   const recent = await one<{ n: number }>(
     ctx.db,
     `SELECT count(*)::int AS n FROM chat_attachments WHERE uploader_id = $1 AND created_at > now() - interval '1 hour'`,
     [user.id],
   );
   if (recent.n >= UPLOADS_PER_HOUR) throw new AppError(429, 'too_many_uploads', 'Upload limit reached; try again later');
-  const kind = sniffImage(body);
-  if (!kind) throw badRequest('unsupported_file', 'Only PNG, JPEG and WebP images can be attached');
   const name = cleanName(fileName);
 
   const scan = await scanOrPause(ctx, body);
@@ -75,15 +84,20 @@ export async function uploadAttachment(ctx: Ctx, roomId: string, user: { id: str
     throw new AppError(422, 'malware_detected', 'This file was blocked by our malware scan');
   }
 
-  let out: { data: Buffer; info: OutputInfo };
-  try {
-    const img = sharp(body, { limitInputPixels: MAX_PIXELS, failOn: 'error' })
-      .rotate() // apply EXIF orientation before metadata is dropped
-      .resize({ width: MAX_EDGE, height: MAX_EDGE, fit: 'inside', withoutEnlargement: true });
-    const encoded = kind === 'png' ? img.png({ compressionLevel: 9 }) : kind === 'webp' ? img.webp({ quality: 85 }) : img.jpeg({ quality: 85, mozjpeg: true });
-    out = await encoded.toBuffer({ resolveWithObject: true });
-  } catch {
-    throw badRequest('invalid_image', 'This image could not be read');
+  // Images are re-encoded (strips metadata and anything smuggled after the image data); videos are
+  // stored as scanned, since they cannot be re-encoded here.
+  let out: { data: Buffer; info: Pick<OutputInfo, 'width' | 'height'> };
+  if (isVideo) out = { data: body, info: { width: 0, height: 0 } };
+  else {
+    try {
+      const img = sharp(body, { limitInputPixels: MAX_PIXELS, failOn: 'error' })
+        .rotate() // apply EXIF orientation before metadata is dropped
+        .resize({ width: MAX_EDGE, height: MAX_EDGE, fit: 'inside', withoutEnlargement: true });
+      const encoded = kind === 'png' ? img.png({ compressionLevel: 9 }) : kind === 'webp' ? img.webp({ quality: 85 }) : img.jpeg({ quality: 85, mozjpeg: true });
+      out = await encoded.toBuffer({ resolveWithObject: true });
+    } catch {
+      throw badRequest('invalid_image', 'This image could not be read');
+    }
   }
 
   const hash = sha256(out.data);
@@ -97,7 +111,7 @@ export async function uploadAttachment(ctx: Ctx, roomId: string, user: { id: str
       roomId,
       user.id,
       'attachment',
-      `📎 ${name} (${out.info.width}×${out.info.height}, sha256 ${hash})`,
+      isVideo ? `🎬 ${name} (${(out.data.length / 1_048_576).toFixed(1)} MB video, sha256 ${hash})` : `📎 ${name} (${out.info.width}×${out.info.height}, sha256 ${hash})`,
       [],
       ctx.keyring,
     );
@@ -106,7 +120,7 @@ export async function uploadAttachment(ctx: Ctx, roomId: string, user: { id: str
       `INSERT INTO chat_attachments (id, room_id, uploader_id, message_id, original_name, mime, bytes, width, height, sha256, storage_key, status, scan_result, key_version)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'clean', $12, $13)
        RETURNING id, message_id, original_name, mime, bytes, width, height, sha256, created_at`,
-      [id, roomId, user.id, msg.id, name, MIME[kind], out.data.length, out.info.width, out.info.height, hash, key, `${ctx.scanner.name}: clean`, ctx.storage.keyVersion],
+      [id, roomId, user.id, msg.id, name, MIME[kind], out.data.length, isVideo ? null : out.info.width, isVideo ? null : out.info.height, hash, key, `${ctx.scanner.name}: clean`, ctx.storage.keyVersion],
     );
     const counterpart = room.buyer_id === user.id ? room.seller_id : room.buyer_id;
     s.notifyUser(counterpart, 'chat.message', { roomId, seq: msg.seq });

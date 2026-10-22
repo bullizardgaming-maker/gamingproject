@@ -45,6 +45,67 @@ const yesNo = ['Yes', 'No'] as const;
 
 const hoyo = { server: { key: 'server', label: 'Server', type: 'select', options: HOYO_SERVERS, required: true } as AttributeDef };
 
+/**
+ * Leagues per game (lower-case name). The permanent leagues are always open; challenge leagues are
+ * added (and later closed) by staff through the league table, which replaces this list at runtime
+ * via setLeagues(). The web demo seeds its own copy.
+ */
+export const PERMANENT_LEAGUES = ['Standard', 'Hardcore'] as const;
+export const LEAGUES: Record<string, string[]> = {
+  'path of exile': [...PERMANENT_LEAGUES],
+  'path of exile 2': [...PERMANENT_LEAGUES],
+};
+export function setLeagues(game: string, names: string[]) {
+  LEAGUES[game.toLowerCase()] = [...PERMANENT_LEAGUES, ...names.filter((n) => !(PERMANENT_LEAGUES as readonly string[]).includes(n))];
+}
+/** A league field whose options are read live, so a league added by staff is accepted at once. */
+const league = (game: string): AttributeDef => ({
+  key: 'league',
+  label: 'League',
+  type: 'select',
+  required: true,
+  get options() {
+    return LEAGUES[game] ?? [...PERMANENT_LEAGUES];
+  },
+});
+const MODE: AttributeDef = { key: 'mode', label: 'Mode', type: 'select', options: ['Softcore', 'Hardcore'], required: true };
+const ALBION_SERVER: AttributeDef = { key: 'server', label: 'Server', type: 'select', options: ['Americas', 'Europe', 'Asia'], required: true };
+const AION_REGIONS = ['North America', 'Europe', 'Asia', 'Middle East'] as const;
+const AION_SERVER: AttributeDef = { key: 'server', label: 'Server', type: 'text', required: true };
+
+/**
+ * Where a game delivers in-game, the buyer gives the name the seller trades with. Only games that
+ * use one get the field; the buyer confirms it in one tap at checkout and it is remembered.
+ */
+export interface HandoverField {
+  key: 'character' | 'uid';
+  label: string;
+  hint: string;
+}
+const CHARACTER: HandoverField = { key: 'character', label: 'Character name', hint: 'The exact in-game character the seller should trade with.' };
+const UID: HandoverField = { key: 'uid', label: 'UID', hint: 'Your in-game UID, found in the game settings.' };
+const HANDOVER_GAMES: Record<string, HandoverField> = {
+  aion: CHARACTER,
+  'aion 2': CHARACTER,
+  'albion online': CHARACTER,
+  'path of exile': CHARACTER,
+  'path of exile 2': CHARACTER,
+  'world of warcraft': CHARACTER,
+  'old school runescape': { key: 'character', label: 'RuneScape name', hint: 'The display name the seller should trade with.' },
+  'diablo iv': { key: 'character', label: 'Battle.net tag', hint: 'Your BattleTag, e.g. Name#1234, so the seller can add and trade with you.' },
+  'genshin impact': UID,
+  'honkai: star rail': UID,
+  'mobile legends': { key: 'uid', label: 'User ID', hint: 'Your in-game ID and zone ID, e.g. 12345678 (1234).' },
+  'pubg mobile': { key: 'uid', label: 'Character ID', hint: 'Your numeric character ID from the profile screen.' },
+};
+const HANDOVER_CATEGORIES = new Set(['currency', 'items', 'top-ups', 'boosting']);
+export function handoverFieldFor(game: string, category: string): HandoverField | null {
+  if (!HANDOVER_CATEGORIES.has(category)) return null;
+  return HANDOVER_GAMES[game.trim().toLowerCase()] ?? null;
+}
+/** Remembered names are kept per game, lower-cased key. */
+export const handoverKey = (game: string) => game.trim().toLowerCase();
+
 /** Per game (lower-case name), per category. A category missing here falls back to the default. */
 export const GAME_SETS: Record<string, Record<string, AttributeDef[]>> = {
   'league of legends': {
@@ -92,10 +153,13 @@ export const GAME_SETS: Record<string, Record<string, AttributeDef[]>> = {
     items: [{ key: 'mode', label: 'Mode', type: 'select', options: ['Softcore', 'Hardcore'], required: true }, platform()],
     boosting: [{ key: 'mode', label: 'Mode', type: 'select', options: ['Softcore', 'Hardcore'] }, platform()],
   },
-  'path of exile 2': {
-    currency: [{ key: 'league', label: 'League', type: 'select', options: ['Standard', 'Hardcore', 'Challenge', 'Challenge Hardcore'], required: true }],
-    items: [{ key: 'league', label: 'League', type: 'select', options: ['Standard', 'Hardcore', 'Challenge', 'Challenge Hardcore'], required: true }],
-  },
+  // Launch games. Path of Exile leagues come from the league table (LEAGUES below): challenge leagues
+  // end, and listings in an ended league expire for sellers who have gone quiet (domain/leagues.ts).
+  'path of exile': { currency: [league('path of exile'), MODE], items: [league('path of exile'), MODE], boosting: [league('path of exile'), MODE] },
+  'path of exile 2': { currency: [league('path of exile 2'), MODE], items: [league('path of exile 2'), MODE], boosting: [league('path of exile 2'), MODE] },
+  'albion online': { currency: [ALBION_SERVER], items: [ALBION_SERVER], boosting: [ALBION_SERVER] },
+  aion: { currency: [AION_SERVER, region(AION_REGIONS, true)], items: [AION_SERVER, region(AION_REGIONS, true)], boosting: [AION_SERVER, region(AION_REGIONS, true)] },
+  'aion 2': { currency: [AION_SERVER, region(AION_REGIONS, true)], items: [AION_SERVER, region(AION_REGIONS, true)], boosting: [AION_SERVER, region(AION_REGIONS, true)] },
   'old school runescape': {
     currency: [{ key: 'method', label: 'Delivery method', type: 'select', options: ['Trade', 'Grand Exchange', 'Drop party'] }],
     accounts: [{ key: 'type', label: 'Account type', type: 'select', options: ['Main', 'Pure', 'Ironman', 'Hardcore Ironman', 'Skiller'] }],

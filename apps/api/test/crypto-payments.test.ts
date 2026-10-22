@@ -4,6 +4,7 @@ import { dispatchEmails } from '../src/domain/notifications.js';
 import { runReconciliation } from '../src/domain/reconciliation.js';
 import { buyAndPay, client, makeOffer, makeUser, setup, type Harness } from './helpers.js';
 import { currentStep, totpAt } from '../src/domain/mfa.js';
+import { runJobsOnce } from '../src/worker.js';
 
 /**
  * A fake NOWPayments: records calls, answers like the real API, and lets the test "pay" by
@@ -99,13 +100,13 @@ describe('crypto checkout (NOWPayments)', () => {
 
     // $10: BTC (min $8) and USDT fit; ETH (min $12) is left out.
     const coins = (await buyer.api.get(`/v1/orders/${order.id}/crypto/coins`)).body;
-    expect(coins.owedCents).toBe(10_00);
+    expect(coins.owedCents).toBe(10_53); // the seller's 10.00 plus the 5% launch-promo commission
     expect(coins.coins.map((c: any) => c.coin)).toEqual(['btc', 'ltc', 'usdttrc20']);
     expect((await buyer.api.post(`/v1/orders/${order.id}/crypto/pay`, { coin: 'eth' })).body.error.code).toBe('coin_unavailable');
 
     const pay = await buyer.api.post(`/v1/orders/${order.id}/crypto/pay`, { coin: 'btc' });
     expect(pay.status, JSON.stringify(pay.body)).toBe(201);
-    expect(pay.body).toMatchObject({ pay_currency: 'btc', pay_currency_name: 'Bitcoin', status: 'waiting', price_usd: '10.00' });
+    expect(pay.body).toMatchObject({ pay_currency: 'btc', pay_currency_name: 'Bitcoin', status: 'waiting', price_usd: '10.53' });
     expect(pay.body.pay_address).toMatch(/^addr_btc_/);
     // One open payment at a time.
     expect((await buyer.api.post(`/v1/orders/${order.id}/crypto/pay`, { coin: 'btc' })).body.error.code).toBe('payment_open');
@@ -122,12 +123,12 @@ describe('crypto checkout (NOWPayments)', () => {
     expect((await ipn(paidIpn(p))).statusCode).toBe(200);
     const paid = (await buyer.api.get(`/v1/orders/${order.id}`)).body;
     expect(paid.status).toBe('paid');
-    expect(paid.crypto_payments[0]).toMatchObject({ status: 'finished', actually_paid_usd: '10.00' });
+    expect(paid.crypto_payments[0]).toMatchObject({ status: 'finished', actually_paid_usd: '10.53' });
     const legs = (await h.ctx.db.query(`SELECT a.kind, e.amount_cents FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id WHERE e.order_id = $1 AND e.memo = 'payment_captured' ORDER BY a.kind`, [order.id])).rows;
     expect(legs).toEqual([
-      { kind: 'escrow', amount_cents: 1000 },
+      { kind: 'escrow', amount_cents: 1053 },
       { kind: 'fx_pnl', amount_cents: -5 },
-      { kind: 'gateway_clearing', amount_cents: -995 },
+      { kind: 'gateway_clearing', amount_cents: -1048 },
     ]);
     const fee = (await h.ctx.db.query(`SELECT count(*)::int AS n FROM ledger_entries WHERE order_id = $1 AND memo = 'psp_fee'`, [order.id])).rows[0].n;
     expect(fee).toBeGreaterThan(0);
@@ -140,27 +141,27 @@ describe('crypto checkout (NOWPayments)', () => {
     const order = (await buyer.api.post('/v1/orders', { offerId: offer.id, quantity: 1, acceptTos: true })).body.order;
     const first = (await buyer.api.post(`/v1/orders/${order.id}/crypto/pay`, { coin: 'usdttrc20' })).body;
     const p1 = fake.payments.get(first.payment_id);
-    // Only $15 of $20 arrived.
+    // Only $15 of $21.06 arrived.
     await ipn(paidIpn(p1, { payment_status: 'partially_paid', actually_paid: 15, actually_paid_at_fiat: 15, outcome_amount: 14.9 }));
     expect((await buyer.api.get(`/v1/orders/${order.id}`)).body.status).toBe('awaiting_payment');
     await dispatchEmails(h.ctx);
-    expect(sent.some((m) => m.to === buyer.email && /\$5\.00 short/.test(m.subject ?? ''))).toBe(true);
+    expect(sent.some((m) => m.to === buyer.email && /\$6\.06 short/.test(m.subject ?? ''))).toBe(true);
 
-    // The coin list is now for the $5 shortfall: BTC's $8 minimum no longer fits.
+    // The coin list is now for the $6.06 shortfall: BTC's $8 minimum no longer fits.
     const coins = (await buyer.api.get(`/v1/orders/${order.id}/crypto/coins`)).body;
-    expect(coins.owedCents).toBe(5_00);
+    expect(coins.owedCents).toBe(6_06);
     expect(coins.coins.map((c: any) => c.coin)).toEqual(['ltc', 'usdttrc20']);
     const second = (await buyer.api.post(`/v1/orders/${order.id}/crypto/pay`, { coin: 'usdttrc20' })).body;
-    expect(second.price_usd).toBe('5.00');
+    expect(second.price_usd).toBe('6.06');
     const p2 = fake.payments.get(second.payment_id);
     expect(p2.purchase_id).toBe(p1.purchase_id);
-    await ipn(paidIpn(p2, { actually_paid: 5, actually_paid_at_fiat: 5, outcome_amount: 4.97 }));
+    await ipn(paidIpn(p2, { actually_paid: 6.06, actually_paid_at_fiat: 6.06, outcome_amount: 6.03 }));
     const paid = (await buyer.api.get(`/v1/orders/${order.id}`)).body;
     expect(paid.status).toBe('paid');
     expect(paid.crypto_payments).toHaveLength(2);
-    // Settled at what reached the wallet across both payments: 14.90 + 4.97.
+    // Settled at what reached the wallet across both payments: 14.90 + 6.03.
     const gw = (await h.ctx.db.query(`SELECT e.amount_cents FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id WHERE e.order_id = $1 AND e.memo = 'payment_captured' AND a.kind = 'gateway_clearing'`, [order.id])).rows[0];
-    expect(Number(gw.amount_cents)).toBe(-1987);
+    expect(Number(gw.amount_cents)).toBe(-2093);
   });
 
   it('refunds are queued for the treasury: the buyer gives an address, the CFO records the transaction', async () => {
@@ -179,10 +180,10 @@ describe('crypto checkout (NOWPayments)', () => {
 
     let detail = (await buyer.api.get(`/v1/orders/${order.id}`)).body;
     expect(detail.status).toBe('refunded');
-    expect(detail.crypto_refund).toMatchObject({ status: 'awaiting_address', amount_cents: 1000 });
+    expect(detail.crypto_refund).toMatchObject({ status: 'awaiting_address', amount_cents: 1053 });
     // The liability sits in refunds_payable, not in the gateway, until the coins are sent.
     const bal = async (kind: string) => Number((await h.ctx.db.query(`SELECT COALESCE(SUM(e.amount_cents), 0) AS s FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id WHERE a.kind = $1 AND e.order_id = $2`, [kind, order.id])).rows[0].s);
-    expect(await bal('refunds_payable')).toBe(1000);
+    expect(await bal('refunds_payable')).toBe(1053);
     expect(await bal('escrow')).toBe(0);
 
     await buyer.api.put(`/v1/orders/${order.id}/refund-address`, { address: 'TXYZabc1234567890refund', currency: 'usdttrc20' });
@@ -193,9 +194,9 @@ describe('crypto checkout (NOWPayments)', () => {
     const sentRes = await arbiter.api.post(`/v1/admin/crypto/refunds/${detail.crypto_refund.id}/sent`, { txHash: '0xdeadbeefdeadbeef' });
     expect(sentRes.status, JSON.stringify(sentRes.body)).toBe(200);
     expect(await bal('refunds_payable')).toBe(0);
-    expect(await bal('gateway_clearing')).toBe(10); // captured −995, provider fee +5 (paid from revenue), refund +1000
+    expect(await bal('gateway_clearing')).toBe(10); // captured −1048, provider fee +5 (paid from revenue), refund +1053
     await dispatchEmails(h.ctx);
-    expect(sent.some((m) => m.to === buyer.email && /Refund of \$10\.00 sent/.test(m.subject ?? ''))).toBe(true);
+    expect(sent.some((m) => m.to === buyer.email && /Refund of \$10\.53 sent/.test(m.subject ?? ''))).toBe(true);
   });
 
   it('seller payouts: address confirmed by email link and 2FA, 6% fee with a $1.50 floor, CFO approval, paid by IPN', async () => {
@@ -290,10 +291,10 @@ describe('crypto checkout (NOWPayments)', () => {
     const checkoutId = cart.body.checkout.id;
     expect(cart.body.checkoutUrl).toMatch(new RegExp(`/checkouts/${checkoutId}/pay$`));
     const coins = (await buyer.api.get(`/v1/checkouts/${checkoutId}/crypto/coins`)).body;
-    expect(coins.owedCents).toBe(16_00);
+    expect(coins.owedCents).toBe(16_85); // 7.37 + 9.48
     const pay = await buyer.api.post(`/v1/checkouts/${checkoutId}/crypto/pay`, { coin: 'btc' });
     expect(pay.status, JSON.stringify(pay.body)).toBe(201);
-    expect(pay.body.price_usd).toBe('16.00');
+    expect(pay.body.price_usd).toBe('16.85');
     await ipn(paidIpn(fake.payments.get(pay.body.payment_id)));
     const view = (await buyer.api.get(`/v1/checkouts/${checkoutId}`)).body;
     expect(view.checkout.status).toBe('paid');
@@ -320,5 +321,47 @@ describe('crypto checkout (NOWPayments)', () => {
     expect(mismatch, 'balance check ran').toBeTruthy();
     expect(mismatch.detail.actual).toBe(100_000);
     expect(mismatch.detail.expected).toBeGreaterThan(0);
+  });
+
+  it('keeps an underpayment that never got its top-up in the buyer’s balance, spendable or withdrawable, never refunded', async () => {
+    const seller = await makeUser(h, { tier: 2 });
+    const buyer = await makeUser(h, { tier: 1 });
+    const offer = await makeOffer(seller, { deliveryMode: 'manual', stock: 5, categorySlug: 'currency', title: 'Gold 300k', priceCents: 20_00 });
+    const order = (await buyer.api.post('/v1/orders', { offerId: offer.id, quantity: 1, acceptTos: true })).body.order;
+    const first = (await buyer.api.post(`/v1/orders/${order.id}/crypto/pay`, { coin: 'usdttrc20' })).body;
+    await ipn(paidIpn(fake.payments.get(first.payment_id), { payment_status: 'partially_paid', actually_paid: 12, actually_paid_at_fiat: 12, outcome_amount: 11.94 }));
+    expect((await buyer.api.get(`/v1/orders/${order.id}`)).body.status).toBe('awaiting_payment');
+    expect((await buyer.api.get('/v1/me/credit')).body.balanceCents).toBe(0);
+
+    // The window lapses: the order is cancelled, the 11.94 that reached the wallet is the buyer's credit.
+    await h.ctx.db.query(`UPDATE orders SET payment_expires_at = now() - interval '2 hours' WHERE id = $1`, [order.id]);
+    await runJobsOnce(h.ctx);
+    expect((await buyer.api.get(`/v1/orders/${order.id}`)).body.status).toBe('cancelled');
+    expect((await buyer.api.get('/v1/me/credit')).body).toMatchObject({ balanceCents: 1194, availableCents: 1194 });
+    expect((await buyer.api.get(`/v1/orders/${order.id}`)).body.crypto_payments[0]).toMatchObject({ status: 'credited' });
+    expect((await buyer.api.get(`/v1/orders/${order.id}`)).body.crypto_refund).toBeNull();
+    await dispatchEmails(h.ctx);
+    expect(sent.some((m) => m.to === buyer.email && /kept in your balance/.test(m.subject ?? ''))).toBe(true);
+    // Idempotent: cancelling again (or re-running the reaper) credits nothing more.
+    await runJobsOnce(h.ctx);
+    expect((await buyer.api.get('/v1/me/credit')).body.balanceCents).toBe(1194);
+
+    // Spent at checkout like any credit...
+    const quote = (await buyer.api.post('/v1/orders/quote', { offerId: offer.id, useCredit: true })).body;
+    expect(quote).toMatchObject({ creditCents: 1194 });
+    // ...or withdrawn to a confirmed payout address under the usual fee (no payout hold on credit).
+    expect((await buyer.api.post('/v1/me/credit/withdraw', { amountCents: 1000 })).body.error.code).toBe('no_payout_address');
+    await h.ctx.db.query(`UPDATE users SET payout_address = 'TBuyerAddress1234567890', payout_address_currency = 'usdttrc20', payout_address_set_at = now(), payouts_enabled = true WHERE id = $1`, [buyer.id]);
+    expect((await buyer.api.post('/v1/me/credit/withdraw', { amountCents: 2000 })).body.error.code).toBe('insufficient_funds');
+    const w = await buyer.api.post('/v1/me/credit/withdraw', { amountCents: 1000 });
+    expect(w.status, JSON.stringify(w.body)).toBe(201);
+    expect(w.body).toMatchObject({ status: 'pending_approval', source: 'credit', fee_cents: 150, net_cents: 850 });
+    expect((await buyer.api.get('/v1/me/credit')).body.balanceCents).toBe(194);
+    const finance = await makeUser(h, { role: 'finance' });
+    expect((await finance.api.post(`/v1/admin/withdrawals/${w.body.id}/decide`, { approve: false, note: 'test' })).status).toBe(200);
+    expect((await buyer.api.get('/v1/me/credit')).body.balanceCents).toBe(1194); // a rejected withdrawal goes back to credit
+    // Every posting balanced: the credit came out of the gateway and went back on rejection.
+    const unbalanced = (await h.ctx.db.query('SELECT txn_id FROM ledger_entries GROUP BY txn_id HAVING SUM(amount_cents) <> 0')).rows;
+    expect(unbalanced).toEqual([]);
   });
 });

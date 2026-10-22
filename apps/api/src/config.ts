@@ -63,6 +63,8 @@ const Env = z.object({
   WITHDRAWAL_FEE_MIN_CENTS: z.coerce.number().int().min(0).default(150),
   /** The on-chain MarketEscrow rail (USDC/USDT with the contract). Off at launch; NOWPayments covers crypto. */
   ONCHAIN_ESCROW_ENABLED: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
+  // Sellers must attach a photo/video of an in-game delivery before marking it delivered.
+  DELIVERY_PROOF_REQUIRED: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
   /** Underpayments within this share of the price are accepted as paid in full (network dust, rounding). */
   CRYPTO_UNDERPAY_TOLERANCE_BPS: z.coerce.number().int().min(0).max(500).default(50),
   KYC_PROVIDER: z.enum(['mock', 'sumsub']).default('mock'),
@@ -100,12 +102,13 @@ const Env = z.object({
   WATCH_CHECK_MINUTES: z.coerce.number().min(1).default(15).describe('How often price alerts are checked'),
   // Currencies & FX. Everything internal (escrow, ledger, balances) is in SETTLEMENT_CURRENCY.
   SETTLEMENT_CURRENCY: z.string().length(3).default('USD'),
-  SUPPORTED_CURRENCIES: z.string().default('USD,EUR,GBP'),
-  FX_PROVIDER: z.enum(['static', 'ecb']).default('static'),
-  FX_STATIC_RATES: z.string().default('{"EUR":0.92,"GBP":0.79}'),
+  SUPPORTED_CURRENCIES: z.string().default('USD,EUR,EGP'),
+  // ecb covers EUR; EGP is not an ECB currency, so 'live' merges ECB with the open exchange-rate API.
+  FX_PROVIDER: z.enum(['static', 'ecb', 'live']).default('static'),
+  FX_STATIC_RATES: z.string().default('{"EUR":0.92,"EGP":48.5}'),
   FX_SPREAD_BPS: z.coerce.number().int().min(0).max(1000).default(100),
   FX_MAX_AGE_HOURS: z.coerce.number().default(48),
-  // Buying EUR/GBP ahead of seller payouts (domain/fxtopups.ts). none = planning only, record conversions by hand.
+  // Buying EUR/EGP ahead of seller payouts (domain/fxtopups.ts). none = planning only, record conversions by hand.
   FX_EXCHANGE_PROVIDER: z.enum(['none', 'mock', 'wise']).default('none'),
   WISE_API_URL: z.string().default('https://api.transferwise.com'),
   WISE_API_TOKEN: z.string().optional(),
@@ -177,7 +180,8 @@ const Env = z.object({
   FRAUD_LABEL_LEGIT_DAYS: z.coerce.number().int().min(1).default(120),
   FRAUD_FREEZE_THRESHOLD: z.coerce.number().default(0.8),
   FRAUD_REVIEW_THRESHOLD: z.coerce.number().default(0.5),
-  OFFPLATFORM_SUSPEND_STRIKES: z.coerce.number().default(3),
+  // Off-platform contact: the offence that bans (1 = instant ban on the first offence). Earlier ones warn.
+  OFFPLATFORM_SUSPEND_STRIKES: z.coerce.number().int().min(1).default(3),
   ORDER_PAYMENT_TTL_MINUTES: z.coerce.number().default(30),
   TOS_VERSION: z.string().default('2026-09-01'),
   // Admin/arbiter actions need a session signed in with a second factor (PCI DSS 8.4). Defaults to on in production.

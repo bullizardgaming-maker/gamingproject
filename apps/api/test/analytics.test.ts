@@ -39,7 +39,7 @@ describe('seller analytics', () => {
     expect(r.series).toHaveLength(30);
     expect(r.totals).toMatchObject({
       orders: 3,
-      grossCents: 30_00,
+      grossCents: 31_59, // three 10.00 sales, each 10.53 to the buyer (5% grossed up)
       views: 4,
       conversionPct: 75,
       buyers: 2,
@@ -47,10 +47,10 @@ describe('seller analytics', () => {
       repeatBuyerPct: 100,
       refundRatePct: 33.33,
       disputeRatePct: 33.33,
-      avgOrderCents: 10_00,
+      avgOrderCents: 10_53,
     });
-    expect(r.totals.netCents).toBeLessThan(20_00); // two non-refunded sales, after commission
-    expect(r.previous).toMatchObject({ orders: 1, grossCents: 5_00 });
+    expect(r.totals.netCents).toBe(20_00); // two non-refunded sales: the seller keeps their price
+    expect(r.previous).toMatchObject({ orders: 1, grossCents: 5_27 });
 
     const sum = (k: string) => r.series.reduce((s: number, x: any) => s + x[k], 0);
     expect(sum('orders')).toBe(3);
@@ -58,7 +58,7 @@ describe('seller analytics', () => {
     // Buyer a's first order is new, the second is returning; buyer b is returning (bought 40 days ago).
     expect(sum('new_buyers')).toBe(1);
     expect(sum('returning_buyers')).toBe(2);
-    expect(r.series.find((x: any) => x.date === daysAgo(3).slice(0, 10))).toMatchObject({ orders: 1, gross_cents: 10_00 });
+    expect(r.series.find((x: any) => x.date === daysAgo(3).slice(0, 10))).toMatchObject({ orders: 1, gross_cents: 10_53 });
 
     expect(r.offers[0]).toMatchObject({ id: offer.id, orders: 3, views: 4, conversion_pct: 75 });
     expect(r.offers.find((o: any) => o.id === other.id)).toBeUndefined(); // nothing this period
@@ -80,7 +80,7 @@ describe('business dashboard', () => {
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     const t = res.body.totals;
     // From the seller test above: three orders paid in the last 30 days.
-    expect(t).toMatchObject({ orders: 3, gmvCents: 30_00, disputes: 1, disputeRatePct: 33.33, refunds: 1, chargebacks: 0, chargebackRatePct: 0, sellers: 1, buyers: 2, newBuyers: 1, newSellers: 0 });
+    expect(t).toMatchObject({ orders: 3, gmvCents: 31_59, disputes: 1, disputeRatePct: 33.33, refunds: 1, chargebacks: 0, chargebackRatePct: 0, sellers: 1, buyers: 2, newBuyers: 1, newSellers: 0 });
     expect(t.takeCents).toBeGreaterThan(0);
     expect(t.takeRatePct).toBeCloseTo((t.takeCents / t.gmvCents) * 100, 1);
     expect(res.body.previous).toMatchObject({ orders: 1, newSellers: 1, newBuyers: 1 });

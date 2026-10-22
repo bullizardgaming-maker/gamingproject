@@ -15,6 +15,7 @@ test('high-value listings can be limited to established buyers', async ({ page }
   await page.locator('input[name=title]').fill('Small gold pack, 10k');
   await page.locator('input[name=price]').fill('20');
   await page.locator('select[name=deliveryMode]').selectOption('manual');
+  await page.locator('select[name="attr.server"]').selectOption('Europe');
   await page.getByLabel('Established buyers only').check();
   await page.getByRole('button', { name: 'Create listing' }).click();
   await expect(page.getByRole('alert')).toContainText('100 or more');

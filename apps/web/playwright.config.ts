@@ -20,6 +20,8 @@ export default defineConfig({
   use: {
     baseURL: 'http://localhost:4173',
     locale: 'en-US',
+    // Prices default to the viewer's local currency (EGP in Egypt, EUR in the euro area): pin the tests to USD.
+    timezoneId: 'America/New_York',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     launchOptions: { executablePath },

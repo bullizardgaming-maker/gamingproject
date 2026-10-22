@@ -26,8 +26,9 @@ describe('tax on commission', () => {
     const de = await sale(german);
     expect(de).toMatchObject({ tax_country: 'DE', tax_treatment: 'standard', tax_rate_bps: 1900 });
     expect(Number(de.commission_tax_cents)).toBe(Math.round((Number(de.commission_cents) * 1900) / 11_900));
-    // The seller is paid the same either way: commission is VAT-inclusive.
-    expect(Number(de.seller_net_cents)).toBe(100_00 - Number(de.commission_cents));
+    // The seller is paid their price either way: commission (VAT-inclusive) sits on top of it.
+    expect(Number(de.seller_net_cents)).toBe(100_00);
+    expect(Number(de.amount_cents)).toBe(100_00 + Number(de.commission_cents));
 
     const french = await makeUser(h, { tier: 2 });
     expect((await french.api.put('/v1/seller/tax-profile', { country: 'FR', isBusiness: true, taxId: 'FR 99 999999999' })).body.error.code).toBe('tax_id_not_registered');

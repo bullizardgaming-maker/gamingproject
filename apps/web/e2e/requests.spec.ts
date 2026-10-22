@@ -51,7 +51,7 @@ test.describe('buyer requests', () => {
     await page.waitForTimeout(5500);
     await page.reload();
     await expect(page.getByRole('button', { name: 'Accept' })).toBeVisible();
-    await expect(page.getByText('$18.00')).toBeVisible();
+    await expect(page.getByText('$18.95')).toBeVisible(); // the seller's $18.00 plus their launch-promo commission
   });
 
   test('a seller sends and revises a proposal', async ({ page }) => {
@@ -64,7 +64,8 @@ test.describe('buyer requests', () => {
     await expect(page.getByText(/Your proposal is with the buyer/)).toBeVisible();
     await page.getByLabel('Your price (USD)').fill('40');
     await page.getByRole('button', { name: 'Update proposal' }).first().click();
-    await expect(page.getByText('$40.00')).toBeVisible();
+    await expect(page.getByText('$40.00').first()).toBeVisible();
+    await expect(page.getByText('buyers pay $44.94')).toBeVisible(); // NorthWind is on the Basilisk rate
     await page.goto('/requests/proposals');
     await expect(page.getByText('$40.00')).toBeVisible();
     await expect(page.getByText('Waiting for buyer')).toBeVisible();

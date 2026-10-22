@@ -27,6 +27,12 @@ export interface User {
   /** Language for emails and notifications. */
   locale?: string;
   session_mfa?: boolean;
+  /** Character names / UIDs remembered per game (lower-case key) after the first order. */
+  handover_names?: Record<string, string>;
+  /** Seller onboarding: set once the rules test is passed. */
+  rules_passed_at?: string | null;
+  selling_restricted_at?: string | null;
+  seller_since?: string | null;
 }
 
 export class ApiError extends Error {
@@ -135,7 +141,7 @@ export async function apiUpload<T = any>(path: string, file: File): Promise<T> {
       r.onerror = () => reject(r.error);
       r.readAsDataURL(file);
     });
-    return api<T>(path, { body: { dataUrl, type: file.type, size: file.size } });
+    return api<T>(path, { body: { dataUrl, type: file.type, size: file.size, name: file.name } });
   }
   const headers: Record<string, string> = { 'Content-Type': file.type || 'application/octet-stream', 'X-Device-Fingerprint': deviceFingerprint() };
   if (session.token) headers.Authorization = `Bearer ${session.token}`;
@@ -162,7 +168,7 @@ export interface ChatMessage {
   room_id: string;
   seq: number;
   sender_id: string | null;
-  kind: 'text' | 'system' | 'delivery' | 'warning' | 'attachment';
+  kind: 'text' | 'system' | 'delivery' | 'warning' | 'attachment' | 'system_order';
   /** null when the author's chat history was erased. */
   body: string | null;
   erased?: boolean;

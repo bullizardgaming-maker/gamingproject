@@ -21,6 +21,17 @@ export async function expectNoHorizontalScroll(page: Page) {
   expect(scroll, `page is ${scroll}px wide in a ${width}px viewport`).toBeLessThanOrEqual(width);
 }
 
+/** Games that deliver in-game ask for the buyer's character name (or UID) before paying. */
+export async function fillCharacter(page: Page, name = 'TestChar_01') {
+  // The buy box (and with it the field) renders once the listing has loaded.
+  await expect(page.getByRole('button', { name: /Pay .* into escrow/ })).toBeVisible();
+  const field = page.getByTestId('character-field');
+  if (!(await field.count())) return;
+  const input = field.getByRole('textbox');
+  if (await input.count()) await input.fill(name);
+  else await field.getByRole('button', { name: /Confirm/ }).click();
+}
+
 /** Pay the crypto checkout on the current page (order or cart): pick a coin, then the demo network confirms it. */
 export async function payCrypto(page: Page) {
   const checkout = page.locator('.crypto-checkout');
@@ -32,6 +43,7 @@ export async function payCrypto(page: Page) {
 /** Buy a listing: order page → crypto checkout → paid; ends on the order page. */
 export async function buy(page: Page, offerPath: string) {
   await page.goto(offerPath);
+  await fillCharacter(page);
   await page.getByLabel(/I accept the Terms of Service/).check();
   await page.getByRole('button', { name: /Pay .* into escrow/ }).click();
   await page.waitForURL(/\/orders\/.*pay=crypto/);

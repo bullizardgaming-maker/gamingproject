@@ -4,7 +4,7 @@ import { buy, signIn } from './helpers';
 test('dispute: buyer states the case, the arbiter decides from the case file', async ({ page }) => {
   await signIn(page, 'Buyer');
   await buy(page, '/offers/offer-14'); // AK-47 Redline, manual delivery
-  await page.getByText('Open a dispute').click();
+  await page.getByText('Open a dispute', { exact: true }).click();
   await page.getByLabel("What's the problem?").selectOption('not_delivered');
   await page.getByPlaceholder(/What happened\?/).fill('Paid an hour ago and the seller has not traded the skin yet.');
   await page.getByRole('button', { name: 'Open dispute' }).click();

@@ -15,6 +15,9 @@ export const PERMISSIONS = [
   'chargebacks.manage',
   'orders.refund_after_release',
   'orders.release', // release an unconfirmed delivered order to the seller (24h+ after delivery)
+  'ranks.manage', // seller ranks, rates and the launch promo (CEO)
+  'leagues.manage', // open and close challenge leagues (Support & Arbitration)
+  'rules.manage', // the seller rules test and the ID deadline (Support & Arbitration)
   'reconciliation.run',
   'promos.manage',
   'treasury.request',
@@ -41,7 +44,7 @@ export type StaffRole = (typeof STAFF_ROLES)[number];
 
 export const ROLE_PERMISSIONS: Record<StaffRole, readonly Permission[]> = {
   arbiter: ['orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'orders.refund_after_release', 'orders.release', 'moderation.manage'],
-  support: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage', 'support.manage', 'moderation.manage', 'orders.release'],
+  support: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage', 'support.manage', 'moderation.manage', 'orders.release', 'leagues.manage', 'rules.manage'],
   finance: [
     'chargebacks.manage', 'orders.refund_after_release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view', 'ledger.adjust',
     'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'analytics.view',

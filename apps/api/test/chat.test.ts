@@ -95,22 +95,37 @@ describe('chat ledger', () => {
     expect((await stranger.api.get(`/v1/chat/rooms/${roomId}/messages`)).status).toBe(403);
   });
 
-  it('warns on off-platform contact and suspends repeat offenders', async () => {
+  it('blocks off-platform contact (never delivered), counts offences, and applies the staff-set action', async () => {
     const { seller, buyer, roomId } = await orderRoom();
-    await seller.api.post(`/v1/chat/rooms/${roomId}/messages`, { body: 'add me on discord for a discount' });
+    const before = (await buyer.api.get(`/v1/chat/rooms/${roomId}/messages`)).body.length;
+    const blocked = await seller.api.post(`/v1/chat/rooms/${roomId}/messages`, { body: 'add me on discord for a discount' });
+    expect(blocked.status).toBe(422);
+    expect(blocked.body.error).toMatchObject({ code: 'offplatform_blocked', message: 'Not sent. Sharing outside contacts can get your account banned right away.' });
+    // The buyer never sees it, the sender neither; staff see the attempt in the queue with its context.
     let msgs = (await buyer.api.get(`/v1/chat/rooms/${roomId}/messages`)).body;
-    const flagged = msgs.find((m: any) => m.body.includes('discord'));
-    expect(flagged.flags).toContain('offplatform:discord');
-    expect(msgs.at(-1).kind).toBe('warning');
-    expect(msgs.at(-1).body).toContain('1/3');
+    expect(msgs).toHaveLength(before);
+    expect(msgs.some((m: any) => m.body.includes('discord'))).toBe(false);
+    expect((await seller.api.get(`/v1/chat/rooms/${roomId}/messages`)).body.some((m: any) => m.body.includes('discord'))).toBe(false);
+    const mod = await makeUser(h, { role: 'support' });
+    const queue = (await mod.api.get('/v1/admin/moderation/chats')).body;
+    const flag = queue.find((f: any) => f.room_id === roomId);
+    expect(flag.reasons).toContain('discord');
+    expect(flag.context.at(-1)).toMatchObject({ body: 'add me on discord for a discount' });
+    expect((await seller.api.get('/v1/me')).body.user.status).toBe('active'); // 1st offence: warn
 
+    // Staff set the policy: first offence warns, the second bans.
+    expect((await mod.api.get('/v1/admin/moderation/offplatform-policy')).body.actions).toEqual(['warn', 'warn', 'ban']);
+    expect((await mod.api.put('/v1/admin/moderation/offplatform-policy', { actions: ['warn', 'ban'] })).body.actions).toEqual(['warn', 'ban']);
     await seller.api.post(`/v1/chat/rooms/${roomId}/messages`, { body: 'telegram: t.me/cheapgold' });
-    await seller.api.post(`/v1/chat/rooms/${roomId}/messages`, { body: 'or whatsapp +44 7700 900123' });
     expect((await seller.api.get('/v1/me')).body.user.status).toBe('suspended');
-    const blocked = await seller.api.post(`/v1/chat/rooms/${roomId}/messages`, { body: 'hello?' });
-    expect(blocked.status).toBe(403);
+    const banned = await seller.api.post(`/v1/chat/rooms/${roomId}/messages`, { body: 'hello?' });
+    expect(banned.status).toBe(403);
     msgs = (await buyer.api.get(`/v1/chat/rooms/${roomId}/messages`)).body;
-    expect(msgs.at(-1).body).toContain('suspended');
+    expect(msgs.at(-1).kind).toBe('warning');
+    expect(msgs.at(-1).body).toContain('banned');
+    // The hash chain still verifies with the hidden attempts in it.
+    expect((await buyer.api.get(`/v1/chat/rooms/${roomId}/verify`)).body.valid).toBe(true);
+    await mod.api.put('/v1/admin/moderation/offplatform-policy', { actions: ['warn', 'warn', 'ban'] });
   });
 });
 

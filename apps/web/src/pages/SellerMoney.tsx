@@ -25,7 +25,7 @@ interface TaxProfile {
   commissionTax: { country: string; treatment: 'standard' | 'reverse_charge' | 'outside_scope'; rateBps: number; note?: string };
 }
 
-const CURRENCIES = ['USD', 'EUR', 'GBP'];
+const CURRENCIES = ['USD', 'EUR', 'EGP'];
 const holdLabel = (level: string) => (['new', 'established', 'trusted', 'watch', 'custom'].includes(level) ? t(`money.hold.${level}` as MessageKey) : level);
 const COUNTRIES: Array<[string, string]> = [
   ['AT', 'Austria'], ['BE', 'Belgium'], ['BG', 'Bulgaria'], ['HR', 'Croatia'], ['CY', 'Cyprus'], ['CZ', 'Czechia'], ['DK', 'Denmark'],

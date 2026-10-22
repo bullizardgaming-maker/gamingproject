@@ -452,3 +452,291 @@ function RoleEditor({ current, onSave, onCancel }: { current: string[]; onSave: 
     </div>
   );
 }
+
+/** Launch phase: which categories are on sale (1 currency/items/top-ups, 2 + accounts/boosting, 3 everything). */
+function LaunchPhase() {
+  const { data, error, reload, setError } = useLoad(() => api<{ phase: number; categories: Array<{ slug: string; name: string; phase: number }> }>('/admin/launch'));
+  const [msg, setMsg] = useState('');
+  if (!data) return <p className="muted">{error || 'Loading…'}</p>;
+  const set = async (phase: number) => {
+    setError('');
+    setMsg('');
+    try {
+      await api('/admin/launch', { method: 'PUT', body: { phase } });
+      setMsg(`Phase ${phase} is live: ${data.categories.filter((c) => c.phase <= phase).map((c) => c.name).join(', ')}.`);
+      reload();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+  return (
+    <div className="card stack" data-testid="launch-phase">
+      <div className="row spread">
+        <b>Launch phase</b>
+        <span className="chip">Phase {data.phase}</span>
+      </div>
+      <p className="small muted" style={{ margin: 0 }}>Closed categories are hidden from buyers and cannot be listed in. Moving forward opens them at once; moving back hides their listings again.</p>
+      {error && <div className="alert" role="alert">{error}</div>}
+      {msg && <div className="ok" role="status">{msg}</div>}
+      <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+        {[1, 2, 3].map((p) => (
+          <button key={p} className={`btn ${data.phase === p ? '' : 'ghost'}`} aria-pressed={data.phase === p} onClick={() => set(p)}>
+            Phase {p}: {data.categories.filter((c) => c.phase === p).map((c) => c.name).join(', ')}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Seller ranks: names, 30-day sales thresholds and commission rates, plus the launch promo (admin only). */
+export function RanksPanel() {
+  const { data, error, reload, setError } = useLoad(() => api<{ ranks: Array<{ position: number; name: string; minMonthlySalesCents: number; rateBps: number; perks: string[] }>; settings: { promoRateBps: number; promoDays: number } }>('/admin/ranks'));
+  const [draft, setDraft] = useState<typeof data | null>(null);
+  const [saved, setSaved] = useState('');
+  useEffect(() => setDraft(data), [data]);
+  if (!draft) return <p className="muted">{error || 'Loading…'}</p>;
+  const set = (i: number, patch: Partial<(typeof draft.ranks)[number]>) => setDraft({ ...draft, ranks: draft.ranks.map((r, k) => (k === i ? { ...r, ...patch } : r)) });
+  const save = async () => {
+    setError('');
+    setSaved('');
+    try {
+      await api('/admin/ranks', { method: 'PUT', body: { ranks: draft.ranks, settings: draft.settings } });
+      setSaved('Saved. Listings show the new rates right away.');
+      reload();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+  return (
+    <div className="stack">
+      <LaunchPhase />
+      <p className="muted small">
+        Sellers set their price and receive it in full; the rank rate is added on top for the buyer. A seller's rank follows their completed sales over the last 30 days. Thresholds must rise and rates must not with each rank.
+      </p>
+      {error && <div className="alert" role="alert">{error}</div>}
+      {saved && <div className="ok" role="status">{saved}</div>}
+      <div className="card table-wrap">
+        <table className="data" aria-label="Seller ranks">
+          <thead><tr><th>#</th><th>Name</th><th>From (30-day sales, USD)</th><th>Commission %</th></tr></thead>
+          <tbody>
+            {draft.ranks.map((r, i) => (
+              <tr key={r.position}>
+                <td className="mono">{r.position}</td>
+                <td><input aria-label={`Rank ${r.position} name`} value={r.name} maxLength={30} onChange={(e) => set(i, { name: e.target.value })} /></td>
+                <td><input aria-label={`Rank ${r.position} threshold`} type="number" min={0} step={1} disabled={i === 0} value={r.minMonthlySalesCents / 100} onChange={(e) => set(i, { minMonthlySalesCents: Math.round(Number(e.target.value) * 100) })} /></td>
+                <td><input aria-label={`Rank ${r.position} rate`} type="number" min={0} max={50} step={0.01} value={r.rateBps / 100} onChange={(e) => set(i, { rateBps: Math.round(Number(e.target.value) * 100) })} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="card stack">
+        <b>Launch promo for new sellers</b>
+        <div className="row" style={{ gap: 16 }}>
+          <label className="field">Rate %<input aria-label="Promo rate" type="number" min={0} max={50} step={0.01} value={draft.settings.promoRateBps / 100} onChange={(e) => setDraft({ ...draft, settings: { ...draft.settings, promoRateBps: Math.round(Number(e.target.value) * 100) } })} /></label>
+          <label className="field">Days from first listing<input aria-label="Promo days" type="number" min={0} max={365} value={draft.settings.promoDays} onChange={(e) => setDraft({ ...draft, settings: { ...draft.settings, promoDays: Number(e.target.value) } })} /></label>
+        </div>
+        <span className="small muted">0 days switches the promo off. The promo never charges more than the seller's rank rate.</span>
+      </div>
+      <div className="row">
+        <button className="btn" onClick={save}>Save ranks</button>
+        <button className="btn ghost" onClick={() => setDraft(data)}>Reset</button>
+      </div>
+    </div>
+  );
+}
+
+/** Challenge leagues (Path of Exile 1 & 2): open one when it is announced, close it when it ends. */
+export function LeaguesPanel() {
+  const { data, error, reload, setError } = useLoad(() => api<{ leagues: Array<{ id: string; game: string; name: string; starts_at: string | null; ends_at: string | null }>; games: string[]; inactiveSellerDays: number }>('/admin/leagues'));
+  const [game, setGame] = useState('path of exile');
+  const [name, setName] = useState('');
+  const [msg, setMsg] = useState('');
+  if (!data) return <p className="muted">{error || 'Loading…'}</p>;
+  const title = (g: string) => g.replace(/\b\w/g, (c) => c.toUpperCase());
+  const call = async (fn: () => Promise<unknown>, ok: string) => {
+    setError('');
+    setMsg('');
+    try {
+      await fn();
+      setMsg(ok);
+      reload();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+  return (
+    <div className="stack">
+      <p className="muted small">
+        Standard and Hardcore are always open. A challenge league you open here becomes a choice on the sell form at once. Once it ends, listings in it from sellers not seen for {data.inactiveSellerDays} days expire (the worker runs this hourly); active sellers keep theirs and can move them.
+      </p>
+      {error && <div className="alert" role="alert">{error}</div>}
+      {msg && <div className="ok" role="status">{msg}</div>}
+      <form
+        className="card row"
+        style={{ gap: 12, alignItems: 'end', flexWrap: 'wrap' }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          call(() => api('/admin/leagues', { body: { game, name: name.trim(), startsAt: new Date().toISOString() } }), `${name.trim()} is open for ${title(game)}.`).then(() => setName(''));
+        }}
+      >
+        <label className="field">Game<select value={game} onChange={(e) => setGame(e.target.value)}>{data.games.map((g) => <option key={g} value={g}>{title(g)}</option>)}</select></label>
+        <label className="field">League name<input value={name} onChange={(e) => setName(e.target.value)} minLength={2} maxLength={60} required placeholder="e.g. the new challenge league" /></label>
+        <button className="btn" disabled={name.trim().length < 2}>Open league</button>
+      </form>
+      <div className="card table-wrap">
+        <table className="data" aria-label="Challenge leagues">
+          <thead><tr><th>Game</th><th>League</th><th>Started</th><th>Ends</th><th /></tr></thead>
+          <tbody>
+            {data.leagues.length === 0 && <tr><td colSpan={5} className="muted">No challenge leagues yet.</td></tr>}
+            {data.leagues.map((l) => {
+              const ended = !!l.ends_at && new Date(l.ends_at) <= new Date();
+              return (
+                <tr key={l.id}>
+                  <td>{title(l.game)}</td>
+                  <td><b>{l.name}</b> {ended ? <span className="chip disputed">Ended</span> : <span className="chip released">Open</span>}</td>
+                  <td className="mono">{l.starts_at ? new Date(l.starts_at).toLocaleDateString() : '—'}</td>
+                  <td className="mono">{l.ends_at ? new Date(l.ends_at).toLocaleDateString() : '—'}</td>
+                  <td>
+                    {ended ? (
+                      <button className="btn ghost small" onClick={() => call(() => api(`/admin/leagues/${l.id}`, { method: 'PATCH', body: { endsAt: null } }), `${l.name} reopened.`)}>Reopen</button>
+                    ) : (
+                      <button className="btn ghost small" onClick={() => call(() => api(`/admin/leagues/${l.id}`, { method: 'PATCH', body: { endsAt: new Date().toISOString() } }), `${l.name} ended. Inactive sellers' listings in it expire on the next worker run.`)}>End now</button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <button className="btn ghost" onClick={() => call(() => api('/admin/leagues/expire', { body: {} }).then((r: any) => setMsg(`Expired ${r.expired} listing(s).`)), '')}>Run expiry now</button>
+    </div>
+  );
+}
+
+/** The seller rules test: questions, the right answer, the pass mark and the ID deadline (support). */
+export function RulesTestPanel() {
+  type Q = { id?: string; position: number; question: string; options: string[]; correct: number; explanation: string; active: boolean };
+  const { data, error, reload, setError } = useLoad(() => api<{ questions: Q[]; settings: { passMarkPct: number; idDueDays: number } }>('/admin/rules-test'));
+  const [qs, setQs] = useState<Q[]>([]);
+  const [settings, setSettings] = useState({ passMarkPct: 100, idDueDays: 30 });
+  const [msg, setMsg] = useState('');
+  useEffect(() => {
+    if (data) {
+      setQs(data.questions.filter((q) => q.active));
+      setSettings(data.settings);
+    }
+  }, [data]);
+  if (!data) return <p className="muted">{error || 'Loading…'}</p>;
+  const set = (i: number, patch: Partial<Q>) => setQs((all) => all.map((q, k) => (k === i ? { ...q, ...patch } : q)));
+  const save = async () => {
+    setError('');
+    setMsg('');
+    try {
+      await api('/admin/rules-test', { method: 'PUT', body: { questions: qs.map((q, i) => ({ ...q, position: i + 1 })), settings } });
+      setMsg('Saved. New sellers get the updated test at once.');
+      reload();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+  return (
+    <div className="stack">
+      <p className="muted small">Every seller passes this test before their first listing. Questions you remove are retired, not deleted. The ID deadline counts from a seller's first listing; the worker reminds them at 7 and 1 days and pauses listings once it passes.</p>
+      {error && <div className="alert" role="alert">{error}</div>}
+      {msg && <div className="ok" role="status">{msg}</div>}
+      <div className="card row" style={{ gap: 16, flexWrap: 'wrap' }}>
+        <label className="field">Pass mark %<input aria-label="Pass mark" type="number" min={1} max={100} value={settings.passMarkPct} onChange={(e) => setSettings({ ...settings, passMarkPct: Number(e.target.value) })} /></label>
+        <label className="field">ID due (days after first listing)<input aria-label="ID due days" type="number" min={1} max={365} value={settings.idDueDays} onChange={(e) => setSettings({ ...settings, idDueDays: Number(e.target.value) })} /></label>
+      </div>
+      {qs.map((q, i) => (
+        <div key={q.id ?? `new-${i}`} className="card stack" data-testid="rules-question">
+          <div className="row spread">
+            <b>Question {i + 1}</b>
+            <button className="btn ghost small" onClick={() => setQs((all) => all.filter((_, k) => k !== i))}>Remove</button>
+          </div>
+          <label className="field">Question<textarea aria-label={`Question ${i + 1}`} value={q.question} rows={2} onChange={(e) => set(i, { question: e.target.value })} /></label>
+          <div className="stack" style={{ gap: 6 }}>
+            {q.options.map((o, k) => (
+              <label key={k} className="row" style={{ gap: 8 }}>
+                <input type="radio" name={`correct-${i}`} style={{ width: 'auto' }} checked={q.correct === k} onChange={() => set(i, { correct: k })} aria-label={`Question ${i + 1} correct answer ${k + 1}`} />
+                <input aria-label={`Question ${i + 1} option ${k + 1}`} value={o} onChange={(e) => set(i, { options: q.options.map((x, j) => (j === k ? e.target.value : x)) })} style={{ flex: 1 }} />
+                {q.options.length > 2 && <button className="btn ghost small" aria-label={`Remove option ${k + 1}`} onClick={() => set(i, { options: q.options.filter((_, j) => j !== k), correct: Math.min(q.correct, q.options.length - 2) })}>×</button>}
+              </label>
+            ))}
+            {q.options.length < 6 && <button className="btn ghost small" style={{ alignSelf: 'start' }} onClick={() => set(i, { options: [...q.options, ''] })}>Add option</button>}
+          </div>
+          <label className="field">Explanation shown when missed<input value={q.explanation} onChange={(e) => set(i, { explanation: e.target.value })} /></label>
+        </div>
+      ))}
+      <div className="row">
+        <button className="btn ghost" onClick={() => setQs((all) => [...all, { position: all.length + 1, question: '', options: ['', ''], correct: 0, explanation: '', active: true }])}>Add question</button>
+        <button className="btn" onClick={save} disabled={qs.some((q) => q.question.trim().length < 10 || q.options.some((o) => !o.trim()))}>Save test</button>
+      </div>
+    </div>
+  );
+}
+
+/** Creator affiliate codes (finance): give a streamer a code and a share of the commission. */
+export function AffiliatesPanel() {
+  const { data, error, reload, setError } = useLoad(() => api<any[]>('/admin/affiliates'));
+  const [form, setForm] = useState({ userId: '', code: '', rate: '20', note: '' });
+  const [msg, setMsg] = useState('');
+  if (!data) return <p className="muted">{error || 'Loading…'}</p>;
+  const act = async (fn: () => Promise<unknown>, ok: string) => {
+    setError('');
+    setMsg('');
+    try {
+      await fn();
+      setMsg(ok);
+      reload();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+  return (
+    <div className="stack">
+      <p className="muted small">A creator's code pays them a share of the commission on every order by a buyer who entered it (at signup or on their account page), on top of the referral reward. Earnings go to the creator's balance.</p>
+      {error && <div className="alert" role="alert">{error}</div>}
+      {msg && <div className="ok" role="status">{msg}</div>}
+      <form
+        className="card grid two"
+        onSubmit={(e) => {
+          e.preventDefault();
+          act(() => api('/admin/affiliates', { body: { userId: form.userId.trim(), code: form.code.trim(), rateBps: Math.round(Number(form.rate) * 100), note: form.note.trim() } }), `${form.code.trim().toUpperCase()} is live.`).then(() => setForm({ userId: '', code: '', rate: '20', note: '' }));
+        }}
+      >
+        <label className="field">Creator's user ID<input value={form.userId} onChange={(e) => setForm({ ...form, userId: e.target.value })} required placeholder="uuid" /></label>
+        <label className="field">Code<input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} required minLength={3} maxLength={20} placeholder="STREAMER-X" /></label>
+        <label className="field">Share of commission %<input type="number" min={0} max={50} step={1} value={form.rate} onChange={(e) => setForm({ ...form, rate: e.target.value })} /></label>
+        <label className="field">Note<input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} maxLength={300} placeholder="Twitch, 40k followers" /></label>
+        <button className="btn" style={{ alignSelf: 'end' }}>Create code</button>
+      </form>
+      <div className="card table-wrap">
+        <table className="data" aria-label="Creator codes">
+          <thead><tr><th>Code</th><th>Creator</th><th>Share</th><th>Buyers</th><th>Orders</th><th>Earned</th><th /></tr></thead>
+          <tbody>
+            {data.length === 0 && <tr><td colSpan={7} className="muted">No creator codes yet.</td></tr>}
+            {data.map((a) => (
+              <tr key={a.id}>
+                <td className="mono"><b>{a.code}</b>{a.status === 'paused' && <span className="chip held" style={{ marginInlineStart: 6 }}>Paused</span>}</td>
+                <td>{a.display_name}<div className="small muted">{a.email}{a.note ? ` · ${a.note}` : ''}</div></td>
+                <td className="mono">{(Number(a.rate_bps) / 100).toFixed(0)}%</td>
+                <td className="mono">{a.buyers}</td>
+                <td className="mono">{a.orders}</td>
+                <td className="mono">{money(Number(a.earned_cents))}</td>
+                <td>
+                  <button className="btn ghost small" onClick={() => act(() => api(`/admin/affiliates/${a.id}`, { method: 'PATCH', body: { status: a.status === 'active' ? 'paused' : 'active' } }), `${a.code} ${a.status === 'active' ? 'paused' : 'active'}.`)}>
+                    {a.status === 'active' ? 'Pause' : 'Resume'}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}

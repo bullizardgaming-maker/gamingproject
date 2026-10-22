@@ -92,9 +92,10 @@ function ChatQueue({ onChange }: { onChange: () => void }) {
   };
   return (
     <div className="stack">
+      <OffplatformPolicy />
       <div className="row spread">
         <p className="small muted" style={{ margin: 0, flex: '1 1 320px' }}>
-          The sender was already warned in the chat. Confirm a real attempt to take the deal elsewhere, or dismiss a false alarm (that takes back the strike). Opening this queue is recorded in the audit log.
+          The message was not delivered; the sender saw "Not sent". Confirm a real attempt to take the deal elsewhere, or dismiss a false alarm (that takes back the strike). Opening this queue is recorded in the audit log.
         </p>
         <div className="filters" role="group" aria-label="Flag status" style={{ margin: 0 }}>
           {(['open', 'confirmed', 'dismissed'] as const).map((s) => <button key={s} aria-pressed={status === s} onClick={() => setStatus(s)}>{s[0]!.toUpperCase() + s.slice(1)}</button>)}
@@ -189,6 +190,51 @@ function Terms() {
           </div>
         ))
       )}
+    </div>
+  );
+}
+
+
+/** What happens on each outside-contact offence (staff-set): warn, suspend or ban. */
+function OffplatformPolicy() {
+  const [actions, setActions] = useState<string[] | null>(null);
+  const [msg, setMsg] = useState('');
+  const [error, setError] = useState('');
+  useEffect(() => {
+    api<{ actions: string[] }>('/admin/moderation/offplatform-policy').then((r) => setActions(r.actions)).catch((e) => setError(e.message));
+  }, []);
+  if (!actions) return null;
+  const save = async (next: string[]) => {
+    setError('');
+    setMsg('');
+    try {
+      const r = await api<{ actions: string[] }>('/admin/moderation/offplatform-policy', { method: 'PUT', body: { actions: next } });
+      setActions(r.actions);
+      setMsg('Saved.');
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+  return (
+    <div className="card stack" data-testid="offplatform-policy">
+      <b>Outside-contact offences</b>
+      <p className="small muted" style={{ margin: 0 }}>A blocked message is never delivered. Pick what each offence does; the last one repeats for every offence after it.</p>
+      <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'end' }}>
+        {actions.map((a, i) => (
+          <label key={i} className="field" style={{ margin: 0 }}>
+            {i + 1}{['st', 'nd', 'rd'][i] ?? 'th'} offence
+            <select aria-label={`Offence ${i + 1} action`} value={a} onChange={(e) => save(actions.map((x, k) => (k === i ? e.target.value : x)))} style={{ width: 'auto' }}>
+              <option value="warn">Warn (block only)</option>
+              <option value="suspend">Suspend</option>
+              <option value="ban">Ban</option>
+            </select>
+          </label>
+        ))}
+        {actions.length < 5 && <button className="btn ghost small" onClick={() => save([...actions, 'ban'])}>Add step</button>}
+        {actions.length > 1 && <button className="btn ghost small" onClick={() => save(actions.slice(0, -1))}>Remove last</button>}
+      </div>
+      {msg && <span className="small text-released" role="status">{msg}</span>}
+      {error && <div className="alert" role="alert">{error}</div>}
     </div>
   );
 }

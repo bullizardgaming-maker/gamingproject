@@ -22,6 +22,7 @@ export async function setup(overrides: Record<string, string> = {}, ctxOverrides
   const db = createPool(cfg.DATABASE_URL);
   await db.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
   await migrate(db);
+  await db.query('UPDATE launch_settings SET phase = 3'); // tests cover every category; launch-phase.test.ts checks the gating
   const messenger = new ConsoleMessenger(() => {});
   const ctx = createContext(cfg, silent, { db, pubsub: new MemoryPubSub(), messenger, ...ctxOverrides });
   const app = await buildApp(ctx);
@@ -68,7 +69,7 @@ export function client(app: FastifyInstance, token?: string, headers: Record<str
 let seq = 0;
 
 /** Register a user and fast-path them to the requested tier/role. */
-export async function makeUser(h: Harness, opts: { tier?: 0 | 1 | 2; role?: 'user' | 'arbiter' | 'support' | 'finance' | 'compliance' | 'admin'; device?: string; ip?: string; name?: string } = {}) {
+export async function makeUser(h: Harness, opts: { tier?: 0 | 1 | 2; role?: 'user' | 'arbiter' | 'support' | 'finance' | 'compliance' | 'admin'; device?: string; ip?: string; name?: string; /** Tier-1 users who may sell (the rules test passed). */ rulesPassed?: boolean } = {}) {
   seq++;
   const email = `user${seq}_${Date.now()}@example.com`;
   const res = await client(h.app, undefined, {
@@ -81,9 +82,10 @@ export async function makeUser(h: Harness, opts: { tier?: 0 | 1 | 2; role?: 'use
   await h.ctx.db.query(
     `UPDATE users SET kyc_tier = $2::smallint, role = $3,
        email_verified_at = CASE WHEN $2::smallint >= 1 THEN now() END, phone_verified_at = CASE WHEN $2::smallint >= 1 THEN now() END,
-       legal_name = CASE WHEN $2::smallint >= 2 THEN $4 END
+       legal_name = CASE WHEN $2::smallint >= 2 THEN $4 END,
+       rules_passed_at = CASE WHEN $2::smallint >= 2 OR $5::boolean THEN now() END
      WHERE id = $1`,
-    [user.id, tier, opts.role ?? 'user', opts.name ?? `User ${seq}`],
+    [user.id, tier, opts.role ?? 'user', opts.name ?? `User ${seq}`, !!opts.rulesPassed],
   );
   const headers: Record<string, string> = {};
   if (opts.device) headers['x-device-fingerprint'] = opts.device;

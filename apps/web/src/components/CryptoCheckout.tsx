@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, money } from '../api';
+import { t } from '../i18n';
 
 /**
  * Crypto checkout. `base` is `/orders/<id>` or `/checkouts/<id>`; the API under it offers the
@@ -24,17 +25,8 @@ export interface CryptoPayment {
 }
 interface Coins { owedCents: number; currency: string; coins: Array<{ coin: string; name: string; minUsd: number }> }
 
-const STATUS: Record<string, string> = {
-  waiting: 'Waiting for your transfer',
-  confirming: 'Seen on the network, confirming…',
-  confirmed: 'Confirmed, settling…',
-  sending: 'Settling…',
-  partially_paid: 'Partially paid',
-  finished: 'Paid',
-  failed: 'Failed',
-  refunded: 'Refunded',
-  expired: 'Expired',
-};
+const STATUSES = ['waiting', 'confirming', 'confirmed', 'sending', 'partially_paid', 'finished', 'failed', 'refunded', 'expired'] as const;
+const statusText = (s: string) => ((STATUSES as readonly string[]).includes(s) ? t(`crypto.status.${s as (typeof STATUSES)[number]}`) : s);
 const OPEN = new Set(['waiting', 'confirming', 'confirmed', 'sending']);
 const trim = (n: string) => n.replace(/(\.\d*?[1-9])0+$|\.0+$/, '$1');
 
@@ -104,42 +96,42 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid }: { base: 
     }
   };
 
-  if (!coins && payments.length === 0) return <div className="card"><p className="muted">{error || 'Loading payment options…'}</p></div>;
+  if (!coins && payments.length === 0) return <div className="card"><p className="muted">{error || t('crypto.loading')}</p></div>;
   const owed = coins?.owedCents ?? amountCents - paidCents;
 
   return (
     <div className="card stack crypto-checkout">
-      <h3>Pay with crypto</h3>
+      <h3>{t('crypto.title')}</h3>
       {underpaid && !open && (
         <div className="alert" role="status">
-          We received {money(paidCents, currency)}, which is {money(owed, currency)} short of the price (network fees or a rate change on the way). Send the rest to finish paying; what you sent is kept for this order.
+          {t('crypto.underpaid', { received: money(paidCents, currency), short: money(owed, currency) })}
         </div>
       )}
       {open ? (
         <div className="stack" style={{ gap: 8 }}>
-          <p className="small muted" style={{ margin: 0 }}>Send exactly this amount from your wallet. The order is funded when the network confirms it; this page updates by itself.</p>
-          <div className="row spread"><span className="muted">Coin</span><b>{open.pay_currency_name}</b></div>
-          <div className="row spread"><span className="muted">Amount</span><b className="mono" data-testid="pay-amount">{trim(open.pay_amount)} {open.pay_currency.toUpperCase().replace(/(TRC20|ERC20|BSC|SOL)$/, '')}</b></div>
+          <p className="small muted" style={{ margin: 0 }}>{t('crypto.sendExact')}</p>
+          <div className="row spread"><span className="muted">{t('crypto.coin')}</span><b>{open.pay_currency_name}</b></div>
+          <div className="row spread"><span className="muted">{t('crypto.amount')}</span><b className="mono" data-testid="pay-amount">{trim(open.pay_amount)} {open.pay_currency.toUpperCase().replace(/(TRC20|ERC20|BSC|SOL)$/, '')}</b></div>
           <div className="row spread" style={{ alignItems: 'start', gap: 8 }}>
-            <span className="muted">Address</span>
+            <span className="muted">{t('crypto.address')}</span>
             <code className="mono" style={{ wordBreak: 'break-all', textAlign: 'end' }} data-testid="pay-address">{open.pay_address}</code>
           </div>
-          {open.pay_extra_id && <div className="row spread"><span className="muted">Memo / tag (required)</span><code className="mono">{open.pay_extra_id}</code></div>}
+          {open.pay_extra_id && <div className="row spread"><span className="muted">{t('crypto.memo')}</span><code className="mono">{open.pay_extra_id}</code></div>}
           <div className="row" style={{ gap: 8 }}>
-            <button className="btn ghost" type="button" onClick={() => copy(open.pay_address)}>{copied ? 'Copied' : 'Copy address'}</button>
-            <button className="btn ghost" type="button" onClick={() => copy(trim(open.pay_amount))}>Copy amount</button>
+            <button className="btn ghost" type="button" onClick={() => copy(open.pay_address)}>{copied ? t('crypto.copied') : t('crypto.copyAddress')}</button>
+            <button className="btn ghost" type="button" onClick={() => copy(trim(open.pay_amount))}>{t('crypto.copyAmount')}</button>
           </div>
           <p className="small" style={{ margin: 0 }}>
-            <span className="chip held">{STATUS[open.status] ?? open.status}</span>
-            {open.expires_at && <span className="muted"> · rate locked until {new Date(open.expires_at).toLocaleTimeString()}</span>}
+            <span className="chip held">{statusText(open.status)}</span>
+            {open.expires_at && <span className="muted"> · {t('crypto.rateLocked', { time: new Date(open.expires_at).toLocaleTimeString() })}</span>}
           </p>
         </div>
       ) : (
         <div className="stack" style={{ gap: 8 }}>
           <p className="small muted" style={{ margin: 0 }}>
-            {money(owed, currency)} to pay. Choose a coin; you then get an address and the exact amount to send. Only coins whose network minimum fits this amount are listed.
+            {t('crypto.toPay', { amount: money(owed, currency) })}
           </p>
-          {coins && coins.coins.length === 0 && <p className="small">No coin can carry this amount right now. Try again in a minute or contact support.</p>}
+          {coins && coins.coins.length === 0 && <p className="small">{t('crypto.noCoin')}</p>}
           <div className="coin-grid">
             {coins?.coins.map((c) => (
               <button key={c.coin} type="button" className="btn ghost coin-option" disabled={busy} onClick={() => pick(c.coin)}>
@@ -152,10 +144,10 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid }: { base: 
       )}
       {payments.filter((p) => !OPEN.has(p.status)).length > 0 && (
         <details>
-          <summary className="small muted" style={{ cursor: 'pointer' }}>Payment history</summary>
+          <summary className="small muted" style={{ cursor: 'pointer' }}>{t('crypto.history')}</summary>
           <ul className="small" style={{ margin: '6px 0 0', paddingInlineStart: 18 }}>
             {payments.map((p) => (
-              <li key={p.id}>{p.pay_currency_name}: {trim(p.pay_amount)} for {money(Math.round(Number(p.price_usd) * 100), 'USD')} · {STATUS[p.status] ?? p.status}{p.actually_paid_usd ? ` · received ${money(Math.round(Number(p.actually_paid_usd) * 100), 'USD')}` : ''}</li>
+              <li key={p.id}>{t('crypto.historyLine', { coin: p.pay_currency_name, amount: trim(p.pay_amount), price: money(Math.round(Number(p.price_usd) * 100), 'USD'), status: statusText(p.status) })}{p.actually_paid_usd ? ` · ${t('crypto.received', { amount: money(Math.round(Number(p.actually_paid_usd) * 100), 'USD') })}` : ''}</li>
             ))}
           </ul>
         </details>
@@ -182,22 +174,32 @@ export function RefundAddressForm({ orderId, refund, coins, onDone }: { orderId:
   };
   return (
     <div className="card stack">
-      <h3>Your refund of {money(refund.amount_cents, refund.currency)}</h3>
+      <h3>{t('crypto.refund.title', { amount: money(refund.amount_cents, refund.currency) })}</h3>
       {refund.status === 'sent' ? (
-        <p className="small">Sent to <code className="mono">{refund.refund_address}</code>. Transaction: <code className="mono" style={{ wordBreak: 'break-all' }}>{refund.tx_hash}</code></p>
+        <p className="small">
+          {t('crypto.refund.sent', { address: '\u0000', tx: '\u0001' }).split(/[\u0000\u0001]/)[0]}
+          <code className="mono">{refund.refund_address}</code>
+          {t('crypto.refund.sent', { address: '\u0000', tx: '\u0001' }).split(/[\u0000\u0001]/)[1]}
+          <code className="mono" style={{ wordBreak: 'break-all' }}>{refund.tx_hash}</code>
+          {t('crypto.refund.sent', { address: '\u0000', tx: '\u0001' }).split(/[\u0000\u0001]/)[2]}
+        </p>
       ) : refund.status === 'pending' ? (
-        <p className="small muted" style={{ margin: 0 }}>The treasury sends it to <code className="mono">{refund.refund_address}</code> ({refund.refund_currency?.toUpperCase()}) within three working days. You get an email with the transaction.</p>
+        <p className="small muted" style={{ margin: 0 }}>
+          {t('crypto.refund.pending', { address: '\u0000', coin: refund.refund_currency?.toUpperCase() ?? '' }).split('\u0000')[0]}
+          <code className="mono">{refund.refund_address}</code>
+          {t('crypto.refund.pending', { address: '\u0000', coin: refund.refund_currency?.toUpperCase() ?? '' }).split('\u0000')[1]}
+        </p>
       ) : (
         <form className="stack" onSubmit={submit}>
-          <p className="small muted" style={{ margin: 0 }}>Crypto refunds go to an address you give us. Pick the coin and paste the address of a wallet you control.</p>
-          <label className="field">Coin
+          <p className="small muted" style={{ margin: 0 }}>{t('crypto.refund.text')}</p>
+          <label className="field">{t('crypto.coin')}
             <select value={coin} onChange={(e) => setCoin(e.target.value)}>{coins.map((c) => <option key={c.coin} value={c.coin}>{c.name}</option>)}</select>
           </label>
-          <label className="field">Address
-            <input value={address} onChange={(e) => setAddress(e.target.value)} required minLength={10} maxLength={128} placeholder="Your wallet address" />
+          <label className="field">{t('crypto.address')}
+            <input value={address} onChange={(e) => setAddress(e.target.value)} required minLength={10} maxLength={128} placeholder={t('crypto.refund.placeholder')} />
           </label>
           {error && <div className="alert" role="alert">{error}</div>}
-          <button className="btn" type="submit">Send my refund here</button>
+          <button className="btn" type="submit">{t('crypto.refund.send')}</button>
         </form>
       )}
     </div>

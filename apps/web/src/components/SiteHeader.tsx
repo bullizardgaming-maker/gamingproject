@@ -5,7 +5,7 @@ import { cartCount, useCart } from '@/lib/cart';
 import { useSession } from '../session';
 import { NotificationBell } from './NotificationBell';
 import { CATEGORY_ICON, GameArt } from './CatalogUi';
-import { CATEGORY_META, CATEGORY_ORDER, loadGames, popular, slugify, type GameEntry } from '@/lib/catalog';
+import { CATEGORY_META, loadGames, popular, slugify, useCategoryOrder, type GameEntry } from '@/lib/catalog';
 import { cn } from '@/lib/utils';
 import { LOCALES, setLocale, t, useLocale, type Locale } from '../i18n';
 import { DISPLAY_CURRENCIES, resolvedTheme, setCurrency, setTheme, useDisplayCurrency, useTheme, type DisplayCurrency } from '@/lib/prefs';
@@ -154,6 +154,7 @@ function CartLink() {
 }
 
 export function SiteHeader() {
+  const categoryOrder = useCategoryOrder();
   const { user, signOut } = useSession();
   const { pathname, search } = useLocation();
   const cat = new URLSearchParams(search).get('category');
@@ -194,7 +195,7 @@ export function SiteHeader() {
             <NavLink to="/games" className={({ isActive }) => cn('cat-link', isActive && 'on')}>
               <LayoutGrid className="size-4" /> {t('nav.allGames')}
             </NavLink>
-            {CATEGORY_ORDER.map((slug) => {
+            {categoryOrder.map((slug) => {
               const Icon = CATEGORY_ICON[slug]!;
               return (
                 <Link key={slug} to={`/market?category=${slug}`} className={cn('cat-link', pathname === '/market' && cat === slug && 'on')}>

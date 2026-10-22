@@ -5,6 +5,8 @@ import type { Queryable } from '../db.js';
 import { maybeOne, one, withTx } from '../db.js';
 import { hashPassword, hmacSha256, randomDigits, randomToken, safeEqual, verifyPassword } from '../lib/crypto.js';
 import { AppError, badRequest, conflict, unauthorized } from '../lib/errors.js';
+import { liftIdRestriction } from './onboarding.js';
+import { attributeBuyer } from './affiliates.js';
 import { withScope } from './events.js';
 import { recordSignals, subnetOf } from './fraud.js';
 import { accountId, post, sellerAvailable } from './ledger.js';
@@ -33,6 +35,12 @@ export interface User {
   created_at: string;
   totp_enabled: boolean;
   payouts_enabled: boolean;
+  /** Character names / UIDs remembered per game (lower-case key) after the first order. */
+  handover_names?: Record<string, string>;
+  /** Seller onboarding (domain/onboarding.ts). */
+  rules_passed_at?: string | null;
+  selling_restricted_at?: string | null;
+  seller_since?: string | null;
   /** Interface and message language (en, ar, es, fr, de, pt). */
   locale: string;
   /** True when the current session was established with a second factor. */
@@ -42,7 +50,7 @@ export interface User {
 }
 
 export const PUBLIC_USER_COLUMNS =
-  'id, email, display_name, role, kyc_tier, status, email_verified_at, phone, phone_verified_at, withdrawals_frozen, stripe_account_id, legal_name, created_at, (totp_enabled_at IS NOT NULL) AS totp_enabled, payouts_enabled, staff_roles, locale';
+  'id, email, display_name, role, kyc_tier, status, email_verified_at, phone, phone_verified_at, withdrawals_frozen, stripe_account_id, legal_name, created_at, (totp_enabled_at IS NOT NULL) AS totp_enabled, payouts_enabled, staff_roles, locale, handover_names, rules_passed_at, selling_restricted_at, seller_since';
 
 // ---------------------------------------------------------------------------
 // Authentication. Sessions live in ./sessions.ts (15-minute access tokens +
@@ -90,7 +98,7 @@ function sessionResponse(user: User, s: IssuedSession) {
   return { user, token: s.accessToken, refreshToken: s.refreshToken, expiresIn: s.expiresIn };
 }
 
-export async function register(ctx: Ctx, input: { email: string; password: string; displayName: string; referralCode?: string; locale?: string } & AuthMeta) {
+export async function register(ctx: Ctx, input: { email: string; password: string; displayName: string; referralCode?: string; creatorCode?: string; locale?: string } & AuthMeta) {
   const hash = await hashPassword(input.password);
   const referrer = await referrerForCode(ctx.db, input.referralCode);
   try {
@@ -100,6 +108,8 @@ export async function register(ctx: Ctx, input: { email: string; password: strin
       [input.email, hash, input.displayName, referrer, isLocale(input.locale) ? input.locale : 'en'],
     );
     await recordSignals(ctx.db, user.id, { device: input.device, ip_subnet: subnetOf(input.ip) });
+    // A creator's code at signup (a wrong one is ignored rather than failing the signup).
+    if (input.creatorCode) await attributeBuyer(ctx.db, user.id, input.creatorCode).catch(() => null);
     return sessionResponse(user, await createSession(ctx, user.id, { mfa: false, userAgent: input.userAgent, ip: input.ip }));
   } catch (err: any) {
     if (err.code === '23505') throw conflict('email_taken', 'An account with this email already exists');
@@ -336,6 +346,7 @@ export async function applyKycResult(ctx: Ctx, result: { externalId: string; sta
     await s.tx.query('UPDATE kyc_verifications SET status = $2, result = $3, updated_at = now() WHERE id = $1', [v.id, result.status, JSON.stringify(result.raw ?? {})]);
     if (result.status === 'approved') {
       await s.tx.query('UPDATE users SET kyc_tier = 2, legal_name = COALESCE($2, legal_name) WHERE id = $1', [v.user_id, result.legalName ?? null]);
+      await liftIdRestriction(s.tx, v.user_id); // overdue sellers get their listings back
       await enqueueEmail(s.tx, v.user_id, 'kyc_result', { approved: true });
       s.notifyUser(v.user_id, 'kyc.approved', {});
       s.defer(async () => void (await screenUser(ctx, v.user_id)));

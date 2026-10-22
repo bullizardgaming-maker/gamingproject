@@ -4,7 +4,7 @@ import { ArrowRight, BadgeCheck, MessagesSquare, PackageCheck, Wallet } from 'lu
 import { api } from '../api';
 import { CATEGORY_ICON, GameCard, OfferTable, TrustStrip } from '../components/CatalogUi';
 import { GameSearch } from '../components/SiteHeader';
-import { CATEGORY_META, CATEGORY_ORDER, popular, slugify, useGames } from '@/lib/catalog';
+import { CATEGORY_META, popular, slugify, useCategoryOrder, useGames } from '@/lib/catalog';
 import type { Offer } from './Market';
 import { EscrowTrack, formatRemaining } from '../components/EscrowTrack';
 import { FeeLadder } from '../components/FeeLadder';
@@ -63,6 +63,7 @@ function LiveEscrow() {
 }
 
 export function Home() {
+  const categoryOrder = useCategoryOrder();
   usePageMeta({ description: t('home.meta') });
   const { games } = useGames();
   const [instant, setInstant] = useState<Offer[] | null>(null);
@@ -112,7 +113,7 @@ export function Home() {
           </div>
         </div>
         <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {CATEGORY_ORDER.map((slug) => {
+          {categoryOrder.map((slug) => {
             const Icon = CATEGORY_ICON[slug]!;
             const meta = CATEGORY_META[slug]!;
             return (

@@ -6,7 +6,7 @@ import { notify } from './notifications.js';
 import { bookConversion, fxPosition } from './sellerfx.js';
 
 /**
- * Automated FX top-ups. Sellers can be paid in EUR or GBP, so the platform must hold enough of
+ * Automated FX top-ups. Sellers can be paid in EUR or EGP, so the platform must hold enough of
  * each. The planner compares what sellers are owed in every non-settlement currency with what
  * the PSP should hold there (domain/sellerfx.ts fxPosition) and proposes buying the shortfall
  * plus FX_TOPUP_BUFFER_BPS, from the settlement currency, rounded up to a whole unit.

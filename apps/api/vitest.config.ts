@@ -9,7 +9,8 @@ export default defineConfig({
     env: {
       NODE_ENV: 'test',
       DATABASE_URL: process.env.TEST_DATABASE_URL ?? 'postgres://market:market@localhost:5432/market_test',
-      ONCHAIN_ESCROW_ENABLED: 'true', // the contract rail is off by default at launch; its tests still run
+      ONCHAIN_ESCROW_ENABLED: 'true',
+      DELIVERY_PROOF_REQUIRED: 'false', // most flows deliver without a proof; games.test.ts turns it on
     },
   },
 });

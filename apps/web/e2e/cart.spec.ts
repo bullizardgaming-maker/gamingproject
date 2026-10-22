@@ -18,10 +18,10 @@ test.describe('cart', () => {
     await expect(page.getByText('Elden Ring — Steam key (Global)')).toBeVisible();
     await expect(page.getByText('Baldur’s Gate 3 — Steam key (EU)')).toBeVisible();
     await expect(page.getByText(/split into 2 escrow orders/)).toBeVisible();
-    // $32.49 + 2 × $41.99
-    await expect(page.getByText('$116.47').first()).toBeVisible();
+    // $32.50 + 2 × $41.99 (seller prices plus NorthWind's commission)
+    await expect(page.getByText('$116.48').first()).toBeVisible();
     await page.getByLabel(/I accept the Terms of Service/).check();
-    await page.getByRole('button', { name: 'Pay $116.47 into escrow' }).click();
+    await page.getByRole('button', { name: 'Pay $116.48 into escrow' }).click();
     await page.waitForURL(/checkouts\/cart-.*\/pay/);
     await payCrypto(page);
     await page.waitForURL(/\/orders\?checkout=success/);

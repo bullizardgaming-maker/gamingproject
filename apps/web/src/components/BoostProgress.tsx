@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, apiBlob, apiUpload } from '../api';
+import { t } from '../i18n';
 
 export interface ProgressUpdate {
   id: string;
@@ -21,11 +22,11 @@ function Shot({ id }: { id: string }) {
     );
     return () => void (url && URL.revokeObjectURL(url));
   }, [id]);
-  if (failed) return <span className="small muted">Screenshot unavailable</span>;
-  if (!src) return <span className="small muted">Loading screenshot…</span>;
+  if (failed) return <span className="small muted">{t('boost.shotUnavailable')}</span>;
+  if (!src) return <span className="small muted">{t('boost.shotLoading')}</span>;
   return (
     <a href={src} target="_blank" rel="noreferrer" className="block w-fit">
-      <img src={src} alt="Progress screenshot" className="max-h-40 rounded-md border border-border" />
+      <img src={src} alt={t('boost.shotAlt')} className="max-h-40 rounded-md border border-border" />
     </a>
   );
 }
@@ -72,10 +73,10 @@ export function BoostProgress({ order, isSeller, onDone }: {
   return (
     <section className="card stack" aria-labelledby="progress-title">
       <div className="row spread">
-        <h3 id="progress-title" style={{ margin: 0 }}>Progress</h3>
+        <h3 id="progress-title" style={{ margin: 0 }}>{t('boost.title')}</h3>
         <span className="mono">{shown}%</span>
       </div>
-      <div className="progress" role="progressbar" aria-label="Boosting progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={shown}>
+      <div className="progress" role="progressbar" aria-label={t('boost.aria')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={shown}>
         <div style={{ width: `${shown}%` }} />
       </div>
       {updates.length > 0 ? (
@@ -91,27 +92,27 @@ export function BoostProgress({ order, isSeller, onDone }: {
           ))}
         </ol>
       ) : (
-        <p className="small muted" style={{ margin: 0 }}>Post milestones as you go: the buyer is notified, and each update is kept in the order chat.</p>
+        <p className="small muted" style={{ margin: 0 }}>{t('boost.empty')}</p>
       )}
       {canPost && (
         <form className="stack" onSubmit={submit} style={{ gap: 10 }}>
           <div className="row" style={{ alignItems: 'end' }}>
             <label className="field" style={{ width: 120 }}>
-              Done (%)
+              {t('boost.done')}
               <input type="number" min={last} max={100} required value={percent} onChange={(e) => setPercent(Math.min(100, Math.max(0, Number(e.target.value))))} />
             </label>
             <label className="field" style={{ flex: '1 1 240px' }}>
-              Note for the buyer
-              <input value={note} maxLength={500} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Platinum IV reached, 12 wins from 16 games" />
+              {t('boost.note')}
+              <input value={note} maxLength={500} onChange={(e) => setNote(e.target.value)} placeholder={t('boost.noteHint')} />
             </label>
           </div>
           <div className="row">
             <label className="btn ghost" style={{ cursor: 'pointer' }}>
-              {file ? 'Change screenshot' : 'Add screenshot'}
+              {file ? t('boost.changeShot') : t('boost.addShot')}
               <input type="file" className="file-input" accept="image/png,image/jpeg,image/webp" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
             </label>
             {file && <span className="small muted">{file.name}</span>}
-            <button className="btn" disabled={busy}>{busy ? 'Posting…' : 'Post update'}</button>
+            <button className="btn" disabled={busy}>{busy ? t('boost.posting') : t('boost.post')}</button>
           </div>
           {error && <div className="alert" role="alert">{error}</div>}
         </form>

@@ -1,4 +1,5 @@
 import { money } from '../api';
+import { t } from '../i18n';
 
 export type TrackVariant = 'held' | 'released' | 'disputed' | 'refunded';
 
@@ -19,7 +20,7 @@ export function EscrowTrack({ amountCents, stage, variant, elapsed = 0, windowLa
   const coin = variant === 'refunded' ? 0 : stage === 0 ? 0 : stage === 2 ? 100 : 50 + Math.min(1, Math.max(0, elapsed)) * 30;
   const fill = variant === 'refunded' ? 0 : stage === 2 ? 100 : stage === 1 ? coin : 0;
   const label =
-    variant === 'disputed' ? 'Frozen' : variant === 'refunded' ? 'Refunded' : stage === 2 ? 'Released' : stage === 1 ? 'Held' : 'Pending';
+    variant === 'disputed' ? t('escrow.frozen') : variant === 'refunded' ? t('escrow.refunded') : stage === 2 ? t('escrow.released') : stage === 1 ? t('escrow.held') : t('escrow.pending');
 
   return (
     <div className="track" data-variant={variant} role="img" aria-label={`${money(amountCents)} ${label.toLowerCase()}`}>
@@ -32,16 +33,16 @@ export function EscrowTrack({ amountCents, stage, variant, elapsed = 0, windowLa
       </div>
       <div className="track-stops">
         <div className={`track-stop ${stage >= 0 ? 'on' : ''}`}>
-          <b>Buyer pays</b>
-          <span>{variant === 'refunded' ? 'Refunded to card' : 'Card or USDC'}</span>
+          <b>{t('escrow.buyerPays')}</b>
+          <span>{variant === 'refunded' ? t('escrow.refundedToCard') : t('escrow.cardOrUsdc')}</span>
         </div>
         <div className={`track-stop ${stage >= 1 ? 'on' : ''}`}>
-          <b>{variant === 'disputed' ? 'Frozen by dispute' : 'Held in escrow'}</b>
+          <b>{variant === 'disputed' ? t('escrow.frozenByDispute') : t('escrow.heldInEscrow')}</b>
           <span>{windowLabel}</span>
         </div>
         <div className={`track-stop ${stage >= 2 ? 'on' : ''}`}>
-          <b>Seller is paid</b>
-          <span>minus tier fee</span>
+          <b>{t('escrow.sellerPaid')}</b>
+          <span>{t('escrow.minusFee')}</span>
         </div>
       </div>
     </div>
@@ -49,9 +50,9 @@ export function EscrowTrack({ amountCents, stage, variant, elapsed = 0, windowLa
 }
 
 export function formatRemaining(ms: number) {
-  if (ms <= 0) return '0h 00m';
+  if (ms <= 0) return t('escrow.noTime');
   const h = Math.floor(ms / 3_600_000);
   const m = Math.floor((ms % 3_600_000) / 60_000);
-  if (h >= 48) return `${Math.floor(h / 24)}d ${h % 24}h left`;
-  return `${h}h ${String(m).padStart(2, '0')}m left`;
+  if (h >= 48) return t('escrow.leftDays', { d: String(Math.floor(h / 24)), h: String(h % 24) });
+  return t('escrow.leftHours', { h: String(h), m: String(m).padStart(2, '0') });
 }

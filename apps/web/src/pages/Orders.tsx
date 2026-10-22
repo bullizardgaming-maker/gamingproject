@@ -3,12 +3,15 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, money } from '../api';
 import { Chat } from '../components/Chat';
 import { useSession } from '../session';
+import { t } from '../i18n';
 import { usePageMeta } from '@/lib/seo';
 
 const CHIP: Record<string, string> = { completed: 'released', delivered: 'held', paid: 'held', disputed: 'disputed', charged_back: 'disputed' };
+const STATUSES = ['awaiting_payment', 'paid', 'delivered', 'completed', 'disputed', 'refunded', 'cancelled', 'charged_back'] as const;
+const statusText = (s: string) => ((STATUSES as readonly string[]).includes(s) ? t(`orders.status.${s as (typeof STATUSES)[number]}`) : s.replace('_', ' '));
 
 export function Orders() {
-  usePageMeta({ title: 'Your orders', noindex: true });
+  usePageMeta({ title: t('orders.meta'), noindex: true });
   const [params, setParams] = useSearchParams();
   const as = params.get('as') === 'seller' ? 'seller' : 'buyer';
   const [orders, setOrders] = useState<any[] | null>(null);
@@ -20,25 +23,25 @@ export function Orders() {
 
   return (
     <div className="stack">
-      <h1 style={{ fontSize: 40 }}>Orders</h1>
-      <div className="filters" role="group" aria-label="Role">
-        <button aria-pressed={as === 'buyer'} onClick={() => setParams({ as: 'buyer' })}>Buying</button>
-        <button aria-pressed={as === 'seller'} onClick={() => setParams({ as: 'seller' })}>Selling</button>
+      <h1 style={{ fontSize: 40 }}>{t('nav.orders')}</h1>
+      <div className="filters" role="group" aria-label={t('orders.role')}>
+        <button aria-pressed={as === 'buyer'} onClick={() => setParams({ as: 'buyer' })}>{t('orders.buying')}</button>
+        <button aria-pressed={as === 'seller'} onClick={() => setParams({ as: 'seller' })}>{t('orders.selling')}</button>
       </div>
       {orders === null ? (
-        <p className="muted">Loading…</p>
+        <p className="muted">{t('common.loading')}</p>
       ) : orders.length === 0 ? (
-        <div className="card"><p className="muted">No orders yet. {as === 'buyer' ? <Link to="/market">Browse the market</Link> : <Link to="/sell">Create a listing</Link>}</p></div>
+        <div className="card"><p className="muted">{t('orders.empty')} {as === 'buyer' ? <Link to="/market">{t('orders.browse')}</Link> : <Link to="/sell">{t('orders.create')}</Link>}</p></div>
       ) : (
         <div className="card table-wrap">
           <table className="data">
-            <thead><tr><th>Listing</th><th>Amount</th><th>Status</th><th>Placed</th></tr></thead>
+            <thead><tr><th>{t('orders.col.listing')}</th><th>{t('orders.col.amount')}</th><th>{t('orders.col.status')}</th><th>{t('orders.col.placed')}</th></tr></thead>
             <tbody>
               {orders.map((o) => (
                 <tr key={o.id}>
-                  <td><Link to={`/orders/${o.id}`}>{o.offer_title}</Link><div className="small muted">{o.game}</div></td>
+                  <td><Link to={`/orders/${o.id}`}>{o.offer_title}</Link><div className="small muted">{o.ref ? <span className="mono">{o.ref} · </span> : null}{o.game}</div></td>
                   <td className="mono">{money(o.amount_cents, o.currency)}</td>
-                  <td><span className={`chip ${CHIP[o.status] ?? ''}`}>{o.status.replace('_', ' ')}</span></td>
+                  <td><span className={`chip ${CHIP[o.status] ?? ''}`}>{statusText(o.status)}</span></td>
                   <td className="small muted">{new Date(o.created_at).toLocaleDateString()}</td>
                 </tr>
               ))}
@@ -52,17 +55,17 @@ export function Orders() {
 
 /** Pre-sale inquiry chat between a buyer and a seller. */
 export function InquiryChat() {
-  usePageMeta({ title: 'Chat', noindex: true });
+  usePageMeta({ title: t('orders.chatMeta'), noindex: true });
   const { id } = useParams();
   const { user } = useSession();
   const [room, setRoom] = useState<any>(null);
   useEffect(() => {
     api(`/chat/rooms/${id}`).then(setRoom).catch(() => {});
   }, [id]);
-  if (!room || !user) return <p className="muted">Loading chat…</p>;
+  if (!room || !user) return <p className="muted">{t('orders.chatLoading')}</p>;
   return (
     <div className="stack" style={{ maxWidth: 720 }}>
-      <Link to={`/offers/${room.offer_id}`} className="small">Back to listing</Link>
+      <Link to={`/offers/${room.offer_id}`} className="small">{t('orders.backToListing')}</Link>
       <Chat roomId={room.id} meId={user.id} names={{ [room.buyer_id]: room.buyer_name, [room.seller_id]: room.seller_name }} />
     </div>
   );

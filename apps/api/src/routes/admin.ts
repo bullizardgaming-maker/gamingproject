@@ -38,6 +38,12 @@ import { decideAdjustment, listAdjustments, requestAdjustment, userLedger } from
 import { decideTreasuryWithdrawal, listTreasuryWithdrawals, requestTreasuryWithdrawal, treasuryBalance } from '../domain/treasury.js';
 import { listCryptoRefunds, markRefundSent } from '../domain/cryptoPayments.js';
 import { decideWithdrawal, listPendingWithdrawals } from '../domain/cryptoPayouts.js';
+import { commissionSettings, listRanks, updateRanks } from '../domain/commission.js';
+import { INACTIVE_SELLER_DAYS, LEAGUE_GAMES, createLeague, expireEndedLeagueListings, listLeagues, updateLeague } from '../domain/leagues.js';
+import { enforceIdDeadlines, listQuestions, rulesSettings, updateRulesTest } from '../domain/onboarding.js';
+import { createAffiliate, listAffiliates, updateAffiliate } from '../domain/affiliates.js';
+import { setSuggestionStatus } from '../domain/gameVotes.js';
+import { offplatformPolicy, setOffplatformPolicy } from '../domain/chat.js';
 
 const Id = z.object({ id: z.string().uuid() });
 
@@ -253,6 +259,122 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   // --- Platform earnings (four-eyes) ------------------------------------------------------
+  // --- Ranks and the launch promo (commission) ------------------------------------------------
+  app.get('/admin/ranks', async (req) => {
+    requirePermission(req, 'ranks.manage');
+    return { ranks: await listRanks(ctx.db), settings: await commissionSettings(ctx.db) };
+  });
+  // --- Site texts (the chat safety panel) ---------------------------------------------------------
+  app.put('/admin/texts/:key', async (req) => {
+    const staff = requirePermission(req, 'support.manage');
+    const { key } = z.object({ key: z.enum(['chat_safety']) }).parse(req.params);
+    const body = z.object({ body: z.string().trim().min(10).max(2_000), linkLabel: z.string().trim().max(60).default(''), linkHref: z.string().trim().max(200).regex(/^\/|^$/).default('') }).parse(req.body);
+    const row = await one(ctx.db, 'UPDATE site_texts SET body = $2, link_label = $3, link_href = $4, updated_by = $5, updated_at = now() WHERE key = $1 RETURNING key, body, link_label, link_href, updated_at', [key, body.body, body.linkLabel, body.linkHref, staff.id]);
+    await audit(ctx.db, req, 'texts.update', { type: 'site_text', id: key }, body);
+    return row;
+  });
+
+  // --- Creator affiliate codes and game voting ----------------------------------------------
+  app.get('/admin/affiliates', async (req) => (requirePermission(req, 'promos.manage'), listAffiliates(ctx.db)));
+  app.post('/admin/affiliates', async (req, reply) => {
+    const user = requirePermission(req, 'promos.manage');
+    const body = z.object({ userId: z.string().uuid(), code: z.string().trim().min(3).max(20), rateBps: z.number().int().min(0).max(5000), note: z.string().trim().max(300).optional() }).parse(req.body);
+    const a = await createAffiliate(ctx, user.id, body);
+    await audit(ctx.db, req, 'affiliate.create', { type: 'affiliate', id: a.id }, body);
+    return reply.status(201).send(a);
+  });
+  app.patch('/admin/affiliates/:id', async (req) => {
+    requirePermission(req, 'promos.manage');
+    const body = z.object({ rateBps: z.number().int().min(0).max(5000).optional(), status: z.enum(['active', 'paused']).optional(), note: z.string().trim().max(300).optional() }).parse(req.body);
+    const a = await updateAffiliate(ctx, Id.parse(req.params).id, body);
+    await audit(ctx.db, req, 'affiliate.update', { type: 'affiliate', id: a.id }, body);
+    return a;
+  });
+  app.patch('/admin/games/votes/:id', async (req) => {
+    requirePermission(req, 'moderation.manage');
+    const body = z.object({ status: z.enum(['open', 'planned', 'added', 'declined']), note: z.string().trim().max(300).default('') }).parse(req.body);
+    return setSuggestionStatus(ctx, Id.parse(req.params).id, body.status, body.note);
+  });
+
+  // --- Launch phase: which categories are on sale ---------------------------------------------
+  app.get('/admin/launch', async (req) => {
+    requirePermission(req, 'ranks.manage');
+    const l = await one<any>(ctx.db, 'SELECT phase, founding_until, founding_featured_slots, featured_days FROM launch_settings');
+    return { phase: Number(l.phase), foundingUntil: l.founding_until, foundingFeaturedSlots: Number(l.founding_featured_slots), featuredDays: Number(l.featured_days), categories: await many(ctx.db, 'SELECT slug, name, phase FROM categories ORDER BY phase, name') };
+  });
+  app.put('/admin/launch', async (req) => {
+    requirePermission(req, 'ranks.manage');
+    const body = z.object({ phase: z.number().int().min(1).max(3).optional(), foundingUntil: z.string().datetime().optional(), foundingFeaturedSlots: z.number().int().min(0).max(10).optional(), featuredDays: z.number().int().min(1).max(90).optional() }).parse(req.body);
+    await ctx.db.query(
+      'UPDATE launch_settings SET phase = COALESCE($1, phase), founding_until = COALESCE($2, founding_until), founding_featured_slots = COALESCE($3, founding_featured_slots), featured_days = COALESCE($4, featured_days), updated_at = now()',
+      [body.phase ?? null, body.foundingUntil ?? null, body.foundingFeaturedSlots ?? null, body.featuredDays ?? null],
+    );
+    await audit(ctx.db, req, 'launch.settings', { type: 'launch', id: 'launch' }, body);
+    const l = await one<any>(ctx.db, 'SELECT phase, founding_until, founding_featured_slots, featured_days FROM launch_settings');
+    return { phase: Number(l.phase), foundingUntil: l.founding_until, foundingFeaturedSlots: Number(l.founding_featured_slots), featuredDays: Number(l.featured_days) };
+  });
+
+  // --- Seller rules test (questions, pass mark, ID deadline) -----------------------------------
+  app.get('/admin/rules-test', async (req) => {
+    requirePermission(req, 'rules.manage');
+    return { questions: await listQuestions(ctx.db), settings: await rulesSettings(ctx.db) };
+  });
+  app.put('/admin/rules-test', async (req) => {
+    const user = requirePermission(req, 'rules.manage');
+    const body = z
+      .object({
+        questions: z.array(z.object({ id: z.string().uuid().optional(), position: z.number().int().min(1).max(100), question: z.string().trim().min(10).max(500), options: z.array(z.string().trim().min(1).max(200)).min(2).max(6), correct: z.number().int().min(0).max(5), explanation: z.string().trim().max(600).default(''), active: z.boolean().default(true) })).min(1).max(50),
+        settings: z.object({ passMarkPct: z.number().int().min(1).max(100).optional(), idDueDays: z.number().int().min(1).max(365).optional() }).optional(),
+      })
+      .parse(req.body);
+    const r = await updateRulesTest(ctx, user.id, body);
+    await audit(ctx.db, req, 'rules_test.update', { type: 'rules_test', id: 'rules_test' }, { questions: body.questions.length, settings: body.settings ?? null });
+    return r;
+  });
+  /** Run the ID-deadline check now (it also runs in the worker). */
+  app.post('/admin/rules-test/enforce', async (req) => {
+    requirePermission(req, 'rules.manage');
+    return enforceIdDeadlines(ctx);
+  });
+
+  // --- Challenge leagues (Path of Exile) -----------------------------------------------------
+  app.get('/admin/leagues', async (req) => {
+    requirePermission(req, 'leagues.manage');
+    return { leagues: await listLeagues(ctx.db), games: LEAGUE_GAMES, inactiveSellerDays: INACTIVE_SELLER_DAYS };
+  });
+  app.post('/admin/leagues', async (req, reply) => {
+    const user = requirePermission(req, 'leagues.manage');
+    const body = z.object({ game: z.string().min(1).max(80), name: z.string().trim().min(2).max(60), startsAt: z.string().datetime().nullable().optional(), endsAt: z.string().datetime().nullable().optional() }).parse(req.body);
+    const l = await createLeague(ctx, user.id, body);
+    await audit(ctx.db, req, 'league.create', { type: 'league', id: l.id }, body);
+    return reply.status(201).send(l);
+  });
+  app.patch('/admin/leagues/:id', async (req) => {
+    requirePermission(req, 'leagues.manage');
+    const body = z.object({ startsAt: z.string().datetime().nullable().optional(), endsAt: z.string().datetime().nullable().optional() }).parse(req.body);
+    const l = await updateLeague(ctx, Id.parse(req.params).id, body);
+    await audit(ctx.db, req, 'league.update', { type: 'league', id: l.id }, body);
+    return l;
+  });
+  /** Run the league expiry now (it also runs in the worker). */
+  app.post('/admin/leagues/expire', async (req) => {
+    requirePermission(req, 'leagues.manage');
+    return { expired: await expireEndedLeagueListings(ctx) };
+  });
+
+  app.put('/admin/ranks', async (req) => {
+    requirePermission(req, 'ranks.manage');
+    const body = z
+      .object({
+        ranks: z.array(z.object({ position: z.number().int().min(1).max(5), name: z.string().trim().min(2).max(30), minMonthlySalesCents: z.number().int().min(0), rateBps: z.number().int().min(0).max(5000), perks: z.array(z.string().max(120)).max(8).optional() })).length(5),
+        settings: z.object({ promoRateBps: z.number().int().min(0).max(5000).optional(), promoDays: z.number().int().min(0).max(365).optional() }).optional(),
+      })
+      .parse(req.body);
+    const r = await updateRanks(ctx, body.ranks, body.settings);
+    await audit(ctx.db, req, 'ranks.update', { type: 'ranks', id: 'ranks' }, body);
+    return r;
+  });
+
   // --- Unconfirmed deliveries: staff release 24h+ after delivery ------------------------------
   app.get('/admin/orders/unconfirmed', async (req) => {
     requirePermission(req, 'orders.release');
@@ -428,7 +550,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return { reencrypted, status: await keyStatus(ctx) };
   });
 
-  // --- Currency position (sellers paid in EUR/GBP) ---------------------------------------
+  // --- Currency position (sellers paid in EUR/EGP) ---------------------------------------
   app.get('/admin/fx/position', async (req) => {
     requirePermission(req, 'fx.manage');
     return { positions: await fxPosition(ctx), conversions: await many(ctx.db, 'SELECT * FROM fx_conversions ORDER BY created_at DESC LIMIT 50') };
@@ -469,6 +591,15 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const res = await decideChatFlag(ctx, id, staff.id, body.confirm, body.note);
     await audit(ctx.db, req, body.confirm ? 'moderation.chat_confirmed' : 'moderation.chat_dismissed', { type: 'chat_flag', id }, { note: body.note });
     return res;
+  });
+  /** Outside-contact policy: the action per offence (warn = block only, suspend, ban); the last repeats. */
+  app.get('/admin/moderation/offplatform-policy', async (req) => (requirePermission(req, 'moderation.manage'), { actions: await offplatformPolicy(ctx.db) }));
+  app.put('/admin/moderation/offplatform-policy', async (req) => {
+    const staff = requirePermission(req, 'moderation.manage');
+    const { actions } = z.object({ actions: z.array(z.enum(['warn', 'suspend', 'ban'])).min(1).max(5) }).parse(req.body);
+    const saved = await setOffplatformPolicy(ctx.db, actions, staff.id);
+    await audit(ctx.db, req, 'moderation.offplatform_policy', { type: 'moderation', id: 'offplatform_policy' }, { actions });
+    return { actions: saved };
   });
   app.get('/admin/moderation/terms', async (req) => (requirePermission(req, 'moderation.manage'), listTerms(ctx.db)));
   app.post('/admin/moderation/terms', async (req, reply) => {

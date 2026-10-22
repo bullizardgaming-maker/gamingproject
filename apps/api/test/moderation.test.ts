@@ -46,7 +46,7 @@ describe('listing review queue', () => {
     const held = await seller.api.post('/v1/offers', { ...base, title: 'Private aimbot, undetected', description: 'DM me on discord for setup' });
     expect(held.status).toBe(201);
     expect(held.body.status).toBe('review');
-    expect(held.body.review_reasons).toEqual(['term:aimbot', 'contact:discord']);
+    expect(held.body.review_reasons).toEqual(['term:aimbot', 'contact:discord', 'contact:add_me']);
     expect(await sent(seller.id, 'listing_review')).toHaveLength(1);
     // Hidden from search, and the seller can't switch it live themselves.
     const search = await client(h.app).get('/v1/offers?game=Moderation%20Game');
@@ -101,7 +101,7 @@ describe('flagged chats', () => {
     const queue = (await mod.api.get('/v1/admin/moderation/chats')).body.filter((f: any) => f.room_id === room_id);
     expect(queue.map((f: any) => [f.role, f.reasons])).toEqual([
       ['seller', ['external_payment']],
-      ['buyer', ['whatsapp', 'phone_number']],
+      ['buyer', ['whatsapp', 'phone_number', 'add_me']],
     ]);
     expect(queue[0].order_id).toBe(order.id);
     expect(queue[0].context.map((m: any) => m.body)).toContain('Is it the EU version?');

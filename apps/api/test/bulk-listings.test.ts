@@ -45,12 +45,12 @@ describe('bulk listing CSV', () => {
     expect(byRow[5]).toMatchObject({ action: 'create', review: true }); // contact details: held for review
     expect(byRow[6].error).toMatch(/No listing of yours/);
     // A preview writes nothing.
-    expect((await client(h.app).get(`/v1/offers/${a.id}`)).body.price_cents).toBe(10_00);
+    expect((await client(h.app).get(`/v1/offers/${a.id}`)).body.seller_price_cents).toBe(10_00);
 
     const applied = await seller.api.post('/v1/seller/listings/import', { csv: edited, dryRun: false });
     expect(applied.body.summary).toEqual({ create: 2, update: 1, unchanged: 1, error: 2 });
     const updated = (await client(h.app).get(`/v1/offers/${a.id}`)).body;
-    expect([updated.price_cents, updated.stock]).toEqual([12_50, 9]);
+    expect([updated.seller_price_cents, updated.price_cents, updated.stock]).toEqual([12_50, 13_16, 9]); // buyers see the grossed-up price
     const created = (await seller.api.get('/v1/seller/offers')).body;
     expect(created.find((o: any) => o.title === 'Immortal account, 40 skins')).toMatchObject({ warranty_days: 30, status: 'active' });
     expect(created.find((o: any) => o.title === 'Contact me on telegram')).toMatchObject({ status: 'review' });

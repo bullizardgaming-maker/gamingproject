@@ -39,6 +39,7 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
         sellerCode: z.string().trim().min(1).max(40).optional(),
         useCredit: z.boolean().optional(),
         currency: z.string().length(3).toUpperCase().optional(),
+        characterName: z.string().trim().min(1).max(60).optional().describe('In-game character name or UID, for games that deliver in-game'),
       })
       .parse(req.body);
     const idem = req.headers['idempotency-key'];
@@ -58,7 +59,7 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/orders/cart', async (req, reply) => {
     const body = z
       .object({
-        items: z.array(z.object({ offerId: z.string().uuid(), quantity: z.number().int().positive().max(1000).default(1) })).min(1).max(MAX_CART_ITEMS),
+        items: z.array(z.object({ offerId: z.string().uuid(), quantity: z.number().int().positive().max(1000).default(1), characterName: z.string().trim().min(1).max(60).optional() })).min(1).max(MAX_CART_ITEMS),
         acceptTos: z.literal(true),
         currency: z.string().length(3).toUpperCase().optional(),
       })
@@ -102,7 +103,7 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.get('/orders/:id', async (req) => {
     const user = me(req);
-    const order = await getOrderFor(ctx.db, Id.parse(req.params).id, user);
+    const order = await getOrderFor(ctx, Id.parse(req.params).id, user);
     // Staff reading someone else's order (and its chat) is logged.
     if (order.buyer_id !== user.id && order.seller_id !== user.id) await audit(ctx.db, req, 'order.viewed', { type: 'order', id: order.id });
     return order;
@@ -118,9 +119,10 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
     return revealDelivered(ctx, id);
   });
 
+  /** Manual delivery. Goods handed over in-game need a photo/video proof (a chat attachment on this order). */
   app.post('/orders/:id/deliver', async (req) => {
-    const { payload } = z.object({ payload: z.string().max(8_000).optional() }).parse(req.body ?? {});
-    return deliverManually(ctx, Id.parse(req.params).id, me(req).id, payload);
+    const { payload, proofAttachmentId } = z.object({ payload: z.string().max(8_000).optional(), proofAttachmentId: z.string().uuid().optional() }).parse(req.body ?? {});
+    return deliverManually(ctx, Id.parse(req.params).id, me(req).id, payload, proofAttachmentId);
   });
 
   app.post('/orders/:id/confirm', async (req) => {
@@ -298,10 +300,10 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
     return reply.status(201).send(msg);
   });
 
-  /** Upload a screenshot (raw PNG/JPEG/WebP body; file name in X-Filename). */
+  /** Upload a screenshot or a short video (raw PNG/JPEG/WebP/MP4/WebM body; file name in X-Filename). */
   app.post('/chat/rooms/:id/attachments', async (req, reply) => {
     const { id } = Id.parse(req.params);
-    if (!Buffer.isBuffer(req.body)) throw badRequest('unsupported_file', 'Send the image bytes with Content-Type image/png, image/jpeg or image/webp');
+    if (!Buffer.isBuffer(req.body)) throw badRequest('unsupported_file', 'Send the file bytes with Content-Type image/png, image/jpeg, image/webp, video/mp4 or video/webm');
     let name = 'screenshot';
     try {
       if (typeof req.headers['x-filename'] === 'string') name = decodeURIComponent(req.headers['x-filename']);

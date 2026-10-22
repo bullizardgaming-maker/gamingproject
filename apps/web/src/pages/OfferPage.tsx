@@ -15,6 +15,7 @@ import { addToCart } from '@/lib/cart';
 import { ShoppingCart } from 'lucide-react';
 import { OfferPriceHistory } from '../components/PriceHistory';
 import { AlsoBought } from '../components/AlsoBought';
+import { CharacterField, handoverFieldFor } from '../components/CharacterField';
 import { intlLocale, t } from '../i18n';
 
 export function OfferPage() {
@@ -33,6 +34,7 @@ export function OfferPage() {
   const [codeText, setCodeText] = useState('');
   const [code, setCode] = useState<{ code: string; discount: number; qty: number } | null>(null);
   const [codeError, setCodeError] = useState('');
+  const [character, setCharacter] = useState({ value: '', ok: false });
   const price = usePrice();
   usePageMeta({ title: offer?.title, description: offer ? `${offer.title} — ${offer.game}. Paid into escrow, released only after delivery checks out.` : undefined });
 
@@ -53,13 +55,14 @@ export function OfferPage() {
   const total = unit * qty - (code && code.qty === qty ? code.discount : 0);
   const onSale = offer.regular_price_cents != null && offer.regular_price_cents > offer.price_cents;
   const own = user?.id === offer.seller_id;
+  const needsCharacter = !!handoverFieldFor(offer.game, offer.category_slug);
 
   const buy = async () => {
     setBusy(true);
     setError('');
     try {
       const res = await api<{ order: { id: string }; checkoutUrl: string | null }>('/orders', {
-        body: { offerId: offer.id, quantity: qty, rail, acceptTos: true, ...(rail === 'crypto' ? { walletAddress: wallet } : {}), ...(code ? { sellerCode: code.code } : {}) },
+        body: { offerId: offer.id, quantity: qty, rail, acceptTos: true, ...(rail === 'crypto' ? { walletAddress: wallet } : {}), ...(code ? { sellerCode: code.code } : {}), ...(needsCharacter ? { characterName: character.value.trim() } : {}) },
         headers: { 'Idempotency-Key': `${offer.id}:${qty}:${rail}:${Math.floor(Date.now() / 60_000)}` },
       });
       if (res.checkoutUrl) window.location.assign(res.checkoutUrl);
@@ -228,6 +231,7 @@ export function OfferPage() {
             </label>
           )}
         </fieldset>
+        {user && !own && <CharacterField game={offer.game} category={offer.category_slug} value={character.value} onChange={(value, ok) => setCharacter({ value, ok })} />}
         <div className="notice">
           {isAccount ? t('offer.escrow14') : t('offer.escrow72')}
         </div>
@@ -249,7 +253,7 @@ export function OfferPage() {
           <p className="muted small">{t('offer.yours')}</p>
         ) : (
           <div className="row">
-            <button className="btn" disabled={!tos || busy || offer.stock < qty || (rail === 'crypto' && !/^0x[0-9a-fA-F]{40}$/.test(wallet))} onClick={buy}>
+            <button className="btn" disabled={!tos || busy || offer.stock < qty || (needsCharacter && !character.ok) || (rail === 'crypto' && !/^0x[0-9a-fA-F]{40}$/.test(wallet))} onClick={buy}>
               {busy ? t('offer.opening') : t('offer.pay', { amount: money(total, offer.currency) })}
             </button>
             {rail === 'fiat' && (

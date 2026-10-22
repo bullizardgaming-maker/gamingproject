@@ -75,6 +75,6 @@ describe('staff roles', () => {
   it('every permission belongs to at least one non-admin role or is admin-only on purpose', () => {
     const covered = new Set(Object.entries(ROLE_PERMISSIONS).filter(([r]) => r !== 'admin').flatMap(([, p]) => p));
     const adminOnly = PERMISSIONS.filter((p) => !covered.has(p));
-    expect(adminOnly.sort()).toEqual(['keys.manage', 'staff.manage']);
+    expect(adminOnly.sort()).toEqual(['keys.manage', 'ranks.manage', 'staff.manage']);
   });
 });
