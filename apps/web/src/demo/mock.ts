@@ -278,7 +278,7 @@ function releaseOrder(o: any, reason: string) {
     }
   }
   notify(o.seller_id, 'selling', 'order.released', 'Payment released', `$${(o.seller_net_cents / 100).toFixed(2)} from “${o.offer_title}” was added to your balance.`, '/sell/money');
-  live(appendMessage(o.room_id, null, 'system', `Order completed. $${(o.seller_net_cents / 100).toFixed(2)} released to the seller (fee ${(o.commission_bps / 100).toFixed(2)}%).`));
+  live(appendMessage(o.room_id, null, 'system', 'Order completed. Funds released to the seller.'));
 }
 
 /** Demo stand-in for the hosted card checkout: pays the order and runs what the PSP webhook triggers. */
@@ -289,7 +289,7 @@ export function payDemoOrder(orderId: string) {
   o.paid_at = now();
   state.platform.escrow += o.amount_cents;
   notify(o.seller_id, 'selling', 'order.paid', 'New order', `${o.offer_title}: the buyer has paid. Deliver from the order page.`, `/orders/${o.id}`);
-  live(appendMessage(o.room_id, null, 'system', `Payment received: $${(o.amount_cents / 100).toFixed(2)} is locked in escrow.`));
+  live(appendMessage(o.room_id, null, 'system', 'Payment received. It stays in escrow until the buyer confirms delivery.'));
   const offer = state.offers.find((f) => f.id === o.offer_id)!;
   if (offer.delivery_mode === 'auto') deliverOrder(o);
   else scheduleReply(o.room_id, o.seller_id);
@@ -1576,6 +1576,29 @@ const roomFor = (me: DemoUser, id: string) => {
   if (!r || (r.buyer_id !== me.id && r.seller_id !== me.id && me.role === 'user')) fail(404, 'not_found', 'Chat not found');
   return r;
 };
+route('GET', '/chat/rooms', ({ me }) => {
+  const u = need(me);
+  return state.rooms
+    .filter((r) => r.buyer_id === u.id || r.seller_id === u.id)
+    .map((r) => {
+      const last = state.messages.filter((m) => m.room_id === r.id).sort((a, b) => a.seq - b.seq).at(-1);
+      const order = r.order_id ? state.orders.find((o: any) => o.id === r.order_id) : null;
+      const offer = state.offers.find((o) => o.id === r.offer_id);
+      return {
+        ...r,
+        offer_title: offer?.title ?? order?.offer_title ?? null,
+        order_status: order?.status ?? null,
+        order_ref: order?.ref ?? null,
+        buyer_name: userById(r.buyer_id)?.display_name,
+        seller_name: userById(r.seller_id)?.display_name,
+        last_message: last?.body ?? null,
+        last_kind: last?.kind ?? null,
+        last_sender_id: last?.sender_id ?? null,
+        last_at: last?.created_at ?? null,
+      };
+    })
+    .sort((a, b) => String(b.last_at).localeCompare(String(a.last_at)));
+});
 route('GET', '/chat/rooms/:id', ({ me, params }) => {
   const r = roomFor(need(me), params[0]!);
   return { ...r, buyer_name: userById(r.buyer_id)?.display_name, seller_name: userById(r.seller_id)?.display_name };

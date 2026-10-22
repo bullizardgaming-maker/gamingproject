@@ -682,7 +682,7 @@ async function onFunded(ctx: Ctx, s: TxScope, order: Order & { delivery_mode: st
     [order.delivery_mode],
   );
   const room = await roomOf(s.tx, order.id);
-  await appendMessage(s, room.id, null, 'system', `Payment received: ${(order.amount_cents / 100).toFixed(2)} ${order.currency} is locked in escrow.`);
+  await appendMessage(s, room.id, null, 'system', 'Payment received. It stays in escrow until the buyer confirms delivery.');
   await postOrderCard(s, order, 'paid');
 
   const risk = await assessOrder(ctx, s.tx, order.id);
@@ -805,7 +805,7 @@ async function releaseEscrow(ctx: Ctx, s: TxScope, order: Order & { title: strin
   }
   await transition(s.tx, order, 'completed', actorId, reason, ', completed_at = now()');
   const room = await roomOf(s.tx, order.id);
-  await appendMessage(s, room.id, null, 'system', `Order completed. ${(order.seller_net_cents / 100).toFixed(2)} ${order.currency} released to the seller (commission ${(order.commission_bps / 100).toFixed(2)}%).`);
+  await appendMessage(s, room.id, null, 'system', 'Order completed. Funds released to the seller.');
   await postOrderCard(s, order, 'completed');
   await enqueueWebhook(s.tx, order.seller_id, 'order.completed', orderSummary(order));
   if (order.rail === 'fiat') {

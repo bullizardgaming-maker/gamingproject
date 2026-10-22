@@ -235,7 +235,7 @@ export function OfferPage() {
         <div className="notice">
           {isAccount ? t('offer.escrow14') : t('offer.escrow72')}
         </div>
-        <label className="row small">
+        <label className="check-row small">
           <input type="checkbox" style={{ width: 'auto' }} checked={tos} onChange={(e) => setTos(e.target.checked)} />
           {t('offer.tos')}
         </label>
@@ -244,7 +244,7 @@ export function OfferPage() {
         {error && <div className="alert" role="alert">{error} {error === t('offer.verifyFirst') && <Link to="/account">{t('offer.verifyNow')}</Link>}</div>}
         {!user ? (
           <div className="row">
-            <Link className="btn" to={`/login?next=/offers/${offer.id}`}>{t('offer.signInToBuy')}</Link>
+            <Link className="btn go" to={`/login?next=/offers/${offer.id}`}>{t('offer.signInToBuy')}</Link>
             <button className="btn ghost" disabled={offer.stock < qty} onClick={() => setAdded(addToCart(offer.id, isAccount ? 1 : qty) ? 'ok' : 'full')}>
               <ShoppingCart className="size-4" /> {t('cart.add')}
             </button>
@@ -253,7 +253,7 @@ export function OfferPage() {
           <p className="muted small">{t('offer.yours')}</p>
         ) : (
           <div className="row">
-            <button className="btn" disabled={!tos || busy || offer.stock < qty || (needsCharacter && !character.ok) || (rail === 'crypto' && !/^0x[0-9a-fA-F]{40}$/.test(wallet))} onClick={buy}>
+            <button className="btn go" disabled={!tos || busy || offer.stock < qty || (needsCharacter && !character.ok) || (rail === 'crypto' && !/^0x[0-9a-fA-F]{40}$/.test(wallet))} onClick={buy}>
               {busy ? t('offer.opening') : t('offer.pay', { amount: money(total, offer.currency) })}
             </button>
             {rail === 'fiat' && (

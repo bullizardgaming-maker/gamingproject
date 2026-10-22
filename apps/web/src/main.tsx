@@ -8,6 +8,7 @@ import { OfferPage } from './pages/OfferPage';
 import { OrderPage } from './pages/OrderPage';
 import { InquiryChat, Orders } from './pages/Orders';
 import { Sell } from './pages/Sell';
+import { Messages } from './pages/Messages';
 import { Developers } from './pages/Developers';
 import { Account, ForgotPassword, Login, ResetPassword } from './pages/Account';
 import { Admin } from './pages/Admin';
@@ -106,6 +107,7 @@ function App() {
           <Route path="/orders/:id" element={<OrderPage />} />
           <Route path="/checkouts/:id/pay" element={<CartPayPage />} />
           <Route path="/chat/:id" element={<InquiryChat />} />
+          <Route path="/messages" element={<Messages />} />
           <Route path="/sell" element={<Sell />} />
           <Route path="/sell/money" element={<Sell />} />
           <Route path="/sell/analytics" element={<Sell />} />

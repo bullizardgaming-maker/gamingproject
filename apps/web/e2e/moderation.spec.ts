@@ -9,8 +9,10 @@ test.describe('safety and moderation', () => {
     await box.fill('thanks, all good');
     await expect(page.getByRole('status').filter({ hasText: /outside Bullizard/ })).toHaveCount(0);
     await box.fill('add me on telegram, I pay with paypal');
-    await expect(page.getByText(/Sharing outside contacts can get your account banned right away/).first()).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Send anyway' })).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: /Sharing outside contacts can get your account banned right away/ })).toBeVisible();
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await expect(page.getByText('Not sent.')).toBeVisible();
+    await expect(page.getByRole('log').getByText('add me on telegram')).toHaveCount(0);
   });
 
   test('a listing with a review term waits for a moderator', async ({ page }) => {

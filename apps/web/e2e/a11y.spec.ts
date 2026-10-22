@@ -34,7 +34,7 @@ test.describe('accessibility', () => {
     await signIn(page, 'Buyer');
     await buy(page, '/offers/offer-2');
     const order = new URL(page.url()).pathname;
-    for (const path of [order, '/orders', '/watchlist', '/account', '/requests/req-1']) await scan(page, path);
+    for (const path of [order, '/orders', '/messages', '/watchlist', '/account', '/requests/req-1']) await scan(page, path);
   });
 
   test('seller pages', async ({ page }) => {

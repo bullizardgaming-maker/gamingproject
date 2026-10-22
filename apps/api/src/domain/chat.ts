@@ -104,12 +104,15 @@ export async function roomForParticipant(q: Queryable, roomId: string, user: { i
 export async function listRooms(keyring: Keyring, q: Queryable, userId: string) {
   const rooms = await many<any>(
     q,
-    `SELECT r.*, o.title AS offer_title, ord.status AS order_status,
-            (SELECT row_to_json(m) FROM (SELECT id, room_id, seq, sender_id, kind, body, body_sealed, hash_version FROM chat_messages m
+    `SELECT r.*, o.title AS offer_title, ord.status AS order_status, ord.ref AS order_ref,
+            bu.display_name AS buyer_name, su.display_name AS seller_name,
+            (SELECT row_to_json(m) FROM (SELECT id, room_id, seq, sender_id, kind, body, body_sealed, hash_version, created_at FROM chat_messages m
                                           WHERE m.room_id = r.id ORDER BY seq DESC LIMIT 1) m) AS last
        FROM chat_rooms r
        LEFT JOIN offers o ON o.id = r.offer_id
        LEFT JOIN orders ord ON ord.id = r.order_id
+       LEFT JOIN users bu ON bu.id = r.buyer_id
+       LEFT JOIN users su ON su.id = r.seller_id
       WHERE r.buyer_id = $1 OR r.seller_id = $1
       ORDER BY r.created_at DESC LIMIT 100`,
     [userId],
@@ -117,8 +120,13 @@ export async function listRooms(keyring: Keyring, q: Queryable, userId: string) 
   for (const r of rooms) {
     const last = r.last ? (await openMessages(keyring, q, [r.last]))[0]! : null;
     r.last_message = last ? (last.erased ? null : last.body) : null;
+    r.last_kind = last?.kind ?? null;
+    r.last_sender_id = last?.sender_id ?? null;
+    r.last_at = new Date(r.last?.created_at ?? r.created_at).toISOString();
     delete r.last;
   }
+  // Inbox order: most recent activity first.
+  rooms.sort((a, b) => b.last_at.localeCompare(a.last_at));
   return rooms;
 }
 

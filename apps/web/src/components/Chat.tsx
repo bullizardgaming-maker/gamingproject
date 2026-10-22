@@ -1,19 +1,55 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BadgeCheck, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { Check, ImageIcon, ShieldCheck } from 'lucide-react';
 import { api, realtime, type ChatMessage } from '../api';
 import { detectOffPlatform } from '@/lib/safety';
+import { BrandMark } from './Brand';
 import { t, type MessageKey } from '../i18n';
 
-/** Order chat. Messages are rendered strictly by server `seq`, never by client clocks. */
+const time = (iso: string) => new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+const isBlockedError = (e: any) => e?.code === 'offplatform_blocked' || /^Not sent\./.test(String(e?.message ?? e ?? ''));
+
+function BlockedNotice() {
+  return (
+    <div className="msg mine blocked" role="status">
+      <b>{t('chat.notSent')}</b> {t('chat.bannable')}
+    </div>
+  );
+}
+
+/** A server-originated text message: the official Bullizard card. Users can only send `text`, so this can't be faked. */
+function OfficialNote({ m }: { m: ChatMessage }) {
+  return (
+    <div className="chat-official" role="article" aria-label={t('chat.fromBullizard')}>
+      <div className="chat-official-head">
+        <BrandMark style={{ width: 20, height: 18 }} />
+        <b>Bullizard</b>
+        <Check className="size-4" strokeWidth={3} aria-label={t('chat.verified')} />
+        <span className="chat-official-time">{time(m.created_at)}</span>
+      </div>
+      <div className="chat-official-body" dir="auto">{m.body}</div>
+    </div>
+  );
+}
+
+/**
+ * Order chat. Messages are rendered strictly by server `seq`, never by client clocks.
+ * Outside contact details are never sent: the attempt stays in place in the thread as "Not sent."
+ */
 export function Chat({ roomId, meId, names, accountOrder = false }: { roomId: string; meId: string; names: Record<string, string>; /** Account handovers may carry the account's email. */ accountOrder?: boolean }) {
   const [messages, setMessages] = useState<Map<number, ChatMessage>>(new Map());
+  // Blocked attempts stay where they happened: each remembers the last message it followed.
+  const [blocked, setBlocked] = useState<Array<{ key: number; after: number }>>([]);
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
   const logRef = useRef<HTMLDivElement>(null);
+  const lastSeq = useRef(-1);
+
+  const markBlocked = () => setBlocked((b) => [...b, { key: Date.now() + b.length, after: lastSeq.current }]);
 
   useEffect(() => {
     setMessages(new Map());
+    setBlocked([]);
     const merge = (list: ChatMessage[]) =>
       setMessages((prev) => {
         const next = new Map(prev);
@@ -25,24 +61,30 @@ export function Chat({ roomId, meId, names, accountOrder = false }: { roomId: st
     return realtime.subscribe(roomId, (f) => {
       if (f.type === 'history' && f.roomId === roomId) merge(f.messages);
       if (f.type === 'message' && f.roomId === roomId) merge([f.message]);
-      if (f.type === 'error') setError(f.message);
+      if (f.type === 'error') (isBlockedError(f) ? markBlocked() : setError(f.message));
     });
   }, [roomId]);
 
   const ordered = [...messages.values()].sort((a, b) => a.seq - b.seq);
+  lastSeq.current = ordered.at(-1)?.seq ?? -1;
   const roomHasOrder = ordered.some((m) => m.kind === 'system_order');
-  // Same rules as the server: warn before sending rather than after the strike.
+  // Same rules as the server: catch it before it leaves the browser.
   const risky = detectOffPlatform(draft, { allowEmail: accountOrder }).length > 0;
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
-  }, [ordered.length]);
+  }, [ordered.length, blocked.length]);
 
   const send = async (e: React.FormEvent) => {
     e.preventDefault();
     const body = draft.trim();
     if (!body) return;
     setError('');
+    if (detectOffPlatform(body, { allowEmail: accountOrder }).length > 0) {
+      markBlocked();
+      setDraft('');
+      return;
+    }
     try {
       realtime.send(roomId, body);
     } catch {
@@ -51,52 +93,68 @@ export function Chat({ roomId, meId, names, accountOrder = false }: { roomId: st
         const m = await api<ChatMessage>(`/chat/rooms/${roomId}/messages`, { body: { body } });
         setMessages((prev) => new Map(prev).set(m.seq, m));
       } catch (err: any) {
-        setError(err.message);
-        return;
+        if (isBlockedError(err)) markBlocked();
+        else {
+          setError(err.message);
+          return;
+        }
       }
     }
     setDraft('');
   };
 
+  const line = (m: ChatMessage) => {
+    if (m.kind === 'system_order') return <OrderCard message={m} />;
+    if (m.kind === 'system') return <OfficialNote m={m} />;
+    if (m.kind === 'delivery' || m.kind === 'warning')
+      return (
+        <div className={`chat-event ${m.kind === 'delivery' ? 'held' : 'disputed'}`}>
+          <i aria-hidden /> <span>{m.body}</span> <span className="muted">· {time(m.created_at)}</span>
+        </div>
+      );
+    const mine = m.sender_id === meId;
+    return (
+      <div className={mine ? 'msg mine' : 'msg'} dir="auto">
+        {m.kind === 'attachment' && <ImageIcon className="me-1 inline size-4 align-text-bottom" aria-hidden />}
+        {m.body ?? <i className="muted">{t('chat.erased')}</i>}
+        <span className="meta">
+          {mine ? '' : `${m.sender_id ? names[m.sender_id] ?? t('chat.user') : t('chat.system')} · `}
+          {time(m.created_at)} · #{m.seq}
+          {m.flags.length > 0 && ` · ${t('chat.flagged')}`}
+        </span>
+      </div>
+    );
+  };
+
   return (
-    <div className="card chat">
-      <div className="row spread" style={{ marginBottom: 8 }}>
+    <div className="card chat chat2">
+      <div className="chat2-head">
         <h3 style={{ margin: 0 }}>{t('chat.title')}</h3>
         <span className="chip">{t('chat.recorded')}</span>
       </div>
       {roomHasOrder && <SafetyPanel />}
       <div className="chat-log" ref={logRef} role="log" aria-label={t('a11y.chatLog')}>
-        {ordered.map((m) => {
-          const mine = m.sender_id === meId;
-          const cls = m.kind === 'text' ? (mine ? 'msg mine' : 'msg') : `msg ${m.kind}`;
-          if (m.kind === 'system_order') return <OrderCard key={m.seq} message={m} />;
-          return (
-            <div key={m.seq} className={cls}>
-              {m.body ?? <i className="muted">{t('chat.erased')}</i>}
-              <span className="meta">
-                #{m.seq} · {m.sender_id ? names[m.sender_id] ?? t('chat.user') : t('chat.system')} ·{' '}
-                {new Date(m.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                {m.flags.length > 0 && ` · ${t('chat.flagged')}`}
-              </span>
-            </div>
-          );
-        })}
+        {blocked.filter((b) => b.after < 0).map((b) => <BlockedNotice key={b.key} />)}
+        {ordered.map((m) => (
+          <Fragment key={m.seq}>
+            {line(m)}
+            {blocked.filter((b) => b.after === m.seq).map((b) => <BlockedNotice key={b.key} />)}
+          </Fragment>
+        ))}
       </div>
       {error && <div className="alert" style={{ marginBottom: 8 }}>{error}</div>}
       {risky && (
-        <div className="alert flex items-start gap-2" role="status" style={{ marginBottom: 8 }}>
-          <ShieldAlert className="mt-0.5 size-4 shrink-0" />
-          <span>{t('chat.offPlatform')}</span>
+        <div className="alert small" role="status" style={{ marginBottom: 8 }}>
+          {t('chat.offPlatform')}
         </div>
       )}
       <form onSubmit={send}>
         <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={t('chat.placeholder')} aria-label={t('chat.message')} maxLength={4000} />
-        <button className="btn" type="submit">{risky ? t('chat.sendAnyway') : t('chat.send')}</button>
+        <button className="btn" type="submit">{t('chat.send')}</button>
       </form>
     </div>
   );
 }
-
 
 /**
  * The official order message: posted only by the server (kind `system_order`), rendered in a frame
@@ -113,18 +171,18 @@ function OrderCard({ message }: { message: ChatMessage }) {
   if (!card) return null;
   const chip = ORDER_CHIP[card.status] ?? { label: card.status, cls: '' };
   return (
-    <div className="order-card" data-testid="order-card" data-status={card.status}>
-      <div className="order-card-head">
-        <span className="brand-mark" aria-hidden />
-        <span>Bullizard</span>
-        <BadgeCheck className="size-4" aria-label={t('chat.official')} />
-        <span className="meta">{new Date(message.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+    <div className="chat-official" role="article" aria-label={t('chat.fromBullizard')} data-testid="order-card" data-status={card.status}>
+      <div className="chat-official-head">
+        <BrandMark style={{ width: 20, height: 18 }} />
+        <b>Bullizard</b>
+        <Check className="size-4" strokeWidth={3} aria-label={t('chat.official')} />
+        <span className="chat-official-time">{time(message.created_at)}</span>
       </div>
-      <div className="order-card-body">
-        <Link to={`/orders/${card.order_id}`} className="mono">{card.ref}</Link>
-        <span>{card.title}{card.quantity > 1 ? ` ×${card.quantity}` : ''}</span>
-        {card.character_name && <span className="small muted">→ <b className="mono">{card.character_name}</b></span>}
-        <span className={`chip ${chip.cls}`}>{t(chip.label as MessageKey)}</span>
+      <div className="chat-official-body order-card-rows">
+        <span><Link to={`/orders/${card.order_id}`} className="mono" dir="ltr">{card.ref}</Link></span>
+        <span dir="auto">{card.title}{card.quantity > 1 ? ` ×${card.quantity}` : ''}</span>
+        {card.character_name && <span className="small muted">→ <b className="mono" dir="ltr">{card.character_name}</b></span>}
+        <span><span className={`chip ${chip.cls}`}>{t(chip.label as MessageKey)}</span></span>
       </div>
     </div>
   );
@@ -165,12 +223,12 @@ function SafetyPanel() {
     });
   };
   return (
-    <div className="safety-panel" data-testid="safety-panel">
-      <button type="button" className="safety-toggle" aria-expanded={open} onClick={toggle}>
-        <ShieldCheck className="size-4" /> {t('chat.staySafe')} <span className="meta">{open ? '▾' : '▸'}</span>
+    <div className="chat-safety" data-testid="safety-panel">
+      <button type="button" className="chat-safety-toggle" aria-expanded={open} onClick={toggle}>
+        <ShieldCheck className="size-4" strokeWidth={2} /> {t('chat.staySafe')} <span className="meta" aria-hidden>{open ? '▾' : '▸'}</span>
       </button>
       {open && (
-        <div className="safety-body">
+        <div className="chat-safety-body">
           {text.body.split('\n').map((line, i) => <p key={i}>{line}</p>)}
           {text.link_href && <Link to={text.link_href}>{text.link_label || t('chat.rules')}</Link>}
         </div>
