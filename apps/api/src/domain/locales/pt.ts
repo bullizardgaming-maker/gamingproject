@@ -16,7 +16,9 @@ const pt: LocalePack = {
         `Seu pedido “${d.title}” foi entregue. Abra a página do pedido para ver.\n\n` +
         (d.protection === 'insurance_14d'
           ? `Esta conta tem seguro de 14 dias até ${h.when(d.protection_ends_at)}. Complete agora o checklist de segurança: troque a senha, o e-mail de recuperação e o 2FA.`
-          : `Você tem até ${h.when(d.protection_ends_at)} para conferir. Se algo estiver errado, abra uma disputa antes disso.`) +
+          : d.protection_ends_at
+            ? `Você tem até ${h.when(d.protection_ends_at)} para conferir. Se algo estiver errado, abra uma disputa antes disso.`
+            : `Confira e confirme o pedido; o vendedor só recebe quando você confirma. Se algo estiver errado, abra uma disputa.`) +
         `\n\n${link(`/orders/${d.order_id}`)}`,
     },
     order_refunded: {

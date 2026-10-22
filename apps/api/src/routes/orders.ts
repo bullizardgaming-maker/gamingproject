@@ -6,6 +6,7 @@ import { getOrCreateInquiryRoom, listMessages, listRooms, postUserMessage, roomF
 import { revealDelivered } from '../domain/inventory.js';
 import {
   cancelLateOrder, cancelOrder, confirmOrder, createOrder, quoteOrder, deliverManually, getOrderFor, listOrders, openDispute, updateChecklist,
+  STAFF_RELEASE_AFTER_HOURS,
 } from '../domain/orders.js';
 import { buildEscrowTerms } from '../domain/web3.js';
 import { MAX_CART_ITEMS, cartView, createCartCheckout } from '../domain/cart.js';
@@ -13,9 +14,11 @@ import { DISPUTE_CATEGORIES, addStatement } from '../domain/disputes.js';
 import { CLAIM_REASONS, buyerRespond, openClaim, sellerRespond } from '../domain/warranty.js';
 import { postProgress } from '../domain/progress.js';
 import { startHandover } from '../domain/linkedAccounts.js';
+import { createTicket } from '../domain/support.js';
+import { coinsFor, paymentsFor, refreshCryptoPayment, setRefundAddress, startCryptoPayment } from '../domain/cryptoPayments.js';
 import { BUYER_TAGS, buyerReputation, rateBuyer } from '../domain/buyerReputation.js';
 import { createReview, replyToReview, sellerProfile } from '../domain/reviews.js';
-import { badRequest, forbidden, notFound } from '../lib/errors.js';
+import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { readAttachment, uploadAttachment } from '../domain/attachments.js';
 import { audit } from '../domain/audit.js';
 import { readBanner } from '../domain/storefront.js';
@@ -123,6 +126,56 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/orders/:id/confirm', async (req) => {
     const body = z.object({ handoverConsent: z.boolean().optional() }).parse(req.body ?? {});
     return confirmOrder(ctx, Id.parse(req.params).id, me(req).id, body);
+  });
+
+  /** Seller follow-up: the buyer has not confirmed 24h+ after delivery; opens a support ticket for release. */
+  app.post('/orders/:id/follow-up', async (req, reply) => {
+    const { id } = Id.parse(req.params);
+    const user = me(req);
+    const { message } = z.object({ message: z.string().trim().max(2_000).optional() }).parse(req.body ?? {});
+    const o = await maybeOne<{ seller_id: string; status: string; delivered_at: string | null; title: string }>(
+      ctx.db, 'SELECT o.seller_id, o.status, o.delivered_at, f.title FROM orders o JOIN offers f ON f.id = o.offer_id WHERE o.id = $1', [id],
+    );
+    if (!o || o.seller_id !== user.id) throw notFound('Order');
+    if (o.status !== 'delivered') throw conflict('invalid_state', `This order is ${o.status}`);
+    const since = Date.now() - new Date(o.delivered_at!).getTime();
+    if (since < STAFF_RELEASE_AFTER_HOURS * 3_600_000) throw conflict('too_early', `You can ask for a release ${STAFF_RELEASE_AFTER_HOURS} hours after delivery`);
+    const open = await maybeOne(ctx.db, `SELECT id FROM support_tickets WHERE order_id = $1 AND user_id = $2 AND status <> 'resolved'`, [id, user.id]);
+    if (open) throw conflict('already_open', 'You already have an open request on this order');
+    const hours = Math.floor(since / 3_600_000);
+    const ticketId = await createTicket(ctx, user.id, {
+      category: 'order',
+      subject: `Release request: ${o.title}`,
+      orderId: id,
+      body: `Delivered ${hours} hours ago and the buyer has not confirmed. Please review the delivery proof in the order chat and release the payment.${message ? `\n\n${message}` : ''}`,
+    });
+    return reply.status(201).send({ ticketId });
+  });
+
+  // --- Crypto checkout (NOWPayments): coin picker, payment address, status, refund address ----------
+  const Coin = z.object({ coin: z.string().min(2).max(20).toLowerCase() });
+  const PayId = z.object({ id: z.string().uuid(), pid: z.string().max(40) });
+  for (const kind of ['orders', 'checkouts'] as const) {
+    const refOf = (id: string) => (kind === 'orders' ? { orderId: id } : { checkoutId: id });
+    app.get(`/${kind}/:id/crypto/coins`, async (req) => coinsFor(ctx, refOf(Id.parse(req.params).id), me(req).id));
+    app.post(`/${kind}/:id/crypto/pay`, async (req, reply) => {
+      const { coin } = Coin.parse(req.body);
+      return reply.status(201).send(await startCryptoPayment(ctx, refOf(Id.parse(req.params).id), me(req).id, coin));
+    });
+    app.get(`/${kind}/:id/crypto/payments`, async (req) => {
+      const { id } = Id.parse(req.params);
+      const o = await maybeOne<{ buyer_id: string }>(ctx.db, `SELECT buyer_id FROM ${kind} WHERE id = $1`, [id]);
+      if (!o || o.buyer_id !== me(req).id) throw notFound(kind === 'orders' ? 'Order' : 'Checkout');
+      return paymentsFor(ctx.db, refOf(id));
+    });
+    app.post(`/${kind}/:id/crypto/payments/:pid/refresh`, async (req) => {
+      const { id, pid } = PayId.parse(req.params);
+      return refreshCryptoPayment(ctx, refOf(id), me(req).id, pid);
+    });
+  }
+  app.put('/orders/:id/refund-address', async (req) => {
+    const body = z.object({ address: z.string().trim().min(10).max(128), currency: z.string().min(2).max(20) }).parse(req.body);
+    return setRefundAddress(ctx, Id.parse(req.params).id, me(req).id, body);
   });
 
   /** Handover check: the buyer signs in to the account they bought; the callback ticks the checklist. */

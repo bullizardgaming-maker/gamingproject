@@ -42,6 +42,24 @@ export const TEMPLATES = {
     subject: (d) => `Payment received for ${d.title}`,
     body: (d, link) => `We've received ${money(d.amount_cents, d.currency)} for "${d.title}". It's held in escrow and the seller isn't paid until you have the goods.\n\nTrack the order: ${link(`/orders/${d.order_id}`)}`,
   },
+  crypto_underpaid: {
+    category: 'orders',
+    subject: (d) => `Your payment is ${money(d.owed_cents, d.currency)} short`,
+    body: (d, link) =>
+      `We received ${money(d.paid_cents, d.currency)} for your order, which is ${money(d.owed_cents, d.currency)} less than its price (network fees or an exchange rate change on the way). ` +
+      `Open the order and send the remaining amount to finish paying; what you sent is kept for it.\n\n${link(`/orders/${d.order_id}?pay=crypto`)}`,
+  },
+  crypto_refund_address: {
+    category: 'orders',
+    subject: (d) => `Refund of ${money(d.amount_cents, d.currency)}: where should we send it?`,
+    body: (d, link) =>
+      `A refund of ${money(d.amount_cents, d.currency)} is due on your order. Crypto refunds are sent to an address you give us: open the order, pick the coin and paste your address, and the treasury sends it within three working days.\n\n${link(`/orders/${d.order_id}`)}`,
+  },
+  crypto_refund_sent: {
+    category: 'orders',
+    subject: (d) => `Refund of ${money(d.amount_cents, d.currency)} sent`,
+    body: (d, link) => `Your refund of ${money(d.amount_cents, d.currency)} is on its way. Transaction: ${d.tx_hash}\n\n${link(`/orders/${d.order_id}`)}`,
+  },
   order_delivered: {
     category: 'orders',
     subject: (d) => `Delivered: ${d.title}`,
@@ -49,7 +67,9 @@ export const TEMPLATES = {
       `Your order "${d.title}" has been delivered. Open your order page to see it.\n\n` +
       (d.protection === 'insurance_14d'
         ? `This account is covered by 14-day asset insurance until ${when(d.protection_ends_at)}. Complete the security checklist now: change the password, recovery email and 2FA.`
-        : `You have until ${when(d.protection_ends_at)} to check it. If something is wrong, open a dispute before then.`) +
+        : d.protection_ends_at
+          ? `You have until ${when(d.protection_ends_at)} to check it. If something is wrong, open a dispute before then.`
+          : `Check it and confirm the order; the seller is paid only when you confirm. If something is wrong, open a dispute instead.`) +
       `\n\n${link(`/orders/${d.order_id}`)}`,
   },
   order_refunded: {
@@ -94,6 +114,25 @@ export const TEMPLATES = {
     category: 'selling',
     subject: (d) => `${money(d.seller_net_cents, d.currency)} added to your balance`,
     body: (d, link) => `Order "${d.title}" is complete. ${money(d.seller_net_cents, d.currency)} is now in your balance and ready to withdraw.\n\n${link('/sell')}`,
+  },
+  payout_address_confirm: {
+    category: 'security',
+    subject: () => 'Confirm your new payout address',
+    body: (d) =>
+      `Someone (hopefully you) asked to send your withdrawals to this ${d.coin} address:\n\n${d.address}\n\n` +
+      `Confirm it within ${d.minutes} minutes${d.mfa ? ' (you will be asked for your two-factor code)' : ''}:\n${d.url}\n\n` +
+      `If you didn't ask for this, ignore this email and change your password.`,
+  },
+  payout_address_changed: {
+    category: 'security',
+    subject: () => 'Your payout address was changed',
+    body: (d, link) => `Withdrawals now go to this ${d.coin} address: ${d.address}. Not you? Secure your account now: ${link('/account')}`,
+  },
+  withdrawal_requested: {
+    category: 'selling',
+    subject: (d) => `Withdrawal of ${money(d.amount_cents, d.currency)} requested`,
+    body: (d, link) =>
+      `We received your withdrawal of ${money(d.amount_cents, d.currency)}. After the ${money(d.fee_cents, d.currency)} fee, ${money(d.net_cents, d.currency)} will be sent in ${d.coin} once the treasury approves it, usually within three working days.\n\n${link('/sell/money')}`,
   },
   withdrawal_paid: {
     category: 'selling',

@@ -6,6 +6,8 @@ import { closeChargeback, receiveChargeback } from '../domain/chargebacks.js';
 import { handleChainEvent, handlePaymentCaptured, type ChainEvent } from '../domain/orders.js';
 import { applyKycResult } from '../domain/users.js';
 import { applyPayoutAccountUpdate } from '../domain/payouts.js';
+import { applyCryptoPayment } from '../domain/cryptoPayments.js';
+import { applyCryptoPayout } from '../domain/cryptoPayouts.js';
 import { debtPaymentByRef, handleDebtPaymentCaptured } from '../domain/debts.js';
 import { checkoutByRef, closeCheckoutChargeback, handleCheckoutCaptured, receiveCheckoutChargeback } from '../domain/cart.js';
 import { hmacSha256, safeEqual } from '../lib/crypto.js';
@@ -30,6 +32,10 @@ export async function processPaymentEvent(ctx: Ctx, ev: PaymentEvent) {
       return (await closeCheckoutChargeback(ctx, ev.disputeRef, ev.won)) ?? closeChargeback(ctx, ev.disputeRef, ev.won);
     case 'payout_account.updated':
       return applyPayoutAccountUpdate(ctx, ev.accountRef, ev.payoutsEnabled);
+    case 'crypto.payment':
+      return applyCryptoPayment(ctx, ev);
+    case 'crypto.payout':
+      return applyCryptoPayout(ctx, ev);
     default:
       return null; // payment.failed: the unpaid-order reaper releases stock when the window lapses
   }

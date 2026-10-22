@@ -46,7 +46,7 @@ describe('verification tiers', () => {
   });
 });
 
-describe('auto-delivery with 72h inspection escrow', () => {
+describe('auto-delivery with escrow held until confirmation', () => {
   it('captures into escrow, auto-delivers encrypted goods, and splits on buyer confirmation', async () => {
     const seller = await makeUser(h, { tier: 2 });
     const buyer = await makeUser(h, { tier: 1 });
@@ -67,11 +67,10 @@ describe('auto-delivery with 72h inspection escrow', () => {
     const order = await buyAndPay(h, buyer, offer.id, 2);
     const detail = (await buyer.api.get(`/v1/orders/${order.id}`)).body;
     expect(detail.status).toBe('delivered');
-    expect(detail.protection).toBe('inspection_72h');
+    // Standard goods are held until the buyer confirms: no deadline, no auto-release (release-rule.test.ts).
+    expect(detail.protection).toBe('until_confirmed');
+    expect(detail.protection_ends_at).toBeNull();
     expect(detail.commission_bps).toBe(999); // Normal tier, "other" rate
-    const hours = (new Date(detail.protection_ends_at).getTime() - Date.now()) / 3_600_000;
-    expect(hours).toBeGreaterThan(71.9);
-    expect(hours).toBeLessThanOrEqual(72);
 
     const items = (await buyer.api.get(`/v1/orders/${order.id}/items`)).body;
     expect(items.map((i: any) => i.content)).toEqual(['KEY-AAA', 'KEY-BBB']);

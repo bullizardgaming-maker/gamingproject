@@ -35,7 +35,7 @@ test.describe('seller', () => {
     const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'PDF' }).first().click()]);
     expect(download.suggestedFilename()).toMatch(/\.pdf$/);
     await page.getByRole('button', { name: /^Withdraw \$/ }).click();
-    await expect(page.getByText(/on its way to your bank/).first()).toBeVisible();
+    await expect(page.getByText(/sent once the treasury approves/).first()).toBeVisible();
   });
 
   test('can hide online status from buyers', async ({ page }) => {

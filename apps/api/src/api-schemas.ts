@@ -52,7 +52,7 @@ export const MerchantOrder = z.object({
   seller_net_cents: cents,
   status: z.string(),
   rail: z.enum(['fiat', 'crypto']),
-  protection: z.enum(['inspection_72h', 'insurance_14d']),
+  protection: z.enum(['inspection_72h', 'insurance_14d', 'until_confirmed']),
   protection_ends_at: z.string().nullable(),
   paid_at: z.string().nullable(),
   delivered_at: z.string().nullable(),
@@ -87,7 +87,7 @@ const OrderSummary = z.object({
   commission_cents: cents,
   status: z.string(),
   rail: z.enum(['fiat', 'crypto']),
-  protection: z.enum(['inspection_72h', 'insurance_14d']),
+  protection: z.enum(['inspection_72h', 'insurance_14d', 'until_confirmed']),
 });
 
 const Payout = z.object({

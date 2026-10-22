@@ -6,6 +6,7 @@ import { AlsoBought } from '../components/AlsoBought';
 import { BoostProgress, type ProgressUpdate } from '../components/BoostProgress';
 import { BuyerCard, type BuyerRep, type BuyerTag } from '../components/BuyerReputation';
 import { EscrowTrack, formatRemaining, type TrackVariant } from '../components/EscrowTrack';
+import { CryptoCheckout, REFUND_COINS, RefundAddressForm } from '../components/CryptoCheckout';
 import { useSession } from '../session';
 import { usePageMeta } from '@/lib/seo';
 
@@ -27,13 +28,15 @@ interface OrderDetail {
   seller_net_cents: number;
   seller_tier: string;
   rail: 'fiat' | 'crypto';
+  payment_provider?: string | null;
   status: string;
-  protection: 'inspection_72h' | 'insurance_14d';
+  protection: 'inspection_72h' | 'insurance_14d' | 'until_confirmed';
   protection_ends_at: string | null;
   delivered_at: string | null;
   escrow_frozen: boolean;
   seller_protected: boolean;
   room_id: string;
+  crypto_refund?: { id: string; amount_cents: number; currency: string; status: string; refund_address: string | null; refund_currency: string | null; tx_hash: string | null } | null;
   checklist: {
     items: Array<{ key: string; label: string; done: boolean; auto?: boolean }>;
     completed_at: string | null;
@@ -200,6 +203,7 @@ export function OrderPage() {
   const [statement, setStatement] = useState('');
   const [now, setNow] = useState(Date.now());
   const [handoverConsent, setHandoverConsent] = useState(false);
+  const [followUp, setFollowUp] = useState('');
   const [params, setParams] = useSearchParams();
   const handoverResult = params.get('handover');
 
@@ -241,11 +245,24 @@ export function OrderPage() {
 
   const windowMs = order.protection === 'insurance_14d' ? 14 * 86_400_000 : 72 * 3_600_000;
   const ends = order.protection_ends_at ? new Date(order.protection_ends_at).getTime() : 0;
+  // No deadline: the coin sits in escrow until the buyer confirms (or staff release), so nothing drifts.
   const elapsed = order.status === 'delivered' && ends ? 1 - (ends - now) / windowMs : 0;
+  const untilConfirmed = order.protection === 'until_confirmed';
+  const deliveredAgoMs = order.delivered_at ? now - new Date(order.delivered_at).getTime() : 0;
+  const canFollowUp = isSeller && order.status === 'delivered' && untilConfirmed && deliveredAgoMs >= 24 * 3_600_000;
+  const askRelease = async () => {
+    setError('');
+    try {
+      await api(`/orders/${order.id}/follow-up`, { body: {} });
+      setFollowUp('Support has your request and will review the delivery proof in the chat.');
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
   const stage: 0 | 1 | 2 = ['completed'].includes(order.status) ? 2 : ['awaiting_payment', 'cancelled'].includes(order.status) ? 0 : 1;
   const variant: TrackVariant =
     order.status === 'completed' ? 'released' : ['refunded', 'charged_back', 'cancelled'].includes(order.status) ? 'refunded' : order.status === 'disputed' || order.escrow_frozen ? 'disputed' : 'held';
-  const clock = order.status === 'delivered' ? formatRemaining(ends - now) : STATUS_TEXT[order.status];
+  const clock = order.status === 'delivered' ? (ends ? formatRemaining(ends - now) : isBuyer ? 'Until you confirm' : 'Until the buyer confirms') : STATUS_TEXT[order.status];
   const checklistDone = !order.checklist || !!order.checklist.completed_at;
   const handoverVerified = !!order.checklist?.handover_at;
   const platformName = order.checklist?.handover_platform === 'steam' ? 'Steam' : 'Riot';
@@ -283,13 +300,15 @@ export function OrderPage() {
           stage={stage}
           variant={variant}
           elapsed={elapsed}
-          windowLabel={order.protection === 'insurance_14d' ? '14-day asset insurance' : '72-hour inspection'}
+          windowLabel={order.protection === 'insurance_14d' ? '14-day asset insurance' : untilConfirmed ? 'Escrow until confirmed' : '72-hour inspection'}
           clock={clock}
         />
         <p className="small muted" style={{ marginTop: 12 }}>
           {isSeller
             ? `You receive ${money(order.seller_net_cents, order.currency)} after the ${(order.commission_bps / 100).toFixed(2)}% ${order.seller_tier} tier fee.`
-            : `Paid ${money(order.amount_cents, order.currency)} via ${order.rail === 'crypto' ? 'on-chain escrow' : 'card'}.`}
+            : order.status === 'awaiting_payment'
+              ? `${money(order.amount_cents, order.currency)} is held in escrow once your payment is confirmed.`
+              : `Paid ${money(order.amount_cents, order.currency)} via ${order.rail === 'crypto' ? 'on-chain escrow' : order.payment_provider === 'nowpayments' ? 'crypto' : 'card'}.`}
           {order.escrow_frozen && order.status !== 'disputed' && ' This order is in a routine security review; funds stay in escrow until it finishes.'}{' '}
           <Link to={`/support/new?category=order&order=${order.id}`}>Get help with this order</Link>
         </p>
@@ -306,6 +325,19 @@ export function OrderPage() {
       <div className="order-layout">
         <div className="stack">
           {order.status === 'awaiting_payment' && isBuyer && order.rail === 'crypto' && <CryptoDeposit orderId={order.id} />}
+          {order.status === 'awaiting_payment' && isBuyer && order.payment_provider === 'nowpayments' && (
+            <CryptoCheckout base={`/orders/${order.id}`} amountCents={order.amount_cents} currency={order.currency} onPaid={load} />
+          )}
+          {isBuyer && order.crypto_refund && <RefundAddressForm orderId={order.id} refund={order.crypto_refund} coins={REFUND_COINS} onDone={load} />}
+          {isSeller && order.status === 'delivered' && untilConfirmed && (
+            <div className="card stack">
+              <h3>Waiting for the buyer</h3>
+              <p className="small muted" style={{ margin: 0 }}>
+                The payment is released when the buyer confirms. If they go quiet, support can release it for you from 24 hours after delivery; keep your delivery proof in the chat.
+              </p>
+              {followUp ? <p className="small" role="status">{followUp}</p> : canFollowUp && <button className="btn ghost" type="button" onClick={askRelease}>Ask support to release the payment</button>}
+            </div>
+          )}
 
           {items.length > 0 && (
             <div className="card stack">

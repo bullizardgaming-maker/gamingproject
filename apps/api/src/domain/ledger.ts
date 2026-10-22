@@ -14,7 +14,9 @@ export type AccountKind =
   | 'fx_pnl'
   | 'tax_payable'
   | 'fx_position'
-  | 'fx_conversion';
+  | 'fx_conversion'
+  | 'refunds_payable'
+  | 'withdrawals_pending';
 
 /**
  * Double-entry ledger. Every posting is a set of entries sharing a txn_id whose

@@ -326,3 +326,8 @@ html[lang='ar'] * { letter-spacing: normal !important; }
 html[lang='ar'] body { line-height: 1.7; }
 /* Plex Mono has no Arabic glyphs: let Arabic text in mono labels fall back to Plex Sans Arabic. */
 html[lang='ar'] { --mono: 'IBM Plex Mono', 'IBM Plex Sans Arabic', ui-monospace, monospace; --font-mono: 'IBM Plex Mono', 'IBM Plex Sans Arabic', ui-monospace, monospace; }
+
+/* Crypto checkout: coin picker and payment details */
+.coin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.coin-grid .btn.coin-option { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 12px; text-align: start; }
+.crypto-checkout code.mono { font-size: 13px; }

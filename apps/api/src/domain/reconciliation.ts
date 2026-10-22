@@ -107,7 +107,7 @@ async function buildReport(ctx: Ctx, currency: string): Promise<ReconReport> {
   );
   if (negative.length) warnings.push({ check: 'negative_seller_balances', detail: negative });
 
-  const stuckWithdrawals = await many(ctx.db, `SELECT id, user_id, amount_cents, created_at FROM withdrawals WHERE status = 'pending' AND created_at < now() - interval '1 hour'`);
+  const stuckWithdrawals = await many(ctx.db, `SELECT id, user_id, amount_cents, created_at FROM withdrawals WHERE (status = 'pending' AND created_at < now() - interval '1 hour') OR (status = 'processing' AND updated_at < now() - interval '3 days') OR (status = 'pending_approval' AND created_at < now() - interval '3 days')`);
   if (stuckWithdrawals.length) warnings.push({ check: 'withdrawals_stuck_pending', detail: stuckWithdrawals });
 
   const undelivered = await many(

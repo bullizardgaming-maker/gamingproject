@@ -8,13 +8,13 @@ State of the project for whoever picks it up next (a person or another Claude se
 - All work is on `main`. CI (api, web, e2e, load, contracts, fraud-gnn, sdk-python) is green.
 - 14 rounds of features are built: 84 of 92 suggestions. The tracker lives in the Claude report doc
   ("Bullizard report"), which has the full list with statuses.
-- Tests: 240 API tests (63 files), 98 browser tests (26 files), 14 contract tests.
+- Tests: 255 API tests (65 files), 103 browser tests (27 files), 14 contract tests.
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `apps/api` | Fastify 5 + Postgres API and worker. Migrations in `migrations/` (latest 052), business logic in `src/domain/`, routes in `src/routes/`, providers (payments, KYC, email, Steam/Riot…) in `src/providers/` |
+| `apps/api` | Fastify 5 + Postgres API and worker. Migrations in `migrations/` (latest 054), business logic in `src/domain/`, routes in `src/routes/`, providers (payments, KYC, email, Steam/Riot…) in `src/providers/` |
 | `apps/web` | React 19 + Vite + Tailwind v4 web app. `src/demo/` is an in-browser mock of the API used for previews and browser tests |
 | `contracts` | `MarketEscrow.sol` (Hardhat) |
 | `services/fraud-gnn` | Python fraud model service |
@@ -71,6 +71,24 @@ Built and tested; migrations 051–052:
    only" badge.
 3. Weekly retention digest (`domain/retentionDigest.ts`, worker job `retention_digest`, template `retention_digest`):
    Mondays UTC to staff with `analytics.view`; `COHORT_ALERT_*` thresholds in `.env`.
+
+## Round 15 (Oct 22, 2026) — launch brief, part 1: money paths and the release rule
+
+Built and tested; migrations 053–054. The brief is the project doc "backend-change-brief.md".
+1. NOWPayments provider (`providers/payments/nowpayments.ts`, `domain/cryptoPayments.ts`): own coin picker (only coins whose
+   minimum fits what is owed), payment address + amount, IPN (HMAC-SHA512 over the sorted body) funds the order like a card
+   capture, settled at what reached the wallet; underpayment → top-up sharing the purchase id; carts pay with one payment
+   (`/v1/checkouts/:id/crypto/*`). Refunds are manual: `crypto_refunds` queue, `refunds_payable` ledger account, buyer gives an
+   address, CFO records the hash. Card checkout stays available as `PAYMENT_PROVIDER=stripe|mock`; on-chain escrow is behind
+   `ONCHAIN_ESCROW_ENABLED` (off).
+2. Crypto payouts (`domain/cryptoPayouts.ts`): payout address confirmed by email link + 2FA code; withdrawals take 6% (min $1.50),
+   move the gross to `withdrawals_pending`, wait for `treasury.approve`; approval books the fee and sends through NOWPayments
+   (JWT + TOTP verify); the payout IPN marks it paid or reverses it. Ops tab "Payouts".
+3. Release rule: standard orders are `until_confirmed` (no `protection_ends_at`, no auto-release); staff release from 24h after
+   delivery (`orders.release`, ops tab "Releases"); sellers file a follow-up that opens a high-priority support ticket. Accounts
+   keep the 14-day window.
+Still to do from the brief, in its order: commission gross-up + sell-form preview (3, 5), games and listing fields + PoE league
+expiry + proof of delivery (NEW 1–3), seller onboarding (8, NEW 5), chat filter (9), currencies + Arabic (7, 11), ranks + extras.
 
 ## Suggested next round
 

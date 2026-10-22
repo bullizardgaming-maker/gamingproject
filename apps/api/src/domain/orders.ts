@@ -27,6 +27,7 @@ import { listStatements, type DisputeCategory } from './disputes.js';
 import { claimsForOrder } from './warranty.js';
 import { progressFor } from './progress.js';
 import { buyerReputation, ratingForOrder } from './buyerReputation.js';
+import { paymentsForOrder, queueCryptoRefund, refundForOrder } from './cryptoPayments.js';
 
 export type OrderStatus = 'awaiting_payment' | 'paid' | 'delivered' | 'completed' | 'disputed' | 'refunded' | 'cancelled' | 'charged_back';
 
@@ -60,7 +61,7 @@ export interface Order {
   promo_code_id: string | null;
   rail: 'fiat' | 'crypto';
   status: OrderStatus;
-  protection: 'inspection_72h' | 'insurance_14d';
+  protection: 'inspection_72h' | 'insurance_14d' | 'until_confirmed';
   protection_ends_at: string | null;
   escrow_frozen: boolean;
   seller_protected: boolean;
@@ -75,10 +76,14 @@ export interface Order {
   created_at: string;
 }
 
+/** Auto-release windows in ms; null = held until the buyer confirms or staff release (no deadline). */
 export const PROTECTION_WINDOWS = {
   inspection_72h: 72 * 3600 * 1000,
   insurance_14d: 14 * 24 * 3600 * 1000,
+  until_confirmed: null,
 } as const;
+/** Staff may release an unconfirmed order only this long after delivery. */
+export const STAFF_RELEASE_AFTER_HOURS = 24;
 
 /** Share of each commission retained in the chargeback reserve that backs the Chargeback Shield. */
 export const RESERVE_SHARE_BPS = 1_000; // 10% of commission
@@ -296,6 +301,7 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
   if (buyer.status !== 'active') throw forbidden('suspended', 'Account suspended');
   if (buyer.kyc_tier < 1) throw forbidden('kyc_required', 'Verify your email and phone (Tier 1) before purchasing');
   if (!input.acceptTos) throw badRequest('tos_required', 'You must accept the Terms of Service');
+  if (input.rail === 'crypto' && !ctx.cfg.ONCHAIN_ESCROW_ENABLED) throw badRequest('rail_unavailable', 'On-chain escrow is not available; pay with crypto at checkout instead');
   if (input.rail === 'crypto' && !input.walletAddress) throw badRequest('wallet_required', 'walletAddress is required for crypto escrow');
   if (input.walletAddress) await assertWalletClear(ctx, buyer.id, input.walletAddress);
 
@@ -344,7 +350,7 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
     const price = await priceOrder(ctx, s.tx, offer, buyer.id, input);
     const amount = price.amountCents;
     const split = splitAmount(amount, rate);
-    const protection = offer.risk_class === 'high' ? 'insurance_14d' : 'inspection_72h';
+    const protection = offer.risk_class === 'high' ? 'insurance_14d' : 'until_confirmed';
     // "High Risk - Secondary Market": account listings without verified Original Owner Proof.
     const sellerProtected = offer.category_kind !== 'account' || offer.owner_proof_status === 'verified';
 
@@ -493,10 +499,10 @@ export async function handlePaymentCaptured(ctx: Ctx, ev: Extract<PaymentEvent, 
   if (refundNeeded) {
     const o = refundNeeded as Order;
     // Keyed by order: orders in one cart checkout share the payment reference.
-    const r = await ctx.payments.refund(o.payment_ref!, o.presentment_amount_cents, o.presentment_currency, `refund_order_${o.id}`);
+    const r = o.payment_provider === 'nowpayments' ? { settledAmountCents: undefined } : await ctx.payments.refund(o.payment_ref!, o.presentment_amount_cents, o.presentment_currency, `refund_order_${o.id}`);
     await withScope(ctx, async (s) => {
       const cur = await lockOrder(s.tx, o.id);
-      await postRefund(s.tx, cur, r.settledAmountCents);
+      await postRefund(s.tx, cur, r.settledAmountCents, 'late_payment');
       await s.tx.query('INSERT INTO order_events (order_id, from_status, to_status, reason) VALUES ($1, $2, $2, $3)', [o.id, 'cancelled', 'late_payment_refunded']);
     });
   }
@@ -572,19 +578,26 @@ async function postFunding(tx: Tx, order: Order) {
  * PSP (at what the PSP actually debits us, the rest is FX gain/loss), the promo
  * part to treasury, the credit part back to the buyer's credit.
  */
-async function postRefund(tx: Tx, order: Order, refundSettledCents?: number) {
+/**
+ * Books a refund of what escrow holds. Card money goes back out through the gateway; a crypto
+ * refund is sent by hand later, so until then the amount sits in `refunds_payable` and a queue
+ * item asks the buyer for an address (cryptoPayments.ts).
+ */
+async function postRefund(tx: Tx, order: Order, refundSettledCents?: number, reason = 'refund') {
   const cur = order.currency;
   const held = await orderEscrowBalance(tx, order.id, cur);
   if (held <= 0) return;
   const card = Math.min(held, order.charged_cents);
   const promo = Math.min(held - card, order.discount_cents);
   const credit = held - card - promo;
-  const settledBack = refundSettledCents ?? card;
+  const manual = order.payment_provider === 'nowpayments';
+  const settledBack = manual ? card : (refundSettledCents ?? card);
+  if (manual && card > 0) await queueCryptoRefund(tx, order, card, reason);
   await post(
     tx,
     [
       { account: await accountId(tx, 'escrow', cur), amountCents: -held },
-      { account: await accountId(tx, 'gateway_clearing', cur), amountCents: settledBack },
+      { account: await accountId(tx, manual ? 'refunds_payable' : 'gateway_clearing', cur), amountCents: settledBack },
       { account: await accountId(tx, 'fx_pnl', cur), amountCents: card - settledBack },
       { account: await accountId(tx, 'treasury', cur), amountCents: promo },
       { account: await accountId(tx, 'user_credit', cur, order.buyer_id), amountCents: credit },
@@ -646,7 +659,7 @@ async function deliver(ctx: Ctx, s: TxScope, order: Order & { category_kind: str
   const window = PROTECTION_WINDOWS[order.protection];
   await transition(
     s.tx, order, 'delivered', actorId, reason,
-    ', delivered_at = now(), protection_ends_at = now() + make_interval(secs => $4)', [window / 1000],
+    ', delivered_at = now(), protection_ends_at = CASE WHEN $4::float IS NULL THEN NULL ELSE now() + make_interval(secs => $4) END', [window === null ? null : window / 1000],
   );
   const room = await roomOf(s.tx, order.id);
   await appendMessage(
@@ -654,7 +667,9 @@ async function deliver(ctx: Ctx, s: TxScope, order: Order & { category_kind: str
     `Delivered${count ? ` (${count} item${count === 1 ? '' : 's'})` : ''}. The buyer can view the goods in the order dashboard. ` +
       (order.protection === 'insurance_14d'
         ? 'The 14-Day Asset Insurance period has started: complete the Security Changeover checklist now.'
-        : 'The 72-Hour Inspection Window has started. Confirm receipt or open a dispute if anything is wrong.'),
+        : order.protection === 'until_confirmed'
+          ? 'The payment stays in escrow until the buyer confirms. Buyer: check your order and confirm, or open a dispute if anything is wrong.'
+          : 'The 72-Hour Inspection Window has started. Confirm receipt or open a dispute if anything is wrong.'),
   );
   if (order.category_kind === 'account') {
     const linked = await maybeOne<{ provider: string }>(
@@ -791,6 +806,49 @@ export async function recordHandover(ctx: Ctx, orderId: string, buyerId: string,
   });
 }
 
+/**
+ * Staff release of an order the buyer never confirmed: allowed from STAFF_RELEASE_AFTER_HOURS after
+ * delivery, never while a dispute is open or the escrow is frozen. There is no deadline on the
+ * buyer's side; this is how an abandoned order eventually pays the seller.
+ */
+export async function releaseByStaff(ctx: Ctx, orderId: string, staffId: string, note: string) {
+  return withScope(ctx, async (s) => {
+    const order = await lockOrder(s.tx, orderId);
+    if (order.status !== 'delivered') throw conflict('invalid_state', `Cannot release an order that is ${order.status}`);
+    if (order.rail === 'crypto') throw conflict('onchain', 'On-chain escrow is released from the buyer’s wallet');
+    if (order.escrow_frozen) throw new AppError(423, 'under_review', 'Order is under security review');
+    const deliveredAt = new Date(order.delivered_at!).getTime();
+    const earliest = deliveredAt + STAFF_RELEASE_AFTER_HOURS * 3_600_000;
+    if (Date.now() < earliest) {
+      throw conflict('too_early', `Staff can release this order from ${new Date(earliest).toISOString()}, ${STAFF_RELEASE_AFTER_HOURS} hours after delivery`);
+    }
+    if (order.category_kind === 'account') {
+      const cl = await maybeOne<{ completed_at: string | null }>(s.tx, 'SELECT completed_at FROM security_checklists WHERE order_id = $1', [orderId]);
+      if (cl && !cl.completed_at) throw conflict('checklist_incomplete', 'The buyer has not finished the Security Changeover checklist; the 14-day window releases it');
+    }
+    await s.tx.query('UPDATE orders SET released_by = $2, release_note = $3 WHERE id = $1', [orderId, staffId, note]);
+    await releaseEscrow(ctx, s, order, staffId, 'staff_released');
+    const room = await roomOf(s.tx, orderId);
+    await appendMessage(s, room.id, null, 'system', `Support released the payment to the seller after reviewing the delivery: ${note}`);
+    return order;
+  });
+}
+
+/** Orders delivered long enough ago for staff to release, oldest first (the support queue). */
+export async function unconfirmedDeliveries(q: Queryable, limit = 100) {
+  return many(
+    q,
+    `SELECT o.id, o.buyer_id, o.seller_id, o.amount_cents, o.currency, o.delivered_at, o.protection, o.protection_ends_at, f.title, f.game,
+            b.display_name AS buyer_name, sl.display_name AS seller_name,
+            (SELECT count(*)::int FROM support_tickets t WHERE t.order_id = o.id AND t.status <> 'resolved') AS open_tickets,
+            (SELECT max(m.created_at) FROM chat_messages m JOIN chat_rooms r ON r.id = m.room_id WHERE r.order_id = o.id AND m.sender_id = o.buyer_id) AS buyer_last_message_at
+       FROM orders o JOIN offers f ON f.id = o.offer_id JOIN users b ON b.id = o.buyer_id JOIN users sl ON sl.id = o.seller_id
+      WHERE o.status = 'delivered' AND o.rail = 'fiat' AND NOT o.escrow_frozen AND o.delivered_at <= now() - make_interval(hours => $1)
+      ORDER BY o.delivered_at LIMIT $2`,
+    [STAFF_RELEASE_AFTER_HOURS, limit],
+  );
+}
+
 export async function updateChecklist(ctx: Ctx, orderId: string, buyerId: string, key: string, done: boolean) {
   return withScope(ctx, async (s) => {
     const order = await lockOrder(s.tx, orderId);
@@ -823,7 +881,7 @@ export async function updateChecklist(ctx: Ctx, orderId: string, buyerId: string
 export async function autoCompleteExpired(ctx: Ctx, limit = 100): Promise<number> {
   const due = await many<{ id: string }>(
     ctx.db,
-    `SELECT id FROM orders WHERE status = 'delivered' AND rail = 'fiat' AND NOT escrow_frozen AND protection_ends_at <= now()
+    `SELECT id FROM orders WHERE status = 'delivered' AND rail = 'fiat' AND NOT escrow_frozen AND protection_ends_at IS NOT NULL AND protection_ends_at <= now()
       ORDER BY protection_ends_at LIMIT $1`,
     [limit],
   );
@@ -832,7 +890,7 @@ export async function autoCompleteExpired(ctx: Ctx, limit = 100): Promise<number
     try {
       await withScope(ctx, async (s) => {
         const order = await lockOrder(s.tx, id);
-        if (order.status !== 'delivered' || order.escrow_frozen || new Date(order.protection_ends_at!) > new Date()) return;
+        if (order.status !== 'delivered' || order.escrow_frozen || !order.protection_ends_at || new Date(order.protection_ends_at) > new Date()) return;
         await releaseEscrow(ctx, s, order, null, 'protection_window_elapsed');
         done++;
       });
@@ -886,7 +944,8 @@ export async function openDispute(ctx: Ctx, orderId: string, userId: string, rea
     if (order.buyer_id !== userId && order.seller_id !== userId) throw forbidden('not_participant', 'Not a participant of this order');
     if (order.rail === 'crypto') throw conflict('onchain', 'Crypto escrow disputes are opened on-chain and decided by the validator panel');
     if (!['paid', 'delivered'].includes(order.status)) throw conflict('invalid_state', `Cannot dispute an order that is ${order.status}`);
-    if (order.status === 'delivered' && new Date(order.protection_ends_at!) <= new Date()) {
+    // Standard orders have no deadline: disputable until release. Account windows close on time.
+    if (order.status === 'delivered' && order.protection_ends_at && new Date(order.protection_ends_at) <= new Date()) {
       throw conflict('window_closed', 'The protection window for this order has ended');
     }
     await transition(s.tx, order, 'disputed', userId, 'dispute_opened', '', [], { reason });
@@ -929,10 +988,10 @@ async function refundOrder(ctx: Ctx, s: TxScope, order: Order & { delivery_mode:
   // The PSP refund is idempotent (keyed on the payment ref), so calling it inside the
   // transaction is safe: on rollback a retry re-uses the same refund.
   let settledBack: number | undefined;
-  if (order.rail === 'fiat' && order.payment_ref && order.charged_cents > 0 && order.payment_provider !== 'none') {
+  if (order.rail === 'fiat' && order.payment_ref && order.charged_cents > 0 && order.payment_provider !== 'none' && order.payment_provider !== 'nowpayments') {
     settledBack = (await ctx.payments.refund(order.payment_ref, order.presentment_amount_cents, order.presentment_currency, `refund_order_${order.id}`)).settledAmountCents;
   }
-  await postRefund(s.tx, order, settledBack);
+  await postRefund(s.tx, order, settledBack, reason);
   await setRedemptionStatus(s.tx, order.id, 'released');
   // Undelivered auto-delivery stock goes back on sale; delivered goods are burned.
   if (order.delivery_mode === 'auto') {
@@ -1006,7 +1065,8 @@ export async function getOrderFor(q: Queryable, orderId: string, user: { id: str
   if (!staff && order.buyer_id !== user.id && order.seller_id !== user.id) throw notFound('Order');
   // Sellers (and staff) see the buyer's reputation and their own rating of this order.
   const sellerView = staff || order.seller_id === user.id;
-  const [checklist, dispute, events, review, warrantyClaims, progress, buyerRep, buyerRating] = await Promise.all([
+  const crypto = order.payment_provider === 'nowpayments';
+  const [checklist, dispute, events, review, warrantyClaims, progress, buyerRep, buyerRating, cryptoPayments, cryptoRefund] = await Promise.all([
     maybeOne(q, 'SELECT items, completed_at, handover_platform, handover_at FROM security_checklists WHERE order_id = $1', [orderId]),
     maybeOne<any>(q, 'SELECT * FROM disputes WHERE order_id = $1', [orderId]).then(async (d) => d && { ...d, statements: await listStatements(q, d.id) }),
     many(q, 'SELECT from_status, to_status, reason, created_at FROM order_events WHERE order_id = $1 ORDER BY id', [orderId]),
@@ -1015,8 +1075,10 @@ export async function getOrderFor(q: Queryable, orderId: string, user: { id: str
     order.category_kind === 'boosting' ? progressFor(q, orderId) : Promise.resolve([]),
     sellerView ? buyerReputation(q, order.buyer_id) : Promise.resolve(null),
     sellerView ? ratingForOrder(q, orderId) : Promise.resolve(null),
+    crypto && order.buyer_id === user.id ? paymentsForOrder(q, orderId) : Promise.resolve([]),
+    crypto ? refundForOrder(q, orderId) : Promise.resolve(null),
   ]);
-  return { ...order, checklist, dispute, events, review, warranty_claims: warrantyClaims, progress, buyer_reputation: buyerRep, buyer_rating: buyerRating };
+  return { ...order, checklist, dispute, events, review, warranty_claims: warrantyClaims, progress, buyer_reputation: buyerRep, buyer_rating: buyerRating, crypto_payments: cryptoPayments, crypto_refund: cryptoRefund };
 }
 
 export async function listOrders(q: Queryable, userId: string, role: 'buyer' | 'seller', status?: string, limit = 50) {

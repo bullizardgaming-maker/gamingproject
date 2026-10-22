@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { CryptoCheckout } from '../components/CryptoCheckout';
 import { ShieldCheck, ShoppingCart, Trash2 } from 'lucide-react';
 import { api, money } from '../api';
 import { useSession } from '../session';
@@ -147,6 +148,41 @@ export function CartPage() {
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Crypto payment for a cart checkout: one payment covers every order in it. */
+export function CartPayPage() {
+  const { id } = useParams();
+  const nav = useNavigate();
+  const [view, setView] = useState<{ checkout: { id: string; status: string; presentment_amount_cents: number; presentment_currency: string }; orders: Array<{ id: string; offer_title: string; quantity: number; seller_name: string; amount_cents: number; currency: string }> } | null>(null);
+  const [error, setError] = useState('');
+  const load = useCallback(async () => {
+    try {
+      const v = await api<any>(`/checkouts/${id}`);
+      setView(v);
+      if (v.checkout.status === 'paid') nav('/orders?checkout=success', { replace: true });
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }, [id, nav]);
+  useEffect(() => {
+    load();
+  }, [load]);
+  if (error) return <div className="card"><h2>Checkout not found</h2><p className="muted">{error}</p><Link to="/cart">Back to the cart</Link></div>;
+  if (!view) return <p className="muted">Loading…</p>;
+  const total = view.orders.reduce((s, o) => s + o.amount_cents, 0);
+  return (
+    <div className="stack" style={{ maxWidth: 640 }}>
+      <div>
+        <div className="eyebrow">Checkout</div>
+        <h1 style={{ fontSize: 32 }}>{view.orders.length} listing{view.orders.length === 1 ? '' : 's'} · {money(total, view.orders[0]?.currency ?? 'USD')}</h1>
+      </div>
+      <ul className="card small" style={{ margin: 0, paddingInlineStart: 34 }}>
+        {view.orders.map((o) => <li key={o.id}>{o.offer_title} × {o.quantity} · {o.seller_name} · {money(o.amount_cents, o.currency)}</li>)}
+      </ul>
+      <CryptoCheckout base={`/checkouts/${view.checkout.id}`} amountCents={total} currency={view.orders[0]?.currency ?? 'USD'} onPaid={load} />
     </div>
   );
 }

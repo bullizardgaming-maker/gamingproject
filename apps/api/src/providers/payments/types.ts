@@ -52,6 +52,24 @@ export type PaymentEvent =
     }
   | { type: 'chargeback.closed'; disputeRef: string; won: boolean }
   | { type: 'payout_account.updated'; accountRef: string; payoutsEnabled: boolean }
+  /** A crypto payment's status changed (NOWPayments IPN); domain/cryptoPayments.ts maps it to the order. */
+  | {
+      type: 'crypto.payment';
+      paymentId: string;
+      orderId: string | null;
+      purchaseId: string | null;
+      status: 'waiting' | 'confirming' | 'confirmed' | 'sending' | 'partially_paid' | 'finished' | 'failed' | 'refunded' | 'expired';
+      payCurrency: string;
+      payAmount: number;
+      actuallyPaid: number;
+      actuallyPaidUsd: number | null;
+      priceUsd: number;
+      outcomeAmount: number | null;
+      outcomeCurrency: string | null;
+      raw?: unknown;
+    }
+  /** A crypto payout (seller withdrawal) progressed. */
+  | { type: 'crypto.payout'; payoutId: string; batchId: string | null; status: 'CREATING' | 'WAITING' | 'PROCESSING' | 'SENDING' | 'FINISHED' | 'FAILED' | 'REJECTED'; hash: string | null; error: string | null; raw?: unknown }
   | { type: 'ignored' };
 
 export interface PaymentProvider {

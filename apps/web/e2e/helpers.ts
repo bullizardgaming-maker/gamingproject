@@ -21,12 +21,19 @@ export async function expectNoHorizontalScroll(page: Page) {
   expect(scroll, `page is ${scroll}px wide in a ${width}px viewport`).toBeLessThanOrEqual(width);
 }
 
-/** Buy a listing through the demo hosted checkout; ends on the order page. */
+/** Pay the crypto checkout on the current page (order or cart): pick a coin, then the demo network confirms it. */
+export async function payCrypto(page: Page) {
+  const checkout = page.locator('.crypto-checkout');
+  await checkout.getByRole('button', { name: /Tether \(TRC-20\)/ }).click();
+  await expect(checkout.getByText('Waiting for your transfer')).toBeVisible();
+  await expect(checkout).toHaveCount(0, { timeout: 20_000 });
+}
+
+/** Buy a listing: order page → crypto checkout → paid; ends on the order page. */
 export async function buy(page: Page, offerPath: string) {
   await page.goto(offerPath);
   await page.getByLabel(/I accept the Terms of Service/).check();
   await page.getByRole('button', { name: /Pay .* into escrow/ }).click();
-  await page.waitForURL(/demo-checkout/);
-  await page.getByRole('button', { name: /^Pay / }).click();
-  await page.waitForURL(/\/orders\//);
+  await page.waitForURL(/\/orders\/.*pay=crypto/);
+  await payCrypto(page);
 }

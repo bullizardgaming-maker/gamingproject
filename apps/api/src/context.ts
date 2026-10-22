@@ -6,6 +6,7 @@ import type { PubSub } from './lib/pubsub.js';
 import { createPubSub } from './lib/pubsub.js';
 import { MockPaymentProvider } from './providers/payments/mock.js';
 import { StripePaymentProvider } from './providers/payments/stripe.js';
+import { NowPaymentsProvider } from './providers/payments/nowpayments.js';
 import type { PaymentProvider } from './providers/payments/types.js';
 import { MockKycProvider } from './providers/kyc/mock.js';
 import { SumsubKycProvider } from './providers/kyc/sumsub.js';
@@ -72,7 +73,17 @@ export function createContext(cfg: Config, log: Logger, overrides: Partial<Ctx> 
     overrides.payments ??
     (cfg.PAYMENT_PROVIDER === 'stripe'
       ? new StripePaymentProvider(required(cfg.STRIPE_SECRET_KEY, 'STRIPE_SECRET_KEY'), required(cfg.STRIPE_WEBHOOK_SECRET, 'STRIPE_WEBHOOK_SECRET'))
-      : new MockPaymentProvider(cfg.JWT_SECRET, apiBaseUrl));
+      : cfg.PAYMENT_PROVIDER === 'nowpayments'
+        ? new NowPaymentsProvider({
+            apiKey: required(cfg.NOWPAYMENTS_API_KEY, 'NOWPAYMENTS_API_KEY'),
+            ipnSecret: required(cfg.NOWPAYMENTS_IPN_SECRET, 'NOWPAYMENTS_IPN_SECRET'),
+            apiUrl: cfg.NOWPAYMENTS_API_URL,
+            email: cfg.NOWPAYMENTS_EMAIL,
+            password: cfg.NOWPAYMENTS_PASSWORD,
+            twoFactorSecret: cfg.NOWPAYMENTS_2FA_SECRET,
+            outcomeCurrency: cfg.NOWPAYMENTS_OUTCOME_CURRENCY,
+          })
+        : new MockPaymentProvider(cfg.JWT_SECRET, apiBaseUrl));
   const kyc =
     overrides.kyc ??
     (cfg.KYC_PROVIDER === 'sumsub'

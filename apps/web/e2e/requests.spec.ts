@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { expectNoHorizontalScroll, signIn, watchErrors } from './helpers';
+import { expectNoHorizontalScroll, payCrypto, signIn, watchErrors } from './helpers';
 
 test.describe('buyer requests', () => {
   test('the board is public and filters by game', async ({ page }) => {
@@ -33,9 +33,8 @@ test.describe('buyer requests', () => {
     await page.goto(url);
     await page.getByLabel(/I accept the Terms of Service/).check();
     await page.getByRole('button', { name: /Pay .* into escrow/ }).click();
-    await page.waitForURL(/demo-checkout/);
-    await page.getByRole('button', { name: /^Pay / }).click();
-    await page.waitForURL(/\/orders\//);
+    await page.waitForURL(/\/orders\/.*pay=crypto/);
+    await payCrypto(page);
     done();
   });
 

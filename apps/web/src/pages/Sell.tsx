@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, NavLink, useLocation } from 'react-router-dom';
+import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { api, money } from '../api';
 import { FeeLadder } from '../components/FeeLadder';
 import { useSession } from '../session';
@@ -129,6 +129,7 @@ export function Sell() {
   usePageMeta({ title: 'Sell on Bullizard', description: 'Open a shop: fees fall as your sales grow, instant delivery for codes, Chargeback Shield and payouts in USD, EUR or GBP.' });
   const { user, refresh } = useSession();
   const { pathname } = useLocation();
+  const navigate = useNavigate();
   const moneyTab = pathname.startsWith('/sell/money');
   const analyticsTab = pathname.startsWith('/sell/analytics');
   const [dash, setDash] = useState<Dashboard | null>(null);
@@ -187,14 +188,8 @@ export function Sell() {
 
   const progress = dash.next ? dash.monthlySalesCents / dash.next.tier.minMonthlySalesCents : 1;
 
-  const setUpPayouts = async () => {
-    try {
-      const { url } = await api<{ url: string }>('/seller/payout-account', { body: {} });
-      window.location.assign(url);
-    } catch (e: any) {
-      setMsg({ kind: 'alert', text: e.message });
-    }
-  };
+  // Payouts go to a crypto address the seller sets on the Money tab.
+  const setUpPayouts = () => navigate('/sell/money#payout-address');
 
   const withdraw = async () => {
     try {

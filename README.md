@@ -4,7 +4,7 @@ A peer-to-peer marketplace for game accounts, keys, in-game currency, items and 
 
 | Protection | Applies to | Rule |
 |---|---|---|
-| 72-hour inspection window | keys, gift cards, currency, items, boosting | Funds auto-release 72h after delivery unless the buyer disputes |
+| Held until confirmed | currency, items, top-ups, keys, gift cards, boosting | The seller is paid when the buyer confirms. No deadline: if the buyer goes quiet, support releases it, never before 24 hours after delivery |
 | 14-day asset insurance | game accounts | Funds auto-release 14 days after delivery; buyer completes a Security Changeover checklist; listings without Original Owner Proof are flagged *High risk · secondary market* |
 
 ## What's in the repo
@@ -32,7 +32,10 @@ npm run dev:web               # http://localhost:5173
 ```
 
 Demo logins: `buyer@demo.test` (level 1), `seller@demo.test` (level 2 seller), `admin@demo.test` (admin/arbiter; the Operations console needs two-factor login when `STAFF_MFA_REQUIRED=true`, the production default).
-With `PAYMENT_PROVIDER=mock`, checkout opens a mock hosted payment page that posts a signed webhook back, the same flow as Stripe.
+With `PAYMENT_PROVIDER=mock`, checkout opens a mock hosted payment page that posts a signed webhook back. The launch provider is
+`PAYMENT_PROVIDER=nowpayments` (crypto only): the buyer picks a coin on the order page, sends to the address shown, and the IPN funds the
+order; underpayments get a top-up; refunds are sent by hand from the treasury queue; seller withdrawals go to a confirmed crypto address
+after finance approval (6% fee, $1.50 minimum). The demo build simulates all of it.
 
 Full stack in containers: `docker compose up --build` (web on :8080). Add `--profile gnn` for the fraud model service.
 
@@ -92,7 +95,10 @@ Highlights of what the tests prove: exactly one of 25 simultaneous buyers gets a
 
 ## Key API surfaces
 
-- `POST /v1/orders` → hosted checkout URL (card) or EIP-712 escrow terms (`GET /v1/orders/:id/crypto-terms`, USDC/USDT)
+- `POST /v1/orders` → checkout URL; with NOWPayments: `GET /v1/orders/:id/crypto/coins` (coins whose minimum fits what is owed), `POST /v1/orders/:id/crypto/pay` (`coin` → address and exact amount), `GET /v1/orders/:id/crypto/payments`, `POST /v1/orders/:id/crypto/payments/:pid/refresh`; the same under `/v1/checkouts/:id` for carts; `PUT /v1/orders/:id/refund-address` after a refund is decided
+- Release: `POST /v1/orders/:id/confirm` (buyer, instant); staff `GET /v1/admin/orders/unconfirmed`, `POST /v1/admin/orders/:id/release` (24h+ after delivery, `orders.release`); seller `POST /v1/orders/:id/follow-up` opens a support ticket
+- Seller payouts (crypto): `GET|POST|DELETE /v1/seller/payout-address`, `POST /v1/seller/payout-address/confirm` (email link + 2FA), `GET /v1/seller/withdrawals/quote?amountCents=`, `POST /v1/seller/withdrawals` (waits for finance); staff `GET /v1/admin/withdrawals`, `POST /v1/admin/withdrawals/:id/decide`; refunds `GET /v1/admin/crypto/refunds`, `POST /v1/admin/crypto/refunds/:id/sent`
+- On-chain escrow (off unless `ONCHAIN_ESCROW_ENABLED=true`): EIP-712 escrow terms (`GET /v1/orders/:id/crypto-terms`, USDC/USDT)
 - Catalogue: `GET /v1/catalog/games` (game directory with per-category counts), `GET /v1/offers?game=&category=&seller=&sort=&attr.<key>=`, `GET /v1/catalog/attributes` (game-specific fields), `GET /v1/sellers/:id`
 - Watchlist and price alerts: `GET|POST /v1/me/watches`, `PATCH|DELETE /v1/me/watches/:id`
 - Analytics: seller `GET /v1/seller/analytics?days=7|30|90|365`; staff `GET /v1/admin/analytics` (GMV, take rate, dispute and chargeback rates)

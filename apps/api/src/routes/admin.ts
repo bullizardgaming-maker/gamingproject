@@ -6,7 +6,7 @@ import { many, maybeOne, one, withTx } from '../db.js';
 import { receiveChargeback } from '../domain/chargebacks.js';
 import { withScope } from '../domain/events.js';
 import { reviewOwnerProof } from '../domain/offers.js';
-import { resolveDispute } from '../domain/orders.js';
+import { releaseByStaff, resolveDispute, unconfirmedDeliveries } from '../domain/orders.js';
 import { setReviewHidden } from '../domain/reviews.js';
 import { runReconciliation } from '../domain/reconciliation.js';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
@@ -36,6 +36,8 @@ import { fxPosition, recordConversion } from '../domain/sellerfx.js';
 import { getInvoice, invoicePdf, issueMonthlyInvoices } from '../domain/invoices.js';
 import { decideAdjustment, listAdjustments, requestAdjustment, userLedger } from '../domain/adjustments.js';
 import { decideTreasuryWithdrawal, listTreasuryWithdrawals, requestTreasuryWithdrawal, treasuryBalance } from '../domain/treasury.js';
+import { listCryptoRefunds, markRefundSent } from '../domain/cryptoPayments.js';
+import { decideWithdrawal, listPendingWithdrawals } from '../domain/cryptoPayouts.js';
 
 const Id = z.object({ id: z.string().uuid() });
 
@@ -251,6 +253,48 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   // --- Platform earnings (four-eyes) ------------------------------------------------------
+  // --- Unconfirmed deliveries: staff release 24h+ after delivery ------------------------------
+  app.get('/admin/orders/unconfirmed', async (req) => {
+    requirePermission(req, 'orders.release');
+    return unconfirmedDeliveries(ctx.dbRead);
+  });
+  app.post('/admin/orders/:id/release', async (req) => {
+    const staff = requirePermission(req, 'orders.release');
+    const { id } = Id.parse(req.params);
+    const { note } = z.object({ note: z.string().trim().min(3).max(1_000) }).parse(req.body);
+    const o = await releaseByStaff(ctx, id, staff.id, note);
+    await audit(ctx.db, req, 'order.release', { type: 'order', id }, { note });
+    return { id: o.id, status: 'completed' };
+  });
+
+  // --- Seller withdrawals (crypto): CFO approval -------------------------------------------
+  app.get('/admin/withdrawals', async (req) => {
+    requirePermission(req, 'treasury.request');
+    return listPendingWithdrawals(ctx.db);
+  });
+  app.post('/admin/withdrawals/:id/decide', async (req) => {
+    const staff = requirePermission(req, 'treasury.approve');
+    const { id } = Id.parse(req.params);
+    const body = z.object({ approve: z.boolean(), note: z.string().max(500).optional() }).parse(req.body);
+    const w = await decideWithdrawal(ctx, id, staff.id, body.approve, body.note);
+    await audit(ctx.db, req, body.approve ? 'withdrawal.approve' : 'withdrawal.reject', { type: 'withdrawal', id }, body);
+    return w;
+  });
+
+  // --- Crypto refunds: sent by hand from the store wallet -----------------------------------
+  app.get('/admin/crypto/refunds', async (req) => {
+    requirePermission(req, 'treasury.request');
+    const { status } = z.object({ status: z.enum(['awaiting_address', 'pending', 'sent', 'cancelled']).optional() }).parse(req.query);
+    return listCryptoRefunds(ctx.db, status);
+  });
+  app.post('/admin/crypto/refunds/:id/sent', async (req) => {
+    const staff = requirePermission(req, 'treasury.approve');
+    const body = z.object({ txHash: z.string().trim().min(8).max(200), note: z.string().max(500).optional() }).parse(req.body);
+    const r = await markRefundSent(ctx, Id.parse(req.params).id, staff.id, body);
+    await audit(ctx.db, req, 'crypto_refund.sent', { type: 'crypto_refund', id: r.id }, body);
+    return r;
+  });
+
   app.get('/admin/treasury', async (req) => {
     requirePermission(req, 'treasury.request');
     return { balance: await treasuryBalance(ctx), withdrawals: await listTreasuryWithdrawals(ctx) };

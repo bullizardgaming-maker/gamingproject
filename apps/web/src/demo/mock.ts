@@ -12,7 +12,7 @@ import { detectOffPlatform, matchTerms } from '../../../api/src/domain/safety';
 import { parseCsv } from '../../../api/src/domain/csv';
 import { platformForGame } from '../../../api/src/domain/platforms';
 
-const KEY = 'bz.demo.v18';
+const KEY = 'bz.demo.v19';
 const day = 86_400_000;
 const now = () => new Date().toISOString();
 const rid = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2) + Date.now().toString(16));
@@ -217,7 +217,8 @@ function deliverOrder(o: any, payload?: string) {
   else if (offer.delivery_mode === 'auto') o.items = offer.inventory.splice(0, o.quantity);
   else if (payload) o.items = [payload];
   o.delivered_at = now();
-  o.protection_ends_at = new Date(Date.now() + (o.protection === 'insurance_14d' ? 14 * day : 3 * day)).toISOString();
+  // Accounts keep the 14-day window; everything else is held until the buyer confirms (no deadline).
+  o.protection_ends_at = o.protection === 'insurance_14d' ? new Date(Date.now() + 14 * day).toISOString() : null;
   // Handover check: a listing that showed a linked Steam/Riot account gets a step the buyer ticks by signing in.
   const la = offer.linked_account_id ? state.linkedAccounts.find((a) => a.id === offer.linked_account_id && !a.unlinked_at) : null;
   if (o.checklist && la) {
@@ -304,6 +305,7 @@ function orderDetail(o: any, viewer?: DemoUser) {
     review: review ? { rating: review.rating, comment: review.comment, seller_reply: review.seller_reply } : null,
     warranty_claims: state.warrantyClaims.filter((c) => c.order_id === o.id).sort((a, b) => b.created_at.localeCompare(a.created_at)),
     progress: state.progress.filter((p) => p.order_id === o.id),
+    crypto_refund: refundOf(o.id),
     buyer_reputation: sellerView ? buyerRepOf(o.buyer_id) : null,
     buyer_rating: sellerView && rating ? { positive: rating.positive, tags: rating.tags, created_at: rating.created_at } : null,
   };
@@ -329,6 +331,10 @@ function seedOrdersFor(buyer: DemoUser) {
   appendMessage(boost.room_id, null, 'system', 'Progress: 35% · Gold II now, 9 wins from 14 games');
   const acct = make(pick('Lvl 80 Warrior'), day);
   deliverOrder(acct, 'Login: arthas-2009@example.com\nPassword: ••••••••• (change it now)\nOriginal registration email included.');
+  // Delivered two days ago and never confirmed: the seller can ask support to release it.
+  const stale = make(pick('100k Gold'), 3 * day);
+  deliverOrder(stale, 'Traded in Stormwind, screenshot in the chat.');
+  stale.delivered_at = new Date(Date.now() - 2 * day).toISOString();
   // A delivered account that showed a Riot sign-in badge: the handover check is waiting for the buyer.
   const hand = make(pick('Diamond 1 smurf'), 6 * 3_600_000);
   deliverOrder(hand, 'Riot ID: ArcaneSmurf#EUW\nPassword: ••••••••• (change it now)\nEmail is unlinked, add yours first.');
@@ -348,7 +354,8 @@ function createOrderRecord(buyer: DemoUser, offer: any, quantity: number, rail: 
     id, buyer_id: buyer.id, seller_id: offer.seller_id, offer_id: offer.id, offer_title: offer.title, game: offer.game,
     category_kind: offer.category_kind, delivery_mode: offer.delivery_mode, quantity, amount_cents: amount, currency: 'USD',
     commission_bps: bps, seller_net_cents: amount - commission, seller_tier: tierOf(offer.seller_id).tier.name, rail,
-    status: 'awaiting_payment', protection: isAccount ? 'insurance_14d' : 'inspection_72h', protection_ends_at: null, delivered_at: null,
+    status: 'awaiting_payment', protection: isAccount ? 'insurance_14d' : 'until_confirmed', protection_ends_at: null, delivered_at: null,
+    payment_provider: rail === 'fiat' ? 'nowpayments' : 'escrow_contract',
     escrow_frozen: false, seller_protected: !isAccount || offer.owner_proof_status === 'verified', room_id: room.id,
     checklist: isAccount ? { items: CHECKLIST.map(([key, label]) => ({ key, label, done: false })), completed_at: null, handover_platform: null, handover_at: null } : null,
     dispute: null, events: [{ from_status: null, to_status: 'awaiting_payment', reason: 'order_created', created_at: now() }],
@@ -703,8 +710,202 @@ route('POST', '/orders', ({ me, body }) => {
   const code = body.sellerCode ? sellerCodeQuote(offer, u, qty, body.sellerCode) : null;
   const o = createOrderRecord(u, offer, qty, body.rail ?? 'fiat', code?.discount ?? 0);
   if (code) Object.assign(o, { seller_code_id: code.c.id, seller_discount_cents: code.discount });
-  return { order: orderDetail(o), checkoutUrl: o.rail === 'fiat' ? `/demo-checkout/${o.id}` : null };
+  return { order: orderDetail(o), checkoutUrl: o.rail === 'fiat' ? `/orders/${o.id}?pay=crypto` : null };
 });
+// --- Crypto checkout (demo): coins, a fake address, and a payment that confirms itself ------------
+const DEMO_COINS = [
+  ['usdttrc20', 'Tether (TRC-20)', 1], ['usdterc20', 'Tether (ERC-20)', 8], ['btc', 'Bitcoin', 6], ['eth', 'Ethereum', 10], ['ltc', 'Litecoin', 2],
+  ['trx', 'TRON', 1], ['sol', 'Solana', 2], ['doge', 'Dogecoin', 3], ['xmr', 'Monero', 15], ['ton', 'Toncoin', 2],
+] as const;
+const DEMO_RATE: Record<string, number> = { usdttrc20: 1, usdterc20: 1, btc: 97_000, eth: 3_400, ltc: 95, trx: 0.24, sol: 190, doge: 0.33, xmr: 160, ton: 5.4 };
+const coinNameOf = (c: string) => DEMO_COINS.find((x) => x[0] === c)?.[1] ?? c.toUpperCase();
+function payableOf(u: DemoUser, kind: 'orders' | 'checkouts', id: string) {
+  if (kind === 'orders') {
+    const o = orderFor(u, id);
+    return { kind, id, orders: [o], owed: o.amount_cents, status: o.status };
+  }
+  const c = state.checkouts.find((x) => x.id === id && x.buyer_id === u.id) ?? fail(404, 'not_found', 'Checkout not found');
+  const orders = c.order_ids.map((oid: string) => state.orders.find((o) => o.id === oid)!);
+  return { kind, id, orders, owed: orders.reduce((s: number, o: any) => s + o.amount_cents, 0), status: orders.every((o: any) => o.status !== 'awaiting_payment') ? 'paid' : 'awaiting_payment' };
+}
+const paymentsOf = (kind: string, id: string) => state.cryptoPayments.filter((p) => p.ref_kind === kind && p.ref_id === id);
+const paidSoFar = (kind: string, id: string) => paymentsOf(kind, id).reduce((s, p) => s + (['partially_paid', 'finished'].includes(p.status) ? Math.round(Number(p.actually_paid_usd) * 100) : 0), 0);
+const view = (p: any) => ({ ...p, pay_currency_name: coinNameOf(p.pay_currency), ref_kind: undefined, ref_id: undefined, finish_at: undefined });
+for (const kind of ['orders', 'checkouts'] as const) {
+  route('GET', `/${kind}/:id/crypto/coins`, ({ me, params }) => {
+    const p = payableOf(need(me), kind, params[0]!);
+    const owed = p.owed - paidSoFar(kind, p.id);
+    return { owedCents: owed, currency: 'USD', coins: DEMO_COINS.filter(([, , min]) => min * 100 <= owed).map(([coin, name, minUsd]) => ({ coin, name, minUsd })) };
+  });
+  route('GET', `/${kind}/:id/crypto/payments`, ({ me, params }) => paymentsOf(kind, payableOf(need(me), kind, params[0]!).id).map(view));
+  route('POST', `/${kind}/:id/crypto/pay`, ({ me, params, body }) => {
+    const p = payableOf(need(me), kind, params[0]!);
+    if (p.status !== 'awaiting_payment') fail(409, 'invalid_state', 'This order is already paid');
+    if (paymentsOf(kind, p.id).some((x) => x.status === 'waiting')) fail(409, 'payment_open', 'A payment is already waiting for your transfer');
+    const owed = p.owed - paidSoFar(kind, p.id);
+    const coin = String(body.coin);
+    if (!DEMO_COINS.some(([c, , min]) => c === coin && min * 100 <= owed)) fail(400, 'coin_unavailable', `${coinNameOf(coin)} can’t be used for this amount`);
+    const amount = owed / 100 / (DEMO_RATE[coin] ?? 1);
+    const pay = {
+      id: rid(), ref_kind: kind, ref_id: p.id, payment_id: String(5_000_000 + state.cryptoPayments.length), pay_currency: coin, pay_address: `${coin === 'btc' ? 'bc1q' : coin === 'eth' || coin.endsWith('erc20') ? '0x' : 'T'}demo${rid().replace(/-/g, '').slice(0, 28)}`,
+      pay_extra_id: null, pay_amount: amount.toFixed(coin.startsWith('usd') ? 2 : 8), price_usd: (owed / 100).toFixed(2), actually_paid: '0', actually_paid_usd: null as string | null, status: 'waiting',
+      expires_at: new Date(Date.now() + 20 * 60_000).toISOString(), created_at: now(), finish_at: Date.now() + 1_500, // the demo "network" confirms after a moment
+    };
+    state.cryptoPayments.push(pay);
+    save();
+    return view(pay);
+  });
+  route('POST', `/${kind}/:id/crypto/payments/:pid/refresh`, ({ me, params }) => {
+    const p = payableOf(need(me), kind, params[0]!);
+    const pay = paymentsOf(kind, p.id).find((x) => x.payment_id === params[1]) ?? fail(404, 'not_found', 'Payment not found');
+    if (pay.status === 'waiting' && Date.now() >= pay.finish_at) {
+      pay.status = 'finished';
+      pay.actually_paid = pay.pay_amount;
+      pay.actually_paid_usd = pay.price_usd;
+      for (const o of p.orders) payDemoOrder(o.id);
+      save();
+    }
+    return paymentsOf(kind, p.id).map(view);
+  });
+}
+// Refunds on crypto orders are sent by hand: the buyer gives an address, the treasury records the transaction.
+function queueCryptoRefund(o: any, reason: string) {
+  if (o.payment_provider !== 'nowpayments' || state.cryptoRefunds.some((r) => r.order_id === o.id && r.status !== 'cancelled')) return;
+  state.cryptoRefunds.push({ id: rid(), order_id: o.id, amount_cents: o.amount_cents, currency: 'USD', reason, refund_address: null, refund_currency: null, status: 'awaiting_address', tx_hash: null, created_at: now(), updated_at: now() });
+  notify(o.buyer_id, 'orders', 'refund.address', 'Where should we send your refund?', `${o.offer_title}: give us a wallet address on the order page.`, `/orders/${o.id}`);
+}
+const refundOf = (orderId: string) => state.cryptoRefunds.find((r) => r.order_id === orderId && r.status !== 'cancelled') ?? null;
+route('PUT', '/orders/:id/refund-address', ({ me, params, body }) => {
+  const o = orderFor(need(me), params[0]!);
+  const r = refundOf(o.id) ?? fail(404, 'not_found', 'Refund not found');
+  if (r.status === 'sent') fail(409, 'already_sent', 'This refund was already sent');
+  Object.assign(r, { refund_address: String(body.address).trim(), refund_currency: String(body.currency).toLowerCase(), status: 'pending', updated_at: now() });
+  live(appendMessage(o.room_id, null, 'system', `The buyer gave a ${coinNameOf(r.refund_currency)} address for the refund; the treasury sends it within three working days.`));
+  save();
+  return r;
+});
+route('GET', '/admin/crypto/refunds', ({ me, query }) => {
+  needPerm(me, 'treasury.request');
+  const st = query.get('status');
+  return state.cryptoRefunds.filter((r) => !st || r.status === st).map((r) => {
+    const o = state.orders.find((x) => x.id === r.order_id)!;
+    const b = userById(o.buyer_id);
+    return { ...r, buyer_email: b?.email, buyer_name: b?.display_name };
+  });
+});
+route('POST', '/admin/crypto/refunds/:id/sent', ({ me, params, body }) => {
+  needPerm(me, 'treasury.approve');
+  const r = state.cryptoRefunds.find((x) => x.id === params[0]) ?? fail(404, 'not_found', 'Refund not found');
+  if (r.status !== 'pending') fail(409, 'invalid_state', `This refund is ${r.status}`);
+  Object.assign(r, { status: 'sent', tx_hash: String(body.txHash).trim(), updated_at: now() });
+  const o = state.orders.find((x) => x.id === r.order_id)!;
+  notify(o.buyer_id, 'orders', 'refund.sent', 'Refund sent', `$${(r.amount_cents / 100).toFixed(2)} is on its way. Transaction ${r.tx_hash}.`, `/orders/${o.id}`);
+  save();
+  return r;
+});
+
+// --- Crypto payouts (demo): the address confirms at once, withdrawals wait for the CFO -----------
+const PAYOUT_COINS = ['usdttrc20', 'usdterc20', 'usdtbsc', 'usdcerc20', 'usdcbsc', 'usdcsol', 'btc', 'eth', 'ltc', 'trx', 'bnb', 'sol'];
+const payoutAddressView = (u: DemoUser) => ({
+  address: u.payout_address ?? null, currency: u.payout_address_currency ?? null, currencyName: u.payout_address_currency ? coinNameOf(u.payout_address_currency) : null, setAt: u.payout_address_set_at ?? null, pending: null,
+  coins: PAYOUT_COINS.map((coin) => ({ coin, name: coinNameOf(coin) })),
+});
+route('GET', '/seller/payout-address', ({ me }) => payoutAddressView(need(me)));
+route('POST', '/seller/payout-address', ({ me, body }) => {
+  const u = need(me);
+  const currency = String(body.currency).toLowerCase();
+  if (!PAYOUT_COINS.includes(currency)) fail(400, 'unsupported_coin', 'That coin is not supported for payouts');
+  if (!/^[A-Za-z0-9:_-]{10,128}$/.test(String(body.address).trim())) fail(400, 'invalid_address', 'That does not look like a wallet address');
+  // The real site sends an email link (and asks for the 2FA code); the demo confirms at once.
+  Object.assign(u, { payout_address: String(body.address).trim(), payout_address_currency: currency, payout_address_set_at: now(), payouts_enabled: true });
+  save();
+  return payoutAddressView(u);
+});
+route('POST', '/seller/payout-address/confirm', ({ me }) => payoutAddressView(need(me)));
+route('DELETE', '/seller/payout-address', ({ me }) => {
+  const u = need(me);
+  Object.assign(u, { payout_address: null, payout_address_currency: null, payout_address_set_at: null, payouts_enabled: false });
+  save();
+  return payoutAddressView(u);
+});
+const WITHDRAWAL_FEE_BPS = 600;
+const WITHDRAWAL_FEE_MIN = 150;
+const feeFor = (cents: number) => Math.min(cents, Math.max(WITHDRAWAL_FEE_MIN, Math.ceil((cents * WITHDRAWAL_FEE_BPS) / 10_000)));
+route('GET', '/seller/withdrawals/quote', ({ query }) => {
+  const amountCents = Number(query.get('amountCents'));
+  if (!(amountCents > 0)) fail(400, 'validation_error', 'amountCents must be positive');
+  const fee = feeFor(amountCents);
+  return { amountCents, feeCents: fee, netCents: amountCents - fee, feeBps: WITHDRAWAL_FEE_BPS, feeMinCents: WITHDRAWAL_FEE_MIN };
+});
+route('GET', '/seller/withdrawals', ({ me }) => state.withdrawals.filter((w) => w.user_id === need(me).id).sort((a, b) => b.created_at.localeCompare(a.created_at)));
+route('GET', '/admin/withdrawals', ({ me }) => {
+  needPerm(me, 'treasury.request');
+  return state.withdrawals.filter((w) => ['pending_approval', 'processing'].includes(w.status)).map((w) => {
+    const u = userById(w.user_id);
+    return { ...w, email: u?.email, display_name: u?.display_name, kyc_tier: u?.kyc_tier, trust_level: state.trust[w.user_id] ?? 'new' };
+  });
+});
+route('POST', '/admin/withdrawals/:id/decide', ({ me, params, body }) => {
+  const staff = needPerm(me, 'treasury.approve');
+  const w = state.withdrawals.find((x) => x.id === params[0]) ?? fail(404, 'not_found', 'Withdrawal not found');
+  if (w.user_id === staff.id) fail(403, 'own_withdrawal', 'You cannot decide your own withdrawal');
+  if (w.status !== 'pending_approval') fail(409, 'invalid_state', `This withdrawal is ${w.status}`);
+  if (body.approve) {
+    Object.assign(w, { status: 'processing', decided_at: now(), decision_note: body.note ?? null, provider_ref: `batch_${rid().slice(0, 8)}`, payout_id: String(7_000_000 + state.withdrawals.length) });
+    state.platform.treasury += w.fee_cents;
+    setTimeout(() => {
+      Object.assign(w, { status: 'paid', tx_hash: `0x${rid().replace(/-/g, '')}`, updated_at: now() });
+      notify(w.user_id, 'selling', 'payout.paid', 'Payout sent', `$${(w.net_cents / 100).toFixed(2)} in ${coinNameOf(w.destination_currency)} is on its way to your wallet.`, '/sell/money');
+      save();
+    }, 3_000);
+  } else {
+    Object.assign(w, { status: 'rejected', decided_at: now(), decision_note: body.note ?? null });
+    state.balances[w.user_id] = (state.balances[w.user_id] ?? 0) + w.amount_cents;
+    notify(w.user_id, 'selling', 'payout.failed', 'Withdrawal not approved', `$${(w.amount_cents / 100).toFixed(2)} is back in your balance${body.note ? `: ${body.note}` : '.'}`, '/sell/money');
+  }
+  save();
+  return w;
+});
+
+// --- Release rule (demo): staff release 24h+ after delivery; seller follow-up opens a ticket ------
+const RELEASE_AFTER_H = 24;
+route('GET', '/admin/orders/unconfirmed', ({ me }) => {
+  needPerm(me, 'orders.release');
+  return state.orders
+    .filter((o) => o.status === 'delivered' && o.rail === 'fiat' && !o.escrow_frozen && o.delivered_at && Date.now() - new Date(o.delivered_at).getTime() >= RELEASE_AFTER_H * 3_600_000)
+    .map((o) => ({
+      id: o.id, buyer_id: o.buyer_id, seller_id: o.seller_id, amount_cents: o.amount_cents, currency: o.currency, delivered_at: o.delivered_at, protection: o.protection, protection_ends_at: o.protection_ends_at,
+      title: o.offer_title, game: o.game, buyer_name: userById(o.buyer_id)?.display_name, seller_name: userById(o.seller_id)?.display_name,
+      open_tickets: state.tickets.filter((t) => t.order_id === o.id && t.status !== 'resolved').length,
+      buyer_last_message_at: state.messages.filter((m) => m.room_id === o.room_id && m.sender_id === o.buyer_id).map((m) => m.created_at).sort().at(-1) ?? null,
+    }))
+    .sort((a, b) => a.delivered_at.localeCompare(b.delivered_at));
+});
+route('POST', '/admin/orders/:id/release', ({ me, params, body }) => {
+  const staff = needPerm(me, 'orders.release');
+  const o = state.orders.find((x) => x.id === params[0]) ?? fail(404, 'not_found', 'Order not found');
+  if (o.status !== 'delivered') fail(409, 'invalid_state', `Cannot release an order that is ${o.status}`);
+  if (o.escrow_frozen) fail(423, 'under_review', 'Order is under security review');
+  if (Date.now() - new Date(o.delivered_at).getTime() < RELEASE_AFTER_H * 3_600_000) fail(409, 'too_early', `Staff can release this order ${RELEASE_AFTER_H} hours after delivery`);
+  if (o.checklist && !o.checklist.completed_at) fail(409, 'checklist_incomplete', 'The buyer has not finished the Security Changeover checklist');
+  o.released_by = staff.id;
+  o.release_note = String(body.note ?? '');
+  releaseOrder(o, 'staff_released');
+  live(appendMessage(o.room_id, null, 'system', `Support released the payment to the seller after reviewing the delivery: ${o.release_note}`));
+  save();
+  return { id: o.id, status: 'completed' };
+});
+route('POST', '/orders/:id/follow-up', ({ me, params, body }) => {
+  const u = need(me);
+  const o = state.orders.find((x) => x.id === params[0] && x.seller_id === u.id) ?? fail(404, 'not_found', 'Order not found');
+  if (o.status !== 'delivered') fail(409, 'invalid_state', `This order is ${o.status}`);
+  const since = Date.now() - new Date(o.delivered_at).getTime();
+  if (since < RELEASE_AFTER_H * 3_600_000) fail(409, 'too_early', `You can ask for a release ${RELEASE_AFTER_H} hours after delivery`);
+  if (state.tickets.some((t) => t.order_id === o.id && t.user_id === u.id && t.status !== 'resolved')) fail(409, 'already_open', 'You already have an open request on this order');
+  const t = createTicketRecord(u, { category: 'order', subject: `Release request: ${o.offer_title}`, orderId: o.id, body: `Delivered ${Math.floor(since / 3_600_000)} hours ago and the buyer has not confirmed. Please review the delivery proof in the order chat and release the payment.${body?.message ? `\n\n${body.message}` : ''}` });
+  return { ticketId: t.id };
+});
+
 // --- Seller-funded discounts: sales and codes ---------------------------------------------
 function sellerCodeQuote(offer: any, buyer: DemoUser, qty: number, text: string) {
   const c = state.sellerCodes.find((x) => x.seller_id === offer.seller_id && x.code.toLowerCase() === String(text).trim().toLowerCase());
@@ -783,7 +984,7 @@ route('POST', '/orders/cart', ({ me, body }) => {
   const checkout = { id: `cart-${rid().slice(0, 8)}`, buyer_id: u.id, order_ids: lines.map(({ offer, qty }) => createOrderRecord(u, offer, qty, 'fiat').id), created_at: now() };
   for (const id of checkout.order_ids) state.orders.find((o) => o.id === id)!.checkout_id = checkout.id;
   state.checkouts.push(checkout);
-  return { ...checkoutView(checkout), checkoutUrl: `/demo-checkout/${checkout.id}`, replayed: false };
+  return { ...checkoutView(checkout), checkoutUrl: `/checkouts/${checkout.id}/pay`, replayed: false };
 });
 const checkoutView = (c: any) => {
   const orders = c.order_ids.map((id: string) => state.orders.find((o) => o.id === id)!);
@@ -1301,13 +1502,20 @@ route('GET', '/seller/payout-account', ({ me }) => {
 });
 route('POST', '/seller/withdrawals', ({ me, body }) => {
   const u = needSeller(me);
+  if (!u.payout_address) fail(400, 'no_payout_address', 'Add and confirm a payout address first');
   const available = state.balances[u.id] ?? 0;
   const { withdrawableCents } = holdOf(u.id);
   if (!(body.amountCents > 0) || body.amountCents > withdrawableCents) fail(400, 'insufficient_funds', `You can withdraw up to ${withdrawableCents} cents right now`);
+  const fee = feeFor(body.amountCents);
+  if (body.amountCents - fee <= 0) fail(400, 'amount_too_small', 'The fee would take the whole amount');
   state.balances[u.id] = available - body.amountCents;
-  const w = { id: rid(), amount_cents: body.amountCents, currency: 'USD', status: 'paid', created_at: now() };
-  state.withdrawals.push({ ...w, user_id: u.id });
-  notify(u.id, 'selling', 'payout.paid', 'Payout sent', `$${(body.amountCents / 100).toFixed(2)} is on its way to your bank.`, '/sell/money');
+  const w = {
+    id: rid(), user_id: u.id, amount_cents: body.amountCents, fee_cents: fee, net_cents: body.amountCents - fee, currency: 'USD', status: 'pending_approval',
+    destination_address: u.payout_address, destination_currency: u.payout_address_currency, provider_ref: null as string | null, payout_id: null as string | null, tx_hash: null as string | null, created_at: now(), updated_at: now(),
+  };
+  state.withdrawals.push(w);
+  notify(u.id, 'selling', 'payout.requested', 'Withdrawal requested', `$${(body.amountCents / 100).toFixed(2)} requested; $${((body.amountCents - fee) / 100).toFixed(2)} is sent once the treasury approves it.`, '/sell/money');
+  save();
   return w;
 });
 
@@ -1776,6 +1984,7 @@ route('POST', '/admin/disputes/:id/resolve', ({ me, params, body }) => {
   if (body.outcome === 'buyer') {
     transition(o, 'refunded', 'dispute_resolved_buyer');
     state.platform.escrow -= o.amount_cents;
+    queueCryptoRefund(o, 'dispute_resolved_buyer');
     live(appendMessage(o.room_id, null, 'system', `Arbiter decision: refunded to the buyer. “${body.note}”`));
   } else {
     live(appendMessage(o.room_id, null, 'system', `Arbiter decision: released to the seller. “${body.note}”`));
@@ -1973,8 +2182,8 @@ route('GET', '/support/tickets', ({ me }) => {
   const u = need(me);
   return state.tickets.filter((t) => t.user_id === u.id).sort((a, b) => b.updated_at.localeCompare(a.updated_at)).map((t) => ({ ...ticketView(t, false), messages: undefined, last_from_staff: t.messages.filter((m: any) => !m.internal).at(-1)?.staff ?? false }));
 });
-route('POST', '/support/tickets', ({ me, body }) => {
-  const u = need(me);
+route('POST', '/support/tickets', ({ me, body }) => ticketView(createTicketRecord(need(me), body), false));
+function createTicketRecord(u: DemoUser, body: any) {
   if (!TICKET_CATS.includes(body.category)) fail(400, 'validation_error', 'Choose a topic');
   if (String(body.subject ?? '').trim().length < 3 || String(body.body ?? '').trim().length < 2) fail(400, 'validation_error', 'Add a subject and some details');
   if (state.tickets.filter((t) => t.user_id === u.id && t.status !== 'resolved').length >= 5) fail(400, 'too_many_tickets', 'You have 5 open requests. Reply on one of those before opening another.');
@@ -1998,8 +2207,8 @@ route('POST', '/support/tickets', ({ me, body }) => {
     notify(u.id, 'support', 'support_reply', `New reply on request #${t.number}`, 'Bullizard Support replied to your request.', `/support/${t.id}`);
     save();
   }, 6000);
-  return ticketView(t, false);
-});
+  return t;
+}
 route('GET', '/support/tickets/:id', ({ me, params }) => ticketView(myTicket(me, params[0]!), false));
 route('POST', '/support/tickets/:id/messages', ({ me, params, body }) => {
   const t = myTicket(me, params[0]!);
@@ -2234,13 +2443,13 @@ route('GET', '/admin/analytics', ({ me, query }) => {
 // --- Staff permissions, compliance, treasury, tax, staff ------------------------------------
 const ALL_PERMS = [
   'orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'risk.review', 'users.suspend', 'aml.review', 'aml.sar',
-  'chargebacks.manage', 'orders.refund_after_release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view',
+  'chargebacks.manage', 'orders.refund_after_release', 'orders.release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view',
   'ledger.adjust', 'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'keys.manage', 'retention.manage', 'audit.view', 'staff.manage', 'status.manage',
   'analytics.view', 'support.manage', 'moderation.manage',
 ];
 const ROLE_PERMS: Record<string, string[]> = {
-  arbiter: ['orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'orders.refund_after_release', 'moderation.manage'],
-  support: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage', 'support.manage', 'moderation.manage'],
+  arbiter: ['orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'orders.refund_after_release', 'orders.release', 'moderation.manage'],
+  support: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage', 'support.manage', 'moderation.manage', 'orders.release'],
   finance: ['chargebacks.manage', 'orders.refund_after_release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view', 'ledger.adjust', 'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'analytics.view'],
   compliance: ['orders.view_any', 'risk.review', 'users.suspend', 'aml.review', 'aml.sar', 'payout_holds.set', 'ledger.view', 'audit.view', 'retention.manage', 'analytics.view'],
   admin: ALL_PERMS,

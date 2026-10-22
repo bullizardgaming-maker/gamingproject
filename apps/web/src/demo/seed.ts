@@ -27,6 +27,10 @@ export interface DemoUser {
   withdrawals_frozen: boolean;
   totp_enabled: boolean;
   payouts_enabled: boolean;
+  /** Crypto payout address (withdrawals are sent here). */
+  payout_address?: string | null;
+  payout_address_currency?: string | null;
+  payout_address_set_at?: string | null;
   legal_name: string | null;
   created_at: string;
 }
@@ -44,6 +48,9 @@ const u = (id: string, email: string, name: string, role: DemoUser['role'], tier
   withdrawals_frozen: false,
   totp_enabled: false,
   payouts_enabled: tier >= 2,
+  payout_address: tier >= 2 ? `TDemo${id.replace(/-/g, '').slice(0, 28)}` : null,
+  payout_address_currency: tier >= 2 ? 'usdttrc20' : null,
+  payout_address_set_at: tier >= 2 ? ago(60 * day) : null,
   legal_name: tier >= 2 ? name : null,
   created_at: ago(120 * day),
   ...extra,
@@ -339,6 +346,8 @@ export function seed() {
     balances: { [users[1]!.id]: 1_284_50, [users[3]!.id]: 312_00, [users[4]!.id]: 861_40, [users[5]!.id]: 4_210_00, [users[6]!.id]: 9_655_20 } as Record<string, number>,
     monthlySales: { [users[1]!.id]: 6_420_00, [users[3]!.id]: 840_00, [users[4]!.id]: 2_310_00 } as Record<string, number>,
     withdrawals: [] as any[],
+    cryptoPayments: [] as any[],
+    cryptoRefunds: [] as any[],
     apiKeys: [] as any[],
     watches: [] as any[],
     tickets: [] as any[],

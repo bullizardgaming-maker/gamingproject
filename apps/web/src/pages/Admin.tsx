@@ -4,6 +4,7 @@ import { api, apiBlob, money } from '../api';
 import { useSession } from '../session';
 import { AmlPanel, StaffPanel, TaxPanel, TreasuryPanel } from './AdminPanels';
 import { CurrencyPanel, DebtsPanel, FraudModelPanel, IncidentsPanel, PrivacyPanel } from './OpsPanels';
+import { CryptoRefundsPanel, PayoutsPanel, ReleasesPanel } from './CryptoOpsPanels';
 import { usePageMeta } from '@/lib/seo';
 import { currentLocale, t } from '../i18n';
 import { BusinessPanel } from './BusinessPanel';
@@ -15,7 +16,7 @@ import { ModerationPanel } from './ModerationPanel';
 import { WarrantyPanel } from './WarrantyPanel';
 
 type ListTab = 'disputes' | 'risk' | 'proofs' | 'chargebacks' | 'ledger' | 'recon' | 'audit';
-type PanelTab = 'business' | 'retention' | 'support' | 'moderation' | 'warranty' | 'aml' | 'treasury' | 'tax' | 'staff' | 'status' | 'debts' | 'currency' | 'model' | 'privacy';
+type PanelTab = 'business' | 'retention' | 'support' | 'releases' | 'moderation' | 'warranty' | 'aml' | 'treasury' | 'payouts' | 'refunds' | 'tax' | 'staff' | 'status' | 'debts' | 'currency' | 'model' | 'privacy';
 type Tab = ListTab | PanelTab;
 
 /** Each tab is shown to whoever holds its permission (see the API's domain/permissions.ts). */
@@ -23,6 +24,7 @@ const TABS: Array<{ id: Tab; label: string; perm: string }> = [
   { id: 'business', label: 'Business', perm: 'analytics.view' },
   { id: 'retention', label: 'Retention', perm: 'analytics.view' },
   { id: 'support', label: 'Support', perm: 'support.manage' },
+  { id: 'releases', label: 'Releases', perm: 'orders.release' },
   { id: 'moderation', label: 'Moderation', perm: 'moderation.manage' },
   { id: 'disputes', label: 'Disputes', perm: 'disputes.manage' },
   { id: 'warranty', label: 'Warranty claims', perm: 'disputes.manage' },
@@ -32,6 +34,8 @@ const TABS: Array<{ id: Tab; label: string; perm: string }> = [
   { id: 'aml', label: 'Compliance', perm: 'aml.review' },
   { id: 'chargebacks', label: 'Chargebacks', perm: 'chargebacks.manage' },
   { id: 'treasury', label: 'Treasury', perm: 'treasury.request' },
+  { id: 'payouts', label: 'Payouts', perm: 'treasury.request' },
+  { id: 'refunds', label: 'Crypto refunds', perm: 'treasury.request' },
   { id: 'currency', label: 'Currency', perm: 'fx.manage' },
   { id: 'debts', label: 'Seller debts', perm: 'ledger.view' },
   { id: 'tax', label: 'Tax', perm: 'tax.manage' },
@@ -45,6 +49,7 @@ const TABS: Array<{ id: Tab; label: string; perm: string }> = [
 const PANELS: Record<PanelTab, () => React.ReactElement> = {
   business: BusinessPanel, retention: RetentionPanel, support: SupportPanel, moderation: ModerationPanel, warranty: WarrantyPanel, aml: AmlPanel, treasury: TreasuryPanel, tax: TaxPanel, staff: StaffPanel,
   status: IncidentsPanel, debts: DebtsPanel, currency: CurrencyPanel, model: FraudModelPanel, privacy: PrivacyPanel,
+  releases: ReleasesPanel, payouts: PayoutsPanel, refunds: CryptoRefundsPanel,
 };
 const isPanel = (t: Tab): t is PanelTab => t in PANELS;
 

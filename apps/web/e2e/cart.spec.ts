@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { signIn, watchErrors } from './helpers';
+import { payCrypto, signIn, watchErrors } from './helpers';
 
 test.describe('cart', () => {
   test('pays listings from two sellers in one checkout, one escrow order each', async ({ page }) => {
@@ -22,9 +22,9 @@ test.describe('cart', () => {
     await expect(page.getByText('$116.47').first()).toBeVisible();
     await page.getByLabel(/I accept the Terms of Service/).check();
     await page.getByRole('button', { name: 'Pay $116.47 into escrow' }).click();
-    await page.waitForURL(/demo-checkout\/cart-/);
-    await page.getByRole('button', { name: /^Pay / }).click();
-    await page.waitForURL(/\/orders/);
+    await page.waitForURL(/checkouts\/cart-.*\/pay/);
+    await payCrypto(page);
+    await page.waitForURL(/\/orders\?checkout=success/);
     await expect(page.getByText('Elden Ring — Steam key (Global)').first()).toBeVisible();
     await expect(page.getByText('Baldur’s Gate 3 — Steam key (EU)').first()).toBeVisible();
     await expect(page.getByRole('link', { name: 'Cart, 0 items' })).toBeVisible();

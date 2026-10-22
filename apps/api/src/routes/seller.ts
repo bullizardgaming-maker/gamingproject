@@ -16,6 +16,8 @@ import { MIN_BUYER_REPUTATIONS } from '../domain/buyerReputation.js';
 import { ACCENTS, MAX_INTRO, MAX_PINNED, deleteBanner, storefront, updateStorefront, uploadBanner } from '../domain/storefront.js';
 import { requestWithdrawal } from '../domain/users.js';
 import { payoutStatus, startPayoutOnboarding } from '../domain/payouts.js';
+import { confirmPayoutAddress, payoutAddressOf, removePayoutAddress, requestCryptoWithdrawal, requestPayoutAddress, withdrawalFee } from '../domain/cryptoPayouts.js';
+import { NowPaymentsProvider } from '../providers/payments/nowpayments.js';
 import { withdrawable } from '../domain/payoutholds.js';
 import { ExportQuery } from '../api-schemas.js';
 import { EXPORT_KINDS, buildExport, exportRange, toCsv, type ExportKind } from '../domain/exports.js';
@@ -211,8 +213,27 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     const user = me(req);
     const body = z.object({ amountCents: z.number().int().positive(), currency: z.string().length(3).toUpperCase().optional() }).parse(req.body);
     const currency = body.currency ?? (await payoutCurrency(ctx, ctx.db, user.id));
-    return reply.status(201).send(await requestWithdrawal(ctx, user.id, body.amountCents, currency));
+    const crypto = ctx.payments instanceof NowPaymentsProvider;
+    return reply.status(201).send(crypto ? await requestCryptoWithdrawal(ctx, user.id, body.amountCents, currency) : await requestWithdrawal(ctx, user.id, body.amountCents, currency));
   });
+  /** What a withdrawal of this size costs (6%, at least 1.50) and what arrives. */
+  app.get('/seller/withdrawals/quote', async (req) => {
+    const { amountCents } = z.object({ amountCents: z.coerce.number().int().positive() }).parse(req.query);
+    const fee = withdrawalFee(ctx, amountCents);
+    return { amountCents, feeCents: fee, netCents: amountCents - fee, feeBps: ctx.cfg.WITHDRAWAL_FEE_BPS, feeMinCents: ctx.cfg.WITHDRAWAL_FEE_MIN_CENTS };
+  });
+
+  // --- Crypto payout address: confirmed by email link (+ 2FA when on) ------------------------
+  app.get('/seller/payout-address', async (req) => payoutAddressOf(ctx.db, me(req).id));
+  app.post('/seller/payout-address', async (req) => {
+    const body = z.object({ address: z.string().trim().min(10).max(128), currency: z.string().min(2).max(20) }).parse(req.body);
+    return requestPayoutAddress(ctx, me(req), body);
+  });
+  app.post('/seller/payout-address/confirm', async (req) => {
+    const body = z.object({ token: z.string().min(10).max(200), code: z.string().trim().min(6).max(12).optional() }).parse(req.body);
+    return confirmPayoutAddress(ctx, me(req), body);
+  });
+  app.delete('/seller/payout-address', async (req) => removePayoutAddress(ctx, me(req).id));
 
   /** Currency new sales are credited and paid out in (the buyer's conversion is the only one). */
   app.put('/seller/payout-currency', async (req) => {

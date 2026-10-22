@@ -6,6 +6,7 @@ import { withScope } from './events.js';
 import { accountId, post, type Posting } from './ledger.js';
 import { notify } from './notifications.js';
 import { RESERVE_SHARE_BPS, emailData, lockOrder, orderSummary, roomOf, transition } from './orders.js';
+import { queueCryptoRefund } from './cryptoPayments.js';
 import { sellerLeg, toSellerCurrency } from './sellerfx.js';
 import { enqueueWebhook } from './webhooks.js';
 
@@ -64,7 +65,12 @@ export async function refundAfterRelease(
     // Card part back through the PSP (presentment currency, pro rata), keyed per refund.
     let settledBack = card;
     let providerRef: string | null = null;
-    if (card > 0 && order.payment_ref && order.payment_provider !== 'none') {
+    const manual = order.payment_provider === 'nowpayments';
+    if (manual && card > 0) {
+      // Crypto goes back by hand: a liability until the treasury sends it (cryptoPayments.ts).
+      providerRef = `manual:${await queueCryptoRefund(s.tx, order, card, `post_release:${input.reason}`)}`;
+      await s.tx.query('UPDATE post_release_refunds SET provider_ref = $2 WHERE id = $1', [refund.id, providerRef]);
+    } else if (card > 0 && order.payment_ref && order.payment_provider !== 'none') {
       const presentment = share(Number(order.presentment_amount_cents), card, Number(order.charged_cents));
       try {
         const r = await ctx.payments.refund(order.payment_ref, presentment, order.presentment_currency, `post_release_refund_${refund.id}`);
@@ -88,7 +94,7 @@ export async function refundAfterRelease(
       s.tx,
       [
         ...sources,
-        { account: await accountId(s.tx, 'gateway_clearing', cur), amountCents: settledBack },
+        { account: await accountId(s.tx, manual ? 'refunds_payable' : 'gateway_clearing', cur), amountCents: settledBack },
         { account: await accountId(s.tx, 'fx_pnl', cur), amountCents: card - settledBack },
         { account: await accountId(s.tx, 'treasury', cur), amountCents: promo },
         { account: await accountId(s.tx, 'user_credit', cur, order.buyer_id), amountCents: credit },

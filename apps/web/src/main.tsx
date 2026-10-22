@@ -16,7 +16,7 @@ import { SellerPage } from './pages/SellerPage';
 import { Watchlist } from './pages/Watchlist';
 import { HelpArticlePage, HelpCentre, SupportList, SupportNew, SupportTicket } from './pages/Help';
 import { StatusPage } from './pages/StatusPage';
-import { CartPage } from './pages/Cart';
+import { CartPage, CartPayPage } from './pages/Cart';
 import { MyProposals, MyRequests, RequestNew, RequestPage, RequestsBoard } from './pages/Requests';
 import { SiteHeader } from './components/SiteHeader';
 import { SiteFooter } from './components/SiteFooter';
@@ -102,6 +102,7 @@ function App() {
           <Route path="/offers/:id" element={<OfferPage />} />
           <Route path="/orders" element={<Orders />} />
           <Route path="/orders/:id" element={<OrderPage />} />
+          <Route path="/checkouts/:id/pay" element={<CartPayPage />} />
           <Route path="/chat/:id" element={<InquiryChat />} />
           <Route path="/sell" element={<Sell />} />
           <Route path="/sell/money" element={<Sell />} />

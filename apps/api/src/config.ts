@@ -46,9 +46,25 @@ const Env = z.object({
   RIOT_CLIENT_ID: z.string().optional(),
   RIOT_CLIENT_SECRET: z.string().optional(),
   RIOT_ACCOUNT_REGION: z.enum(['americas', 'asia', 'europe']).default('europe'),
-  PAYMENT_PROVIDER: z.enum(['mock', 'stripe']).default('mock'),
+  PAYMENT_PROVIDER: z.enum(['mock', 'stripe', 'nowpayments']).default('mock'),
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  // NOWPayments (crypto in and out). Sandbox: https://api-sandbox.nowpayments.io with a sandbox account's key.
+  NOWPAYMENTS_API_KEY: z.string().optional(),
+  NOWPAYMENTS_IPN_SECRET: z.string().optional(),
+  NOWPAYMENTS_API_URL: z.string().default('https://api.nowpayments.io'),
+  NOWPAYMENTS_EMAIL: z.string().optional(),            // account login, needed for payouts
+  NOWPAYMENTS_PASSWORD: z.string().optional(),
+  NOWPAYMENTS_2FA_SECRET: z.string().optional(),       // base32; payouts are verified automatically with it
+  NOWPAYMENTS_OUTCOME_CURRENCY: z.string().default('usdttrc20'),
+  NOWPAYMENTS_SANDBOX_CASE: z.string().optional(),     // sandbox only: success | partially_paid | failed
+  /** Seller withdrawals: fee in basis points, with a floor in settlement minor units (6%, at least $1.50). */
+  WITHDRAWAL_FEE_BPS: z.coerce.number().int().min(0).max(5000).default(600),
+  WITHDRAWAL_FEE_MIN_CENTS: z.coerce.number().int().min(0).default(150),
+  /** The on-chain MarketEscrow rail (USDC/USDT with the contract). Off at launch; NOWPayments covers crypto. */
+  ONCHAIN_ESCROW_ENABLED: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
+  /** Underpayments within this share of the price are accepted as paid in full (network dust, rounding). */
+  CRYPTO_UNDERPAY_TOLERANCE_BPS: z.coerce.number().int().min(0).max(500).default(50),
   KYC_PROVIDER: z.enum(['mock', 'sumsub']).default('mock'),
   SUMSUB_APP_TOKEN: z.string().optional(),
   SUMSUB_SECRET_KEY: z.string().optional(),

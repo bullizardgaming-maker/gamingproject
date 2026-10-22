@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Download, FileText, Lock, ReceiptText } from 'lucide-react';
 import { api, download, money } from '../api';
 import { useSession } from '../session';
@@ -141,6 +142,7 @@ export function SellerMoney() {
             onWithdraw={(cents) => run(() => api('/seller/withdrawals', { body: { amountCents: cents, currency } }), t('money.onItsWay', { amount: money(cents, currency) }))}
           />
           {!user?.payouts_enabled && <p className="small muted" style={{ margin: 0 }}>{t('money.setUpFirst')}</p>}
+          <RecentWithdrawals refreshKey={msg?.text ?? ''} />
           {dash.withdrawalsFrozen && <p className="small muted" style={{ margin: 0 }}>{t('money.frozen')}</p>}
           {others.map((b: any) => (
             <div key={b.currency} className="notice row spread">
@@ -153,6 +155,9 @@ export function SellerMoney() {
             </div>
           ))}
         </div>
+
+        {/* Payout address */}
+        <PayoutAddressCard onChanged={load} onMessage={setMsg} />
 
         {/* Tax profile */}
         <TaxForm tax={tax} onSaved={(next) => (setTax(next), setMsg({ kind: 'ok', text: t('money.taxSaved') }))} onError={(text) => setMsg({ kind: 'alert', text })} />
@@ -252,8 +257,23 @@ function Stat({ label, value, tone, icon }: { label: string; value: string; tone
 
 function Withdraw({ currency, max, disabled, onWithdraw }: { currency: string; max: number; disabled: boolean; onWithdraw: (cents: number) => void }) {
   const [amount, setAmount] = useState('');
+  const [quote, setQuote] = useState<{ feeCents: number; netCents: number; feeBps: number; feeMinCents: number } | null>(null);
   const cents = amount ? Math.round(Number(amount) * 100) : max;
+  useEffect(() => {
+    if (cents <= 0) return setQuote(null);
+    let live = true;
+    api<any>(`/seller/withdrawals/quote?amountCents=${cents}`).then((q) => live && setQuote(q)).catch(() => live && setQuote(null));
+    return () => {
+      live = false;
+    };
+  }, [cents]);
   return (
+    <div className="stack" style={{ gap: 6 }}>
+    {quote && cents > 0 && (
+      <p className="small muted" style={{ margin: 0 }} data-testid="withdrawal-fee">
+        {t('money.fee', { fee: money(quote.feeCents, currency), pct: (quote.feeBps / 100).toFixed(0), min: money(quote.feeMinCents, currency), net: money(quote.netCents, currency) })}
+      </p>
+    )}
     <div className="row">
       <input
         type="number"
@@ -268,6 +288,105 @@ function Withdraw({ currency, max, disabled, onWithdraw }: { currency: string; m
       <button className="btn" disabled={disabled || cents <= 0 || cents > max} onClick={() => (onWithdraw(cents), setAmount(''))}>
         {t('money.withdrawAmount', { amount: money(cents, currency) })}
       </button>
+    </div>
+    </div>
+  );
+}
+
+const WSTATUS: Record<string, MessageKey> = {
+  pending_approval: 'money.wstatus.pending_approval', processing: 'money.wstatus.processing', paid: 'money.wstatus.paid',
+  failed: 'money.wstatus.failed', rejected: 'money.wstatus.rejected', pending: 'money.wstatus.pending',
+};
+
+function RecentWithdrawals({ refreshKey }: { refreshKey: string }) {
+  const [rows, setRows] = useState<any[]>([]);
+  useEffect(() => {
+    api<any[]>('/seller/withdrawals').then((r) => setRows(r.slice(0, 6))).catch(() => {});
+  }, [refreshKey]);
+  if (!rows.length) return null;
+  return (
+    <div className="small">
+      <div className="eyebrow" style={{ marginBottom: 4 }}>{t('money.recentWithdrawals')}</div>
+      {rows.map((w) => (
+        <div key={w.id} className="row spread" style={{ borderTop: '1px solid var(--rule)', padding: '6px 0' }}>
+          <span className="muted">{fmtDate(w.created_at)}{w.destination_currency ? ` · ${w.destination_currency.toUpperCase()}` : ''}</span>
+          <span className="mono">{money(Number(w.net_cents ?? w.amount_cents), w.currency)}</span>
+          <span className={cn('chip', w.status === 'paid' ? 'released' : ['failed', 'rejected'].includes(w.status) ? 'disputed' : 'held')}>{t(WSTATUS[w.status] ?? 'money.wstatus.pending')}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+interface PayoutAddress { address: string | null; currency: string | null; currencyName: string | null; setAt: string | null; pending: { address: string; currency: string; since: string } | null; coins: Array<{ coin: string; name: string }> }
+
+/** The crypto address withdrawals go to: set with an email link, plus the 2FA code when the account has one. */
+function PayoutAddressCard({ onChanged, onMessage }: { onChanged: () => void; onMessage: (m: { kind: 'ok' | 'alert'; text: string }) => void }) {
+  const [pa, setPa] = useState<PayoutAddress | null>(null);
+  const [coin, setCoin] = useState('usdttrc20');
+  const [address, setAddress] = useState('');
+  const [code, setCode] = useState('');
+  const [params, setParams] = useSearchParams();
+  const token = params.get('confirm-payout-address');
+  const load = useCallback(() => api<PayoutAddress>('/seller/payout-address').then(setPa).catch(() => {}), []);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const request = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      setPa(await api<PayoutAddress>('/seller/payout-address', { body: { address, currency: coin } }));
+      setAddress('');
+      onMessage({ kind: 'ok', text: t('money.payoutAddress.sent') });
+    } catch (err: any) {
+      onMessage({ kind: 'alert', text: err.message });
+    }
+  };
+  const confirm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      setPa(await api<PayoutAddress>('/seller/payout-address/confirm', { body: { token, ...(code ? { code } : {}) } }));
+      setParams({}, { replace: true });
+      onMessage({ kind: 'ok', text: t('money.payoutAddress.confirmed') });
+      onChanged();
+    } catch (err: any) {
+      onMessage({ kind: 'alert', text: err.message });
+    }
+  };
+
+  if (!pa) return null;
+  return (
+    <div className="card stack" id="payout-address">
+      <div className="eyebrow" style={{ marginBottom: 0 }}>{t('money.payoutAddress')}</div>
+      <p className="small muted" style={{ margin: 0 }}>{t('money.payoutAddress.text')}</p>
+      {pa.address ? (
+        <p className="small" style={{ margin: 0 }}><b>{pa.currencyName}</b> · <code className="mono" style={{ wordBreak: 'break-all' }}>{pa.address}</code></p>
+      ) : (
+        <p className="small muted" style={{ margin: 0 }}>{t('money.payoutAddress.none')}</p>
+      )}
+      {token ? (
+        <form className="row" onSubmit={confirm} style={{ alignItems: 'end', flexWrap: 'wrap' }}>
+          <label className="field" style={{ margin: 0 }}>
+            {t('money.payoutAddress.code')}
+            <input value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" maxLength={12} style={{ maxWidth: 140 }} />
+          </label>
+          <button className="btn" type="submit">{t('money.payoutAddress.confirm')}</button>
+        </form>
+      ) : pa.pending ? (
+        <p className="small" role="status" style={{ margin: 0 }}>{t('money.payoutAddress.pending', { address: pa.pending.address })}</p>
+      ) : null}
+      <form className="row" onSubmit={request} style={{ alignItems: 'end', flexWrap: 'wrap' }}>
+        <label className="field" style={{ margin: 0 }}>
+          {t('money.payoutAddress.coin')}
+          <select value={coin} onChange={(e) => setCoin(e.target.value)}>{pa.coins.map((c) => <option key={c.coin} value={c.coin}>{c.name}</option>)}</select>
+        </label>
+        <label className="field" style={{ margin: 0, flex: 1, minWidth: 220 }}>
+          {t('money.payoutAddress.address')}
+          <input value={address} onChange={(e) => setAddress(e.target.value)} required minLength={10} maxLength={128} />
+        </label>
+        <button className="btn ghost" type="submit">{t('money.payoutAddress.save')}</button>
+      </form>
     </div>
   );
 }
