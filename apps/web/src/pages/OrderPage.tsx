@@ -7,7 +7,6 @@ import { BoostProgress, type ProgressUpdate } from '../components/BoostProgress'
 import { BuyerCard, type BuyerRep, type BuyerTag } from '../components/BuyerReputation';
 import { formatRemaining, type TrackVariant } from '../components/EscrowTrack';
 import { CheckoutSteps, CryptoCheckout, REFUND_COINS, RefundAddressForm } from '../components/CryptoCheckout';
-import { GameArt } from '../components/CatalogUi';
 import { DeliveryProof, type ProofAttachment } from '../components/DeliveryProof';
 import { useSession } from '../session';
 import { intlLocale, t } from '../i18n';
@@ -311,7 +310,6 @@ export function OrderPage() {
           <aside className="card pg-summary">
             <p className="pg-label">{t('checkout.yourOrder')}</p>
             <div className="flex items-center gap-3">
-              <GameArt game={order.game} size="sm" className="size-12 shrink-0 rounded-[10px]" />
               <div className="min-w-0">
                 <b className="block">{order.offer_title}{order.quantity > 1 ? ` ×${order.quantity}` : ''}{order.character_name ? <> → <span className="num" data-testid="order-character">{order.character_name}</span></> : null}</b>
                 <span className="small muted">{order.game} · {order.seller_name}</span>

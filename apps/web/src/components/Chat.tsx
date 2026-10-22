@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, ImageIcon, ShieldCheck } from 'lucide-react';
+import { Check, Image as ImageIcon, ShieldCheck } from '@phosphor-icons/react';
 import { api, realtime, type ChatMessage } from '../api';
 import { detectOffPlatform } from '@/lib/safety';
 import { BrandMark } from './Brand';
@@ -24,7 +24,7 @@ function OfficialNote({ m }: { m: ChatMessage }) {
       <div className="chat-official-head">
         <BrandMark style={{ width: 20, height: 18 }} />
         <b>Bullizard</b>
-        <Check className="size-4" strokeWidth={3} aria-label={t('chat.verified')} />
+        <Check className="size-4" weight="bold" aria-label={t('chat.verified')} />
         <span className="chat-official-time">{time(m.created_at)}</span>
       </div>
       <div className="chat-official-body" dir="auto">{m.body}</div>
@@ -175,7 +175,7 @@ function OrderCard({ message }: { message: ChatMessage }) {
       <div className="chat-official-head">
         <BrandMark style={{ width: 20, height: 18 }} />
         <b>Bullizard</b>
-        <Check className="size-4" strokeWidth={3} aria-label={t('chat.official')} />
+        <Check className="size-4" weight="bold" aria-label={t('chat.official')} />
         <span className="chat-official-time">{time(message.created_at)}</span>
       </div>
       <div className="chat-official-body order-card-rows">
@@ -225,7 +225,7 @@ function SafetyPanel() {
   return (
     <div className="chat-safety" data-testid="safety-panel">
       <button type="button" className="chat-safety-toggle" aria-expanded={open} onClick={toggle}>
-        <ShieldCheck className="size-4" strokeWidth={2} /> {t('chat.staySafe')} <span className="meta" aria-hidden>{open ? '▾' : '▸'}</span>
+        <ShieldCheck className="size-4" weight="bold" /> {t('chat.staySafe')} <span className="meta" aria-hidden>{open ? '▾' : '▸'}</span>
       </button>
       {open && (
         <div className="chat-safety-body">

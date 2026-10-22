@@ -5,14 +5,14 @@
  * elsewhere in production: the hosted card checkout, auto-delivery, the seller replying in chat,
  * and identity verification. Nothing here talks to a server.
  */
-import { CATEGORIES, DEMO_CODE, seed, type DemoState, type DemoUser } from './seed';
+import { CATEGORIES, DEMO_CODE, DEMO_FULL, seed, type DemoState, type DemoUser } from './seed';
 import { CATEGORY_DEFAULTS, GAME_SETS, LEAGUES, PERMANENT_LEAGUES, attributesFor, cleanAttributes, handoverFieldFor, handoverKey, setLeagues } from '../../../api/src/domain/attributeSets';
 import { checkTiers, effectivePrice, unitPriceFor } from '../../../api/src/domain/priceTiers';
 import { detectOffPlatform, matchTerms } from '../../../api/src/domain/safety';
 import { parseCsv } from '../../../api/src/domain/csv';
 import { platformForGame } from '../../../api/src/domain/platforms';
 
-const KEY = 'bz.demo.v26';
+const KEY = DEMO_FULL ? 'bz.demo.v26' : 'bz.demo.launch.v1';
 const day = 86_400_000;
 const now = () => new Date().toISOString();
 const rid = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2) + Date.now().toString(16));
@@ -299,7 +299,7 @@ export function payDemoOrder(orderId: string) {
 
 function orderSummary(o: any, as: 'buyer' | 'seller') {
   return {
-    id: o.id, ref: o.ref, offer_title: o.offer_title, game: o.game, amount_cents: o.amount_cents, seller_net_cents: o.seller_net_cents, currency: o.currency, status: o.status, created_at: o.created_at,
+    id: o.id, ref: o.ref, offer_id: o.offer_id, offer_title: o.offer_title, game: o.game, amount_cents: o.amount_cents, seller_net_cents: o.seller_net_cents, currency: o.currency, status: o.status, created_at: o.created_at,
     counterparty: userById(as === 'buyer' ? o.seller_id : o.buyer_id)?.display_name,
   };
 }
@@ -356,6 +356,19 @@ function seedOrdersFor(buyer: DemoUser) {
     payDemoOrder(o.id);
     return o;
   };
+  if (!DEMO_FULL) {
+    // Launch view: a short history in the launch games.
+    const first = make(pick('10M silver — Europe'), 9 * day);
+    first.character_name = 'Kaelthar';
+    releaseOrder(first, 'buyer_confirmed');
+    state.reviews.push({ id: rid(), order_id: first.id, seller_id: first.seller_id, rating: 5, comment: 'Fast trade at the Martlock bank.', seller_reply: null, created_at: now() });
+    make(pick('200 Divine Orbs'), 4 * 3_600_000).character_name = 'Pat_Ranger';
+    const kinah = make(pick('100M kinah — Siel'), 2 * day);
+    kinah.character_name = 'Kaisinel_Pat';
+    deliverOrder(kinah, 'Mailed in-game to Kaisinel_Pat, screenshot in the chat.');
+    save();
+    return;
+  }
   const done = make(pick('Elden Ring'), 9 * day);
   releaseOrder(done, 'buyer_confirmed');
   state.reviews.push({ id: rid(), order_id: done.id, seller_id: done.seller_id, rating: 5, comment: 'Instant and worked first try.', seller_reply: null, created_at: now() });

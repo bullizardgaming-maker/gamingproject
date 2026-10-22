@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { BookmarkPlus, Check } from 'lucide-react';
+import { BookmarkSimple as BookmarkPlus, Check } from '@phosphor-icons/react';
 import { api } from '../api';
 import { useSession } from '../session';
 import { t } from '../i18n';

@@ -1,7 +1,7 @@
 import { t } from '../i18n';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, Bell, CheckCheck } from 'lucide-react';
+import { ArrowRight, Bell, Checks as CheckCheck } from '@phosphor-icons/react';
 import { AnimatePresence, motion } from 'motion/react';
 import { api, realtime } from '../api';
 import { cn } from '@/lib/utils';
@@ -120,7 +120,7 @@ export function NotificationBell() {
         onClick={() => setOpen((o) => !o)}
         className="relative grid size-10 cursor-pointer place-items-center rounded-lg border border-border bg-transparent text-foreground transition-colors hover:border-foreground"
       >
-        <Bell className="size-[18px]" strokeWidth={1.8} />
+        <Bell className="size-[18px]" />
         <AnimatePresence>
           {unread > 0 && (
             <motion.span
@@ -147,7 +147,7 @@ export function NotificationBell() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -6, scale: 0.98 }}
             transition={{ duration: 0.16, ease: 'easeOut' }}
-            className="absolute end-0 top-12 z-50 w-[min(380px,calc(100vw-32px))] origin-top-right overflow-hidden rounded-xl border border-border bg-card shadow-[0_18px_50px_-12px_rgba(22,32,46,0.28)]"
+            className="absolute end-0 top-12 z-50 w-[min(380px,calc(100vw-32px))] origin-top-right overflow-hidden rounded-xl border border-border bg-card shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
           >
             <div className="flex items-center justify-between px-4 pt-3 pb-2">
               <span className="font-semibold">{t('notif.title')}</span>
@@ -173,7 +173,7 @@ export function NotificationBell() {
                 <p className="m-0 px-4 py-6 text-sm text-muted-foreground">{t('common.loading')}</p>
               ) : shown.length === 0 ? (
                 <p className="notif-empty">
-                  <Bell className="size-5" strokeWidth={1.6} aria-hidden />
+                  <Bell className="size-5" aria-hidden />
                   {t(TABS.find((x) => x.key === current)!.empty)}
                 </p>
               ) : (

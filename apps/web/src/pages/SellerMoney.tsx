@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Download, FileText, Lock, ReceiptText } from 'lucide-react';
+import { DownloadSimple as Download, FileText, Lock, Receipt as ReceiptText } from '@phosphor-icons/react';
 import { api, download, money } from '../api';
 import { useSession } from '../session';
 import { cn } from '@/lib/utils';
@@ -191,7 +191,7 @@ export function SellerMoney() {
       {/* Invoices & credit notes */}
       <div className="card stack">
         <div className="row spread">
-          <h3 style={{ margin: 0 }} className="inline-flex items-center gap-2"><ReceiptText className="size-5" strokeWidth={1.8} /> {t('money.invoices')}</h3>
+          <h3 style={{ margin: 0 }} className="inline-flex items-center gap-2"><ReceiptText className="size-5" /> {t('money.invoices')}</h3>
           <span className="small muted">{t('money.invoices.when')}</span>
         </div>
         {invoices.length === 0 ? (
@@ -502,7 +502,7 @@ function Exports() {
   return (
     <div className="card stack">
       <div className="row spread">
-        <h3 style={{ margin: 0 }} className="inline-flex items-center gap-2"><Download className="size-5" strokeWidth={1.8} /> {t('money.exports')}</h3>
+        <h3 style={{ margin: 0 }} className="inline-flex items-center gap-2"><Download className="size-5" /> {t('money.exports')}</h3>
         <div className="row small">
           <label className="row" style={{ gap: 6 }}>{t('money.from')} <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} style={{ width: 150 }} /></label>
           <label className="row" style={{ gap: 6 }}>{t('money.to')} <input type="date" value={to} onChange={(e) => setTo(e.target.value)} style={{ width: 150 }} /></label>

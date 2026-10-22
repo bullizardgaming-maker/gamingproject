@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BellPlus, BellRing } from 'lucide-react';
+import { BellSimpleRinging as BellPlus, BellRinging as BellRing } from '@phosphor-icons/react';
 import { money } from '../api';
 import { useSession } from '../session';
 import { addWatch, findWatch, removeWatch, setTarget, useWatches } from '@/lib/watches';
@@ -86,7 +86,7 @@ export function WatchButton({ target, label = t('watch.alert'), className }: { t
       {open && (
         <form
           onSubmit={save}
-          className="absolute end-0 top-[calc(100%+6px)] z-40 grid w-[min(300px,calc(100vw-32px))] gap-2.5 rounded-xl border border-border bg-card p-3.5 text-start shadow-[0_18px_50px_-12px_rgba(22,32,46,0.28)]"
+          className="absolute end-0 top-[calc(100%+6px)] z-40 grid w-[min(300px,calc(100vw-32px))] gap-2.5 rounded-xl border border-border bg-card p-3.5 text-start shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
         >
           <b className="text-sm">{watch ? t('watch.edit') : isOffer ? t('watch.thisListing') : t('watch.thisMarket')}</b>
           <label className="grid gap-1 text-xs text-muted-foreground">

@@ -1,8 +1,8 @@
 import { useId } from 'react';
 import { Link } from 'react-router-dom';
 import { money } from '../api';
-import { Award, BadgeCheck, Coins, Gamepad2, Gift, KeyRound, Rocket, ShieldCheck, Smartphone, Star, Swords, UserRound, Video, Zap } from 'lucide-react';
-import { categoryLabel, deliveryLabel, hueOf, initials, slugify } from '@/lib/catalog';
+import { Medal as Award, SealCheck as BadgeCheck, Coins, GameController as Gamepad2, Gift, Key as KeyRound, RocketLaunch as Rocket, ShieldCheck, DeviceMobile as Smartphone, Star, Sword as Swords, UserCircle as UserRound, VideoCamera as Video, Lightning as Zap } from '@phosphor-icons/react';
+import { categoryLabel, deliveryLabel, initials } from '@/lib/catalog';
 import { cn } from '@/lib/utils';
 import { attributePairs } from '@/lib/attributes';
 import { usePrice } from '@/lib/prefs';
@@ -22,49 +22,9 @@ export const CATEGORY_ICON: Record<string, typeof Coins> = {
   'video-games': Gamepad2,
 };
 
-/**
- * Generated cover art for a game: a two-tone field in the game's own hue under Bullizard's
- * scale pattern, with the game's initials. No publisher artwork is used anywhere.
- */
-export function GameArt({ game, className, size = 'md' }: { game: string; className?: string; size?: 'sm' | 'md' | 'lg' }) {
-  const h = hueOf(game);
-  const id = `sc-${slugify(game)}-${size}`;
-  return (
-    <div className={cn('relative overflow-hidden', className)} aria-hidden>
-      <svg className="absolute inset-0 size-full" preserveAspectRatio="xMidYMid slice" viewBox="0 0 160 100">
-        <defs>
-          <linearGradient id={`${id}-g`} x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0" stopColor={`hsl(${h} 42% 20%)`} />
-            <stop offset="1" stopColor={`hsl(${(h + 38) % 360} 55% 36%)`} />
-          </linearGradient>
-          <pattern id={id} width="16" height="12" patternUnits="userSpaceOnUse">
-            <path d="M0 12a8 8 0 0 1 16 0M-8 6a8 8 0 0 1 16 0M8 6a8 8 0 0 1 16 0" fill="none" stroke="#fff" strokeOpacity=".09" strokeWidth="1.2" />
-          </pattern>
-        </defs>
-        <rect width="160" height="100" fill={`url(#${id}-g)`} />
-        <rect width="160" height="100" fill={`url(#${id})`} />
-        <circle cx="132" cy="18" r="34" fill={`hsl(${(h + 70) % 360} 70% 60%)`} opacity=".16" />
-      </svg>
-      <span
-        className={cn(
-          'absolute bottom-[8%] left-[7%] font-display font-bold leading-none tracking-tight text-white/90',
-          size === 'sm' ? 'text-base' : size === 'lg' ? 'text-6xl' : 'text-3xl',
-        )}
-      >
-        {initials(game)}
-      </span>
-    </div>
-  );
-}
-
 export function Avatar({ name, className }: { name: string; className?: string }) {
-  const h = hueOf(name);
   return (
-    <span
-      aria-hidden
-      className={cn('grid size-9 shrink-0 place-items-center rounded-full font-display text-sm font-bold text-white', className)}
-      style={{ background: `linear-gradient(135deg, hsl(${h} 45% 32%), hsl(${(h + 40) % 360} 55% 44%))` }}
-    >
+    <span aria-hidden className={cn('avatar-ini grid size-9 shrink-0 place-items-center rounded-full text-sm font-bold', className)}>
       {initials(name)}
     </span>
   );
@@ -74,7 +34,7 @@ export function Rating({ value, count, className }: { value: number | string | n
   if (!count || value == null) return <span className={cn('text-xs text-muted-foreground', className)}>{t('rating.new')}</span>;
   return (
     <span className={cn('inline-flex items-center gap-1 text-xs text-muted-foreground', className)}>
-      <Star className="size-3.5 fill-held text-held" />
+      <Star className="size-3.5 text-held" weight="fill" />
       <b className="font-mono text-foreground">{Number(value).toFixed(2)}</b>
       <span>({count.toLocaleString()})</span>
     </span>
@@ -85,7 +45,7 @@ export function DeliveryTag({ offer }: { offer: Pick<Offer, 'delivery_mode'> & {
   const instant = offer.delivery_mode === 'auto';
   return (
     <span className={cn('inline-flex items-center gap-1 whitespace-nowrap font-mono text-xs', instant ? 'text-released' : 'text-muted-foreground')}>
-      {instant && <Zap className="size-3.5 fill-released" />}
+      {instant && <Zap className="size-3.5" weight="fill" />}
       {deliveryLabel(offer.delivery_mode, offer.delivery_hours)}
     </span>
   );
@@ -140,7 +100,7 @@ export function OfferTable({ offers, showGame = false, showSeller = true, empty,
             <li key={o.id} className="lt-row group">
               <div className="lt-offer">
                 {showGame && <div className="lt-game">{o.game} · {categoryLabel(o.category_slug)}</div>}
-                <Link id={`${uid}-${o.id}`} to={`/offers/${o.id}`} className="lt-title after:absolute after:inset-0">{o.title}</Link>
+                <Link id={`${uid}-${o.id}`} to={`/offers/${o.id}`} className="lt-title after:absolute after:inset-0" dir="auto">{o.title}</Link>
                 <AttributeLine offer={o} />
                 {showSeller && (
                   <div className="lt-seller">
@@ -192,27 +152,6 @@ export function RankPill({ name, className }: { name: string; className?: string
   return <span className={cn('rank', /dragon/i.test(name) && 'top', className)}>{name}</span>;
 }
 
-export function GameCard({ game, offers, min, categories }: { game: string; offers: number; min: number; categories: Array<{ slug: string; count: number }> }) {
-  const price = usePrice();
-  return (
-    <Link to={`/games/${slugify(game)}`} className="group block overflow-hidden rounded-xl border border-border bg-card no-underline transition-colors hover:border-muted-foreground">
-      <GameArt game={game} className="aspect-[16/9]" />
-      <div className="p-3">
-        <div className="truncate font-display text-[15px] font-semibold tracking-tight">{game}</div>
-        <div className="mt-0.5 flex items-center justify-between text-xs text-muted-foreground">
-          <span>{t('offers.count', { count: offers })}</span>
-          <span className="font-mono">{t('offers.from', { price: price(min) })}</span>
-        </div>
-        <div className="mt-2 flex flex-wrap gap-1">
-          {categories.slice(0, 3).map((c) => (
-            <span key={c.slug} className="rounded-md bg-secondary px-1.5 py-0.5 text-[11px] text-muted-foreground">{categoryLabel(c.slug)}</span>
-          ))}
-        </div>
-      </div>
-    </Link>
-  );
-}
-
 export function TrustStrip({ className }: { className?: string }) {
   const items = [
     [ShieldCheck, t('trust.escrow'), t('trust.escrow.text')],
@@ -224,7 +163,7 @@ export function TrustStrip({ className }: { className?: string }) {
     <div className={cn('trust-strip', className)}>
       {items.map(([Icon, title, text]) => (
         <div key={title} className="trust-item">
-          <span className="trust-icon"><Icon className="size-[18px]" strokeWidth={1.8} /></span>
+          <Icon className="trust-icon size-5" aria-hidden />
           <div className="min-w-0">
             <div className="text-sm font-semibold">{title}</div>
             <div className="text-[13px] leading-snug text-muted-foreground">{text}</div>

@@ -9,10 +9,13 @@ import { SellerAnalytics } from './SellerAnalytics';
 import { usePageMeta } from '@/lib/seo';
 import { intlLocale, t, type MessageKey } from '../i18n';
 import { attrLabel, attributesFor, useLeagues } from '@/lib/attributes';
-import { categoryLabel, isCategoryOpen, useCategoryOrder, useGames } from '@/lib/catalog';
+import { categoryLabel, isCategoryOpen, useCategoryOrder } from '@/lib/catalog';
 import { replyLabel } from '@/lib/presence';
 import { TrustBadge } from '../components/CatalogUi';
 import { StorefrontEditor } from '../components/StorefrontEditor';
+import { GamePicker } from '../components/GamePicker';
+import { sellableGames } from '@/lib/launch';
+import { KNOWN_GAMES } from '@/lib/gameList';
 import { BulkListings } from '../components/BulkListings';
 import { LinkedAccounts, platformName, type LinkedAccount } from '../components/LinkedAccounts';
 import { platformForGame } from '../../../api/src/domain/platforms';
@@ -550,7 +553,6 @@ function NewOffer({ onCreated, offers, linked }: { onCreated: () => void; offers
   const [price, setPrice] = useState('');
   useLeagues(game); // league options refresh from the table once it loads
   const fields = attributesFor(game, category);
-  const { games } = useGames();
   // Account listings can show a linked account from the game's own platform, if it isn't on another listing.
   const platform = category === 'accounts' ? platformForGame(game) : null;
   const inUse = new Set(offers.filter((o) => ['active', 'paused', 'review'].includes(o.status)).map((o) => o.linked_account_id));
@@ -593,16 +595,6 @@ function NewOffer({ onCreated, offers, linked }: { onCreated: () => void; offers
       <h2 id="create-offer-title" className="pg-h1">{t('sell.new')}</h2>
       <div className="pg-split">
       <div className="pg-sell-main">
-      <div className="card pg-sell-games">
-        <p className="pg-label">{t('sell.f.game')}</p>
-        <div className="pg-gpick" role="group" aria-label={t('sell.f.launchGames')}>
-          {LAUNCH_GAMES.map((g) => (
-            <button key={g} type="button" aria-pressed={game.trim().toLowerCase() === g.toLowerCase()} onClick={() => setGame(g)}>
-              <i aria-hidden>{LAUNCH_INI[g]}</i>{g}
-            </button>
-          ))}
-        </div>
-      </div>
       <div className="card stack">
       <div className="grid two">
         <label className="field">
@@ -613,8 +605,7 @@ function NewOffer({ onCreated, offers, linked }: { onCreated: () => void; offers
             ))}
           </select>
         </label>
-        <label className="field">{t('sell.f.game')}<input name="game" required maxLength={80} value={game} onChange={(e) => setGame(e.target.value)} list="sell-games" /></label>
-        <datalist id="sell-games">{games?.map((g) => <option key={g.game} value={g.game} />)}</datalist>
+        <GamePicker label={t('sell.f.game')} name="game" required options={sellableGames(KNOWN_GAMES)} value={game} onChange={setGame} />
         <label className="field">{t('sell.f.title')}<input name="title" required minLength={3} maxLength={140} /></label>
         <label className="field">
           {t('sell.f.price')}
@@ -741,8 +732,6 @@ function NewOffer({ onCreated, offers, linked }: { onCreated: () => void; offers
 }
 
 
-const LAUNCH_GAMES = ['Albion Online', 'Aion', 'Aion 2', 'Path of Exile', 'Path of Exile 2'];
-const LAUNCH_INI: Record<string, string> = { 'Albion Online': 'AO', Aion: 'AI', 'Aion 2': 'A2', 'Path of Exile': 'P1', 'Path of Exile 2': 'P2' };
 const PREVIEW_CURRENCIES = ['USD', 'EUR', 'EGP'] as const;
 
 /**

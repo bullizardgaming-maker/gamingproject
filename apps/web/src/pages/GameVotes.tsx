@@ -1,11 +1,17 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ThumbsUp } from 'lucide-react';
+import { ThumbsUp } from '@phosphor-icons/react';
 import { api } from '../api';
 import { useSession } from '../session';
 import { usePageMeta } from '@/lib/seo';
 import { t, type MessageKey } from '../i18n';
 import { cn } from '@/lib/utils';
+import { GamePicker } from '../components/GamePicker';
+import { KNOWN_GAMES } from '@/lib/gameList';
+import { isLaunchGame } from '@/lib/launch';
+
+/** Games open for votes: every known game except the ones already at launch. */
+const VOTABLE = KNOWN_GAMES.filter((g) => !isLaunchGame(g));
 
 interface Suggestion {
   id: string;
@@ -63,11 +69,8 @@ export function GameVotes() {
       </div>
       {user ? (
         <form className="card row" style={{ gap: 10, alignItems: 'end', flexWrap: 'wrap' }} onSubmit={suggest}>
-          <label className="field" style={{ flex: '1 1 280px', margin: 0 }}>
-            {t('votes.suggest')}
-            <input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} placeholder={t('votes.placeholder')} required minLength={2} />
-          </label>
-          <button className="btn" disabled={busy || name.trim().length < 2}>{t('votes.add')}</button>
+          <GamePicker className="m-0 flex-[1_1_280px]" label={t('votes.suggest')} options={VOTABLE} value={name} onChange={setName} placeholder={t('votes.placeholder')} required />
+          <button className="btn" disabled={busy || !VOTABLE.some((g) => g.toLowerCase() === name.trim().toLowerCase())}>{t('votes.add')}</button>
         </form>
       ) : (
         <p className="muted"><Link to="/login?next=/games/vote">{t('votes.signIn')}</Link></p>

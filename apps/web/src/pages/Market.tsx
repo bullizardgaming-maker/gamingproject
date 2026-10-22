@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { SlidersHorizontal } from 'lucide-react';
+import { SlidersHorizontal } from '@phosphor-icons/react';
 import { api } from '../api';
 import { CATEGORY_ICON, OfferTable } from '../components/CatalogUi';
 import { CATEGORY_ORDER, categoryLabel, popular, slugify, useGames } from '@/lib/catalog';

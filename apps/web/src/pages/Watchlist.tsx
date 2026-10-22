@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BellRing, Search, Trash2 } from 'lucide-react';
+import { BellRinging as BellRing, MagnifyingGlass as Search, Trash as Trash2 } from '@phosphor-icons/react';
 import { api, money } from '../api';
 import { useSession } from '../session';
-import { GameArt } from '../components/CatalogUi';
 import { WatchButton } from '../components/WatchButton';
 import { reloadWatches, removeWatch, useWatches, type Watch } from '@/lib/watches';
 import { attributePairs } from '@/lib/attributes';
@@ -55,7 +54,6 @@ export function Watchlist() {
             const game = w.kind === 'offer' ? w.offer?.game : w.game;
             return (
               <li key={w.id} className="grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-3 border-b border-border px-4 py-3.5 last:border-b-0 sm:grid-cols-[auto_1fr_auto_auto]">
-                {game ? <GameArt game={game} size="sm" className="h-10 w-14 rounded-lg" /> : <span className="h-10 w-14" />}
                 <div className="min-w-0">
                   {w.kind === 'offer' ? (
                     w.offer ? (

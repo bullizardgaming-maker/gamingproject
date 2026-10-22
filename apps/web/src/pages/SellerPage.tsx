@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { BadgeCheck, CalendarDays, MessageCircle, PackageCheck, Star, Timer } from 'lucide-react';
+import { SealCheck as BadgeCheck, CalendarBlank as CalendarDays, ChatCircle as MessageCircle, Package as PackageCheck, Star, Timer } from '@phosphor-icons/react';
 import { api, assetUrl } from '../api';
 import { Avatar, FoundingBadge, OfferTable, TrustBadge } from '../components/CatalogUi';
 import { cn } from '@/lib/utils';

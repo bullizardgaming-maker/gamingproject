@@ -75,13 +75,6 @@ export const slugify = (game: string) =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
 
-/** A stable hue per name, so each game and seller keeps its colour everywhere. */
-export function hueOf(name: string) {
-  let h = 2166136261;
-  for (const c of name) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
-  return (h >>> 0) % 360;
-}
-
 export const initials = (name: string) =>
   name
     .replace(/[^A-Za-z0-9 ]/g, ' ')

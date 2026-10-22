@@ -4,6 +4,21 @@
  * states so escrow, chat, disputes and the operations console all have something to show.
  */
 import { DEFAULT_TERMS } from '../../../api/src/domain/safety';
+import { LAUNCH_GAMES } from '../lib/launch';
+
+/**
+ * The demo shows the launch: only the launch games and phase-1 categories. The full sample
+ * catalogue (every game and category, used by the browser tests) is switched on with
+ * localStorage 'bz-demo-full' = '1'.
+ */
+export const DEMO_FULL = (() => {
+  try {
+    return localStorage.getItem('bz-demo-full') === '1';
+  } catch {
+    return false;
+  }
+})();
+const isLaunch = (game: string) => (LAUNCH_GAMES as readonly string[]).includes(game);
 
 export const DEMO_PASSWORD = 'demo-password-123';
 export const DEMO_CODE = '123456';
@@ -83,6 +98,18 @@ export const CATEGORIES = [
 ];
 
 type Seed = [cat: string, game: string, title: string, price: number, mode: 'auto' | 'manual', stock: number, seller: string, proof?: string, description?: string, hours?: number];
+
+// Extra launch-game listings so the launch demo has something to compare (not in the full test catalogue).
+const LAUNCH_EXTRAS: Seed[] = [
+  ['currency', 'Albion Online', '30M silver — Europe', 33_50, 'manual', 40, 'seller2', 'none', 'Face-to-face trade at the Caerleon market. Send a trade request when you are online.', 0.5],
+  ['currency', 'Albion Online', '10M silver — Asia', 12_20, 'manual', 30, 'seller4', 'none', '', 1],
+  ['items', 'Albion Online', 'T8.3 Avalonian mount — Americas', 58_00, 'manual', 2, 'seller5', 'none', '', 3],
+  ['currency', 'Aion', '500M kinah — Siel (NA)', 46_00, 'manual', 12, 'seller5', 'none', '', 1],
+  ['currency', 'Aion 2', '100M kinah — Nezakan (NA)', 26_00, 'manual', 20, 'seller5', 'none', '', 1],
+  ['items', 'Aion 2', 'Legendary weapon set — Israphel (EU)', 64_00, 'manual', 3, 'seller2', 'none', '', 6],
+  ['currency', 'Path of Exile 2', '50 Exalted Orbs — Dawn of the Hunt', 9_00, 'manual', 60, 'seller2', 'none', '', 0.5],
+  ['items', 'Path of Exile', 'Mageblood — Mercenaries', 320_00, 'manual', 1, 'seller5', 'none', '', 4],
+];
 
 const LISTINGS: Seed[] = [
   ['keys', 'Elden Ring', 'Elden Ring — Steam key (Global)', 32_49, 'auto', 40, 'seller', 'none', 'Global Steam key, activates instantly. Delivered to your order page the second payment clears.'],
@@ -177,6 +204,14 @@ const TIERS: Record<string, Array<{ minQty: number; priceCents: number }>> = {
 };
 
 const ATTRS: Record<string, Record<string, string>> = {
+  '30M silver — Europe': { server: 'Europe' },
+  '10M silver — Asia': { server: 'Asia' },
+  'T8.3 Avalonian mount — Americas': { server: 'Americas' },
+  '500M kinah — Siel (NA)': { server: 'Siel', region: 'North America' },
+  '100M kinah — Nezakan (NA)': { server: 'Nezakan', region: 'North America' },
+  'Legendary weapon set — Israphel (EU)': { server: 'Israphel', region: 'Europe' },
+  '50 Exalted Orbs — Dawn of the Hunt': { league: 'Dawn of the Hunt', mode: 'Softcore' },
+  'Mageblood — Mercenaries': { league: 'Mercenaries', mode: 'Softcore' },
   'Elden Ring — Steam key (Global)': { platform: 'Steam', region: 'Global' },
   'Baldur’s Gate 3 — Steam key (EU)': { platform: 'Steam', region: 'Europe' },
   'Cyberpunk 2077 + Phantom Liberty — GOG key': { platform: 'GOG', region: 'Global' },
@@ -268,7 +303,8 @@ export function seed() {
   const net = (seller: string, cents: number) => Math.round((cents * (10_000 - sellerRate[seller]!)) / 10_000);
 
   const WARRANTY: Record<string, number> = { 'Lvl 80 Warrior, full mythic gear, 2009 account': 30, 'OG account, Renegade Raider + 210 skins': 14 };
-  const offers = LISTINGS.map(([cat, game, title, price, mode, stock, seller, proof, description, hours], i) => {
+  const list = DEMO_FULL ? LISTINGS : [...LISTINGS, ...LAUNCH_EXTRAS];
+  const offers = list.map(([cat, game, title, price, mode, stock, seller, proof, description, hours], i) => {
     const kind = CATEGORIES.find((c) => c.slug === cat)!.kind;
     return {
       id: `offer-${i + 1}`,
@@ -305,7 +341,7 @@ export function seed() {
       reserved_for: null as string | null,
       request_id: null as string | null,
       version: 1,
-      created_at: ago((LISTINGS.length - i) * 3_600_000 * 7),
+      created_at: ago((list.length - i) * 3_600_000 * 7),
     };
   });
   // A bundle: two of NorthWind's instant listings at one price, delivered from their stock.
@@ -336,7 +372,7 @@ export function seed() {
     { id: 'la-2', user_id: users[1]!.id, provider: 'steam', display_name: 'keystone_shop', profile_url: 'https://steamcommunity.com/profiles/76561198000000001', account_created_at: '2014-06-01T00:00:00Z', linked_at: ago(10 * day), unlinked_at: null },
   ];
 
-  return {
+  const st = {
     users,
     offers,
     linkedAccounts: linkedAccounts as any[],
@@ -573,6 +609,25 @@ export function seed() {
     ] as any[],
     platform: { escrow: 0, treasury: 18_432_10, reserve: 2_048_00, tax_payable: 3_118_40, withdrawn: 5_000_00, gateway_clearing: -24_960_00 },
     seq: 1,
+  };
+  return DEMO_FULL ? st : launchOnly(st);
+}
+
+/** Launch view: only launch-game listings, requests and history; phase 1 categories. */
+function launchOnly<T extends { offers: any[]; requests: any[]; proposals?: any[]; rooms: any[]; ownerProofs: any[]; storefronts: Record<string, { pinned: string[] }>; launchPhase: number }>(st: T): T {
+  const offers = st.offers.filter((o) => isLaunch(o.game));
+  const ids = new Set(offers.map((o) => o.id));
+  const requests = st.requests.filter((r) => isLaunch(r.game));
+  const reqIds = new Set(requests.map((r) => r.id));
+  return {
+    ...st,
+    offers,
+    launchPhase: 1,
+    requests,
+    ...(st.proposals ? { proposals: st.proposals.filter((p) => reqIds.has(p.request_id)) } : {}),
+    rooms: st.rooms.map((r) => (r.offer_id && !ids.has(r.offer_id) ? { ...r, offer_id: offers.find((o) => o.seller_id === r.seller_id)?.id ?? offers[0]?.id } : r)),
+    ownerProofs: st.ownerProofs.filter((p) => ids.has(p.offer_id)),
+    storefronts: Object.fromEntries(Object.entries(st.storefronts).map(([k, v]) => [k, { ...v, pinned: v.pinned.filter((id) => ids.has(id)) }])),
   };
 }
 

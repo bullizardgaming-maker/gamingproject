@@ -1,12 +1,12 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { MessageSquare, Search } from 'lucide-react';
+import { ChatCentered as MessageSquare, ClockCounterClockwise, Eye, MagnifyingGlass as Search, TrendUp, X } from '@phosphor-icons/react';
 import { BrandLockup } from './Brand';
 import { useSession } from '../session';
 import { NotificationBell } from './NotificationBell';
-import { GameArt } from './CatalogUi';
 import { AccountMenu, PrefsMenu } from './HeaderMenus';
-import { loadGames, popular, slugify, type GameEntry } from '@/lib/catalog';
+import { categoryLabel, loadGames, popular, slugify, type GameEntry } from '@/lib/catalog';
+import { clearSearches, recordSearch, removeSearch, useRecent } from '@/lib/recent';
 import { cn } from '@/lib/utils';
 import { t } from '../i18n';
 
@@ -29,13 +29,17 @@ export function GameSearch({ big = false, autoFocus = false }: { big?: boolean; 
     return () => document.removeEventListener('mousedown', close);
   }, []);
 
+  const recent = useRecent();
+  const typed = q.trim();
   const matches = useMemo(() => {
-    const t = q.trim().toLowerCase();
-    if (!t) return popular(games, 6);
+    const t = typed.toLowerCase();
+    if (!t) return [];
     return games.filter((g) => g.game.toLowerCase().includes(t) || g.game.toLowerCase().split(/\W+/).some((w) => w.startsWith(t))).slice(0, 6);
-  }, [q, games]);
+  }, [typed, games]);
+  const trending = popular(games, 5);
 
-  const go = (path: string) => {
+  const go = (path: string, search?: string) => {
+    if (search) recordSearch(search);
     setOpen(false);
     setQ('');
     nav(path);
@@ -48,11 +52,11 @@ export function GameSearch({ big = false, autoFocus = false }: { big?: boolean; 
       className="relative w-full"
       onSubmit={(e) => {
         e.preventDefault();
-        if (active >= 0 && matches[active]) go(`/games/${slugify(matches[active]!.game)}`);
-        else if (q.trim()) go(`/market?q=${encodeURIComponent(q.trim())}`);
+        if (active >= 0 && matches[active]) go(`/games/${slugify(matches[active]!.game)}`, matches[active]!.game);
+        else if (typed) go(`/market?q=${encodeURIComponent(typed)}`, typed);
       }}
     >
-      <Search className={cn('pointer-events-none absolute top-1/2 -translate-y-1/2 text-muted-foreground', big ? 'start-4 size-5' : 'start-3 size-4')} />
+      <Search className={cn('pointer-events-none absolute top-1/2 -translate-y-1/2 text-muted-foreground', big ? 'start-4 size-5' : 'start-3 size-4')} aria-hidden />
       <input
         name="search"
         type="search"
@@ -73,12 +77,10 @@ export function GameSearch({ big = false, autoFocus = false }: { big?: boolean; 
           if (e.key === 'ArrowUp') (e.preventDefault(), setActive((a) => Math.max(a - 1, -1)));
           if (e.key === 'Escape') (setOpen(false), setActive(-1));
         }}
-        style={{ paddingInlineStart: big ? 46 : 36, height: big ? 56 : 40, borderRadius: big ? 14 : 10, fontSize: big ? 17 : 15 }}
-        className="shadow-[0_1px_0_rgba(22,32,46,.04)]"
+        style={{ paddingInlineStart: big ? 46 : 36, height: big ? 52 : 40, fontSize: big ? 16 : 15 }}
       />
-      {open && matches.length > 0 && (
-        <div id={listId} role="listbox" aria-label={q.trim() ? t('search.games') : t('search.popular')} className="absolute inset-x-0 top-[calc(100%+6px)] z-50 overflow-hidden rounded-xl border border-border bg-card shadow-[0_18px_50px_-12px_rgba(22,32,46,0.28)]">
-          <div aria-hidden="true" className="px-3 pb-1 pt-2.5 font-mono text-[11px] uppercase tracking-[0.1em] text-muted-foreground">{q.trim() ? t('search.games') : t('search.popular')}</div>
+      {open && typed && matches.length > 0 && (
+        <div id={listId} role="listbox" aria-label={t('search.games')} className="sx-panel">
           {matches.map((g, i) => (
             <button
               key={g.game}
@@ -88,18 +90,57 @@ export function GameSearch({ big = false, autoFocus = false }: { big?: boolean; 
               tabIndex={-1}
               type="button"
               onMouseEnter={() => setActive(i)}
-              onClick={() => go(`/games/${slugify(g.game)}`)}
-              className={cn('flex w-full cursor-pointer items-center gap-3 border-0 bg-transparent px-3 py-2 text-start', active === i && 'bg-secondary')}
+              onClick={() => go(`/games/${slugify(g.game)}`, g.game)}
+              className={cn('sx-option', active === i && 'on')}
             >
-              <GameArt game={g.game} size="sm" className="h-8 w-12 shrink-0 rounded-md" />
-              <span className="flex-1 text-sm font-medium">{g.game}</span>
-              <span className="font-mono text-xs text-muted-foreground">{t('offers.count', { count: g.offers })}</span>
+              <span className="flex-1">{g.game}</span>
+              <span className="small muted">{t('offers.count', { count: g.offers })}</span>
             </button>
           ))}
-          {q.trim() && (
-            <button type="submit" className="flex w-full cursor-pointer items-center gap-2 border-0 border-t border-border bg-transparent px-3 py-2.5 text-start text-sm hover:bg-secondary">
-              <Search className="size-4 text-muted-foreground" /> {t('search.all', { q: q.trim() })}
-            </button>
+          <button type="submit" className="sx-option sx-all">
+            <Search className="size-4 text-muted-foreground" aria-hidden /> {t('search.all', { q: typed })}
+          </button>
+        </div>
+      )}
+      {open && !typed && (trending.length > 0 || recent.searches.length > 0 || recent.browsed.length > 0) && (
+        <div className="sx-panel sx-idle" aria-label={t('search.suggestions')} role="region">
+          {trending.length > 0 && (
+            <section>
+              <h3 className="sx-h"><TrendUp className="size-4" aria-hidden /> {t('search.trending')}</h3>
+              <div className="sx-chips">
+                {trending.map((g) => <Link key={g.game} to={`/games/${slugify(g.game)}`} className="sx-chip" onClick={() => setOpen(false)}>{g.game}</Link>)}
+              </div>
+            </section>
+          )}
+          {recent.searches.length > 0 && (
+            <section>
+              <div className="flex items-center justify-between">
+                <h3 className="sx-h"><ClockCounterClockwise className="size-4" aria-hidden /> {t('search.recent')}</h3>
+                <button type="button" className="sx-clear" onClick={clearSearches}>{t('search.clearAll')}</button>
+              </div>
+              <div className="sx-chips">
+                {recent.searches.map((r) => (
+                  <span key={r} className="sx-chip sx-chip-x">
+                    <Link to={`/market?q=${encodeURIComponent(r)}`} onClick={() => setOpen(false)}>{r}</Link>
+                    <button type="button" aria-label={t('search.remove', { q: r })} onClick={() => removeSearch(r)}><X className="size-3" aria-hidden /></button>
+                  </span>
+                ))}
+              </div>
+            </section>
+          )}
+          {recent.browsed.length > 0 && (
+            <section>
+              <h3 className="sx-h"><Eye className="size-4" aria-hidden /> {t('search.browsed')}</h3>
+              <ul className="sx-browsed">
+                {recent.browsed.slice(0, 3).map((b) => (
+                  <li key={b.game}>
+                    <Link to={`/games/${slugify(b.game)}`} className="sx-game" onClick={() => setOpen(false)}>{b.game}</Link>
+                    {b.categories.length > 0 && <span className="small muted">{t('search.in')}</span>}
+                    {b.categories.map((c) => <Link key={c} to={`/games/${slugify(b.game)}/${c}`} className="sx-chip" onClick={() => setOpen(false)}>{categoryLabel(c)}</Link>)}
+                  </li>
+                ))}
+              </ul>
+            </section>
           )}
         </div>
       )}
@@ -119,7 +160,7 @@ export function SiteHeader() {
           {user ? (
             <>
               <Link to="/messages" aria-label={t('nav.messages')} title={t('nav.messages')} className="icon-link">
-                <MessageSquare className="size-[18px]" strokeWidth={1.8} />
+                <MessageSquare className="size-[18px]" />
               </Link>
               <NotificationBell />
               <AccountMenu />

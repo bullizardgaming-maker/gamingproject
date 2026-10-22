@@ -27,6 +27,13 @@ Last updated: 2026-10-22 (pages round)
 - Sell: launch-game picker, form, sticky preview (USD/EUR/EGP, You earn = price, Buyer pays), "Publish offer".
 - Wallet (/sell/money): Available / In escrow / Withdrawn, history table, withdraw box with fee, You receive, address check.
 
+- Launch only: the demo shows the 5 launch games and phase-1 categories (tests use the full catalogue via localStorage `bz-demo-full`). Sell form and game vote: type a name, pick from the list.
+- Game page: categories first (no listings until you pick one); server is a dropdown filter.
+- Home: new headline, Recently bought, Continue browsing, Our top games (name + categories, no game artwork). Search shows trending games, recent searches and recently browsed.
+- Footer: one small bar (about, language, currency, night mode, key links), always at the bottom.
+- Arabic: Arabic lockup (mark + بوليزارد), wider headings, hero photo mirrored. Icons: Phosphor, one weight, no boxes.
+- Light mode: page bands follow the theme; quieter popover shadows; avatars neutral.
+
 ## Next
 - Help center, logo motion sting.
 
@@ -34,6 +41,7 @@ Last updated: 2026-10-22 (pages round)
 - Offers don't send the seller's rank name yet (`seller_rank`); the table shows it once they do.
 - Coins too big for an order are left out by the API, so they can't be shown greyed with a reason.
 - No "From your balance" amount on checkout yet (no buyer-credit data on the order).
+- The API should also refuse listings for games outside the launch list (the app already limits the sell form).
 
 ## Open questions
 - Mobile app dark or light (chat boards are dark).

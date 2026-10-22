@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Flag, Search } from 'lucide-react';
+import { ArrowLeft, Flag, MagnifyingGlass as Search } from '@phosphor-icons/react';
 import { api } from '../api';
 import { Chat } from '../components/Chat';
 import { useSession } from '../session';

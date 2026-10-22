@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link, NavLink, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Clock, Inbox, MessageSquarePlus, ShieldCheck, Star } from 'lucide-react';
+import { Clock, Tray as Inbox, ChatCenteredDots as MessageSquarePlus, ShieldCheck, Star } from '@phosphor-icons/react';
 import { api, money } from '../api';
 import { useSession } from '../session';
-import { GameArt } from '../components/CatalogUi';
 import { attrLabel, attributePairs, attributesFor } from '@/lib/attributes';
 import { categoryLabel, useCategoryOrder, useGames } from '@/lib/catalog';
 import { usePageMeta } from '@/lib/seo';
@@ -87,7 +86,6 @@ function RequestRow({ r }: { r: BuyerRequest }) {
   const pairs = attributePairs(r.game, r.category_slug, r.attributes).map(([, v]) => v);
   return (
     <li className="grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-2 border-b border-border px-4 py-3.5 last:border-b-0 sm:grid-cols-[auto_1fr_auto]">
-      <GameArt game={r.game} size="sm" className="h-10 w-14 rounded-lg" />
       <div className="min-w-0">
         <Link to={`/requests/${r.id}`} className="block truncate font-medium no-underline hover:underline">{r.title}</Link>
         <div className="truncate text-xs text-muted-foreground">
@@ -410,7 +408,6 @@ export function RequestPage() {
       <Link to="/requests" className="small">← {t('req.back')}</Link>
       <div className="card stack">
         <div className="row" style={{ gap: 14, alignItems: 'start' }}>
-          <GameArt game={r.game} size="sm" className="h-14 w-20 shrink-0 rounded-lg" />
           <div style={{ flex: '1 1 280px', minWidth: 0 }}>
             <div className="small muted">{r.game} · {categoryLabel(r.category_slug)} · {t('req.by', { name: r.buyer_name })}</div>
             <h1 style={{ fontSize: 30, margin: '2px 0 0' }}>{r.title}</h1>

@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, money } from '../api';
 import { useSession } from '../session';
 import { OfferBadges, type Offer } from './Market';
-import { Avatar, DeliveryTag, FoundingBadge, GameArt, OfferTable, RankPill, Rating, TrustBadge } from '../components/CatalogUi';
+import { Avatar, DeliveryTag, FoundingBadge, OfferTable, RankPill, Rating, TrustBadge } from '../components/CatalogUi';
 import { categoryLabel, slugify } from '@/lib/catalog';
 import { usePrice } from '@/lib/prefs';
 import { usePageMeta } from '@/lib/seo';
@@ -12,7 +12,7 @@ import { WatchButton } from '../components/WatchButton';
 import { unitPriceFor } from '@/lib/tiers';
 import { OnlineDot, replyLabel } from '@/lib/presence';
 import { addToCart } from '@/lib/cart';
-import { MessageCircle, ShieldCheck, ShoppingCart } from 'lucide-react';
+import { ChatCircle as MessageCircle, ShieldCheck, ShoppingCart } from '@phosphor-icons/react';
 import { OfferPriceHistory } from '../components/PriceHistory';
 import { AlsoBought } from '../components/AlsoBought';
 import { CharacterField, handoverFieldFor } from '../components/CharacterField';
@@ -98,10 +98,9 @@ export function OfferPage() {
           <Link to={`/games/${gameSlug}/${offer.category_slug}`}>{categoryLabel(offer.category_slug)}</Link>
         </nav>
         <div className="flex items-start gap-4">
-          <GameArt game={offer.game} size="sm" className="pg-tile hidden sm:block" />
           <div className="min-w-0 flex-1">
             <div className="pg-label">{offer.game} · {categoryLabel(offer.category_slug)}</div>
-            <h1 className="pg-h1" style={{ marginTop: 6 }}>{offer.title}</h1>
+            <h1 className="pg-h1" style={{ marginTop: 6 }} dir="auto">{offer.title}</h1>
           </div>
           {user?.id !== offer.seller_id && <WatchButton target={{ offerId: offer.id }} />}
         </div>

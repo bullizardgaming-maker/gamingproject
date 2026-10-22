@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, Globe, Heart, LayoutGrid, LogOut, Moon, Package, Settings, ShoppingCart, Store, Sun, Wrench } from 'lucide-react';
+import { Check, Globe, Heart, SquaresFour as LayoutGrid, SignOut as LogOut, Moon, Package, GearSix as Settings, ShoppingCart, Storefront as Store, Sun, Wrench } from '@phosphor-icons/react';
 import { AnimatePresence, motion } from 'motion/react';
 import { cartCount, useCart } from '@/lib/cart';
 import { useSession } from '../session';
@@ -48,12 +48,12 @@ export function PrefsMenu() {
   return (
     <div className="relative" ref={p.ref}>
       <button ref={p.button} type="button" className="prefs-pill" aria-haspopup="dialog" aria-expanded={p.open} aria-label={t('prefs.title')} title={t('prefs.title')} onClick={() => p.setOpen((o) => !o)}>
-        <Globe className="size-4" strokeWidth={1.8} aria-hidden />
+        <Globe className="size-4" aria-hidden />
         <span>{LOCALES[lang].short}</span>
         <span className="prefs-sep" aria-hidden />
         <span>{cur}</span>
         <span className="prefs-sep" aria-hidden />
-        {dark ? <Moon className="size-4" strokeWidth={1.8} aria-hidden /> : <Sun className="size-4" strokeWidth={1.8} aria-hidden />}
+        {dark ? <Moon className="size-4" aria-hidden /> : <Sun className="size-4" aria-hidden />}
       </button>
       <AnimatePresence>
         {p.open && (

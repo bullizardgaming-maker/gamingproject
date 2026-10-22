@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { AlertTriangle, CheckCircle2, Wrench, XCircle } from 'lucide-react';
+import { Warning as AlertTriangle, CheckCircle as CheckCircle2, Wrench, XCircle } from '@phosphor-icons/react';
 import { api } from '../api';
 import { usePageMeta } from '@/lib/seo';
 import { cn } from '@/lib/utils';
@@ -56,7 +56,7 @@ const when = (iso: string) => new Date(iso).toLocaleString([], { month: 'short',
 
 function StatusIcon({ status, className }: { status: ComponentStatus; className?: string }) {
   const Icon = status === 'operational' ? CheckCircle2 : status === 'maintenance' ? Wrench : status === 'major_outage' ? XCircle : AlertTriangle;
-  return <Icon className={cn('size-5 shrink-0', TONE[status], className)} strokeWidth={1.9} />;
+  return <Icon className={cn('size-5 shrink-0', TONE[status], className)} />;
 }
 
 export function IncidentCard({ i }: { i: Incident }) {

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Activity, Coins, Eraser, Gauge, Megaphone, RefreshCw } from 'lucide-react';
+import { Pulse as Activity, Coins, Eraser, Gauge, Megaphone, ArrowsClockwise as RefreshCw } from '@phosphor-icons/react';
 import { api, money } from '../api';
 import { useSession } from '../session';
 import { useLoad } from './AdminPanels';

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, ArrowDownToLine, Check, Download, ShieldAlert, UserCog } from 'lucide-react';
+import { Warning as AlertTriangle, DownloadSimple as ArrowDownToLine, Check, DownloadSimple as Download, ShieldWarning as ShieldAlert, UserGear as UserCog } from '@phosphor-icons/react';
 import { api, download, money } from '../api';
 import { useSession } from '../session';
 import { cn } from '@/lib/utils';

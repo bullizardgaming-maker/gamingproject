@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BellRing, Smartphone, Trash2 } from 'lucide-react';
+import { BellRinging as BellRing, DeviceMobile as Smartphone, Trash as Trash2 } from '@phosphor-icons/react';
 import { DEMO, api } from '../api';
 
 interface Pref {
@@ -67,7 +67,7 @@ export function PushSettings() {
   return (
     <div className="card stack">
       <div className="row spread">
-        <h3 style={{ margin: 0 }} className="inline-flex items-center gap-2"><BellRing className="size-5" strokeWidth={1.8} /> Push notifications</h3>
+        <h3 style={{ margin: 0 }} className="inline-flex items-center gap-2"><BellRing className="size-5" /> Push notifications</h3>
       </div>
       {config === null ? (
         <p className="muted small">Loading…</p>

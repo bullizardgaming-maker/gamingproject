@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ChevronRight, LifeBuoy, Search } from 'lucide-react';
+import { CaretRight as ChevronRight, Lifebuoy as LifeBuoy, MagnifyingGlass as Search } from '@phosphor-icons/react';
 import { api, money } from '../api';
 import { useSession } from '../session';
 import { HELP_ARTICLES, HELP_TOPICS, TICKET_CATEGORY_LABEL, articleBySlug, searchHelp, type HelpArticle, type HelpTopic } from '@/lib/help';

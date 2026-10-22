@@ -1,4 +1,5 @@
 import type React from 'react';
+import { useLocale } from '../i18n';
 /**
  * Bullizard brand marks, drawn in currentColor so they follow the theme.
  * Mark (coin-eye) is the main logo and app icon; the wordmark is outlined Alexandria 800 with the
@@ -26,10 +27,16 @@ export function BrandWordmark({ className, title, style }: P) {
 
 /** Mark + name lockup: mark 1.25x the wordmark height, 0.4em gap. `size` is the wordmark height in px. */
 export function BrandLockup({ className, size = 20 }: { className?: string; size?: number }) {
+  // Arabic uses the Arabic lockup from the brand canvas: the mark with بوليزارد in Alexandria 800.
+  const ar = useLocale() === 'ar';
   return (
     <span className={className} style={{ display: 'inline-flex', alignItems: 'center', gap: Math.round(size * 0.4), lineHeight: 1 }}>
       <BrandMark style={{ height: size * 1.25, width: 'auto', flex: 'none' }} />
-      <BrandWordmark style={{ height: size, width: 'auto', flex: 'none' }} />
+      {ar ? (
+        <span lang="ar" aria-hidden className="wordmark-ar" style={{ fontSize: Math.round(size * 1.3) }}>بوليزارد</span>
+      ) : (
+        <BrandWordmark style={{ height: size, width: 'auto', flex: 'none' }} />
+      )}
     </span>
   );
 }

@@ -2,10 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { CryptoCheckout } from '../components/CryptoCheckout';
 import { CharacterField, handoverFieldFor } from '../components/CharacterField';
-import { ShieldCheck, ShoppingCart, Trash2 } from 'lucide-react';
+import { ShieldCheck, ShoppingCart, Trash as Trash2 } from '@phosphor-icons/react';
 import { api, money } from '../api';
 import { useSession } from '../session';
-import { GameArt } from '../components/CatalogUi';
 import { clearCart, removeFromCart, setQuantity, useCart } from '@/lib/cart';
 import { unitPriceFor } from '@/lib/tiers';
 import { usePageMeta } from '@/lib/seo';
@@ -100,7 +99,6 @@ export function CartPage() {
             <ul className="m-0 list-none p-0">
               {g.map((l) => (
                 <li key={l.offerId} className="grid grid-cols-[auto_1fr_auto] items-center gap-x-4 gap-y-2 border-b border-border px-4 py-3 last:border-b-0">
-                  {l.offer ? <GameArt game={l.offer.game} size="sm" className="h-10 w-14 rounded-lg" /> : <span className="h-10 w-14" />}
                   <div className="min-w-0">
                     {l.offer ? <Link to={`/offers/${l.offerId}`} className="block truncate font-medium no-underline hover:underline">{l.offer.title}</Link> : <span className="muted">{offers[l.offerId] === null ? t('cart.gone') : t('common.loading')}</span>}
                     {l.offer && (

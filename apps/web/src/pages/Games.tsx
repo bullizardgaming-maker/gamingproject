@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, NavLink, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { BadgeCheck, Search, ShieldCheck, Zap } from 'lucide-react';
+import { SealCheck as BadgeCheck, MagnifyingGlass as Search, ShieldCheck, Lightning as Zap } from '@phosphor-icons/react';
 import { api } from '../api';
-import { CATEGORY_ICON, GameArt, OfferTable } from '../components/CatalogUi';
+import { CATEGORY_ICON, OfferTable } from '../components/CatalogUi';
 import { CATEGORY_META, categoryLabel, slugify, useCategoryOrder, useGames, type GameEntry } from '@/lib/catalog';
 import { cn } from '@/lib/utils';
 import { usePrice } from '@/lib/prefs';
@@ -13,6 +13,7 @@ import { t, type MessageKey } from '../i18n';
 import { WatchButton } from '../components/WatchButton';
 import { SaveSearchButton, paramsFromUrl } from '../components/SaveSearchButton';
 import { MarketPriceHistory } from '../components/PriceHistory';
+import { recordBrowse } from '@/lib/recent';
 
 type AttrFacet = { key: string; value: string; count: number };
 
@@ -78,9 +79,6 @@ export function Games() {
               <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
                 {list.map((g) => (
                   <div key={g.game} className="flex gap-3">
-                    <Link to={`/games/${slugify(g.game)}`} className="shrink-0" tabIndex={-1} aria-hidden="true">
-                      <GameArt game={g.game} size="sm" className="h-11 w-16 rounded-lg" />
-                    </Link>
                     <div className="min-w-0">
                       <Link to={`/games/${slugify(g.game)}`} className="block truncate font-semibold no-underline hover:underline">{g.game}</Link>
                       <div className="flex flex-wrap gap-x-2.5 text-[13px] text-muted-foreground">
@@ -120,6 +118,9 @@ export function GamePage() {
   const [facets, setFacets] = useState<AttrFacet[]>([]);
   const [amount, setAmount] = useState('1');
   const entry = games?.find((g) => slugify(g.game) === slug);
+  useEffect(() => {
+    if (entry) recordBrowse(entry.game, category || undefined);
+  }, [entry?.game, category]);
   usePageMeta({
     title: entry ? `${entry.game} · ${category ? categoryLabel(category) : t('game.marketplace')}` : undefined,
     description: entry
@@ -130,7 +131,7 @@ export function GamePage() {
   const sort = get('sort') || 'price_asc';
 
   const query = useMemo(() => {
-    if (!entry) return null;
+    if (!entry || !category) return null;
     const q = new URLSearchParams({ game: entry.game, sort, pageSize: '20' });
     if (category) q.set('category', category);
     for (const k of ['delivery', 'ownerVerified', 'minRating', 'q']) if (params.get(k)) q.set(k, params.get(k)!);
@@ -179,9 +180,6 @@ export function GamePage() {
 
   const unitWord = category === 'currency' || category === 'items' || category === 'top-ups';
   const amountNum = Math.max(1, Math.floor(Number(amount) || 1));
-  // The game's server/region switch sits in the band (G2G style) when it is a short fixed list.
-  const serverDef = category ? attributesFor(entry.game, category).find((d) => ['server', 'region'].includes(d.key) && d.type === 'select' && (d.options?.length ?? 0) <= 5) : undefined;
-  const serverKey = serverDef ? `attr.${serverDef.key}` : '';
 
   return (
     <div className="stack pg-game">
@@ -191,38 +189,46 @@ export function GamePage() {
           {category ? <><Link to={`/games/${slug}`}>{entry.game}</Link><span>/</span><span>{categoryLabel(category)}</span></> : <span>{entry.game}</span>}
         </nav>
         <div className="pg-band-head">
-          <div className="pg-band-title">
-            <GameArt game={entry.game} size="sm" className="pg-tile" />
-            <div className="min-w-0">
-              <h1>{entry.game}{category ? ` · ${categoryLabel(category)}` : ''}</h1>
-              <span className="muted">
-                {t('offers.count', { count: entry.offers })} · {t('game.sellers', { count: entry.sellers })} · {t('offers.from', { price: price(entry.min_price_cents) })}
-                {entry.instant > 0 && <> · <Zap className="inline size-3.5" aria-hidden /> {t('game.instant', { n: entry.instant })}</>}
-              </span>
-            </div>
+          <div className="min-w-0">
+            <h1>{entry.game}{category ? ` · ${categoryLabel(category)}` : ''}</h1>
+            <span className="muted">
+              {t('offers.count', { count: entry.offers })} · {t('game.sellers', { count: entry.sellers })} · {t('offers.from', { price: price(entry.min_price_cents) })}
+            </span>
           </div>
-          {serverDef && (
-            <div className="pg-seg" role="group" aria-label={attrLabel(serverDef.label)}>
-              <button type="button" aria-pressed={!get(serverKey)} onClick={() => set(serverKey, '')}>{t('game.allServers')}</button>
-              {serverDef.options!.map((o) => (
-                <button key={o} type="button" aria-pressed={get(serverKey) === o} onClick={() => set(serverKey, o)}>{o}</button>
-              ))}
-            </div>
-          )}
         </div>
-        <nav className="pg-tabs" aria-label={entry.game}>
-          <NavLink to={`/games/${slug}`} end>{t('game.allOffers')} <span className="count">{entry.offers}</span></NavLink>
-          {tabs.map((s) => {
-            const Icon = CATEGORY_ICON[s]!;
-            return (
-              <NavLink key={s} to={`/games/${slug}/${s}`}>
-                <Icon className="size-4" aria-hidden /> {categoryLabel(s)} <span className="count">{entry.categories.find((c) => c.slug === s)!.count}</span>
-              </NavLink>
-            );
-          })}
-        </nav>
+        {category && (
+          <nav className="pg-tabs" aria-label={entry.game}>
+            {tabs.map((s) => {
+              const Icon = CATEGORY_ICON[s]!;
+              return (
+                <NavLink key={s} to={`/games/${slug}/${s}`}>
+                  <Icon className="size-4" aria-hidden /> {categoryLabel(s)} <span className="count">{entry.categories.find((c) => c.slug === s)!.count}</span>
+                </NavLink>
+              );
+            })}
+          </nav>
+        )}
       </section>
 
+      {!category ? (
+        <section className="card pg-cats" aria-labelledby="pg-cats-title">
+          <h2 id="pg-cats-title" className="pg-cats-title">{t('game.pickCategory')}</h2>
+          <div className="pg-cats-list">
+            {tabs.map((s) => {
+              const Icon = CATEGORY_ICON[s]!;
+              return (
+                <Link key={s} to={`/games/${slug}/${s}`} className="pg-cat">
+                  <Icon className="size-[18px]" aria-hidden /> {categoryLabel(s)} <span className="count">{entry.categories.find((c) => c.slug === s)!.count}</span>
+                </Link>
+              );
+            })}
+          </div>
+          <p className="small muted" style={{ margin: 0 }}>
+            {t('req.cta')}{' '}
+            <Link to={`/requests/new?${new URLSearchParams({ game: entry.game })}`}>{t('req.post')}</Link>
+          </p>
+        </section>
+      ) : (
       <div className="pg-browse">
         <aside className="pg-side">
           {unitWord && (
@@ -244,7 +250,7 @@ export function GamePage() {
               style={{ paddingInlineStart: 34 }}
             />
           </label>
-          {category && <AttributeFilters game={entry.game} category={category} skip={serverDef?.key} facets={facets} params={params} set={set} clear={(keys) => { const next = new URLSearchParams(params); keys.forEach((k) => next.delete(k)); setParams(next, { replace: true }); }} />}
+          {<AttributeFilters game={entry.game} category={category} facets={facets} params={params} set={set} clear={(keys) => { const next = new URLSearchParams(params); keys.forEach((k) => next.delete(k)); setParams(next, { replace: true }); }} />}
           <fieldset className="pg-opts">
             <legend className="pg-label">{t('table.delivery')}</legend>
             <label><input type="checkbox" checked={get('delivery') === 'instant'} onChange={(e) => set('delivery', e.target.checked ? 'instant' : '')} /> {t('filter.instant')}</label>
@@ -317,6 +323,7 @@ export function GamePage() {
           )}
         </section>
       </div>
+      )}
     </div>
   );
 }
@@ -326,8 +333,8 @@ export function GamePage() {
  * shows how many live offers it has given the other filters; options with none are still listed
  * (greyed) so the full range is visible.
  */
-function AttributeFilters({ game, category, skip, facets, params, set, clear }: { game: string; category: string; skip?: string; facets: AttrFacet[]; params: URLSearchParams; set: (k: string, v: string) => void; clear: (keys: string[]) => void }) {
-  const defs = attributesFor(game, category).filter((d) => d.key !== skip);
+function AttributeFilters({ game, category, facets, params, set, clear }: { game: string; category: string; facets: AttrFacet[]; params: URLSearchParams; set: (k: string, v: string) => void; clear: (keys: string[]) => void }) {
+  const defs = attributesFor(game, category);
   if (!defs.length) return null;
   const active = defs.filter((d) => params.get(`attr.${d.key}`));
   return (

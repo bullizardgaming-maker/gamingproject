@@ -22,6 +22,8 @@ export default defineConfig({
     locale: 'en-US',
     // Prices default to the viewer's local currency (EGP in Egypt, EUR in the euro area): pin the tests to USD.
     timezoneId: 'America/New_York',
+    // The tests use the full sample catalogue (every game and category), not the launch-only demo.
+    storageState: { cookies: [], origins: [{ origin: 'http://localhost:4173', localStorage: [{ name: 'bz-demo-full', value: '1' }] }] },
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     launchOptions: { executablePath },
