@@ -6,7 +6,7 @@ for (const spec of pages) {
   const p = await b.newPage({ viewport: { width: +w, height: +h } });
   await p.goto('http://localhost:4173' + path, { waitUntil: 'networkidle' });
   await p.waitForTimeout(700);
-  await p.screenshot({ path: `${out}/${name || path.replace(/\W+/g, '_')}.png`, fullPage: false });
+  await p.screenshot({ path: `${out}/${name || path.replace(/\W+/g, '_')}.png`, fullPage: process.env.FULL === '1' });
   await p.close();
 }
 await b.close();

@@ -1250,6 +1250,25 @@ const en = {
   // Generic
   'common.notFound': 'Page not found',
   'common.englishOnly': 'This section is in English.',
+  "home.heroTitle1": "Game currency and items.",
+  "home.heroTitle2": "Held until they land.",
+  "home.heroLede": "Buy from verified sellers. Pay with crypto. The seller gets paid when you confirm.",
+  "home.topSearches": "Top searches",
+  "home.games": "Games",
+  "home.missingGame": "Missing a game? Tell us which one",
+  "trust.proof": "Proof on every delivery",
+  "trust.proof.text": "Video or photo of the trade",
+  "trust.crypto": "Pay with crypto",
+  "trust.crypto.text": "USDT, USDC, LTC and more",
+  "grow.title": "Grow with Bullizard",
+  "grow.sub": "Two ways to earn. Start in minutes.",
+  "grow.inviteTitle": "Earn credit for every friend you invite",
+  "grow.inviteText": "Share your link. You get store credit when they finish their first order.",
+  "grow.inviteCta": "Get your invite link",
+  "grow.sellBadge": "Founding Seller",
+  "grow.sellTitle": "Turn your farm into real money",
+  "grow.sellText": "Sell for a 5% fee at launch. Founding sellers keep the badge for good.",
+  "grow.sellCta": "Start selling",
 };
 
 export type MessageKey = keyof typeof en;

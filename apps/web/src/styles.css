@@ -397,3 +397,48 @@ input:focus, select:focus, textarea:focus { border-color: var(--steel); }
 .coin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
 .coin-grid .btn.coin-option { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 12px; text-align: start; }
 .crypto-checkout code.mono { font-size: 13px; }
+/* ---------- Home (brand layer) ---------- */
+html, body { overflow-x: clip; }
+.bleed { margin-inline: calc(50% - 50vw); }
+.rune-text { color: var(--rune); }
+html:not(.dark) .rune-text { color: var(--ink); } /* never green text on light */
+.home-hero2 { position: relative; margin-top: -32px; background: var(--night) url(/img/hero.jpg) right top / cover no-repeat; color: #eef1f5; }
+.home-hero2::before { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, #080c12 0%, #080c12 34%, rgba(8,12,18,.72) 54%, rgba(8,12,18,0) 76%); }
+.home-hero2::after { content: ''; position: absolute; inset-inline: 0; bottom: 0; height: 120px; background: linear-gradient(0deg, var(--frost), rgba(13,19,28,0)); }
+.home-hero2-inner { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 22px; padding-top: clamp(56px, 8vw, 104px); padding-bottom: clamp(64px, 9vw, 120px); }
+.home-hero2 h1 { color: #eef1f5; max-width: 15ch; margin: 0; font-size: clamp(36px, 4.6vw, 60px); }
+.home-hero2 .rune-text { color: #77bd77; }
+.home-hero2 .lede { color: #b8c3d2; margin: 0; max-width: 34ch; font-size: 18px; }
+.home-hero2 .eyebrow { color: #9aa8bb; }
+.home-search { max-width: 640px; }
+.home-hero2 .home-search input { background: rgba(17,25,37,.92); border-color: #2a3749; color: #eef1f5; }
+.search-pill { display: inline-flex; align-items: center; height: 30px; padding: 0 12px; border-radius: 999px; border: 1px solid #2a3749; background: rgba(17,25,37,.7); color: #eef1f5; font-size: 13px; text-decoration: none; }
+.search-pill:hover { border-color: #9aa8bb; }
+.trust-band { border-block: 1px solid var(--rule); background: var(--paper); }
+html.dark .trust-band { background: var(--night); }
+.trust-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; padding-block: 24px; }
+.trust-item { display: flex; gap: 12px; align-items: flex-start; }
+.trust-icon { display: grid; place-items: center; width: 36px; height: 36px; flex: none; border-radius: 8px; border: 1px solid var(--rule); color: var(--ink); }
+.home-block { padding-top: 56px; padding-bottom: 8px; }
+.grow-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin-top: 24px; }
+.grow-card { position: relative; display: flex; align-items: center; min-height: 300px; border: 1px solid var(--rule); border-radius: 14px; overflow: hidden; background: var(--night) right top / cover no-repeat; color: #eef1f5; transition: border-color .14s ease-out; }
+.grow-card:hover { border-color: var(--steel); }
+.grow-card::before { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, #080c12 0%, rgba(8,12,18,.9) 38%, rgba(8,12,18,.2) 70%, rgba(8,12,18,0) 100%); }
+[dir='rtl'] .grow-card::before, [dir='rtl'] .home-hero2::before { transform: scaleX(-1); }
+.grow-in { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: flex-start; gap: 14px; padding: 36px; max-width: 58%; }
+.grow-in h3 { margin: 0; color: #eef1f5; font-size: clamp(22px, 2.2vw, 30px); line-height: 1.15; }
+.grow-in .muted { margin: 0; color: #b8c3d2; }
+.grow-in .btn.ghost { color: #eef1f5; border-color: #2a3749; }
+.grow-in .btn.ghost:hover { border-color: #9aa8bb; }
+.founding { display: inline-flex; align-items: center; gap: 8px; font: 600 12px/1 var(--body); letter-spacing: .06em; text-transform: uppercase; color: #9aa8bb; }
+@media (max-width: 960px) {
+  .trust-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grow-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .home-hero2 { background-position: 70% top; }
+  .home-hero2::before { background: linear-gradient(0deg, #080c12 30%, rgba(8,12,18,.75) 100%); }
+  .trust-strip { grid-template-columns: 1fr; }
+  .grow-in { max-width: 100%; padding: 24px; }
+  .grow-card::before { background: linear-gradient(90deg, rgba(8,12,18,.92), rgba(8,12,18,.6)); }
+}

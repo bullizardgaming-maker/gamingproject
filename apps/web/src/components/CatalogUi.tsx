@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { money } from '../api';
-import { Award, BadgeCheck, Coins, Gamepad2, Gift, KeyRound, Rocket, ShieldCheck, Smartphone, Star, Swords, UserRound, Zap } from 'lucide-react';
+import { Award, BadgeCheck, Coins, Gamepad2, Gift, KeyRound, Rocket, ShieldCheck, Smartphone, Star, Swords, UserRound, Video, Zap } from 'lucide-react';
 import { categoryLabel, deliveryLabel, hueOf, initials, slugify } from '@/lib/catalog';
 import { cn } from '@/lib/utils';
 import { attributePairs } from '@/lib/attributes';
@@ -194,7 +194,7 @@ export function OfferTable({ offers, showGame = false, showSeller = true, empty 
 export function GameCard({ game, offers, min, categories }: { game: string; offers: number; min: number; categories: Array<{ slug: string; count: number }> }) {
   const price = usePrice();
   return (
-    <Link to={`/games/${slugify(game)}`} className="group block overflow-hidden rounded-xl border border-border bg-card no-underline transition hover:-translate-y-0.5 hover:border-foreground hover:shadow-[0_14px_30px_-18px_rgba(22,32,46,.45)]">
+    <Link to={`/games/${slugify(game)}`} className="group block overflow-hidden rounded-xl border border-border bg-card no-underline transition-colors hover:border-muted-foreground">
       <GameArt game={game} className="aspect-[16/9]" />
       <div className="p-3">
         <div className="truncate font-display text-[15px] font-semibold tracking-tight">{game}</div>
@@ -215,18 +215,18 @@ export function GameCard({ game, offers, min, categories }: { game: string; offe
 export function TrustStrip({ className }: { className?: string }) {
   const items = [
     [ShieldCheck, t('trust.escrow'), t('trust.escrow.text')],
-    [Zap, t('trust.instant'), t('trust.instant.text')],
-    [BadgeCheck, t('trust.insurance'), t('trust.insurance.text')],
+    [Video, t('trust.proof'), t('trust.proof.text')],
+    [Coins, t('trust.crypto'), t('trust.crypto.text')],
     [Star, t('trust.reviews'), t('trust.reviews.text')],
   ] as const;
   return (
-    <div className={cn('grid gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-2 lg:grid-cols-4', className)}>
+    <div className={cn('trust-strip', className)}>
       {items.map(([Icon, title, text]) => (
-        <div key={title} className="flex gap-3 bg-card p-4">
-          <Icon className="mt-0.5 size-5 shrink-0 text-released" strokeWidth={1.8} />
-          <div>
+        <div key={title} className="trust-item">
+          <span className="trust-icon"><Icon className="size-[18px]" strokeWidth={1.8} /></span>
+          <div className="min-w-0">
             <div className="text-sm font-semibold">{title}</div>
-            <div className="text-xs leading-snug text-muted-foreground">{text}</div>
+            <div className="text-[13px] leading-snug text-muted-foreground">{text}</div>
           </div>
         </div>
       ))}

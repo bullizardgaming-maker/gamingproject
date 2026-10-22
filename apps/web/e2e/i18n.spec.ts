@@ -5,7 +5,7 @@ test.describe('languages', () => {
   test('Arabic switches the page to right-to-left and persists', async ({ page }) => {
     await page.goto('/');
     await page.getByLabel('Language').first().selectOption('ar');
-    await expect(page.getByRole('heading', { name: /تداول سلع الألعاب/ })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /عملات وعناصر الألعاب/ })).toBeVisible();
     await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
     await expect(page.locator('html')).toHaveAttribute('lang', 'ar');
     await expectNoHorizontalScroll(page);

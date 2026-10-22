@@ -5,7 +5,7 @@ test.describe('browsing', () => {
   test('home, market paging and search', async ({ page }) => {
     const done = watchErrors(page);
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: /Your money waits/ })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /Held until they land/ })).toBeVisible();
     await page.goto('/market');
     await expect(page.getByRole('link', { name: 'Red Dead Redemption 2 — Rockstar key' })).toBeVisible();
     await page.getByRole('button', { name: 'Next' }).click();
