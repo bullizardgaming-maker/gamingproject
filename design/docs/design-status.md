@@ -33,6 +33,7 @@ Last updated: 2026-10-22 (pages round)
 - Footer: one small bar (about, language, currency, night mode, key links), always at the bottom.
 - Arabic: Arabic lockup (mark + بوليزارد), wider headings, hero photo mirrored. Icons: Phosphor, one weight, no boxes.
 - Light mode: page bands follow the theme; quieter popover shadows; avatars neutral.
+- Order screen (FunPay-like): order# + status, progress line, details grid (game, item, server, quantity, character, seller/buyer, dates), Total for the buyer / You earn for the seller, actions. Chat: one order card (latest status), the safety text as a signed Bullizard message (max 15% of the chat), other events as small signed lines; status echoes hidden.
 
 ## Next
 - Help center, logo motion sting.

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, apiUpload, money, realtime } from '../api';
 import { Chat } from '../components/Chat';
-import { AlsoBought } from '../components/AlsoBought';
 import { BoostProgress, type ProgressUpdate } from '../components/BoostProgress';
 import { BuyerCard, type BuyerRep, type BuyerTag } from '../components/BuyerReputation';
 import { formatRemaining, type TrackVariant } from '../components/EscrowTrack';
@@ -11,6 +10,7 @@ import { DeliveryProof, type ProofAttachment } from '../components/DeliveryProof
 import { useSession } from '../session';
 import { intlLocale, t } from '../i18n';
 import { usePageMeta } from '@/lib/seo';
+import { attributePairs } from '@/lib/attributes';
 
 interface OrderDetail {
   id: string;
@@ -22,6 +22,9 @@ interface OrderDetail {
   offer_title: string;
   game: string;
   category_kind: string;
+  category_slug?: string;
+  /** The listing's game fields (server, league…), when the API sends them. */
+  attributes?: Record<string, string>;
   delivery_mode: string;
   quantity: number;
   amount_cents: number;
@@ -332,24 +335,10 @@ export function OrderPage() {
     );
   }
 
+  const closedAt = order.status === 'completed' ? at('completed') : ['refunded', 'cancelled', 'charged_back'].includes(order.status) ? order.events.at(-1)?.created_at : null;
+  const pairs = attributePairs(order.game, order.category_slug ?? '', order.attributes ?? {});
   return (
     <div className="stack pg-order">
-      <div className="pg-order-head">
-        <div className="min-w-0">
-          <div className="small muted num" data-testid="order-ref">{order.ref ?? t('order.ref', { id: order.id.slice(0, 8) })}</div>
-          <h1 className="pg-h1" style={{ marginTop: 4 }}>{order.offer_title}{order.quantity > 1 ? ` ×${order.quantity}` : ''}</h1>
-          <div className="muted">
-            {order.game} · {isSeller ? t('order.forBuyer', { name: order.buyer_name }) : t('order.fromSeller', { name: order.seller_name })}
-            {order.character_name && (
-              <> · <span data-testid="order-character">{order.handover_field?.label ?? t('order.character')}: <b className="num">{order.character_name}</b></span></>
-            )}
-          </div>
-        </div>
-        <div className="pg-order-price">
-          <span className="pg-price">{money(order.amount_cents, order.currency)}</span>
-          <span className={`chip ${variant}`}><span className="chip-dot" aria-hidden />{statusText(order.status)}</span>
-        </div>
-      </div>
       {error && <div className="alert" role="alert">{error}</div>}
       {handoverResult && (
         <div className={handoverResult === 'ok' ? 'notice' : 'alert'} role="status">
@@ -358,51 +347,72 @@ export function OrderPage() {
         </div>
       )}
 
-      <div className="order-layout pg-order-layout">
+      <div className="order-layout pg-order-layout" style={{ marginTop: 0 }}>
         <div className="stack">
           {order.status === 'awaiting_payment' && isBuyer && order.rail === 'crypto' && <CryptoDeposit orderId={order.id} />}
+          <section className="card od" aria-labelledby="od-title">
+            <div className="od-head">
+              <h1 id="od-title" className="od-ref num" data-testid="order-ref">{order.ref ?? t('order.ref', { id: order.id.slice(0, 8) })}</h1>
+              <span className={`od-status ${variant}`}>{statusText(order.status)}</span>
+              {order.status === 'delivered' && <span className="small muted">{clock}</span>}
+            </div>
+            <ol className="od-line" aria-label={t('order.progress')}>
+              {steps.map((st) => (
+                <li key={st.label} className={st.state} aria-current={st.state === 'now' ? 'step' : undefined}>
+                  <i aria-hidden /><span>{st.label}</span>
+                </li>
+              ))}
+            </ol>
+            <dl className="od-grid">
+              <div><dt>{t('od.game')}</dt><dd>{order.game}</dd></div>
+              <div><dt>{t('od.item')}</dt><dd dir="auto"><Link to={`/offers/${order.offer_id}`}>{order.offer_title}</Link></dd></div>
+              {pairs.map(([label, v]) => <div key={label}><dt>{label}</dt><dd>{v}</dd></div>)}
+              <div><dt>{t('od.quantity')}</dt><dd className="num">{order.quantity}</dd></div>
+              {order.character_name && (
+                <div><dt>{order.handover_field?.label ?? t('order.character')}</dt><dd data-testid="order-character"><b className="num">{order.character_name}</b></dd></div>
+              )}
+              <div><dt>{isSeller ? t('od.buyer') : t('od.seller')}</dt><dd>{isSeller ? order.buyer_name : <Link to={`/sellers/${order.seller_id}`}>{order.seller_name}</Link>}</dd></div>
+              <div><dt>{t('od.opened')}</dt><dd>{hm(at('awaiting_payment') ?? order.events[0]?.created_at)}</dd></div>
+              <div><dt>{closedAt ? t('od.closed') : t('od.delivered')}</dt><dd>{hm(closedAt ?? order.delivered_at) || '—'}</dd></div>
+            </dl>
+            <div className="od-total">
+              <span className="pg-label">{isSeller ? t('od.youEarn') : t('od.total')}</span>
+              <span className="od-amount num">{money(isSeller ? order.seller_net_cents : order.amount_cents, order.currency)}</span>
+              {isBuyer && order.status !== 'awaiting_payment' && (
+                <span className="small muted">{t('order.paidVia', { amount: money(order.amount_cents, order.currency), method: order.rail === 'crypto' ? t('order.rail.onchain') : order.payment_provider === 'nowpayments' ? t('order.rail.crypto') : t('order.rail.card') })}</span>
+              )}
+              {order.escrow_frozen && order.status !== 'disputed' && <span className="small muted">{t('order.frozenNote')}</span>}
+            </div>
+            {(isBuyer && order.status === 'delivered' && order.rail === 'fiat') || ((isBuyer || isSeller) && ['paid', 'delivered'].includes(order.status) && order.rail === 'fiat') ? (
+              <div className="od-actions">
+                <span className="pg-label">{t('od.actions')}</span>
+                {isBuyer && order.status === 'delivered' && order.rail === 'fiat' && (
+                  <>
+                    {!checklistDone && handoverVerified && (
+                      <label className="small check-row">
+                        <input type="checkbox" checked={handoverConsent} onChange={(e) => setHandoverConsent(e.target.checked)} />
+                        {t('order.releaseEarly')}
+                      </label>
+                    )}
+                    <button className="btn release" disabled={!canConfirm} onClick={() => act('confirm', handoverConsent ? { handoverConsent: true } : undefined)}>{t('order.confirmRelease')}</button>
+                    {!checklistDone && !handoverVerified && <p className="small muted" style={{ margin: 0 }}>{t('order.finishFirst')}</p>}
+                    <p className="small muted" style={{ margin: 0 }}>{t('order.working.text')}</p>
+                  </>
+                )}
+                <div className="od-links">
+                  <button type="button" className="pg-wrong" onClick={openDispute}>{t('order.somethingWrong')}</button>
+                  <Link className="small muted" to={`/support/new?category=order&order=${order.id}`}>{t('order.getHelp')}</Link>
+                </div>
+              </div>
+            ) : (
+              <div className="od-links"><Link className="small muted" to={`/support/new?category=order&order=${order.id}`}>{t('order.getHelp')}</Link></div>
+            )}
+          </section>
           {order.delivery_proof && (
             <div className="card">
               <DeliveryProof proof={order.delivery_proof} />
             </div>
           )}
-          <div className="card pg-track-card">
-            <ol className="pg-steps" aria-label={t('order.progress')}>
-              {steps.map((st) => (
-                <li key={st.label} className={st.state} aria-current={st.state === 'now' ? 'step' : undefined}>
-                  <i aria-hidden />
-                  <div><b>{st.label}</b>{st.sub && <span>{st.sub}</span>}</div>
-                </li>
-              ))}
-            </ol>
-            <div className="pg-track-actions">
-              {isBuyer && order.status === 'delivered' && order.rail === 'fiat' && (
-                <>
-                  {!checklistDone && handoverVerified && (
-                    <label className="small check-row">
-                      <input type="checkbox" checked={handoverConsent} onChange={(e) => setHandoverConsent(e.target.checked)} />
-                      {t('order.releaseEarly')}
-                    </label>
-                  )}
-                  <button className="btn release lg block" disabled={!canConfirm} onClick={() => act('confirm', handoverConsent ? { handoverConsent: true } : undefined)}>{t('order.confirmRelease')}</button>
-                  {!checklistDone && !handoverVerified && <p className="small muted" style={{ margin: 0 }}>{t('order.finishFirst')}</p>}
-                </>
-              )}
-              <p className="small muted" style={{ margin: 0 }}>
-                {isSeller
-                  ? t('order.sellerNet', { net: money(order.seller_net_cents, order.currency), rate: (order.commission_bps / 100).toFixed(2), tier: order.seller_tier })
-                  : order.status === 'awaiting_payment'
-                    ? t('order.heldOnce', { amount: money(order.amount_cents, order.currency) })
-                    : t('order.paidVia', { amount: money(order.amount_cents, order.currency), method: order.rail === 'crypto' ? t('order.rail.onchain') : order.payment_provider === 'nowpayments' ? t('order.rail.crypto') : t('order.rail.card') })}
-                {isBuyer && order.status === 'delivered' && ` ${t('order.working.text')}`}
-                {order.escrow_frozen && order.status !== 'disputed' && ` ${t('order.frozenNote')}`}
-              </p>
-              {(isBuyer || isSeller) && ['paid', 'delivered'].includes(order.status) && order.rail === 'fiat' && (
-                <button type="button" className="pg-wrong" onClick={openDispute}>{t('order.somethingWrong')}</button>
-              )}
-              <Link className="small muted" to={`/support/new?category=order&order=${order.id}`}>{t('order.getHelp')}</Link>
-            </div>
-          </div>
           {isBuyer && order.crypto_refund && <RefundAddressForm orderId={order.id} refund={order.crypto_refund} coins={REFUND_COINS} onDone={load} />}
           {isSeller && order.status === 'delivered' && untilConfirmed && (
             <div className="card stack">
@@ -548,9 +558,9 @@ export function OrderPage() {
             </div>
           )}
 
-          <div className="card">
-            <h3>{t('order.history')}</h3>
-            <div className="table-wrap">
+          <details className="card">
+            <summary style={{ cursor: 'pointer' }}><b>{t('order.history')}</b></summary>
+            <div className="table-wrap" style={{ marginTop: 12 }}>
               <table className="data">
                 <tbody>
                   {order.events.map((e, i) => (
@@ -563,12 +573,11 @@ export function OrderPage() {
                 </tbody>
               </table>
             </div>
-          </div>
+          </details>
           <Link to="/orders" className="small">{t('order.allOrders')}</Link>
         </div>
         <Chat roomId={order.room_id} meId={user.id} names={names} accountOrder={order.category_kind === 'account'} />
       </div>
-      {isBuyer && !['awaiting_payment', 'cancelled'].includes(order.status) && <AlsoBought offerId={order.offer_id} game={order.game} fillers />}
     </div>
   );
 }

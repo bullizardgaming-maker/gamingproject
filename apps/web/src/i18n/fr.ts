@@ -846,5 +846,16 @@ const fr: Messages = {
   "footer.nav": "Pied de page",
   "footer.nightMode": "Mode nuit",
   "search.big": "Cherchez Aion, Albion Online, Path of Exile…",
+  "od.game": "Jeu",
+  "od.item": "Article",
+  "od.quantity": "Quantité",
+  "od.buyer": "Acheteur",
+  "od.seller": "Vendeur",
+  "od.opened": "Ouverte",
+  "od.closed": "Clôturée",
+  "od.delivered": "Livrée",
+  "od.youEarn": "Vous gagnez",
+  "od.total": "Total",
+  "od.actions": "Actions",
 };
 export default fr;

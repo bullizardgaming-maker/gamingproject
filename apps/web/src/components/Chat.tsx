@@ -17,17 +17,16 @@ function BlockedNotice() {
   );
 }
 
-/** A server-originated text message: the official Bullizard card. Users can only send `text`, so this can't be faked. */
+/** A server-originated event (paid, delivered, dispute opened…): one compact signed line. Users can only send `text`, so this can't be faked. */
 function OfficialNote({ m }: { m: ChatMessage }) {
   return (
-    <div className="chat-official" role="article" aria-label={t('chat.fromBullizard')}>
-      <div className="chat-official-head">
-        <BrandMark style={{ width: 20, height: 18 }} />
-        <b>Bullizard</b>
-        <Check className="size-4" weight="bold" aria-label={t('chat.verified')} />
-        <span className="chat-official-time">{time(m.created_at)}</span>
+    <div className="chat-note" role="article" aria-label={t('chat.fromBullizard')}>
+      <BrandMark className="chat-note-mark" />
+      <div className="min-w-0 flex-1">
+        <span className="chat-note-who">Bullizard <Check className="inline size-3" weight="bold" aria-label={t('chat.verified')} /></span>
+        <span className="chat-note-text" dir="auto">{m.body}</span>
       </div>
-      <div className="chat-official-body" dir="auto">{m.body}</div>
+      <span className="chat-note-time">{time(m.created_at)}</span>
     </div>
   );
 }
@@ -65,9 +64,16 @@ export function Chat({ roomId, meId, names, accountOrder = false }: { roomId: st
     });
   }, [roomId]);
 
-  const ordered = [...messages.values()].sort((a, b) => a.seq - b.seq);
-  lastSeq.current = ordered.at(-1)?.seq ?? -1;
-  const roomHasOrder = ordered.some((m) => m.kind === 'system_order');
+  const all = [...messages.values()].sort((a, b) => a.seq - b.seq);
+  lastSeq.current = all.at(-1)?.seq ?? -1;
+  // One order card per order: the server posts a new one on every status change; only the latest is shown, at the top.
+  const orderCard = all.filter((m) => m.kind === 'system_order').at(-1);
+  // The server echoes each status change as a text next to the new card; the single card already says it.
+  const cardSeqs = new Set(all.filter((m) => m.kind === 'system_order').map((m) => m.seq));
+  const ordered = all.filter((m) => m.kind !== 'system_order' && !((m.kind === 'system' || m.kind === 'delivery') && (cardSeqs.has(m.seq - 1) || cardSeqs.has(m.seq + 1))));
+  const roomHasOrder = !!orderCard;
+  // A blocked attempt sits after the last shown message at or before the one it followed (hidden echoes don't count).
+  const anchorOf = (after: number) => ordered.filter((m) => m.seq <= after).at(-1)?.seq ?? -1;
   // Same rules as the server: catch it before it leaves the browser.
   const risky = detectOffPlatform(draft, { allowEmail: accountOrder }).length > 0;
 
@@ -104,7 +110,6 @@ export function Chat({ roomId, meId, names, accountOrder = false }: { roomId: st
   };
 
   const line = (m: ChatMessage) => {
-    if (m.kind === 'system_order') return <OrderCard message={m} />;
     if (m.kind === 'system') return <OfficialNote m={m} />;
     if (m.kind === 'delivery' || m.kind === 'warning')
       return (
@@ -127,18 +132,19 @@ export function Chat({ roomId, meId, names, accountOrder = false }: { roomId: st
   };
 
   return (
-    <div className="card chat chat2">
+    <div className="card chat chat2" style={{ ['--chat-h' as string]: '640px' }}>
       <div className="chat2-head">
         <h3 style={{ margin: 0 }}>{t('chat.title')}</h3>
         <span className="chip">{t('chat.recorded')}</span>
       </div>
-      {roomHasOrder && <SafetyPanel />}
       <div className="chat-log" ref={logRef} role="log" aria-label={t('a11y.chatLog')}>
-        {blocked.filter((b) => b.after < 0).map((b) => <BlockedNotice key={b.key} />)}
+        {orderCard && <OrderCard message={orderCard} />}
+        {roomHasOrder && <SafetyPanel />}
+        {blocked.filter((b) => anchorOf(b.after) < 0).map((b) => <BlockedNotice key={b.key} />)}
         {ordered.map((m) => (
           <Fragment key={m.seq}>
             {line(m)}
-            {blocked.filter((b) => b.after === m.seq).map((b) => <BlockedNotice key={b.key} />)}
+            {blocked.filter((b) => anchorOf(b.after) === m.seq).map((b) => <BlockedNotice key={b.key} />)}
           </Fragment>
         ))}
       </div>
@@ -198,7 +204,7 @@ const ORDER_CHIP: Record<string, { label: string; cls: string }> = {
   charged_back: { label: 'ocard.disputed', cls: 'disputed' },
 };
 
-/** "Stay safe": staff-managed text above every order chat, open by default, collapsible. */
+/** "Stay safe": the staff-managed safety text as a signed Bullizard message at the top of every order chat; at most 15% of the chat, collapsible. */
 function SafetyPanel() {
   const [text, setText] = useState<{ body: string; link_label: string; link_href: string } | null>(null);
   const [open, setOpen] = useState(() => {
@@ -223,13 +229,18 @@ function SafetyPanel() {
     });
   };
   return (
-    <div className="chat-safety" data-testid="safety-panel">
-      <button type="button" className="chat-safety-toggle" aria-expanded={open} onClick={toggle}>
-        <ShieldCheck className="size-4" weight="bold" /> {t('chat.staySafe')} <span className="meta" aria-hidden>{open ? '▾' : '▸'}</span>
-      </button>
+    <div className="chat-official chat-safety-msg" role="article" aria-label={t('chat.fromBullizard')} data-testid="safety-panel">
+      <div className="chat-official-head">
+        <BrandMark style={{ width: 20, height: 18 }} />
+        <b>Bullizard</b>
+        <Check className="size-4" weight="bold" aria-label={t('chat.official')} />
+        <button type="button" className="chat-safety-toggle" aria-expanded={open} onClick={toggle}>
+          <ShieldCheck className="size-4" aria-hidden /> {t('chat.staySafe')} <span aria-hidden>{open ? '▾' : '▸'}</span>
+        </button>
+      </div>
       {open && (
-        <div className="chat-safety-body">
-          {text.body.split('\n').map((line, i) => <p key={i}>{line}</p>)}
+        <div className="chat-official-body chat-safety-body">
+          {text.body.split('\n').map((line, i) => <p key={i} dir="auto">{line}</p>)}
           {text.link_href && <Link to={text.link_href}>{text.link_label || t('chat.rules')}</Link>}
         </div>
       )}

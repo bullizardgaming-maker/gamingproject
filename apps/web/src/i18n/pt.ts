@@ -847,5 +847,16 @@ const pt: Messages = {
   "footer.nav": "Rodapé",
   "footer.nightMode": "Modo noturno",
   "search.big": "Busque Aion, Albion Online, Path of Exile…",
+  "od.game": "Jogo",
+  "od.item": "Item",
+  "od.quantity": "Quantidade",
+  "od.buyer": "Comprador",
+  "od.seller": "Vendedor",
+  "od.opened": "Aberto",
+  "od.closed": "Fechado",
+  "od.delivered": "Entregue",
+  "od.youEarn": "Você ganha",
+  "od.total": "Total",
+  "od.actions": "Ações",
 };
 export default pt;

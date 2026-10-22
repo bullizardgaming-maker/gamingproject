@@ -8,7 +8,7 @@ test.describe('bundles', () => {
     await expect(page.getByText('Separately $80.41: you save $8.40')).toBeVisible();
     await signIn(page, 'Buyer');
     await buy(page, '/offers/offer-bundle-1');
-    await expect(page.getByText(/Delivered automatically/).first()).toBeVisible();
+    await expect(page.getByTestId('order-card')).toContainText('Delivered');
   });
 
   test('a seller builds a bundle from their instant listings', async ({ page }) => {

@@ -79,7 +79,7 @@ test.describe('crypto money paths', () => {
     await row.getByRole('button', { name: 'Release to seller' }).click();
     await expect(page.getByRole('status').filter({ hasText: 'Released to the seller' })).toBeVisible();
     await page.goto(orderUrl);
-    await expect(page.getByText('Order completed').first()).toBeVisible();
+    await expect(page.getByTestId('order-card')).toContainText('Released');
   });
 
   test('seller withdrawal shows the fee, waits for the CFO, then pays out', async ({ page }) => {

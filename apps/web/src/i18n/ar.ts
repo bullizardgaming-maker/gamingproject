@@ -1221,5 +1221,16 @@ const ar: Messages = {
   "footer.nav": "تذييل الصفحة",
   "footer.nightMode": "الوضع الليلي",
   "search.big": "ابحث عن Aion أو Albion Online أو Path of Exile…",
+  "od.game": "اللعبة",
+  "od.item": "المنتج",
+  "od.quantity": "الكمية",
+  "od.buyer": "المشتري",
+  "od.seller": "البائع",
+  "od.opened": "تاريخ الفتح",
+  "od.closed": "تاريخ الإغلاق",
+  "od.delivered": "تم التسليم",
+  "od.youEarn": "تربح",
+  "od.total": "الإجمالي",
+  "od.actions": "الإجراءات",
 };
 export default ar;

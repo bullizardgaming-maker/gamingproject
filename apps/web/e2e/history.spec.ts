@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { buy, signIn, watchErrors } from './helpers';
+import { watchErrors } from './helpers';
 
 test.describe('price history and recommendations', () => {
   test('a listing shows its price history with a hover readout and a table view', async ({ page }) => {
@@ -24,11 +24,5 @@ test.describe('price history and recommendations', () => {
     await page.getByText(/^Price trend: Elden Ring/).click();
     await expect(page.getByRole('img', { name: /Daily prices for Elden Ring/ })).toBeVisible();
     await expect(page.getByText('Typical (median) price').first()).toBeVisible();
-  });
-
-  test('the order page suggests what else buyers got', async ({ page }) => {
-    await signIn(page, 'Buyer');
-    await buy(page, '/offers/offer-2');
-    await expect(page.getByRole('heading', { name: /Buyers also bought|Popular in/ })).toBeVisible();
   });
 });

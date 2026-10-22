@@ -29,5 +29,5 @@ test('handover check: the buyer signs in to the account they bought and can rele
   await page.getByLabel(/Release now, before the checklist is finished/).check();
   await expect(confirm).toBeEnabled();
   await confirm.click();
-  await expect(page.getByText(/Order completed/).first()).toBeVisible();
+  await expect(page.getByTestId('order-card')).toContainText('Released');
 });

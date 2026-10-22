@@ -6,7 +6,7 @@ test.describe('buyer', () => {
     const done = watchErrors(page);
     await signIn(page, 'Buyer');
     await buy(page, '/offers/offer-2');
-    await expect(page.getByText('Delivered automatically').first()).toBeVisible();
+    await expect(page.getByTestId('order-card')).toContainText('Delivered'); // one order card, its status updated in place
     await page.fill('input[aria-label=Message]', 'Works great, thanks!');
     await page.click('form button[type=submit]');
     await expect(page.getByText('Works great, thanks!')).toBeVisible();

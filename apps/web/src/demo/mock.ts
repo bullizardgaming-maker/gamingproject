@@ -351,6 +351,8 @@ function orderDetail(o: any, viewer?: DemoUser) {
     crypto_refund: refundOf(o.id),
     delivery_proof: o.delivery_proof_id ? (() => { const a = state.attachments.find((x) => x.id === o.delivery_proof_id); return a ? { id: a.id, mime: a.mime, original_name: a.original_name, created_at: a.created_at } : null; })() : null,
     handover_field: handoverFieldFor(o.game, state.offers.find((f) => f.id === o.offer_id)?.category_slug ?? ''),
+    category_slug: state.offers.find((f) => f.id === o.offer_id)?.category_slug,
+    attributes: state.offers.find((f) => f.id === o.offer_id)?.attributes ?? {},
     proof_required: PROOF_KINDS.has(o.category_kind) && o.delivery_mode === 'manual',
     buyer_reputation: sellerView ? buyerRepOf(o.buyer_id) : null,
     buyer_rating: sellerView && rating ? { positive: rating.positive, tags: rating.tags, created_at: rating.created_at } : null,

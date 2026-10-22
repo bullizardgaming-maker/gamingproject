@@ -1419,6 +1419,17 @@ const en = {
   "footer.nav": "Footer",
   "footer.nightMode": "Night mode",
   "search.big": "Search Aion, Albion Online, Path of Exile…",
+  "od.game": "Game",
+  "od.item": "Item",
+  "od.quantity": "Quantity",
+  "od.buyer": "Buyer",
+  "od.seller": "Seller",
+  "od.opened": "Opened",
+  "od.closed": "Closed",
+  "od.delivered": "Delivered",
+  "od.youEarn": "You earn",
+  "od.total": "Total",
+  "od.actions": "Actions",
 };
 
 export type MessageKey = keyof typeof en;
