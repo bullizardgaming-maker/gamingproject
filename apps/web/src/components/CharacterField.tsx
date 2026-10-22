@@ -36,19 +36,21 @@ export function CharacterField({ game, category, value, onChange, compact = fals
     return (
       <div className="field" data-testid="character-field">
         <span>{label}</span>
-        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+        <div className="pg-saved" data-on={confirmed || undefined}>
+          <span className="pg-saved-ini" aria-hidden>{remembered.slice(0, 1).toUpperCase()}</span>
           <button
             type="button"
-            className={`btn ${confirmed ? 'release' : 'ghost'}`}
+            className="pg-saved-pick"
             aria-pressed={confirmed}
             onClick={() => {
               setConfirmed(true);
               onChange(remembered, true);
             }}
           >
-            {confirmed ? '✓ ' : ''}<span className="mono">{remembered}</span>{confirmed ? '' : ` · ${t('handover.confirm')}`}
+            <b className="num">{remembered}</b>
+            <span className="small muted">{confirmed ? `✓ ${t('handover.confirmed')}` : t('handover.confirm')}</span>
           </button>
-          <button type="button" className="btn ghost small" onClick={() => { setEditing(true); setConfirmed(false); onChange('', false); }}>{t('handover.change')}</button>
+          <button type="button" className="pg-saved-change" onClick={() => { setEditing(true); setConfirmed(false); onChange('', false); }}>{t('handover.change')}</button>
         </div>
         {!compact && <span className="small muted">{t('handover.responsible')} <Link to="/help/delivery-in-game">{t('handover.terms')}</Link></span>}
       </div>

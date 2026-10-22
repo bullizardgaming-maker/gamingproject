@@ -24,7 +24,7 @@ export async function expectNoHorizontalScroll(page: Page) {
 /** Games that deliver in-game ask for the buyer's character name (or UID) before paying. */
 export async function fillCharacter(page: Page, name = 'TestChar_01') {
   // The buy box (and with it the field) renders once the listing has loaded.
-  await expect(page.getByRole('button', { name: /Pay .* into escrow/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Buy now/ })).toBeVisible();
   const field = page.getByTestId('character-field');
   if (!(await field.count())) return;
   const input = field.getByRole('textbox');
@@ -45,7 +45,7 @@ export async function buy(page: Page, offerPath: string) {
   await page.goto(offerPath);
   await fillCharacter(page);
   await page.getByLabel(/I accept the Terms of Service/).check();
-  await page.getByRole('button', { name: /Pay .* into escrow/ }).click();
+  await page.getByRole('button', { name: /Buy now/ }).click();
   await page.waitForURL(/\/orders\/.*pay=crypto/);
   await payCrypto(page);
 }

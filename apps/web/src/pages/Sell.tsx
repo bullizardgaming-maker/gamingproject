@@ -589,8 +589,21 @@ function NewOffer({ onCreated, offers, linked }: { onCreated: () => void; offers
     }
   };
   return (
-    <form className="card stack" onSubmit={submit}>
-      <h3>{t('sell.new')}</h3>
+    <form className="pg-sell" id="create-offer" onSubmit={submit} aria-labelledby="create-offer-title">
+      <h2 id="create-offer-title" className="pg-h1">{t('sell.new')}</h2>
+      <div className="pg-split">
+      <div className="pg-sell-main">
+      <div className="card pg-sell-games">
+        <p className="pg-label">{t('sell.f.game')}</p>
+        <div className="pg-gpick" role="group" aria-label={t('sell.f.launchGames')}>
+          {LAUNCH_GAMES.map((g) => (
+            <button key={g} type="button" aria-pressed={game.trim().toLowerCase() === g.toLowerCase()} onClick={() => setGame(g)}>
+              <i aria-hidden>{LAUNCH_INI[g]}</i>{g}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="card stack">
       <div className="grid two">
         <label className="field">
           {t('market.category')}
@@ -605,8 +618,7 @@ function NewOffer({ onCreated, offers, linked }: { onCreated: () => void; offers
         <label className="field">{t('sell.f.title')}<input name="title" required minLength={3} maxLength={140} /></label>
         <label className="field">
           {t('sell.f.price')}
-          <input name="price" type="number" step="0.01" min="0.01" required value={price} onChange={(e) => setPrice(e.target.value)} aria-describedby="price-preview" />
-          <PricePreview price={price} />
+          <input name="price" className="num" type="number" step="0.01" min="0.01" required value={price} onChange={(e) => setPrice(e.target.value)} aria-describedby="price-preview" />
         </label>
         <label className="field">
           {t('table.delivery')}
@@ -625,12 +637,12 @@ function NewOffer({ onCreated, offers, linked }: { onCreated: () => void; offers
             <span id="warranty-hint" className="small muted">{t('warranty.sellHint')}</span>
           </label>
         )}
-        <label className="field">
-          <span>
-            <input name="minBuyerReputation" type="checkbox" aria-describedby="minrep-hint" /> {t('minRep.sellLabel')}
-          </span>
+        <div className="field">
+          <label className="check-row" style={{ color: 'var(--ink)' }}>
+            <input name="minBuyerReputation" type="checkbox" style={{ width: 'auto' }} aria-describedby="minrep-hint" /> {t('minRep.sellLabel')}
+          </label>
           <span id="minrep-hint" className="small muted">{t('minRep.sellHint')}</span>
-        </label>
+        </div>
         {platform && (
           <label className="field">
             {t('linked.sellLabel', { platform: platformName(platform) })}
@@ -715,12 +727,74 @@ function NewOffer({ onCreated, offers, linked }: { onCreated: () => void; offers
       {category === 'accounts' && (
         <p className="small muted">{t('sell.f.accountHint')}</p>
       )}
-      {error && <div className="alert" role="alert">{error}</div>}
-      <button className="btn" type="submit">{t('sell.f.create')}</button>
+      </div>
+      </div>
+      <aside className="card pg-sticky pg-sell-preview">
+        <SellPreview price={price} />
+        {error && <div className="alert" role="alert">{error}</div>}
+        <button className="btn lg block" type="submit">{t('sell.f.create')}</button>
+        <p className="small muted" style={{ margin: 0 }}>{t('sell.f.howPaid')}</p>
+      </aside>
+      </div>
     </form>
   );
 }
 
+
+const LAUNCH_GAMES = ['Albion Online', 'Aion', 'Aion 2', 'Path of Exile', 'Path of Exile 2'];
+const LAUNCH_INI: Record<string, string> = { 'Albion Online': 'AO', Aion: 'AI', 'Aion 2': 'A2', 'Path of Exile': 'P1', 'Path of Exile 2': 'P2' };
+const PREVIEW_CURRENCIES = ['USD', 'EUR', 'EGP'] as const;
+
+/**
+ * The sell form's sticky preview: "You earn" is the seller's own price; "Buyer pays" is that price
+ * with the commission added on top (API maths). One currency at a time, the others in a line below.
+ */
+function SellPreview({ price }: { price: string }) {
+  const [p, setP] = useState<Preview | null>(null);
+  const [cur, setCur] = useState<(typeof PREVIEW_CURRENCIES)[number]>('USD');
+  const cents = Math.round(Number(price) * 100);
+  useEffect(() => {
+    if (!(cents > 0)) return setP(null);
+    let live = true;
+    const id = setTimeout(() => {
+      api<Preview>(`/seller/price-preview?priceCents=${cents}&currency=USD`).then((r) => live && setP(r)).catch(() => live && setP(null));
+    }, 250);
+    return () => {
+      live = false;
+      clearTimeout(id);
+    };
+  }, [cents]);
+  const rate = (c: string) => (p && p.buyerCents ? (p.buyerIn[c] ?? p.buyerCents) / p.buyerCents : 1);
+  const show = (usdCents: number, c: string) => (c === 'USD' ? money(usdCents) : `≈ ${money(Math.round(usdCents * rate(c)), c)}`);
+  return (
+    <div className="pg-sell-pv" id="price-preview" data-testid="price-preview" aria-live="polite">
+      <div className="row spread">
+        <p className="pg-label">{t('preview.title')}</p>
+        <div className="pg-seg" role="group" aria-label={t('preview.currency')}>
+          {PREVIEW_CURRENCIES.map((c) => <button key={c} type="button" aria-pressed={cur === c} onClick={() => setCur(c)}>{c}</button>)}
+        </div>
+      </div>
+      {!(cents > 0) || !p ? (
+        <p className="small muted" style={{ margin: 0 }}>{cents > 0 ? '…' : t('preview.hint')}</p>
+      ) : (
+        <>
+          <div className="pg-earn">
+            <span className="small muted">{t('preview.earnLabel')}</span>{' '}
+            <span className="pg-big">{show(p.sellerCents, cur)}</span>
+          </div>
+          <div className="pg-rows">
+            <div className="pg-total"><span>{t('preview.buyerPaysLabel')}</span><span className="pg-price">{show(p.buyerCents, cur)}</span></div>
+          </div>
+          <span className="small muted">
+            {t('preview.buyersPay', { price: money(p.buyerCents) })}
+            {PREVIEW_CURRENCIES.filter((c) => c !== 'USD').map((c) => ` · ${show(p.buyerCents, c)}`).join('')}
+            {' · '}<Link to="/help/selling-fees">{t('preview.feeDetails')}</Link>
+          </span>
+        </>
+      )}
+    </div>
+  );
+}
 
 interface Preview {
   sellerCents: number;

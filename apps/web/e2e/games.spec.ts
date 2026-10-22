@@ -16,7 +16,7 @@ test.describe('launch games: in-game delivery', () => {
   test('buyer gives a character name once, the seller delivers with proof, the buyer sees it', async ({ page }) => {
     await signIn(page, 'Buyer');
     await page.goto('/offers/offer-55'); // 100M kinah — Aion delivers in-game
-    const pay = page.getByRole('button', { name: /Pay .* into escrow/ });
+    const pay = page.getByRole('button', { name: /Buy now/ });
     await page.getByLabel(/I accept the Terms of Service/).check();
     await expect(pay).toBeDisabled(); // no character yet
     await page.getByLabel('Deliver to character').fill('Kaisinel_Pat');

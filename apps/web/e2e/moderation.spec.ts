@@ -22,12 +22,12 @@ test.describe('safety and moderation', () => {
     await page.locator('input[name=game]').fill('Counter-Strike 2');
     await page.locator('input[name=title]').fill('Wallhack-proof crosshair pack');
     await page.locator('input[name=price]').fill('3');
-    await page.getByRole('button', { name: 'Create listing' }).click();
+    await page.getByRole('button', { name: 'Publish offer' }).click();
     await expect(page.getByText('In review').first()).toBeVisible();
     await page.locator('input[name=game]').fill('Counter-Strike 2');
     await page.locator('input[name=title]').fill('Carding guide');
     await page.locator('input[name=price]').fill('3');
-    await page.getByRole('button', { name: 'Create listing' }).click();
+    await page.getByRole('button', { name: 'Publish offer' }).click();
     await expect(page.getByText(/prohibited goods/)).toBeVisible();
   });
 

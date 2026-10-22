@@ -99,7 +99,7 @@ const m: Messages = {
   'sell.f.choose': 'Elige…',
   'sell.f.description': 'Descripción',
   'sell.f.accountHint': 'Después de crear una oferta de cuenta, envía la prueba de propietario original para que los compradores la vean verificada y no de alto riesgo.',
-  'sell.f.create': 'Crear oferta',
+  'sell.f.create': 'Publicar oferta',
   'money.hold.new': 'Vendedor nuevo',
   'money.hold.established': 'Vendedor consolidado',
   'money.hold.trusted': 'Vendedor de confianza',

@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, money } from '../api';
 import { useSession } from '../session';
 import { OfferBadges, type Offer } from './Market';
-import { Avatar, DeliveryTag, GameArt, OfferTable, Rating, TrustBadge } from '../components/CatalogUi';
+import { Avatar, DeliveryTag, FoundingBadge, GameArt, OfferTable, RankPill, Rating, TrustBadge } from '../components/CatalogUi';
 import { categoryLabel, slugify } from '@/lib/catalog';
 import { usePrice } from '@/lib/prefs';
 import { usePageMeta } from '@/lib/seo';
@@ -12,7 +12,7 @@ import { WatchButton } from '../components/WatchButton';
 import { unitPriceFor } from '@/lib/tiers';
 import { OnlineDot, replyLabel } from '@/lib/presence';
 import { addToCart } from '@/lib/cart';
-import { ShoppingCart } from 'lucide-react';
+import { MessageCircle, ShieldCheck, ShoppingCart } from 'lucide-react';
 import { OfferPriceHistory } from '../components/PriceHistory';
 import { AlsoBought } from '../components/AlsoBought';
 import { CharacterField, handoverFieldFor } from '../components/CharacterField';
@@ -23,9 +23,11 @@ export function OfferPage() {
   const nav = useNavigate();
   const { user } = useSession();
   const [offer, setOffer] = useState<Offer | null>(null);
-  const [qty, setQty] = useState(1);
-  const [rail, setRail] = useState<'fiat' | 'crypto'>('fiat');
-  const [wallet, setWallet] = useState('');
+  const [params] = useSearchParams();
+  const [qty, setQty] = useState(() => Math.max(1, Math.floor(Number(params.get('qty')) || 1)));
+  // Payment is crypto through NOWPayments (the API's 'fiat' rail); the on-chain contract rail is not offered.
+  const rail = 'fiat' as const;
+  const [reviews, setReviews] = useState<Array<{ id: string; rating: number; comment: string; created_at: string; offer_title: string | null }>>([]);
   const [tos, setTos] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -46,6 +48,7 @@ export function OfferPage() {
     if (!offer) return;
     const q = new URLSearchParams({ game: offer.game, category: offer.category_slug, sort: 'price_asc', pageSize: '6' });
     api<{ items: Offer[] }>(`/offers?${q}`).then((r) => setSimilar(r.items.filter((o) => o.id !== offer.id).slice(0, 5))).catch(() => {});
+    api<{ reviews: typeof reviews }>(`/sellers/${offer.seller_id}?limit=3`).then((r) => setReviews((r.reviews ?? []).slice(0, 3))).catch(() => {});
   }, [offer]);
 
   if (!offer) return <p className="muted">{error || t('offer.loading')}</p>;
@@ -62,7 +65,7 @@ export function OfferPage() {
     setError('');
     try {
       const res = await api<{ order: { id: string }; checkoutUrl: string | null }>('/orders', {
-        body: { offerId: offer.id, quantity: qty, rail, acceptTos: true, ...(rail === 'crypto' ? { walletAddress: wallet } : {}), ...(code ? { sellerCode: code.code } : {}), ...(needsCharacter ? { characterName: character.value.trim() } : {}) },
+        body: { offerId: offer.id, quantity: qty, rail, acceptTos: true, ...(code ? { sellerCode: code.code } : {}), ...(needsCharacter ? { characterName: character.value.trim() } : {}) },
         headers: { 'Idempotency-Key': `${offer.id}:${qty}:${rail}:${Math.floor(Date.now() / 60_000)}` },
       });
       if (res.checkoutUrl) window.location.assign(res.checkoutUrl);
@@ -79,42 +82,72 @@ export function OfferPage() {
   };
 
   const gameSlug = slugify(offer.game);
+  const pairs = attributePairs(offer.game, offer.category_slug, offer.attributes);
+  const addCart = () => setAdded(addToCart(offer.id, isAccount ? 1 : qty) ? 'ok' : 'full');
+  const ago = (iso: string) => {
+    const d = Math.round((Date.now() - new Date(iso).getTime()) / 86_400_000);
+    return new Intl.RelativeTimeFormat(intlLocale(), { numeric: 'auto' }).format(-d, 'day');
+  };
   return (
     <div className="stack">
-    <nav className="crumbs" aria-label="Breadcrumb">
-      <Link to="/games">{t('game.crumb')}</Link><span>/</span>
-      <Link to={`/games/${gameSlug}`}>{offer.game}</Link><span>/</span>
-      <Link to={`/games/${gameSlug}/${offer.category_slug}`}>{categoryLabel(offer.category_slug)}</Link>
-    </nav>
-    <div className="order-layout" style={{ marginTop: 0 }}>
-      <div className="stack">
-        <div className="flex items-center gap-3">
-          <GameArt game={offer.game} size="sm" className="h-10 w-14 shrink-0 rounded-lg" />
-          <div className="eyebrow" style={{ margin: 0 }}>{offer.game} · {categoryLabel(offer.category_slug)}</div>
+    <div className="pg-split" style={{ marginTop: 0 }}>
+      <div className="pg-main stack">
+        <nav className="crumbs" aria-label="Breadcrumb" style={{ margin: 0 }}>
+          <Link to="/games">{t('game.crumb')}</Link><span>/</span>
+          <Link to={`/games/${gameSlug}`}>{offer.game}</Link><span>/</span>
+          <Link to={`/games/${gameSlug}/${offer.category_slug}`}>{categoryLabel(offer.category_slug)}</Link>
+        </nav>
+        <div className="flex items-start gap-4">
+          <GameArt game={offer.game} size="sm" className="pg-tile hidden sm:block" />
+          <div className="min-w-0 flex-1">
+            <div className="pg-label">{offer.game} · {categoryLabel(offer.category_slug)}</div>
+            <h1 className="pg-h1" style={{ marginTop: 6 }}>{offer.title}</h1>
+          </div>
+          {user?.id !== offer.seller_id && <WatchButton target={{ offerId: offer.id }} />}
         </div>
-        <h1 style={{ fontSize: 40 }}>{offer.title}</h1>
         {offer.reserved_for && (
           <div className="notice small">
             {user?.id === offer.reserved_for ? t('req.reservedForYou') : t('req.reservedSeller')}{' '}
             {offer.request_id && <Link to={`/requests/${offer.request_id}`}>{t('req.viewRequest')}</Link>}
           </div>
         )}
-        <div className="row" style={{ gap: 12 }}>
-          <OfferBadges offer={offer} />
-          <DeliveryTag offer={offer} />
-          {user?.id !== offer.seller_id && <WatchButton target={{ offerId: offer.id }} className="ms-auto" />}
+
+        <div className="card pg-seller">
+          <Avatar name={offer.seller_name} className="size-[52px] text-base" />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <Link to={`/sellers/${offer.seller_id}`} className="no-underline hover:underline" style={{ fontSize: 17, fontWeight: 700 }}>{offer.seller_name}</Link>
+              {offer.seller_rank && <RankPill name={offer.seller_rank} />}
+              <TrustBadge level={offer.seller_trust_level} />
+              {offer.seller_founding && <FoundingBadge />}
+              {offer.seller_online && <span className="inline-flex items-center gap-1 text-xs text-muted-foreground"><OnlineDot /> {t('presence.online')}</span>}
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 text-[13px] text-muted-foreground">
+              <Rating value={offer.seller_rating} count={offer.seller_review_count} />
+              <span>{t('offer.completed', { n: offer.seller_completed_orders })}</span>
+              <span>{t('offer.idVerified')}</span>
+              {replyLabel(offer.seller_response_minutes) && <span>{replyLabel(offer.seller_response_minutes)}</span>}
+            </div>
+          </div>
+          <Link className="btn ghost sm" to={`/sellers/${offer.seller_id}`}>{t('offer.sellerProfile')}</Link>
         </div>
-        {attributePairs(offer.game, offer.category_slug, offer.attributes).length > 0 && (
-          <dl className="m-0 grid grid-cols-2 gap-x-6 gap-y-2 rounded-xl border border-border bg-card p-4 sm:grid-cols-3">
-            {attributePairs(offer.game, offer.category_slug, offer.attributes).map(([label, v]) => (
-              <div key={label} className="min-w-0">
-                <dt className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">{label}</dt>
-                <dd className="m-0 truncate font-medium">{v}</dd>
-              </div>
+
+        <div className="card">
+          <div className="row spread" style={{ marginBottom: 16 }}>
+            <p className="pg-label">{t('offer.details')}</p>
+            <OfferBadges offer={offer} />
+          </div>
+          <dl className="pg-kv">
+            {pairs.map(([label, v]) => (
+              <div key={label} className="contents"><dt>{label}</dt><dd>{v}</dd></div>
             ))}
+            <dt>{t('table.delivery')}</dt><dd><DeliveryTag offer={offer} /></dd>
+            <dt>{t('table.stock')}</dt><dd className="num">{offer.stock}</dd>
+            <dt>{t('offer.sellerNote')}</dt>
+            <dd style={{ whiteSpace: 'pre-wrap' }}>{offer.description || <span className="muted">{t('offer.noDescription')}</span>}</dd>
           </dl>
-        )}
-        <p style={{ whiteSpace: 'pre-wrap' }}>{offer.description || <span className="muted">{t('offer.noDescription')}</span>}</p>
+        </div>
+
         {offer.bundle && offer.bundle.length > 0 && (() => {
           const separately = offer.bundle.reduce((s, p) => s + p.price_cents * p.quantity, 0);
           return (
@@ -123,8 +156,8 @@ export function OfferPage() {
               <ul className="m-0 list-none p-0">
                 {offer.bundle.map((p) => (
                   <li key={p.offer_id} className="flex items-center justify-between gap-3 border-b border-border py-2 last:border-b-0">
-                    <span className="min-w-0 truncate"><span className="font-mono">{p.quantity}×</span> <Link to={`/offers/${p.offer_id}`}>{p.title}</Link></span>
-                    <span className="font-mono text-sm text-muted-foreground">{money(p.price_cents * p.quantity, p.currency)}</span>
+                    <span className="min-w-0 truncate"><span className="num">{p.quantity}×</span> <Link to={`/offers/${p.offer_id}`}>{p.title}</Link></span>
+                    <span className="num text-sm text-muted-foreground">{money(p.price_cents * p.quantity, p.currency)}</span>
                   </li>
                 ))}
               </ul>
@@ -134,58 +167,42 @@ export function OfferPage() {
             </div>
           );
         })()}
-        <Link to={`/sellers/${offer.seller_id}`} className="card flex items-center gap-3 no-underline hover:border-foreground" style={{ padding: 14 }}>
-          <Avatar name={offer.seller_name} className="size-11" />
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 font-semibold">
-              {offer.seller_name}
-              {offer.seller_online && <span className="inline-flex items-center gap-1 text-xs font-medium text-released"><OnlineDot /> {t('presence.online')}</span>}
-              <TrustBadge level={offer.seller_trust_level} />
-            </div>
-            <div className="flex flex-wrap items-center gap-x-3 text-xs text-muted-foreground">
-              <Rating value={offer.seller_rating} count={offer.seller_review_count} />
-              <span>{t('offer.completed', { n: offer.seller_completed_orders })}</span>
-              <span>{t('offer.idVerified')}</span>
-              {replyLabel(offer.seller_response_minutes) && <span>{replyLabel(offer.seller_response_minutes)}</span>}
-            </div>
+        {offer.high_risk_secondary && <div className="alert">{t('offer.highRisk')}</div>}
+
+        <div className="card pg-reviews">
+          <div className="row spread">
+            <p className="pg-label">{t('offer.reviews')}</p>
+            <Rating value={offer.seller_rating} count={offer.seller_review_count} />
           </div>
-          <span className="small muted">{t('offer.viewShop')}</span>
-        </Link>
-        {offer.high_risk_secondary && (
-          <div className="alert">
-            {t('offer.highRisk')}
-          </div>
-        )}
+          {reviews.length === 0 ? (
+            <p className="small muted" style={{ margin: '12px 0 4px' }}>{t('offer.noReviews')}</p>
+          ) : reviews.map((r) => (
+            <div key={r.id} className="pg-review">
+              <div className="row spread">
+                <b className="small">{r.comment || '★'.repeat(r.rating)}</b>
+                <span className="small muted">{ago(r.created_at)}</span>
+              </div>
+              {r.offer_title && <span className="small muted">{r.offer_title}</span>}
+            </div>
+          ))}
+          <Link className="small" to={`/sellers/${offer.seller_id}#reviews`}>{t('offer.allReviews')}</Link>
+        </div>
         <OfferPriceHistory offerId={offer.id} game={offer.game} />
       </div>
 
-      <div className="card stack">
-        <div className="row spread">
-          <span className="stack" style={{ gap: 0 }}>
-            {onSale && <span className="mono small muted line-through">{money(offer.regular_price_cents! * qty, offer.currency)}</span>}
-            <span className="mono" style={{ fontSize: 28, fontWeight: 600 }}>{money(total, offer.currency)}</span>
-            {onSale && offer.sale_ends_at && <span className="small text-released">{t('sale.endsOn', { when: new Date(offer.sale_ends_at).toLocaleString(intlLocale(), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) })}</span>}
-            {price(total, offer.currency).startsWith('≈') && <span className="small muted">{price(total, offer.currency)} · {t('offer.chargedIn', { currency: offer.currency })}</span>}
-          </span>
-          <span className="small muted">{t('offer.available', { n: offer.stock })}</span>
-        </div>
+      <aside className="card pg-buybox pg-sticky" aria-label={t('offer.buyBox')}>
         {!isAccount && (
           <label className="field">
             {t('offer.quantity')}
-            <input type="number" min={1} max={offer.stock} value={qty} onChange={(e) => setQty(Math.max(1, Number(e.target.value)))} />
+            <input className="num" type="number" min={1} max={offer.stock} value={qty} onChange={(e) => setQty(Math.max(1, Number(e.target.value)))} />
           </label>
         )}
         {tiers.length > 0 && (
           <div className="stack" style={{ gap: 6 }}>
             <div className="small muted">{t('tier.title')}</div>
-            <div className="flex flex-wrap gap-2" role="group" aria-label={t('tier.title')}>
+            <div className="pg-seg" role="group" aria-label={t('tier.title')}>
               {[{ minQty: 1, priceCents: offer.price_cents }, ...tiers].map((tr) => (
-                <button
-                  key={tr.minQty}
-                  type="button"
-                  className={`chip cursor-pointer ${unit === tr.priceCents && qty >= tr.minQty ? 'released' : ''}`}
-                  onClick={() => setQty(tr.minQty)}
-                >
+                <button key={tr.minQty} type="button" aria-pressed={unit === tr.priceCents && qty >= tr.minQty} onClick={() => setQty(tr.minQty)}>
                   {t('tier.row', { qty: tr.minQty, price: money(tr.priceCents, offer.currency) })}
                 </button>
               ))}
@@ -193,85 +210,79 @@ export function OfferPage() {
             {unit < offer.price_cents && <div className="small text-released">{t('tier.saving', { amount: money((offer.price_cents - unit) * qty, offer.currency), each: money(unit, offer.currency) })}</div>}
           </div>
         )}
-        {user && !own && rail === 'fiat' && (
-          <div className="stack" style={{ gap: 6 }}>
-            <div className="row" style={{ gap: 8, flexWrap: 'nowrap' }}>
-              <input aria-label={t('code.enter')} placeholder={t('code.enter')} value={codeText} onChange={(e) => setCodeText(e.target.value)} style={{ flex: 1 }} />
-              <button
-                type="button"
-                className="btn ghost"
-                disabled={!codeText.trim()}
-                onClick={async () => {
-                  setCodeError('');
-                  try {
-                    const q = await api<{ sellerDiscountCents: number }>('/orders/quote', { body: { offerId: offer.id, quantity: qty, sellerCode: codeText.trim() } });
-                    setCode({ code: codeText.trim(), discount: q.sellerDiscountCents, qty });
-                  } catch (e: any) {
-                    setCode(null);
-                    setCodeError(e.message);
-                  }
-                }}
-              >
-                {t('code.apply')}
-              </button>
+        {user && !own && <CharacterField game={offer.game} category={offer.category_slug} value={character.value} onChange={(value, ok) => setCharacter({ value, ok })} />}
+        <div className="pg-rows">
+          {!isAccount && <div><span className="muted">{t('table.perUnit')}</span><span className="num">{money(unit, offer.currency)}</span></div>}
+          {code && code.qty === qty && <div><span className="muted">{t('code.discount')}</span><span className="num">−{money(code.discount, offer.currency)}</span></div>}
+          <div className="pg-total">
+            <span>{t('offer.total')}</span>
+            <span className="text-end">
+              {onSale && <span className="num small muted line-through" style={{ display: 'block', fontWeight: 400 }}>{money(offer.regular_price_cents! * qty, offer.currency)}</span>}
+              <span className="pg-price">{money(total, offer.currency)}</span>
+            </span>
+          </div>
+          {price(total, offer.currency).startsWith('≈') && <div className="small muted" style={{ justifyContent: 'flex-end' }}>{price(total, offer.currency)} · {t('offer.chargedIn', { currency: offer.currency })}</div>}
+          {onSale && offer.sale_ends_at && <div className="small text-released" style={{ justifyContent: 'flex-end' }}>{t('sale.endsOn', { when: new Date(offer.sale_ends_at).toLocaleString(intlLocale(), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) })}</div>}
+        </div>
+        {user && !own && (
+          <div className="pg-code">
+            <div className="stack" style={{ gap: 6 }}>
+              <div className="row" style={{ gap: 8, flexWrap: 'nowrap' }}>
+                <input aria-label={t('code.enter')} placeholder={t('code.enter')} value={codeText} onChange={(e) => setCodeText(e.target.value)} style={{ flex: 1 }} />
+                <button
+                  type="button"
+                  className="btn ghost sm"
+                  disabled={!codeText.trim()}
+                  onClick={async () => {
+                    setCodeError('');
+                    try {
+                      const q = await api<{ sellerDiscountCents: number }>('/orders/quote', { body: { offerId: offer.id, quantity: qty, sellerCode: codeText.trim() } });
+                      setCode({ code: codeText.trim(), discount: q.sellerDiscountCents, qty });
+                    } catch (e: any) {
+                      setCode(null);
+                      setCodeError(e.message);
+                    }
+                  }}
+                >
+                  {t('code.apply')}
+                </button>
+              </div>
+              {code && code.qty === qty && <div className="small text-released">{t('code.applied', { code: code.code.toUpperCase(), amount: money(code.discount, offer.currency) })}</div>}
+              {code && code.qty !== qty && <div className="small muted">{t('code.reapply')}</div>}
+              {codeError && <div className="small" style={{ color: 'var(--disputed)' }}>{codeError}</div>}
             </div>
-            {code && code.qty === qty && <div className="small text-released">{t('code.applied', { code: code.code.toUpperCase(), amount: money(code.discount, offer.currency) })}</div>}
-            {code && code.qty !== qty && <div className="small muted">{t('code.reapply')}</div>}
-            {codeError && <div className="small" style={{ color: 'var(--disputed)' }}>{codeError}</div>}
           </div>
         )}
-        <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0 }}>
-          <legend className="small muted" style={{ marginBottom: 8 }}>{t('offer.payWith')}</legend>
-          <label className="row"><input type="radio" style={{ width: 'auto' }} checked={rail === 'fiat'} onChange={() => setRail('fiat')} /> {t('offer.card')}</label>
-          <label className="row"><input type="radio" style={{ width: 'auto' }} checked={rail === 'crypto'} onChange={() => setRail('crypto')} /> {t('offer.crypto')}</label>
-          {rail === 'crypto' && (
-            <label className="field">
-              {t('offer.wallet')}
-              <input className="mono" placeholder="0x…" value={wallet} onChange={(e) => setWallet(e.target.value.trim())} />
-            </label>
-          )}
-        </fieldset>
-        {user && !own && <CharacterField game={offer.game} category={offer.category_slug} value={character.value} onChange={(value, ok) => setCharacter({ value, ok })} />}
-        <div className="notice">
-          {isAccount ? t('offer.escrow14') : t('offer.escrow72')}
-        </div>
-        <label className="check-row small">
-          <input type="checkbox" style={{ width: 'auto' }} checked={tos} onChange={(e) => setTos(e.target.checked)} />
-          {t('offer.tos')}
-        </label>
         {added === 'ok' && <div className="notice small" role="status">{t('cart.added')} <Link to="/cart">{t('cart.view')}</Link></div>}
         {added === 'full' && <div className="alert small">{t('cart.full')}</div>}
         {error && <div className="alert" role="alert">{error} {error === t('offer.verifyFirst') && <Link to="/account">{t('offer.verifyNow')}</Link>}</div>}
         {!user ? (
-          <div className="row">
-            <Link className="btn go" to={`/login?next=/offers/${offer.id}`}>{t('offer.signInToBuy')}</Link>
-            <button className="btn ghost" disabled={offer.stock < qty} onClick={() => setAdded(addToCart(offer.id, isAccount ? 1 : qty) ? 'ok' : 'full')}>
-              <ShoppingCart className="size-4" /> {t('cart.add')}
-            </button>
-          </div>
+          <>
+            <Link className="btn go lg block" to={`/login?next=/offers/${offer.id}`}>{t('offer.signInToBuy')}</Link>
+            <button className="btn ghost block" disabled={offer.stock < qty} onClick={addCart}><ShoppingCart className="size-4" /> {t('cart.add')}</button>
+          </>
         ) : own ? (
           <p className="muted small">{t('offer.yours')}</p>
         ) : (
-          <div className="row">
-            <button className="btn go" disabled={!tos || busy || offer.stock < qty || (needsCharacter && !character.ok) || (rail === 'crypto' && !/^0x[0-9a-fA-F]{40}$/.test(wallet))} onClick={buy}>
+          <>
+            <label className="check-row small">
+              <input type="checkbox" style={{ width: 'auto' }} checked={tos} onChange={(e) => setTos(e.target.checked)} />
+              {t('offer.tos')}
+            </label>
+            <button className="btn go lg block" disabled={!tos || busy || offer.stock < qty || (needsCharacter && !character.ok)} onClick={buy}>
               {busy ? t('offer.opening') : t('offer.pay', { amount: money(total, offer.currency) })}
             </button>
-            {rail === 'fiat' && (
-              <button
-                className="btn ghost"
-                disabled={offer.stock < qty}
-                onClick={() => setAdded(addToCart(offer.id, isAccount ? 1 : qty) ? 'ok' : 'full')}
-              >
-                <ShoppingCart className="size-4" /> {t('cart.add')}
-              </button>
-            )}
-            <button className="btn ghost" onClick={ask}>{t('offer.ask')}</button>
-          </div>
+            <div className="pg-buy-more">
+              <button className="btn ghost sm" disabled={offer.stock < qty} onClick={addCart}><ShoppingCart className="size-4" /> {t('cart.add')}</button>
+              <button className="btn ghost sm" onClick={ask}><MessageCircle className="size-4" /> {t('offer.ask')}</button>
+            </div>
+          </>
         )}
-      </div>
+        <p className="pg-note"><ShieldCheck className="size-4" aria-hidden /><span>{t('offer.heldUntil')} <Link to={isAccount ? '/help/account-insurance' : '/help/how-escrow-works'}>{t('offer.howEscrow')}</Link></span></p>
+      </aside>
     </div>
     {similar.length > 0 && (
-      <section className="stack" style={{ marginTop: 32 }}>
+      <section className="stack" style={{ marginTop: 40 }}>
         <div className="row spread">
           <h3 style={{ margin: 0 }}>{t('offer.compare', { game: offer.game, category: categoryLabel(offer.category_slug).toLowerCase() })}</h3>
           <Link to={`/games/${gameSlug}/${offer.category_slug}`} className="small">{t('home.seeAll')}</Link>

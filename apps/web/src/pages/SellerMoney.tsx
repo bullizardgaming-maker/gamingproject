@@ -57,8 +57,12 @@ export function SellerMoney() {
   const [invoices, setInvoices] = useState<any[]>([]);
   const [credits, setCredits] = useState<any[]>([]);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'alert'; text: string } | null>(null);
+  const [sales, setSales] = useState<any[]>([]);
+  const [withdrawals, setWithdrawals] = useState<any[]>([]);
 
   const load = useCallback(async () => {
+    api<any[]>('/orders?as=seller').then(setSales).catch(() => {});
+    api<any[]>('/seller/withdrawals').then(setWithdrawals).catch(() => {});
     const [d, h, t, inv, cn] = await Promise.all([
       api('/seller/dashboard'),
       api<Hold>('/seller/payout-hold'),
@@ -79,6 +83,13 @@ export function SellerMoney() {
   if (!dash || !hold || !tax) return <p className="muted">{msg?.text ?? t('money.loading')}</p>;
   const currency: string = dash.payoutCurrency ?? 'USD';
   const others = (dash.allBalances ?? []).filter((b: any) => b.currency !== currency);
+  const withdrawn = withdrawals.filter((w) => w.status === 'paid' && w.currency === currency).reduce((s, w) => s + Number(w.amount_cents), 0);
+  const history: HistoryRow[] = [
+    ...sales
+      .filter((o) => ['paid', 'delivered', 'completed', 'disputed'].includes(o.status))
+      .map((o) => ({ id: o.id, at: o.created_at, what: `${o.ref ?? ''}${o.ref ? ' · ' : ''}${o.offer_title}`, href: `/orders/${o.id}`, state: (o.status === 'completed' ? 'released' : o.status === 'disputed' ? 'disputed' : 'held') as HistoryRow['state'], cents: Number(o.seller_net_cents ?? o.amount_cents), currency: o.currency, sign: 1 })),
+    ...withdrawals.map((w) => ({ id: w.id, at: w.created_at, what: `${t('wallet.withdrawal')}${w.destination_currency ? ` · ${String(w.destination_currency).toUpperCase()}` : ''}`, state: (w.status === 'paid' ? 'sent' : ['failed', 'rejected'].includes(w.status) ? 'failed' : 'pending') as HistoryRow['state'], label: t(WSTATUS[w.status] ?? 'money.wstatus.pending'), cents: Number(w.amount_cents), currency: w.currency, sign: -1 })),
+  ].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 12);
 
   const run = async (fn: () => Promise<unknown>, ok: string) => {
     setMsg(null);
@@ -98,43 +109,56 @@ export function SellerMoney() {
         <DebtCard key={d.id} debt={d} onError={(text) => setMsg({ kind: 'alert', text })} />
       ))}
 
-      <div className="grid gap-4 md:grid-cols-[1.3fr_1fr]">
-        {/* Balance & payouts */}
-        <div className="card stack">
-          <div className="row spread">
-            <div className="eyebrow" style={{ marginBottom: 0 }}>{t('money.balance')}</div>
-            <label className="row small" style={{ gap: 8 }}>
-              {t('money.paidOutIn')}
-              <select
-                aria-label={t('money.payoutCurrency')}
-                value={currency}
-                style={{ width: 90 }}
-                onChange={(e) => run(() => api('/seller/payout-currency', { method: 'PUT', body: { currency: e.target.value } }), t('money.currencyChanged', { currency: e.target.value }))}
-              >
-                {CURRENCIES.map((c) => <option key={c}>{c}</option>)}
-              </select>
-            </label>
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            <Stat label={t('money.withdrawNow')} value={money(hold.withdrawableCents, currency)} tone="released" />
-            <Stat label={t('money.onHold')} value={money(hold.heldCents, currency)} tone="held" icon={<Lock className="size-3.5" />} />
-            <Stat label={t('money.inEscrow')} value={money(dash.balances.pendingEscrowCents, 'USD')} />
-          </div>
+      <div className="pg-wallet-cards">
+        <div className="card pg-bal">
+          <span className="small muted">{t('wallet.available')}</span>
+          <span className="pg-big">{money(hold.withdrawableCents, currency)}</span>
+          {hold.heldCents > 0 && <span className="chip held" style={{ alignSelf: 'flex-start' }}><Lock className="size-3" aria-hidden /> {t('wallet.unlocking', { amount: money(hold.heldCents, currency) })}</span>}
+        </div>
+        <div className="card pg-bal">
+          <span className="small muted">{t('money.inEscrow')}</span>
+          <span className="pg-big muted">{money(dash.balances.pendingEscrowCents, 'USD')}</span>
+        </div>
+        <div className="card pg-bal">
+          <span className="small muted">{t('wallet.withdrawn')}</span>
+          <span className="pg-big muted">{money(withdrawn, currency)}</span>
+        </div>
+      </div>
+
+      <div className="pg-split">
+        <section className="pg-history" aria-labelledby="wallet-history">
+          <h2 id="wallet-history" className="pg-label">{t('wallet.history')}</h2>
+          <WalletHistory rows={history} currency={currency} />
           <p className="small muted" style={{ margin: 0 }}>
-            {hold.holdDays > 0
-              ? t('money.holdText', { level: holdLabel(hold.level), count: hold.holdDays })
-              : t('money.noHold')}
+            {hold.holdDays > 0 ? t('money.holdText', { level: holdLabel(hold.level), count: hold.holdDays }) : t('money.noHold')}
           </p>
           {hold.upcoming.length > 0 && (
             <div className="small">
               {hold.upcoming.slice(0, 4).map((u) => (
                 <div key={u.unlocksAt ?? 'claim'} className="row spread" style={{ borderTop: '1px solid var(--rule)', padding: '6px 0' }}>
                   <span className="muted">{u.unlocksAt ? t('money.unlocks', { date: fmtDate(u.unlocksAt) }) : t('money.unlocksClaim')}</span>
-                  <span className="mono">{money(u.cents, currency)}</span>
+                  <span className="num">{money(u.cents, currency)}</span>
                 </div>
               ))}
             </div>
           )}
+        </section>
+
+        <aside className="card pg-withdraw" aria-labelledby="wallet-withdraw">
+          <div className="row spread">
+            <h2 id="wallet-withdraw" className="h3" style={{ margin: 0, fontSize: 19 }}>{t('money.withdraw')}</h2>
+            <label className="row small" style={{ gap: 8 }}>
+              {t('money.paidOutIn')}
+              <select
+                aria-label={t('money.payoutCurrency')}
+                value={currency}
+                style={{ width: 90, height: 36, padding: '0 8px' }}
+                onChange={(e) => run(() => api('/seller/payout-currency', { method: 'PUT', body: { currency: e.target.value } }), t('money.currencyChanged', { currency: e.target.value }))}
+              >
+                {CURRENCIES.map((c) => <option key={c}>{c}</option>)}
+              </select>
+            </label>
+          </div>
           <Withdraw
             currency={currency}
             max={hold.withdrawableCents}
@@ -142,7 +166,6 @@ export function SellerMoney() {
             onWithdraw={(cents) => run(() => api('/seller/withdrawals', { body: { amountCents: cents, currency } }), t('money.onItsWay', { amount: money(cents, currency) }))}
           />
           {!user?.payouts_enabled && <p className="small muted" style={{ margin: 0 }}>{t('money.setUpFirst')}</p>}
-          <RecentWithdrawals refreshKey={msg?.text ?? ''} />
           {dash.withdrawalsFrozen && <p className="small muted" style={{ margin: 0 }}>{t('money.frozen')}</p>}
           {others.map((b: any) => (
             <div key={b.currency} className="notice row spread">
@@ -154,8 +177,10 @@ export function SellerMoney() {
               )}
             </div>
           ))}
-        </div>
+        </aside>
+      </div>
 
+      <div className="grid gap-4 md:grid-cols-2">
         {/* Payout address */}
         <PayoutAddressCard onChanged={load} onMessage={setMsg} />
 
@@ -257,8 +282,13 @@ function Stat({ label, value, tone, icon }: { label: string; value: string; tone
 
 function Withdraw({ currency, max, disabled, onWithdraw }: { currency: string; max: number; disabled: boolean; onWithdraw: (cents: number) => void }) {
   const [amount, setAmount] = useState('');
+  const [checked, setChecked] = useState(false);
+  const [dest, setDest] = useState<{ address: string | null; currencyName: string | null } | null>(null);
   const [quote, setQuote] = useState<{ feeCents: number; netCents: number; feeBps: number; feeMinCents: number } | null>(null);
   const cents = amount ? Math.round(Number(amount) * 100) : max;
+  useEffect(() => {
+    api<{ address: string | null; currencyName: string | null }>('/seller/payout-address').then(setDest).catch(() => {});
+  }, []);
   useEffect(() => {
     if (cents <= 0) return setQuote(null);
     let live = true;
@@ -268,27 +298,68 @@ function Withdraw({ currency, max, disabled, onWithdraw }: { currency: string; m
     };
   }, [cents]);
   return (
-    <div className="stack" style={{ gap: 6 }}>
-    {quote && cents > 0 && (
-      <p className="small muted" style={{ margin: 0 }} data-testid="withdrawal-fee">
-        {t('money.fee', { fee: money(quote.feeCents, currency), pct: (quote.feeBps / 100).toFixed(0), min: money(quote.feeMinCents, currency), net: money(quote.netCents, currency) })}
-      </p>
-    )}
-    <div className="row">
-      <input
-        type="number"
-        min={0}
-        step="0.01"
-        aria-label={t('money.amountIn', { currency })}
-        placeholder={t('money.all', { amount: (max / 100).toFixed(2) })}
-        value={amount}
-        onChange={(e) => setAmount(e.target.value)}
-        style={{ maxWidth: 170 }}
-      />
-      <button className="btn" disabled={disabled || cents <= 0 || cents > max} onClick={() => (onWithdraw(cents), setAmount(''))}>
+    <div className="pg-withdraw-body">
+      <div className="field">
+        <span className="pg-wlabel">{t('wallet.sendTo')}</span>
+        {dest?.address ? (
+          <div className="pg-addr"><span className="small"><b>{dest.currencyName}</b></span><code className="num">{dest.address}</code><a className="small" href="#payout-address">{t('handover.change')}</a></div>
+        ) : (
+          <a className="small" href="#payout-address">{t('money.payoutAddress.none')}</a>
+        )}
+      </div>
+      <label className="field">
+        <span className="pg-wlabel">{t('money.amountIn', { currency })}</span>
+        <input
+          className="num"
+          type="number"
+          min={0}
+          step="0.01"
+          placeholder={t('money.all', { amount: (max / 100).toFixed(2) })}
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+        />
+      </label>
+      {quote && cents > 0 && (
+        <div className="pg-rows" data-testid="withdrawal-fee">
+          <div><span className="muted">{t('wallet.fee', { pct: (quote.feeBps / 100).toFixed(0), min: money(quote.feeMinCents, currency) })}</span><span className="num">{money(quote.feeCents, currency)}</span></div>
+          <div className="pg-total"><span>{t('wallet.youReceive')}</span><span className="pg-price">{money(quote.netCents, currency)}</span></div>
+        </div>
+      )}
+      <label className="check-row small">
+        <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} />
+        {t('wallet.checked')}
+      </label>
+      <button className="btn lg block" disabled={disabled || !checked || cents <= 0 || cents > max} onClick={() => (onWithdraw(cents), setAmount(''), setChecked(false))}>
         {t('money.withdrawAmount', { amount: money(cents, currency) })}
       </button>
     </div>
+  );
+}
+
+interface HistoryRow { id: string; at: string; what: string; href?: string; state: 'held' | 'released' | 'disputed' | 'sent' | 'pending' | 'failed'; label?: string; cents: number; currency: string; sign: number }
+
+function WalletHistory({ rows, currency }: { rows: HistoryRow[]; currency: string }) {
+  if (!rows.length) return <div className="card small muted">{t('wallet.noHistory')}</div>;
+  const chip = (r: HistoryRow) => {
+    const tone = r.state === 'held' || r.state === 'pending' ? 'held' : r.state === 'disputed' || r.state === 'failed' ? 'disputed' : 'released';
+    const label = r.label ?? t(`wallet.state.${r.state}` as MessageKey);
+    return <span className={cn('chip', tone)}><span className="chip-dot" aria-hidden />{label}</span>;
+  };
+  return (
+    <div className="card pg-htable">
+      <table className="data">
+        <thead><tr><th>{t('wallet.col.date')}</th><th>{t('wallet.col.what')}</th><th>{t('wallet.col.status')}</th><th className="text-end">{t('wallet.col.amount')}</th></tr></thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.id}>
+              <td className="muted small num">{fmtDate(r.at)}</td>
+              <td className="small">{r.href ? <a href={r.href}>{r.what}</a> : r.what}</td>
+              <td>{chip(r)}</td>
+              <td className={cn('num text-end', r.sign < 0 && 'muted')}><b>{r.sign < 0 ? '−' : '+'}{money(r.cents, r.currency ?? currency)}</b></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -297,26 +368,6 @@ const WSTATUS: Record<string, MessageKey> = {
   pending_approval: 'money.wstatus.pending_approval', processing: 'money.wstatus.processing', paid: 'money.wstatus.paid',
   failed: 'money.wstatus.failed', rejected: 'money.wstatus.rejected', pending: 'money.wstatus.pending',
 };
-
-function RecentWithdrawals({ refreshKey }: { refreshKey: string }) {
-  const [rows, setRows] = useState<any[]>([]);
-  useEffect(() => {
-    api<any[]>('/seller/withdrawals').then((r) => setRows(r.slice(0, 6))).catch(() => {});
-  }, [refreshKey]);
-  if (!rows.length) return null;
-  return (
-    <div className="small">
-      <div className="eyebrow" style={{ marginBottom: 4 }}>{t('money.recentWithdrawals')}</div>
-      {rows.map((w) => (
-        <div key={w.id} className="row spread" style={{ borderTop: '1px solid var(--rule)', padding: '6px 0' }}>
-          <span className="muted">{fmtDate(w.created_at)}{w.destination_currency ? ` · ${w.destination_currency.toUpperCase()}` : ''}</span>
-          <span className="mono">{money(Number(w.net_cents ?? w.amount_cents), w.currency)}</span>
-          <span className={cn('chip', w.status === 'paid' ? 'released' : ['failed', 'rejected'].includes(w.status) ? 'disputed' : 'held')}>{t(WSTATUS[w.status] ?? 'money.wstatus.pending')}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
 
 interface PayoutAddress { address: string | null; currency: string | null; currencyName: string | null; setAt: string | null; pending: { address: string; currency: string; since: string } | null; coins: Array<{ coin: string; name: string }> }
 

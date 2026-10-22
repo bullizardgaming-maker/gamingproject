@@ -99,7 +99,7 @@ const m: Messages = {
   'sell.f.choose': 'اختر…',
   'sell.f.description': 'الوصف',
   'sell.f.accountHint': 'بعد إنشاء عرض حساب، أرسل إثبات المالك الأصلي ليراه المشترون موثّقًا بدل عالي المخاطرة.',
-  'sell.f.create': 'أنشئ العرض',
+  'sell.f.create': 'انشر العرض',
   'money.hold.new': 'بائع جديد',
   'money.hold.established': 'بائع راسخ',
   'money.hold.trusted': 'بائع موثوق',

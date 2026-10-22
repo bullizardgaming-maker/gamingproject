@@ -23,7 +23,7 @@ test.describe('bundles', () => {
     const form = page.locator('form', { has: page.locator('input[name=title]') });
     await form.getByRole('checkbox', { name: /5,350 VP — NA region code/ }).check();
     await form.getByRole('checkbox', { name: /Galaxy Scout skin code/ }).check();
-    await page.getByRole('button', { name: 'Create listing' }).click();
+    await page.getByRole('button', { name: 'Publish offer' }).click();
     await expect(page.getByRole('row', { name: /VP \+ skin code starter pack/ }).getByText('Bundle')).toBeVisible();
   });
 });

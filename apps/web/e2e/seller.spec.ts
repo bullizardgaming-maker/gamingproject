@@ -20,7 +20,7 @@ test.describe('seller', () => {
     await page.locator('select[name="attr.server"]').selectOption('KR');
     await page.locator('select[name="attr.rank_from"]').selectOption('Silver');
     await page.locator('select[name="attr.rank_to"]').selectOption('Gold');
-    await page.getByRole('button', { name: 'Create listing' }).click();
+    await page.getByRole('button', { name: 'Publish offer' }).click();
     await expect(page.getByText('Silver → Gold in 3 days').first()).toBeVisible();
     await expect(page.getByRole('row', { name: /Silver → Gold in 3 days/ })).toContainText('buyers pay $28.09');
     await page.goto('/games/league-of-legends/boosting?attr.server=KR');
@@ -62,6 +62,7 @@ test.describe('seller', () => {
     await expect(page.getByRole('heading', { name: 'Commission invoices' })).toBeVisible();
     const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'PDF' }).first().click()]);
     expect(download.suggestedFilename()).toMatch(/\.pdf$/);
+    await page.getByLabel(/I checked the address and network/).check();
     await page.getByRole('button', { name: /^Withdraw \$/ }).click();
     await expect(page.getByText(/sent once the treasury approves/).first()).toBeVisible();
   });

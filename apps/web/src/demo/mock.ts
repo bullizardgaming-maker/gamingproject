@@ -299,7 +299,7 @@ export function payDemoOrder(orderId: string) {
 
 function orderSummary(o: any, as: 'buyer' | 'seller') {
   return {
-    id: o.id, offer_title: o.offer_title, game: o.game, amount_cents: o.amount_cents, currency: o.currency, status: o.status, created_at: o.created_at,
+    id: o.id, ref: o.ref, offer_title: o.offer_title, game: o.game, amount_cents: o.amount_cents, seller_net_cents: o.seller_net_cents, currency: o.currency, status: o.status, created_at: o.created_at,
     counterparty: userById(as === 'buyer' ? o.seller_id : o.buyer_id)?.display_name,
   };
 }

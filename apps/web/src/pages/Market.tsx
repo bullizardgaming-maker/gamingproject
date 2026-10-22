@@ -22,6 +22,8 @@ export interface Offer {
   status?: string;
   seller_trust_level?: 'new' | 'rising' | 'trusted' | 'top';
   seller_founding?: boolean;
+  /** Seller rank name (Hatchling … Dragon), when the API sends it. */
+  seller_rank?: string | null;
   featured?: boolean;
   is_bundle?: boolean;
   /** Account listings: warranty after escrow releases, in days (0 = none). */

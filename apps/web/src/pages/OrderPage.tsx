@@ -5,11 +5,12 @@ import { Chat } from '../components/Chat';
 import { AlsoBought } from '../components/AlsoBought';
 import { BoostProgress, type ProgressUpdate } from '../components/BoostProgress';
 import { BuyerCard, type BuyerRep, type BuyerTag } from '../components/BuyerReputation';
-import { EscrowTrack, formatRemaining, type TrackVariant } from '../components/EscrowTrack';
-import { CryptoCheckout, REFUND_COINS, RefundAddressForm } from '../components/CryptoCheckout';
+import { formatRemaining, type TrackVariant } from '../components/EscrowTrack';
+import { CheckoutSteps, CryptoCheckout, REFUND_COINS, RefundAddressForm } from '../components/CryptoCheckout';
+import { GameArt } from '../components/CatalogUi';
 import { DeliveryProof, type ProofAttachment } from '../components/DeliveryProof';
 import { useSession } from '../session';
-import { t } from '../i18n';
+import { intlLocale, t } from '../i18n';
 import { usePageMeta } from '@/lib/seo';
 
 interface OrderDetail {
@@ -283,39 +284,71 @@ export function OrderPage() {
   };
   const names = { [order.buyer_id]: order.buyer_name, [order.seller_id]: order.seller_name };
 
-  return (
-    <div className="stack">
-      <div className="row spread">
-        <div>
-          <div className="eyebrow mono" data-testid="order-ref">{order.ref ?? t('order.ref', { id: order.id.slice(0, 8) })} · {order.game}</div>
-          <h1 style={{ fontSize: 36 }}>{order.offer_title}{order.quantity > 1 ? ` ×${order.quantity}` : ''}</h1>
-          {order.character_name && (
-            <div className="small muted" data-testid="order-character">{order.handover_field?.label ?? t('order.character')}: <b className="mono">{order.character_name}</b></div>
-          )}
+  const at = (status: string) => order.events.find((e) => e.to_status === status)?.created_at;
+  const hm = (iso?: string | null) => (iso ? new Date(iso).toLocaleString(intlLocale(), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '');
+  const paid = !['awaiting_payment', 'cancelled'].includes(order.status);
+  const delivered = !!order.delivered_at || ['delivered', 'completed'].includes(order.status);
+  const done = order.status === 'completed';
+  const stopped = ['disputed', 'refunded', 'charged_back', 'cancelled'].includes(order.status) || order.escrow_frozen;
+  const steps: Array<{ label: string; sub?: string; state: 'done' | 'now' | 'stop' | '' }> = [
+    { label: t('order.step.paid'), sub: paid ? [money(order.amount_cents, order.currency), hm(at('paid'))].filter(Boolean).join(' · ') : undefined, state: paid ? 'done' : 'now' },
+    { label: order.proof_required || order.delivery_proof ? t('order.step.deliveredProof') : t('order.step.delivered'), sub: hm(order.delivered_at) || undefined, state: delivered ? 'done' : paid ? (stopped ? 'stop' : 'now') : '' },
+    { label: isBuyer ? t('order.step.youConfirm') : t('order.step.buyerConfirms'), sub: order.status === 'delivered' ? clock : undefined, state: done ? 'done' : delivered ? (stopped ? 'stop' : 'now') : '' },
+    { label: isSeller ? t('order.step.youPaid') : t('order.step.sellerPaid'), sub: done ? hm(at('completed')) || undefined : undefined, state: done ? 'done' : '' },
+  ];
+  const openDispute = () => {
+    const d = document.getElementById('order-dispute') as HTMLDetailsElement | null;
+    if (d) { d.open = true; d.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  };
+  const checkoutMode = order.status === 'awaiting_payment' && isBuyer && order.payment_provider === 'nowpayments';
+
+  if (checkoutMode) {
+    return (
+      <div className="stack pg-checkout">
+        <CheckoutSteps step={2} />
+        <div className="pg-split">
+          <CryptoCheckout base={`/orders/${order.id}`} amountCents={order.amount_cents} currency={order.currency} onPaid={load} />
+          <aside className="card pg-summary">
+            <p className="pg-label">{t('checkout.yourOrder')}</p>
+            <div className="flex items-center gap-3">
+              <GameArt game={order.game} size="sm" className="size-12 shrink-0 rounded-[10px]" />
+              <div className="min-w-0">
+                <b className="block">{order.offer_title}{order.quantity > 1 ? ` ×${order.quantity}` : ''}{order.character_name ? <> → <span className="num" data-testid="order-character">{order.character_name}</span></> : null}</b>
+                <span className="small muted">{order.game} · {order.seller_name}</span>
+              </div>
+            </div>
+            <div className="pg-rows">
+              <div><span className="muted">{t('checkout.price')}</span><span className="num">{money(order.amount_cents, order.currency)}</span></div>
+              <div className="pg-total"><span>{t('checkout.toPay')}</span><span className="pg-price">{money(order.amount_cents, order.currency)}</span></div>
+            </div>
+            <span className="small muted num" data-testid="order-ref">{order.ref ?? t('order.ref', { id: order.id.slice(0, 8) })}</span>
+            <p className="small muted" style={{ margin: 0 }}>
+              {t('checkout.rules', { link: '\u0000' }).split('\u0000')[0]}<Link to="/help/how-escrow-works">{t('checkout.rulesLink')}</Link>{t('checkout.rules', { link: '\u0000' }).split('\u0000')[1]}
+            </p>
+          </aside>
         </div>
-        <span className={`chip ${variant}`}>{statusText(order.status)}</span>
       </div>
+    );
+  }
 
-      <div className="card">
-        <EscrowTrack
-          amountCents={order.amount_cents}
-          stage={stage}
-          variant={variant}
-          elapsed={elapsed}
-          windowLabel={order.protection === 'insurance_14d' ? t('order.window14') : untilConfirmed ? t('order.windowConfirmed') : t('order.window72')}
-          clock={clock}
-        />
-        <p className="small muted" style={{ marginTop: 12 }}>
-          {isSeller
-            ? t('order.sellerNet', { net: money(order.seller_net_cents, order.currency), rate: (order.commission_bps / 100).toFixed(2), tier: order.seller_tier })
-            : order.status === 'awaiting_payment'
-              ? t('order.heldOnce', { amount: money(order.amount_cents, order.currency) })
-              : t('order.paidVia', { amount: money(order.amount_cents, order.currency), method: order.rail === 'crypto' ? t('order.rail.onchain') : order.payment_provider === 'nowpayments' ? t('order.rail.crypto') : t('order.rail.card') })}
-          {order.escrow_frozen && order.status !== 'disputed' && ` ${t('order.frozenNote')}`}{' '}
-          <Link to={`/support/new?category=order&order=${order.id}`}>{t('order.getHelp')}</Link>
-        </p>
+  return (
+    <div className="stack pg-order">
+      <div className="pg-order-head">
+        <div className="min-w-0">
+          <div className="small muted num" data-testid="order-ref">{order.ref ?? t('order.ref', { id: order.id.slice(0, 8) })}</div>
+          <h1 className="pg-h1" style={{ marginTop: 4 }}>{order.offer_title}{order.quantity > 1 ? ` ×${order.quantity}` : ''}</h1>
+          <div className="muted">
+            {order.game} · {isSeller ? t('order.forBuyer', { name: order.buyer_name }) : t('order.fromSeller', { name: order.seller_name })}
+            {order.character_name && (
+              <> · <span data-testid="order-character">{order.handover_field?.label ?? t('order.character')}: <b className="num">{order.character_name}</b></span></>
+            )}
+          </div>
+        </div>
+        <div className="pg-order-price">
+          <span className="pg-price">{money(order.amount_cents, order.currency)}</span>
+          <span className={`chip ${variant}`}><span className="chip-dot" aria-hidden />{statusText(order.status)}</span>
+        </div>
       </div>
-
       {error && <div className="alert" role="alert">{error}</div>}
       {handoverResult && (
         <div className={handoverResult === 'ok' ? 'notice' : 'alert'} role="status">
@@ -324,12 +357,51 @@ export function OrderPage() {
         </div>
       )}
 
-      <div className="order-layout">
+      <div className="order-layout pg-order-layout">
         <div className="stack">
           {order.status === 'awaiting_payment' && isBuyer && order.rail === 'crypto' && <CryptoDeposit orderId={order.id} />}
-          {order.status === 'awaiting_payment' && isBuyer && order.payment_provider === 'nowpayments' && (
-            <CryptoCheckout base={`/orders/${order.id}`} amountCents={order.amount_cents} currency={order.currency} onPaid={load} />
+          {order.delivery_proof && (
+            <div className="card">
+              <DeliveryProof proof={order.delivery_proof} />
+            </div>
           )}
+          <div className="card pg-track-card">
+            <ol className="pg-steps" aria-label={t('order.progress')}>
+              {steps.map((st) => (
+                <li key={st.label} className={st.state} aria-current={st.state === 'now' ? 'step' : undefined}>
+                  <i aria-hidden />
+                  <div><b>{st.label}</b>{st.sub && <span>{st.sub}</span>}</div>
+                </li>
+              ))}
+            </ol>
+            <div className="pg-track-actions">
+              {isBuyer && order.status === 'delivered' && order.rail === 'fiat' && (
+                <>
+                  {!checklistDone && handoverVerified && (
+                    <label className="small check-row">
+                      <input type="checkbox" checked={handoverConsent} onChange={(e) => setHandoverConsent(e.target.checked)} />
+                      {t('order.releaseEarly')}
+                    </label>
+                  )}
+                  <button className="btn release lg block" disabled={!canConfirm} onClick={() => act('confirm', handoverConsent ? { handoverConsent: true } : undefined)}>{t('order.confirmRelease')}</button>
+                  {!checklistDone && !handoverVerified && <p className="small muted" style={{ margin: 0 }}>{t('order.finishFirst')}</p>}
+                </>
+              )}
+              <p className="small muted" style={{ margin: 0 }}>
+                {isSeller
+                  ? t('order.sellerNet', { net: money(order.seller_net_cents, order.currency), rate: (order.commission_bps / 100).toFixed(2), tier: order.seller_tier })
+                  : order.status === 'awaiting_payment'
+                    ? t('order.heldOnce', { amount: money(order.amount_cents, order.currency) })
+                    : t('order.paidVia', { amount: money(order.amount_cents, order.currency), method: order.rail === 'crypto' ? t('order.rail.onchain') : order.payment_provider === 'nowpayments' ? t('order.rail.crypto') : t('order.rail.card') })}
+                {isBuyer && order.status === 'delivered' && ` ${t('order.working.text')}`}
+                {order.escrow_frozen && order.status !== 'disputed' && ` ${t('order.frozenNote')}`}
+              </p>
+              {(isBuyer || isSeller) && ['paid', 'delivered'].includes(order.status) && order.rail === 'fiat' && (
+                <button type="button" className="pg-wrong" onClick={openDispute}>{t('order.somethingWrong')}</button>
+              )}
+              <Link className="small muted" to={`/support/new?category=order&order=${order.id}`}>{t('order.getHelp')}</Link>
+            </div>
+          </div>
           {isBuyer && order.crypto_refund && <RefundAddressForm orderId={order.id} refund={order.crypto_refund} coins={REFUND_COINS} onDone={load} />}
           {isSeller && order.status === 'delivered' && untilConfirmed && (
             <div className="card stack">
@@ -426,29 +498,8 @@ export function OrderPage() {
               </button>
             </div>
           )}
-          {order.delivery_proof && (
-            <div className="card">
-              <DeliveryProof proof={order.delivery_proof} />
-            </div>
-          )}
-
-          {isBuyer && order.status === 'delivered' && order.rail === 'fiat' && (
-            <div className="card stack">
-              <h3>{t('order.working')}</h3>
-              <p className="small muted">{t('order.working.text')}</p>
-              {!checklistDone && handoverVerified && (
-                <label className="small">
-                  <input type="checkbox" checked={handoverConsent} onChange={(e) => setHandoverConsent(e.target.checked)} />{' '}
-                  {t('order.releaseEarly')}
-                </label>
-              )}
-              <button className="btn release" disabled={!canConfirm} onClick={() => act('confirm', handoverConsent ? { handoverConsent: true } : undefined)}>{t('order.confirmRelease')}</button>
-              {!checklistDone && !handoverVerified && <p className="small muted">{t('order.finishFirst')}</p>}
-            </div>
-          )}
-
           {(isBuyer || isSeller) && ['paid', 'delivered'].includes(order.status) && order.rail === 'fiat' && (
-            <details className="card">
+            <details className="card" id="order-dispute">
               <summary style={{ cursor: 'pointer' }}><b>{t('order.openDispute')}</b></summary>
               <div className="stack" style={{ marginTop: 12 }}>
                 <p className="small muted">{t('order.dispute.text')}</p>

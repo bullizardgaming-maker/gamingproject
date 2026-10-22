@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import QRCode from 'qrcode';
 import { api, money } from '../api';
 import { t } from '../i18n';
 
@@ -98,48 +99,52 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid }: { base: 
 
   if (!coins && payments.length === 0) return <div className="card"><p className="muted">{error || t('crypto.loading')}</p></div>;
   const owed = coins?.owedCents ?? amountCents - paidCents;
+  const ticker = (code: string) => code.toUpperCase().replace(/(.+)(TRC20|ERC20|BSC|SOL)$/, '$1');
+  const network = (name: string) => /\(([^)]+)\)/.exec(name)?.[1] ?? name;
 
   return (
-    <div className="card stack crypto-checkout">
-      <h3>{t('crypto.title')}</h3>
+    <div className="crypto-checkout pg-pay">
+      <h2 className="sr-only">{t('crypto.title')}</h2>
       {underpaid && !open && (
         <div className="alert" role="status">
           {t('crypto.underpaid', { received: money(paidCents, currency), short: money(owed, currency) })}
         </div>
       )}
       {open ? (
-        <div className="stack" style={{ gap: 8 }}>
-          <p className="small muted" style={{ margin: 0 }}>{t('crypto.sendExact')}</p>
-          <div className="row spread"><span className="muted">{t('crypto.coin')}</span><b>{open.pay_currency_name}</b></div>
-          <div className="row spread"><span className="muted">{t('crypto.amount')}</span><b className="mono" data-testid="pay-amount">{trim(open.pay_amount)} {open.pay_currency.toUpperCase().replace(/(TRC20|ERC20|BSC|SOL)$/, '')}</b></div>
-          <div className="row spread" style={{ alignItems: 'start', gap: 8 }}>
-            <span className="muted">{t('crypto.address')}</span>
-            <code className="mono" style={{ wordBreak: 'break-all', textAlign: 'end' }} data-testid="pay-address">{open.pay_address}</code>
+        <div className="card pg-qr-card">
+          <QrBox text={open.pay_address} />
+          <div className="pg-qr-info">
+            <div className="row spread">
+              <span className="small muted">{t('crypto.sendExactly')}</span>
+              <span className="chip held">{statusText(open.status)}{open.expires_at ? ` · ${t('crypto.rateLocked', { time: new Date(open.expires_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) })}` : ''}</span>
+            </div>
+            <b className="pg-pay-amount num" data-testid="pay-amount">{trim(open.pay_amount)} {ticker(open.pay_currency)}</b>
+            <span className="small muted">{t('crypto.onNetwork', { network: open.pay_currency_name })}</span>
+            <div className="pg-addr">
+              <code className="num" data-testid="pay-address">{open.pay_address}</code>
+              <button className="btn ghost sm" type="button" onClick={() => copy(open.pay_address)}>{copied ? t('crypto.copied') : t('crypto.copyAddress')}</button>
+            </div>
+            {open.pay_extra_id && <div className="pg-addr"><span className="small muted">{t('crypto.memo')}</span><code className="num">{open.pay_extra_id}</code></div>}
+            <button className="btn ghost sm" type="button" style={{ alignSelf: 'flex-start' }} onClick={() => copy(trim(open.pay_amount))}>{t('crypto.copyAmount')}</button>
+            <p className="small muted" style={{ margin: 0 }}>{t('crypto.sendExact')}</p>
           </div>
-          {open.pay_extra_id && <div className="row spread"><span className="muted">{t('crypto.memo')}</span><code className="mono">{open.pay_extra_id}</code></div>}
-          <div className="row" style={{ gap: 8 }}>
-            <button className="btn ghost" type="button" onClick={() => copy(open.pay_address)}>{copied ? t('crypto.copied') : t('crypto.copyAddress')}</button>
-            <button className="btn ghost" type="button" onClick={() => copy(trim(open.pay_amount))}>{t('crypto.copyAmount')}</button>
-          </div>
-          <p className="small" style={{ margin: 0 }}>
-            <span className="chip held">{statusText(open.status)}</span>
-            {open.expires_at && <span className="muted"> · {t('crypto.rateLocked', { time: new Date(open.expires_at).toLocaleTimeString() })}</span>}
-          </p>
         </div>
       ) : (
-        <div className="stack" style={{ gap: 8 }}>
-          <p className="small muted" style={{ margin: 0 }}>
-            {t('crypto.toPay', { amount: money(owed, currency) })}
-          </p>
+        <div className="card pg-coins">
+          <div className="row spread">
+            <h3 style={{ margin: 0 }}>{t('crypto.chooseCoin')}</h3>
+            <span className="small muted">{t('crypto.toPayShort', { amount: money(owed, currency) })}</span>
+          </div>
           {coins && coins.coins.length === 0 && <p className="small">{t('crypto.noCoin')}</p>}
-          <div className="coin-grid">
+          <div className="pg-coin-list">
             {coins?.coins.map((c) => (
-              <button key={c.coin} type="button" className="btn ghost coin-option" disabled={busy} onClick={() => pick(c.coin)}>
-                <b>{c.name}</b>
-                <span className="small muted">{c.coin.toUpperCase()}</span>
+              <button key={c.coin} type="button" className="pg-coin" disabled={busy} onClick={() => pick(c.coin)}>
+                <span className="pg-sym" aria-hidden>{ticker(c.coin).slice(0, 4)}</span>
+                <span className="min-w-0 flex-1"><b className="block">{c.name}</b><span className="small muted">{network(c.name)} · {t('crypto.minimum', { amount: money(Math.round(c.minUsd * 100), 'USD') })}</span></span>
               </button>
             ))}
           </div>
+          <p className="small muted" style={{ margin: 0 }}>{t('crypto.onlyFitting')}</p>
         </div>
       )}
       {payments.filter((p) => !OPEN.has(p.status)).length > 0 && (
@@ -154,6 +159,31 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid }: { base: 
       )}
       {error && <div className="alert" role="alert">{error}</div>}
     </div>
+  );
+}
+
+/** QR code for the deposit address (drawn locally, nothing leaves the page). */
+function QrBox({ text }: { text: string }) {
+  const [src, setSrc] = useState('');
+  useEffect(() => {
+    let live = true;
+    QRCode.toDataURL(text, { margin: 1, width: 296, color: { dark: '#0d131c', light: '#ffffff' } }).then((u) => live && setSrc(u)).catch(() => {});
+    return () => { live = false; };
+  }, [text]);
+  return <div className="pg-qr">{src && <img src={src} width={148} height={148} alt={t('crypto.qrAlt')} />}</div>;
+}
+
+/** Checkout steps: Confirm → Pay → Order. */
+export function CheckoutSteps({ step }: { step: 1 | 2 | 3 }) {
+  const labels = [t('checkout.step.confirm'), t('checkout.step.pay'), t('checkout.step.order')];
+  return (
+    <ol className="pg-stepper" aria-label={t('checkout.steps')}>
+      {labels.map((l, i) => (
+        <li key={l} className={i + 1 < step ? 'done' : i + 1 === step ? 'now' : ''} aria-current={i + 1 === step ? 'step' : undefined}>
+          <i aria-hidden>{i + 1 < step ? '✓' : i + 1}</i>{l}
+        </li>
+      ))}
+    </ol>
   );
 }
 

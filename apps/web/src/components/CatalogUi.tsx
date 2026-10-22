@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { Link } from 'react-router-dom';
 import { money } from '../api';
 import { Award, BadgeCheck, Coins, Gamepad2, Gift, KeyRound, Rocket, ShieldCheck, Smartphone, Star, Swords, UserRound, Video, Zap } from 'lucide-react';
@@ -5,6 +6,7 @@ import { categoryLabel, deliveryLabel, hueOf, initials, slugify } from '@/lib/ca
 import { cn } from '@/lib/utils';
 import { attributePairs } from '@/lib/attributes';
 import { usePrice } from '@/lib/prefs';
+import { unitPriceFor } from '@/lib/tiers';
 import type { Offer } from '../pages/Market';
 import { OnlineDot } from '@/lib/presence';
 import { t, type MessageKey } from '../i18n';
@@ -115,80 +117,79 @@ export function AttributeLine({ offer, className }: { offer: Pick<Offer, 'game' 
   );
 }
 
-export function OfferTable({ offers, showGame = false, showSeller = true, empty }: { offers: Offer[]; showGame?: boolean; showSeller?: boolean; empty?: React.ReactNode }) {
+export function OfferTable({ offers, showGame = false, showSeller = true, empty, amount }: { offers: Offer[]; showGame?: boolean; showSeller?: boolean; empty?: React.ReactNode; amount?: number }) {
   const price = usePrice();
   if (offers.length === 0) return <div className="card text-center text-muted-foreground">{empty ?? t('table.empty')}</div>;
+  const withTotal = amount != null;
+  const uid = useId();
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-card">
-      <div
-        className={cn(
-          'hidden border-b border-border bg-secondary/50 px-4 py-2.5 font-mono text-[11px] uppercase tracking-[0.1em] text-muted-foreground md:grid md:gap-4',
-          showSeller ? 'md:grid-cols-[minmax(0,2.4fr)_minmax(0,1.3fr)_90px_70px_120px]' : 'md:grid-cols-[minmax(0,3fr)_90px_70px_120px]',
-        )}
-      >
+    <div className={cn('lt', withTotal && 'lt-total')}>
+      <div className="lt-row lt-head" aria-hidden>
         <span>{t('table.offer')}</span>
-        {showSeller && <span>{t('table.seller')}</span>}
         <span>{t('table.delivery')}</span>
         <span>{t('table.stock')}</span>
-        <span className="text-end">{t('table.price')}</span>
+        <span className="text-end">{withTotal ? t('table.perUnit') : t('table.price')}</span>
+        <span className="text-end">{withTotal ? t('table.totalFor', { n: amount }) : ''}</span>
       </div>
       <ul className="m-0 list-none p-0">
-        {offers.map((o) => (
-          <li key={o.id} className="group relative border-b border-border/70 last:border-b-0 hover:bg-secondary/40">
-            <div
-              className={cn(
-                'grid grid-cols-[1fr_auto] gap-x-4 gap-y-2 px-4 py-3.5 md:items-center',
-                showSeller ? 'md:grid-cols-[minmax(0,2.4fr)_minmax(0,1.3fr)_90px_70px_120px]' : 'md:grid-cols-[minmax(0,3fr)_90px_70px_120px]',
-              )}
-            >
-              <div className="col-span-2 min-w-0 md:col-span-1">
-                {showGame && (
-                  <div className="mb-0.5 font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
-                    {o.game} · {categoryLabel(o.category_slug)}
-                  </div>
-                )}
-                <Link to={`/offers/${o.id}`} className="block font-medium leading-snug no-underline after:absolute after:inset-0 group-hover:underline">
-                  {o.title}
-                </Link>
+        {offers.map((o) => {
+          const qty = withTotal ? Math.min(amount!, Math.max(1, o.stock)) : 1;
+          const unit = withTotal ? unitPriceFor(o, qty) : o.price_cents;
+          const tooMany = withTotal && amount! > o.stock;
+          return (
+            <li key={o.id} className="lt-row group">
+              <div className="lt-offer">
+                {showGame && <div className="lt-game">{o.game} · {categoryLabel(o.category_slug)}</div>}
+                <Link id={`${uid}-${o.id}`} to={`/offers/${o.id}`} className="lt-title after:absolute after:inset-0">{o.title}</Link>
                 <AttributeLine offer={o} />
-                <ProtectionTag offer={o} />
-                {o.is_bundle && <span className="chip" style={{ marginInlineStart: 6 }}>{t('bundle.chip')}</span>}
-              </div>
-              {showSeller && (
-                <div className="relative z-[1] order-1 flex min-w-0 items-center gap-2.5 md:order-none">
-                  <Avatar name={o.seller_name} className="size-8 text-xs" />
-                  <div className="min-w-0">
-                    <span className="flex min-w-0 items-center gap-1.5">
-                      <Link to={`/sellers/${o.seller_id}`} className="block truncate text-sm font-medium no-underline hover:underline">{o.seller_name}</Link>
-                      {o.seller_online && <OnlineDot />}
-                    </span>
-                    {o.seller_trust_level && o.seller_trust_level !== 'new' && <TrustBadge level={o.seller_trust_level} className="mb-0.5 px-1.5 py-0.5 text-[10px]" />}
-                    {o.seller_founding && <FoundingBadge className="mb-0.5 px-1.5 py-0.5 text-[10px]" />}
+                {showSeller && (
+                  <div className="lt-seller">
+                    <Avatar name={o.seller_name} className="size-7 text-[11px]" />
+                    <Link to={`/sellers/${o.seller_id}`} className="lt-name">{o.seller_name}</Link>
+                    {o.seller_online && <OnlineDot />}
+                    {o.seller_rank && <RankPill name={o.seller_rank} />}
+                    {o.seller_trust_level && o.seller_trust_level !== 'new' && <TrustBadge level={o.seller_trust_level} />}
+                    {o.seller_founding && <FoundingBadge />}
                     <Rating value={o.seller_rating} count={o.seller_review_count} />
                   </div>
+                )}
+                <div className="lt-tags">
+                  <ProtectionTag offer={o} />
+                  {o.is_bundle && <span className="chip">{t('bundle.chip')}</span>}
+                  {o.featured && <span className="chip" data-testid="featured-chip"><Star className="size-3" /> {t('featured.chip')}</span>}
                 </div>
-              )}
-              <div className="order-3 col-span-2 flex items-center gap-3 md:order-none md:col-span-1 md:block">
-                {o.featured && <span className="chip held mb-1 px-1.5 py-0.5 text-[10px]" data-testid="featured-chip"><Star className="size-3" /> {t('featured.chip')}</span>}
-                <DeliveryTag offer={o as any} />
-                <span className="font-mono text-xs text-muted-foreground md:hidden">· {t('table.inStock', { n: o.stock })}</span>
               </div>
-              <span className="hidden font-mono text-sm text-muted-foreground md:block">{o.stock}</span>
-              <div className="order-2 flex flex-col items-end justify-center md:order-none">
+              <div className="lt-del"><DeliveryTag offer={o as any} /></div>
+              <span className="lt-stock"><span className="md:hidden">{t('table.stock')} </span><span className="num">{o.stock}</span></span>
+              <div className="lt-price">
                 {o.regular_price_cents != null && o.regular_price_cents > o.price_cents && (
-                  <span className="font-mono text-xs text-muted-foreground line-through">{money(o.regular_price_cents, o.currency)}</span>
+                  <span className="num text-xs text-muted-foreground line-through">{money(o.regular_price_cents, o.currency)}</span>
                 )}
-                <span className="font-mono text-base font-semibold">{price.offer(o as any)}</span>
+                <span className="num">{withTotal ? price.offer({ ...o, price_cents: unit, price_settlement_cents: null } as any) : price.offer(o as any)}</span>
                 {!!o.price_tiers?.length && (
-                  <span className="text-xs text-released">{t('tier.bulkFrom', { price: money(o.price_tiers.at(-1)!.priceCents, o.currency), qty: o.price_tiers.at(-1)!.minQty })}</span>
+                  <span className="text-xs text-muted-foreground">{t('tier.bulkFrom', { price: money(o.price_tiers.at(-1)!.priceCents, o.currency), qty: o.price_tiers.at(-1)!.minQty })}</span>
                 )}
               </div>
-            </div>
-          </li>
-        ))}
+              <div className="lt-buy">
+                {withTotal && (
+                  <b className="num" title={tooMany ? t('table.onlyStock', { n: o.stock }) : undefined}>
+                    {price.offer({ ...o, price_cents: unit * qty, price_settlement_cents: null } as any)}
+                    {tooMany && <span className="block text-xs font-normal text-muted-foreground">{t('table.onlyStock', { n: o.stock })}</span>}
+                  </b>
+                )}
+                <Link className="btn sm" to={withTotal ? `/offers/${o.id}?qty=${qty}` : `/offers/${o.id}`} aria-describedby={`${uid}-${o.id}`}>{t('table.buy')}</Link>
+              </div>
+            </li>
+          );
+        })}
       </ul>
     </div>
   );
+}
+
+/** Seller rank pill (Hatchling → Dragon). Only the top rank uses the accent. */
+export function RankPill({ name, className }: { name: string; className?: string }) {
+  return <span className={cn('rank', /dragon/i.test(name) && 'top', className)}>{name}</span>;
 }
 
 export function GameCard({ game, offers, min, categories }: { game: string; offers: number; min: number; categories: Array<{ slug: string; count: number }> }) {
@@ -238,18 +239,17 @@ export function TrustStrip({ className }: { className?: string }) {
 /** Founding Sellers opened their shop during the launch: the badge stays for good. */
 export function FoundingBadge({ className }: { className?: string }) {
   return (
-    <span className={cn('chip border-transparent bg-violet-500/15 text-violet-700 dark:text-violet-300', className)} title={t('founding.hint')} data-testid="founding-badge">
-      <Rocket className="size-3.5" /> {t('founding.badge')}
+    <span className={cn('rank', className)} title={t('founding.hint')} data-testid="founding-badge">
+      <Rocket className="size-3" aria-hidden /> {t('founding.badge')}
     </span>
   );
 }
 
 export function TrustBadge({ level, className }: { level?: string | null; className?: string }) {
   if (!level || level === 'new') return null;
-  const tone = level === 'top' ? 'border-transparent bg-amber-500/15 text-amber-700 dark:text-amber-300' : level === 'trusted' ? 'released' : 'held';
   return (
-    <span className={cn('chip', tone, className)} title={t(`trust.${level}.hint` as MessageKey)}>
-      <Award className="size-3.5" /> {t(`trust.${level}` as MessageKey)}
+    <span className={cn('rank', className)} title={t(`trust.${level}.hint` as MessageKey)}>
+      <Award className="size-3" aria-hidden /> {t(`trust.${level}` as MessageKey)}
     </span>
   );
 }

@@ -34,7 +34,7 @@ test.describe('seller onboarding', () => {
     await page.locator('input[name=price]').fill('6');
     await page.locator('select[name=deliveryMode]').selectOption('manual');
     await page.locator('select[name="attr.server"]').selectOption('Europe');
-    await page.getByRole('button', { name: 'Create listing' }).click();
+    await page.getByRole('button', { name: 'Publish offer' }).click();
     await expect(page.getByText('5M silver — Europe').first()).toBeVisible();
     await expect(page.getByTestId('id-deadline')).toContainText('Verify your identity by');
     await expect(page.getByTestId('seller-rate')).toContainText('Launch promo: 5%');

@@ -9,6 +9,7 @@ test.describe('price history and recommendations', () => {
     await expect(card).toBeVisible();
     const chart = card.getByRole('img', { name: /Price of this .* listing over 90 days/ });
     await expect(chart).toBeVisible();
+    await chart.scrollIntoViewIfNeeded();
     const box = (await chart.boundingBox())!;
     await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.5);
     await expect(card.locator('.pointer-events-none.absolute')).toContainText('$');

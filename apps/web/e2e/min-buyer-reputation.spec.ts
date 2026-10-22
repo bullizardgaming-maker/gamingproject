@@ -17,12 +17,12 @@ test('high-value listings can be limited to established buyers', async ({ page }
   await page.locator('select[name=deliveryMode]').selectOption('manual');
   await page.locator('select[name="attr.server"]').selectOption('Europe');
   await page.getByLabel('Established buyers only').check();
-  await page.getByRole('button', { name: 'Create listing' }).click();
+  await page.getByRole('button', { name: 'Publish offer' }).click();
   await expect(page.getByRole('alert')).toContainText('100 or more');
 
   await page.locator('input[name=title]').fill('Huge gold pack, 1M');
   await page.locator('input[name=price]').fill('250');
-  await page.getByRole('button', { name: 'Create listing' }).click();
+  await page.getByRole('button', { name: 'Publish offer' }).click();
   await expect(page.getByText('Huge gold pack, 1M').first()).toBeVisible();
   await page.goto('/games/albion-online/currency');
   await page.getByRole('link', { name: /Huge gold pack, 1M/ }).first().click();

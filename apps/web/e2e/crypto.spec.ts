@@ -6,7 +6,7 @@ test.describe('crypto money paths', () => {
     await signIn(page, 'Buyer');
     await page.goto('/offers/offer-1'); // Elden Ring key, $32.50 to the buyer
     await page.getByLabel(/I accept the Terms of Service/).check();
-    await page.getByRole('button', { name: /Pay .* into escrow/ }).click();
+    await page.getByRole('button', { name: /Buy now/ }).click();
     await page.waitForURL(/pay=crypto/);
     const checkout = page.locator('.crypto-checkout');
     await expect(checkout.getByRole('heading', { name: 'Pay with crypto' })).toBeVisible();
@@ -25,7 +25,7 @@ test.describe('crypto money paths', () => {
     await page.goto('/offers/offer-15'); // Diablo IV item, $12.50
     await fillCharacter(page);
     await page.getByLabel(/I accept the Terms of Service/).check();
-    await page.getByRole('button', { name: /Pay .* into escrow/ }).click();
+    await page.getByRole('button', { name: /Buy now/ }).click();
     await page.waitForURL(/pay=crypto/);
     const checkout = page.locator('.crypto-checkout');
     await expect(checkout.getByRole('button', { name: /Tether \(TRC-20\)/ })).toBeVisible();
@@ -62,7 +62,9 @@ test.describe('crypto money paths', () => {
     await expect(page.getByText('Payout address')).toBeVisible();
     await expect(page.getByText(/Tether \(TRC-20\)/).first()).toBeVisible();
     await page.getByLabel(/Amount in USD/).fill('20');
-    await expect(page.getByTestId('withdrawal-fee')).toContainText('Fee $1.50 (6%, minimum $1.50) · you receive $18.50');
+    await expect(page.getByTestId('withdrawal-fee')).toContainText('Fee (6%, minimum $1.50)$1.50');
+    await expect(page.getByTestId('withdrawal-fee')).toContainText('You receive$18.50');
+    await page.getByLabel(/I checked the address and network/).check();
     await page.getByRole('button', { name: 'Withdraw $20.00' }).click();
     await expect(page.getByText(/requested/).first()).toBeVisible();
     await expect(page.getByText('Awaiting approval').first()).toBeVisible();

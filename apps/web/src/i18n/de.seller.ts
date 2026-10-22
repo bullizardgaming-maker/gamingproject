@@ -99,7 +99,7 @@ const m: Messages = {
   'sell.f.choose': 'Auswählen…',
   'sell.f.description': 'Beschreibung',
   'sell.f.accountHint': 'Reiche nach dem Erstellen eines Account-Angebots den Erstbesitzer-Nachweis ein, damit Käufer es als verifiziert statt als riskant sehen.',
-  'sell.f.create': 'Angebot erstellen',
+  'sell.f.create': 'Angebot veröffentlichen',
   'money.hold.new': 'Neuer Verkäufer',
   'money.hold.established': 'Etablierter Verkäufer',
   'money.hold.trusted': 'Vertrauenswürdiger Verkäufer',
