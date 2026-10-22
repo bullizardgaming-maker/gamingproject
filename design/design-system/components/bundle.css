@@ -1,0 +1,68 @@
+@import url("https://fonts.googleapis.com/css2?family=Alexandria:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap");
+
+/* Bullizard component styles. Every colour comes from tokens.css, so both themes follow. */
+body { margin: 0; background: var(--frost); color: var(--ink); font: 16px/1.55 var(--font-inter); }
+.bz-stage { padding: 20px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.bz-col { display: flex; flex-direction: column; gap: 12px; }
+.bz-mono { font-family: var(--font-inter); font-variant-numeric: tabular-nums; }
+.bz-label { font: 500 12px/1.2 var(--font-inter); letter-spacing: .06em; text-transform: uppercase; color: var(--steel); }
+.bz-muted { color: var(--steel); }
+
+/* Button */
+.bz-btn { display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 18px; border-radius: var(--radius-md); border: 1px solid var(--ink); background: var(--ink); color: var(--paper); font: 600 15px/1 var(--font-inter); cursor: pointer; }
+.bz-btn:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.bz-btn.buy { background: var(--rune); border-color: var(--rune); color: var(--on-rune); }
+.bz-btn.release { background: var(--released); border-color: var(--released); color: var(--paper); }
+.bz-btn.dispute { background: transparent; border-color: var(--disputed); color: var(--disputed); }
+.bz-btn.ghost { background: transparent; border-color: var(--rule); color: var(--ink); }
+.bz-btn.sm { height: 34px; padding: 0 12px; font-size: 14px; }
+.bz-btn[disabled] { opacity: .45; cursor: not-allowed; }
+
+/* Escrow chip */
+.bz-chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: var(--radius-pill); font: 500 12px/1 var(--font-inter); border: 1px solid var(--rule); color: var(--steel); background: var(--paper); white-space: nowrap; }
+.bz-chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.bz-chip.held { background: var(--held-soft); color: var(--held-ink); border-color: transparent; }
+.bz-chip.released { background: var(--released-soft); color: var(--released-ink); border-color: transparent; }
+.bz-chip.disputed { background: var(--disputed-soft); color: var(--disputed-ink); border-color: transparent; }
+
+/* Seller badge: rank shown as filled pips, so it reads without colour */
+.bz-rank { display: inline-flex; align-items: center; gap: 8px; padding: 4px 10px 4px 8px; border-radius: var(--radius-pill); border: 1px solid var(--rule); background: var(--paper); font: 600 12px/1 var(--font-inter); white-space: nowrap; }
+.bz-pips { display: inline-flex; gap: 2px; }
+.bz-pips i { width: 4px; height: 12px; border-radius: 2px; background: var(--rule); }
+.bz-pips i.on { background: var(--rune); }
+.bz-rank.top { background: var(--rune-soft); border-color: transparent; color: var(--ink); }
+
+/* Card */
+.bz-card { background: var(--paper); border: 1px solid var(--rule); border-radius: var(--radius-md); padding: 20px; }
+
+/* Offer card: replaces the cramped table row; columns wrap instead of colliding */
+.bz-offer { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px 24px; align-items: center; background: var(--paper); border: 1px solid var(--rule); border-radius: var(--radius-md); padding: 18px 20px; transition: border-color 140ms ease-out; }
+.bz-offer:hover { border-color: var(--steel); }
+.bz-offer h4 { margin: 4px 0 8px; font: 600 17px/1.3 var(--font-inter); }
+.bz-meta { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; font-size: 14px; color: var(--steel); }
+.bz-seller { display: flex; align-items: center; gap: 8px; color: var(--ink); font-weight: 500; }
+.bz-avatar { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--raised); font: 600 12px/1 var(--font-inter); color: var(--ink); }
+.bz-buy { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.bz-price { font: 600 20px/1 var(--font-inter); font-variant-numeric: tabular-nums; }
+.bz-unit { font: 500 12px/1 var(--font-inter); color: var(--steel); }
+@media (max-width: 520px) { .bz-offer { grid-template-columns: 1fr; } .bz-buy { flex-direction: row; justify-content: space-between; align-items: center; } }
+
+/* Escrow track: the signature order timeline */
+.bz-track { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; }
+.bz-step { position: relative; padding-top: 30px; font-size: 14px; }
+.bz-step::before { content: ""; position: absolute; top: 10px; left: 0; right: 0; height: 3px; background: var(--rule); }
+.bz-step.done::before { background: var(--released); }
+.bz-step.now::before { background: linear-gradient(90deg, var(--held) 50%, var(--rule) 50%); }
+.bz-step .dot { position: absolute; top: 2px; left: 0; width: 19px; height: 19px; border-radius: 50%; background: var(--paper); border: 3px solid var(--rule); }
+.bz-step.done .dot { background: var(--released); border-color: var(--released); }
+.bz-step.now .dot { background: var(--held); border-color: var(--held); box-shadow: 0 0 0 5px var(--held-soft); }
+.bz-step b { display: block; font-weight: 600; color: var(--ink); }
+.bz-step span { color: var(--steel); font-size: 13px; }
+
+/* Fee preview */
+.bz-rows { display: grid; gap: 10px; }
+.bz-row { display: flex; justify-content: space-between; gap: 16px; font-size: 14px; }
+.bz-row .bz-mono { color: var(--ink); }
+.bz-row.total { border-top: 1px dashed var(--rule); padding-top: 12px; font-weight: 600; font-size: 16px; }
+.bz-promo { display: flex; gap: 8px; align-items: center; background: var(--rune-soft); color: var(--ink); padding: 10px 12px; border-radius: var(--radius-sm); font-size: 13px; }
+.bz-input { display: flex; align-items: center; height: 48px; border: 1px solid var(--rule); background: var(--field); border-radius: var(--radius-md); padding: 0 14px; gap: 8px; font: 600 18px/1 var(--font-inter); }

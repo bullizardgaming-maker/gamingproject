@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Checkout: pay with crypto</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="desk.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alexandria:wght@400;500;600;700;800&amp;family=Inter:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+.coin{display:flex;align-items:center;gap:12px;width:100%;min-height:58px;padding:0 16px;border:1px solid #2a3749;border-radius:10px;background:transparent;color:#eef1f5;font:inherit;text-align:start;cursor:pointer}
+.coin:hover{border-color:#9aa8bb}
+.coin.on{border:2px solid #eef1f5;padding:0 15px}
+.coin[disabled]{opacity:.45;cursor:not-allowed}
+.sym{width:34px;height:34px;border-radius:50%;background:#1f2b3c;display:grid;place-items:center;font:700 11px/1 Inter,sans-serif;flex:none}
+.stepper{display:flex;gap:28px;font-size:14px}
+.stepper span{display:flex;align-items:center;gap:8px;color:#9aa8bb}
+.stepper i{width:24px;height:24px;border-radius:50%;border:2px solid #2a3749;display:grid;place-items:center;font:700 12px/1 Inter,sans-serif;font-style:normal}
+.stepper .done i{background:#eef1f5;border-color:#eef1f5;color:#0d131c}
+.stepper .now{color:#eef1f5}
+.stepper .now i{border-color:#eef1f5}
+.qr{width:180px;height:180px;border-radius:10px;background:#fff;display:grid;place-items:center;flex:none}
+</style>
+</helmet>
+<div class="page">
+  <header class="hdr">
+    <div class="wrap">
+      <a class="lockup" href="Main.dc.html" aria-label="Bullizard home"><img class="m" src="/_blob/d461cb998749e4371beb7ed500b0e30c" alt=""><img class="w" src="/_blob/b7b3ba7993b820b7d9f9b0c8287e262c" alt=""></a>
+      <div class="hdr-r">
+        <span class="small muted" style="display: flex; align-items: center; gap: 8px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 8 0v3"></path></svg>Secure checkout</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap" style="padding-block: 32px 64px; display: flex; flex-direction: column; gap: 28px;">
+    <div class="stepper" aria-label="Checkout steps"><span class="done"><i>✓</i>Confirm</span><span class="now"><i>2</i>Pay</span><span><i>3</i>Order</span></div>
+
+    <div style="display: flex; gap: 32px; align-items: flex-start; flex-wrap: wrap;">
+      <section style="flex: 999 1 600px; min-width: 0; display: flex; flex-direction: column; gap: 20px;">
+        <div class="card" style="display: flex; flex-direction: column; gap: 12px;">
+          <div class="row"><h2 class="h3">Choose a coin</h2><span class="chip held"><span class="num">Rate locked 19:42</span></span></div>
+          <sc-for list="{{coins}}" as="c" hint-placeholder-count="5">
+            <button class="{{c.cls}}" onClick="{{c.pick}}" disabled="{{c.off}}">
+              <span class="sym">{{c.sym}}</span>
+              <span style="flex: 1; min-width: 0;"><b style="display: block;">{{c.name}}</b><span class="small muted">{{c.net}}</span></span>
+              <span class="num small">{{c.amount}}</span>
+            </button>
+          </sc-for>
+        </div>
+
+        <div class="card" style="display: flex; gap: 28px; align-items: center;">
+          <div class="qr" role="img" aria-label="Payment QR code">
+            <svg width="148" height="148" viewBox="0 0 7 7" shape-rendering="crispEdges" aria-hidden="true"><path fill="#0d131c" d="M0 0h3v3H0zM4 0h3v3H4zM0 4h3v3H0zM1 1v1h1V1zM5 1v1h1V1zM1 5v1h1V5zM4 4h1v1H4zM6 4h1v2H6zM4 6h2v1H4zM5 5h1v1H5zM3 3h1v1H3zM3 0h1v1H3zM3 5h1v2H3z"></path></svg>
+          </div>
+          <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px;">
+            <span class="small muted">Send exactly</span>
+            <span class="price-lg">{{amount}}</span>
+            <span class="small muted">on the {{net}} network only</span>
+            <div style="display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--raised); border-radius: var(--r);">
+              <span class="num small" style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">[Deposit address from NOWPayments]</span>
+              <button class="btn sm ghost">Copy</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <aside class="card" style="flex: 1 1 320px; max-width: 380px; display: flex; flex-direction: column; gap: 16px;">
+        <p class="label">Your order</p>
+        <div style="display: flex; gap: 12px; align-items: center;">
+          <div style="width: 48px; height: 48px; border-radius: 10px; background: var(--raised); display: grid; place-items: center; font: 800 14px/1 var(--font-display); color: var(--steel);">AO</div>
+          <div><b>30M Silver → Kaelthar</b><div class="small muted">Albion Online · Europe · NorthWind</div></div>
+        </div>
+        <div class="rows">
+          <div class="row"><span class="muted">Price</span><span class="num">$31.58</span></div>
+          <div class="row"><span class="muted">From your balance</span><span class="num">$0.00</span></div>
+          <div class="row total"><span>To pay</span><span class="price">$31.58</span></div>
+        </div>
+        <a class="btn block" href="Order.dc.html">I've sent the payment</a>
+        <span class="small muted">By paying you accept the <a href="#">trading rules</a>.</span>
+      </aside>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1920,"height":1040}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { coin: 'USDT' }; }
+  renderVals() {
+    const list = [
+      { sym: 'USDT', name: 'Tether', net: 'TRC-20', amount: '31.58 USDT' },
+      { sym: 'USDC', name: 'USD Coin', net: 'Polygon', amount: '31.58 USDC' },
+      { sym: 'LTC', name: 'Litecoin', net: 'Litecoin', amount: '[LTC amount]' },
+      { sym: 'TRX', name: 'Tron', net: 'TRC-20', amount: '[TRX amount]' },
+      { sym: 'BTC', name: 'Bitcoin', net: 'Minimum is above this order', amount: '', off: true }
+    ];
+    const cur = list.find((c) => c.sym === this.state.coin) || list[0];
+    return {
+      amount: cur.amount,
+      net: cur.net,
+      coins: list.map((c) => Object.assign({}, c, {
+        off: !!c.off,
+        cls: c.sym === this.state.coin ? 'coin on' : 'coin',
+        pick: () => { if (!c.off) this.setState({ coin: c.sym }); }
+      }))
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+{
+  "v": 3,
+  "createdOnFiles": { "v": 1, "at": "2026-10-22T06:10:00Z" },
+  "title": "Bullizard Brand Identity",
+  "launch": { "view": "canvas" },
+  "pages": [],
+  "boards": {
+    "Main.dc.html": { "x": 0, "y": 0, "w": 1280, "h": 800, "title": "The mark" },
+    "Lockups.dc.html": { "x": 1360, "y": 0, "w": 1280, "h": 800, "title": "Lockups, app icon, favicon (EN + AR)" },
+    "Ranks.dc.html": { "x": 0, "y": 920, "w": 1280, "h": 800, "title": "Ranks: Hatchling to Dragon + Founding Seller" },
+    "Motion.dc.html": { "x": 1360, "y": 920, "w": 1280, "h": 800, "title": "Signature motion: the eye", "is_interactive": true },
+    "Palette.dc.html": { "x": 0, "y": 1840, "w": 1280, "h": 800, "title": "Colour and type" }
+  },
+  "order": ["Main.dc.html", "Lockups.dc.html", "Ranks.dc.html", "Motion.dc.html", "Palette.dc.html"],
+  "notes": {
+    "title": { "x": 0, "y": -260, "text": "Bullizard identity", "kind": "title1", "maxW": 2640 }
+  },
+  "designSystems": [
+    { "title": "Bullizard", "namespace": "bullizard", "artifact": "https://claude.ai/code/artifact/7cc67169-de88-492b-9c55-1c3ddfd1e887", "version": null, "copiedAt": "2026-10-22T06:10:00Z" }
+  ]
+}

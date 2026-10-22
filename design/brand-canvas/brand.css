@@ -1,0 +1,32 @@
+/* Bullizard tokens (design system tokens.json) for the identity boards. One family: Alexandria (Latin + Arabic). */
+:root, .frost {
+  --frost:#eef1f5; --paper:#f8fafc; --raised:#e2e7ee; --field:#ffffff; --ink:#16202e; --steel:#4f5e75; --rule:#cfd6e0;
+  --rune:#4bae24; --rune-soft:#e4f3dd; --on-rune:#0d131c;
+  --held:#d98e04; --held-soft:#fbefd6; --held-ink:#8a5a00;
+  --released:#0b7166; --released-soft:#d8f0ec; --released-ink:#075e55;
+  --disputed:#a82d61; --disputed-soft:#f6dde8; --disputed-ink:#8f2252;
+  --font-display:"Alexandria","Segoe UI",system-ui,sans-serif;
+  --font-body:"Inter","Alexandria","Segoe UI",system-ui,sans-serif;
+  --font-ar:"Alexandria","Segoe UI",system-ui,sans-serif;
+  --font-mono:"Inter","Alexandria","Segoe UI",system-ui,sans-serif;
+}
+.night {
+  --frost:#0d131c; --paper:#16202e; --raised:#1f2b3c; --field:#111925; --ink:#eef1f5; --steel:#9aa8bb; --rule:#2a3749;
+  --rune:#77bd77; --rune-soft:#2c4620; --on-rune:#0d131c;
+  --held:#f0a92a; --held-soft:#3a2c0c; --held-ink:#f6c76a;
+  --released:#5fd3c4; --released-soft:#123a37; --released-ink:#8fe3d8;
+  --disputed:#e0608f; --disputed-soft:#3d1a2a; --disputed-ink:#f39bbb;
+}
+.board { box-sizing:border-box; background:var(--frost); color:var(--ink); font:16px/1.6 var(--font-body); padding:64px; display:flex; flex-direction:column; gap:40px; overflow:hidden; }
+.eyebrow { margin:0; font:600 12px/1.2 var(--font-body); letter-spacing:.06em; text-transform:uppercase; color:var(--steel); }
+.title { margin:0; font:800 40px/1.1 var(--font-display); letter-spacing:-.03em; }
+.lede { margin:0; max-width:60ch; color:var(--steel); font-size:16px; }
+.panel { background:var(--paper); border:1px solid var(--rule); border-radius:10px; }
+.wordmark { font:800 40px/1 var(--font-display); letter-spacing:-.03em; }
+.wordmark-ar { font:800 38px/1.2 var(--font-ar); }
+.logo { display:inline-flex; align-items:center; gap:.4em; line-height:1; color:var(--ink); }
+.logo .eye { height:1.25em; width:auto; flex:none; }
+.logo .wm-svg { height:1em; width:auto; flex:none; }
+.mono { font-family:var(--font-mono); font-variant-numeric:tabular-nums; }
+.small { font-size:14px; }
+.muted { color:var(--steel); }

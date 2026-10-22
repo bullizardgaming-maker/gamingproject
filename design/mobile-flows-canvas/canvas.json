@@ -1,0 +1,243 @@
+{
+  "v": 3,
+  "attachments": {},
+  "boards": {
+    "GameDesktop.dc.html": {
+      "expand": "fill",
+      "h": 1360,
+      "is_interactive": true,
+      "title": "Game page · Albion Online · desktop",
+      "w": 1440,
+      "x": 0,
+      "y": 5320
+    },
+    "GameMobile.dc.html": {
+      "h": 1360,
+      "title": "Game page · Path of Exile 2 · mobile",
+      "w": 390,
+      "x": 1520,
+      "y": 5320
+    },
+    "HomeDesktop.dc.html": {
+      "expand": "fill",
+      "h": 1720,
+      "title": "Home · desktop",
+      "w": 1440,
+      "x": 0,
+      "y": 3220
+    },
+    "HomeMobile.dc.html": {
+      "h": 1560,
+      "title": "Home · mobile EN",
+      "w": 390,
+      "x": 1520,
+      "y": 3220
+    },
+    "HomeMobileAR.dc.html": {
+      "h": 1560,
+      "title": "Home · mobile AR (RTL)",
+      "w": 390,
+      "x": 1990,
+      "y": 3220
+    },
+    "Main.dc.html": {
+      "h": 900,
+      "title": "Checkout · confirm & pay",
+      "w": 390,
+      "x": 0,
+      "y": 0
+    },
+    "OnbDone.dc.html": {
+      "h": 900,
+      "title": "Seller onboarding · passed + ID reminder",
+      "w": 390,
+      "x": 470,
+      "y": 7060
+    },
+    "OnbTest.dc.html": {
+      "h": 900,
+      "is_interactive": true,
+      "title": "Seller onboarding · rules test",
+      "w": 390,
+      "x": 0,
+      "y": 7060
+    },
+    "OrderBuyer.dc.html": {
+      "h": 1040,
+      "title": "Order · buyer confirms",
+      "w": 390,
+      "x": 1060,
+      "y": 0
+    },
+    "OrderChat.dc.html": {
+      "h": 1000,
+      "title": "Order chat · safety panel + official order message",
+      "w": 390,
+      "x": 3650,
+      "y": 0
+    },
+    "OrderSeller.dc.html": {
+      "h": 1040,
+      "title": "Order · seller uploads proof",
+      "w": 390,
+      "x": 1530,
+      "y": 0
+    },
+    "Pay.dc.html": {
+      "h": 900,
+      "is_interactive": true,
+      "title": "Checkout · send crypto",
+      "w": 390,
+      "x": 470,
+      "y": 0
+    },
+    "PromoBanner.dc.html": {
+      "h": 400,
+      "title": "Launch promo · buyers banner (1200×400)",
+      "w": 1200,
+      "x": 1160,
+      "y": 1760
+    },
+    "PromoSquare.dc.html": {
+      "h": 1080,
+      "title": "Launch promo · sellers (1080²)",
+      "w": 1080,
+      "x": 0,
+      "y": 1760
+    },
+    "RanksMobile.dc.html": {
+      "h": 1300,
+      "title": "Ranks & badges · seller view",
+      "w": 390,
+      "x": 940,
+      "y": 7060
+    },
+    "Sell.dc.html": {
+      "h": 1320,
+      "is_interactive": true,
+      "title": "Sell form · buyer-price preview",
+      "w": 390,
+      "x": 2120,
+      "y": 0
+    },
+    "Underpaid.dc.html": {
+      "h": 900,
+      "title": "Checkout · underpayment (rest kept in balance)",
+      "w": 390,
+      "x": 3180,
+      "y": 0
+    },
+    "Wallet.dc.html": {
+      "h": 940,
+      "is_interactive": true,
+      "title": "Wallet · withdraw",
+      "w": 390,
+      "x": 2590,
+      "y": 0
+    }
+  },
+  "createdOnFiles": {
+    "at": "2026-10-21T23:45:00Z",
+    "v": 1
+  },
+  "designSystems": [
+    {
+      "artifact": "https://claude.ai/code/artifact/7cc67169-de88-492b-9c55-1c3ddfd1e887",
+      "copiedAt": "2026-10-21T23:45:00Z",
+      "namespace": "bullizard",
+      "title": "Bullizard",
+      "version": "1792625372-1aec"
+    }
+  ],
+  "launch": {
+    "view": "canvas"
+  },
+  "notes": {
+    "checkout": {
+      "kind": "title1",
+      "maxW": 860,
+      "text": "Checkout",
+      "w": 240,
+      "x": 0,
+      "y": -260
+    },
+    "game": {
+      "kind": "title1",
+      "maxW": 1910,
+      "text": "Game page",
+      "w": 240,
+      "x": 0,
+      "y": 5060
+    },
+    "home": {
+      "kind": "title1",
+      "maxW": 2380,
+      "text": "Home",
+      "w": 240,
+      "x": 0,
+      "y": 2960
+    },
+    "onb": {
+      "kind": "title1",
+      "maxW": 1330,
+      "text": "Seller onboarding and ranks",
+      "w": 240,
+      "x": 0,
+      "y": 6800
+    },
+    "order": {
+      "kind": "title1",
+      "maxW": 860,
+      "text": "Order page",
+      "w": 240,
+      "x": 1060,
+      "y": -260
+    },
+    "promo": {
+      "kind": "title1",
+      "maxW": 2360,
+      "text": "Launch promo",
+      "w": 240,
+      "x": 0,
+      "y": 1500
+    },
+    "sell": {
+      "kind": "title1",
+      "maxW": 860,
+      "text": "Seller",
+      "w": 240,
+      "x": 2120,
+      "y": -260
+    },
+    "states": {
+      "kind": "title1",
+      "maxW": 860,
+      "text": "Edge states",
+      "w": 240,
+      "x": 3180,
+      "y": -260
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "Pay.dc.html",
+    "OrderBuyer.dc.html",
+    "OrderSeller.dc.html",
+    "Sell.dc.html",
+    "Wallet.dc.html",
+    "Underpaid.dc.html",
+    "OrderChat.dc.html",
+    "PromoSquare.dc.html",
+    "PromoBanner.dc.html",
+    "HomeDesktop.dc.html",
+    "HomeMobile.dc.html",
+    "HomeMobileAR.dc.html",
+    "GameDesktop.dc.html",
+    "GameMobile.dc.html",
+    "OnbTest.dc.html",
+    "OnbDone.dc.html",
+    "RanksMobile.dc.html"
+  ],
+  "pages": [],
+  "title": "Bullizard Core Flows"
+}

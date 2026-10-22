@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Offer: 30M Albion silver from NorthWind</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="desk.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alexandria:wght@400;500;600;700;800&amp;family=Inter:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+.kv{display:grid;grid-template-columns:160px minmax(0,1fr);gap:12px 16px;font-size:14px}
+.kv dt{color:#9aa8bb}
+.kv dd{margin:0}
+.review{display:flex;flex-direction:column;gap:6px;padding-block:16px;border-top:1px solid #2a3749}
+.saved{display:flex;align-items:center;gap:12px;padding:12px;border:2px solid #eef1f5;border-radius:10px}
+</style>
+</helmet>
+<div class="page">
+  <header class="hdr">
+    <div class="wrap">
+      <a class="lockup" href="Main.dc.html" aria-label="Bullizard home"><img class="m" src="/_blob/d461cb998749e4371beb7ed500b0e30c" alt=""><img class="w" src="/_blob/b7b3ba7993b820b7d9f9b0c8287e262c" alt=""></a>
+      <nav class="nav" aria-label="Main"><a class="on" href="Game.dc.html">Currency</a><a href="#">Items</a><a href="#">Top-ups</a></nav>
+      <div class="hdr-r">
+        <button class="pill" aria-label="Region and currency">EG · EGP</button>
+        <a class="ibtn" href="Messages.dc.html" aria-label="Messages"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z"></path></svg></a>
+        <a class="btn sm ghost" href="Sell.dc.html">Create offer</a>
+        <span class="avatar">EJ</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap" style="padding-block: 32px 64px; display: flex; gap: 32px; align-items: flex-start; flex-wrap: wrap;">
+    <section style="flex: 999 1 600px; min-width: 0; display: flex; flex-direction: column; gap: 20px;">
+      <nav class="small muted" aria-label="Breadcrumb"><a href="Main.dc.html" style="color: var(--steel);">Home</a> / <a href="Game.dc.html" style="color: var(--steel);">Albion Online</a> / Silver · Europe</nav>
+      <h1 class="h1" style="font-size: 36px;">Albion Online Silver · Europe</h1>
+
+      <div class="card" style="display: flex; align-items: center; gap: 16px;">
+        <span class="avatar" style="width: 52px; height: 52px; font-size: 16px;">NW</span>
+        <div style="flex: 1; display: flex; flex-direction: column; gap: 6px;">
+          <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;"><b style="font-size: 17px;">NorthWind</b><span class="rank">Fang</span><span class="rank">Founding</span><span class="small muted">· Online</span></div>
+          <span class="small muted num">★ 4.90 · 190 orders · member since 2026</span>
+        </div>
+        <a class="btn sm ghost" href="#">Seller profile</a>
+      </div>
+
+      <div class="card">
+        <p class="label" style="margin-bottom: 16px;">Offer</p>
+        <dl class="kv" style="margin: 0;">
+          <dt>Server</dt><dd>Europe</dd>
+          <dt>How it's delivered</dt><dd>Face-to-face trade, Caerleon market</dd>
+          <dt>Delivery time</dt><dd>About 30 minutes</dd>
+          <dt>In stock</dt><dd class="num">820M</dd>
+          <dt>Seller's note</dt><dd>Online 10:00–02:00 CET. Send a trade request to NorthWind.</dd>
+        </dl>
+      </div>
+
+      <div class="card" style="padding-block: 20px 4px;">
+        <div class="row"><p class="label">Reviews</p><span class="small muted num">★ 4.90 from 190 orders</span></div>
+        <div class="review"><div class="row"><b class="small">Fast and clean, delivered in 12 min</b><span class="small muted">2 days ago</span></div><span class="small muted">Albion silver · 50M</span></div>
+        <div class="review"><div class="row"><b class="small">Video proof was clear, smooth trade</b><span class="small muted">5 days ago</span></div><span class="small muted">Albion silver · 20M</span></div>
+      </div>
+    </section>
+
+    <aside class="card" style="flex: 1 1 340px; max-width: 380px; display: flex; flex-direction: column; gap: 18px; position: sticky; top: 16px;">
+      <div class="field">
+        <label for="qty">Amount</label>
+        <div style="display: flex; align-items: center; gap: 8px;"><input id="qty" class="input num" type="number" min="1" value="{{qtyRaw}}" onChange="{{setQty}}"><b>M</b></div>
+      </div>
+      <div class="field">
+        <label>Deliver to</label>
+        <div class="saved">
+          <span class="avatar" style="width: 32px; height: 32px;">K</span>
+          <div style="flex: 1;"><b>Kaelthar</b><div class="small muted">Europe</div></div>
+          <button class="linkbtn" style="color: var(--steel);">Change</button>
+        </div>
+      </div>
+      <div class="rows">
+        <div class="row"><span class="muted">Per 1M</span><span class="num">$1.053</span></div>
+        <div class="row total"><span>Total</span><span class="price">{{total}}</span></div>
+      </div>
+      <a class="btn go block" href="Checkout.dc.html">Buy now</a>
+      <span class="small muted" style="display: flex; gap: 8px; align-items: center;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8-8 9c-4.6-1-8-4.5-8-9V6z"></path></svg>Held until you confirm delivery.</span>
+    </aside>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1920,"height":1160}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { qty: '30' }; }
+  renderVals() {
+    const q = Math.max(1, parseFloat(this.state.qty) || 1);
+    return {
+      qtyRaw: this.state.qty,
+      total: '$' + (Math.ceil((q / 0.95) * 100) / 100).toFixed(2),
+      setQty: (e) => this.setState({ qty: e.target.value })
+    };
+  }
+}
+</script>
+</body>
+</html>

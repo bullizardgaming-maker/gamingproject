@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bullizard home</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="desk.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alexandria:wght@400;500;600;700;800&amp;family=Inter:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+.hero{position:relative;background:#080c12 url(/_blob/f9b31c95077d83bbf6fe5ce3994acb64) right top/cover no-repeat;}
+.hero::before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,#080c12 0%,#080c12 34%,rgba(8,12,18,.72) 52%,rgba(8,12,18,0) 74%);}
+.hero::after{content:"";position:absolute;left:0;right:0;bottom:0;height:120px;background:linear-gradient(0deg,#0d131c,rgba(13,19,28,0));}
+.big-search{display:flex;align-items:center;gap:12px;height:58px;padding:0 10px 0 18px;border:1px solid #2a3749;border-radius:12px;background:rgba(17,25,37,.92);max-width:640px;}
+.big-search input{flex:1;border:0;outline:0;background:transparent;color:#eef1f5;font:500 16px/1 Inter,system-ui,sans-serif;min-width:0;}
+.kbd{display:grid;place-items:center;width:28px;height:28px;border:1px solid #2a3749;border-radius:6px;color:#9aa8bb;font:600 13px/1 Inter,sans-serif;}
+.tile{position:relative;display:flex;flex-direction:column;justify-content:flex-end;gap:6px;aspect-ratio:4/5;padding:18px;border-radius:10px;background:#16202e;border:1px solid #2a3749;text-decoration:none;color:#eef1f5;overflow:hidden;transition:border-color 140ms ease-out;}
+.tile:hover{border-color:#9aa8bb;}
+.tile .art{position:absolute;inset:0 0 42% 0;display:grid;place-items:center;background:#1f2b3c;color:#9aa8bb;font:600 12px/1.3 Inter,sans-serif;text-align:center;padding:12px;}
+.tile b{font:700 18px/1.2 Alexandria,sans-serif;}
+.trust{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:32px;}
+.trust > div{display:grid;grid-template-columns:22px minmax(0,1fr);gap:4px 12px;align-items:start;}
+.trust svg{grid-row:span 2;margin-top:2px;}
+@media (max-width:900px){.trust{grid-template-columns:repeat(2,minmax(0,1fr));}}
+.grow{position:relative;min-height:300px;border-radius:14px;border:1px solid #2a3749;overflow:hidden;background:#080c12 right top/cover no-repeat;display:flex;align-items:center;transition:border-color 140ms ease-out;}
+.grow:hover{border-color:#9aa8bb;}
+.grow::before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,#080c12 0%,rgba(8,12,18,.9) 38%,rgba(8,12,18,.2) 70%,rgba(8,12,18,0) 100%);}
+.grow-in{position:relative;z-index:1;display:flex;flex-direction:column;align-items:flex-start;gap:14px;padding:36px;max-width:56%;}
+.grow-h{margin:0;font:700 30px/1.15 Alexandria,sans-serif;letter-spacing:-.01em;color:#eef1f5;}
+.founding{display:inline-flex;align-items:center;gap:8px;font:600 12px/1 Inter,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#9aa8bb;}
+</style>
+</helmet>
+<div class="page">
+  <header class="hdr">
+    <div class="wrap wide">
+      <a class="lockup" href="Main.dc.html" aria-label="Bullizard home"><img class="m" src="/_blob/d461cb998749e4371beb7ed500b0e30c" alt=""><img class="w" src="/_blob/b7b3ba7993b820b7d9f9b0c8287e262c" alt=""></a>
+      <nav class="nav" aria-label="Main"><a href="Game.dc.html">Currency</a><a href="#">Items</a><a href="#">Top-ups</a></nav>
+      <div class="hdr-r">
+        <button class="pill" aria-label="Region and currency">EG · EGP</button>
+        <button class="pill" lang="ar">عربي</button>
+        <a class="ibtn" href="Messages.dc.html" aria-label="Messages, 3 unread"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z"></path></svg><span class="dot">3</span></a>
+        <button class="ibtn" aria-label="Notifications"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.7 21a2 2 0 0 1-3.4 0"></path></svg></button>
+        <a class="btn sm" href="Sell.dc.html">Create offer</a>
+        <span class="avatar">EJ</span>
+      </div>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div class="wrap wide" style="position: relative; z-index: 1; padding-block: 104px 120px; display: flex; flex-direction: column; gap: 24px;">
+      <h1 class="h1" style="max-width: 640px;">Game currency and items.<br><span style="color: var(--rune);">Held until they land.</span></h1>
+      <p class="muted" style="margin: 0; font-size: 18px; max-width: 520px;">Buy from verified sellers. Pay with crypto. The seller gets paid when you confirm.</p>
+      <label class="big-search" for="hq">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9aa8bb" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+        <input id="hq" placeholder="Search Albion silver, Aion Kinah, Divine Orbs">
+        <span class="kbd" aria-hidden="true">/</span>
+      </label>
+      <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+        <span class="label" style="margin-inline-end: 4px;">Top searches</span>
+        <a class="pill" href="Game.dc.html" style="height: 30px; font-size: 13px;">Albion silver</a>
+        <a class="pill" href="#" style="height: 30px; font-size: 13px;">Aion 2 Kinah</a>
+        <a class="pill" href="#" style="height: 30px; font-size: 13px;">Divine Orb</a>
+        <a class="pill" href="#" style="height: 30px; font-size: 13px;">Exalted Orb</a>
+      </div>
+    </div>
+  </section>
+
+  <section style="border-block: 1px solid var(--rule); background: var(--night);">
+    <div class="wrap wide trust" style="padding-block: 28px;">
+      <div><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8-8 9c-4.6-1-8-4.5-8-9V6z"></path></svg><b>Escrow on every order</b><span class="small muted">The seller is paid when you confirm</span></div>
+      <div><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 7l-7 5 7 5V7z"></path><rect x="1" y="5" width="15" height="14" rx="2"></rect></svg><b>Proof on every delivery</b><span class="small muted">Video or photo of the trade</span></div>
+      <div><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M9 9h4.5a1.5 1.5 0 0 1 0 3H9h5a1.5 1.5 0 0 1 0 3H9M11 7v2M11 15v2"></path></svg><b>Pay with crypto</b><span class="small muted">USDT, USDC, LTC and more</span></div>
+      <div><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"></path></svg><b>Ratings from real orders</b><span class="small muted">Only buyers who paid can rate</span></div>
+    </div>
+  </section>
+
+  <section class="wrap" style="padding-block: 64px; display: flex; flex-direction: column; gap: 24px;">
+    <div class="row">
+      <h2 class="h2">Games</h2>
+      <div class="seg"><button class="on">All 5</button><button>Currency</button><button>Items</button><button>Top-ups</button></div>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px;">
+      <sc-for list="{{games}}" as="g" hint-placeholder-count="5">
+        <a class="tile" href="{{g.href}}">
+          <span class="art">[{{g.name}} key art]</span>
+          <b>{{g.name}}</b>
+          <span class="small muted">{{g.what}}</span>
+        </a>
+      </sc-for>
+    </div>
+    <a href="#" class="small" style="color: var(--steel);">Missing a game? Vote for the next one</a>
+  </section>
+
+  <section class="wrap" style="padding-block: 8px 72px; display: flex; flex-direction: column; gap: 28px;">
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      <h2 class="h2">Grow with Bullizard</h2>
+      <span class="muted" style="font-size: 17px;">Two ways to earn. Start in minutes.</span>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px;">
+      <article class="grow" style="background-image: url(/_blob/2ec63231d3acbae620a3a95e1241db64);">
+        <div class="grow-in">
+          <h3 class="grow-h">Earn [X%] from every friend you invite</h3>
+          <p class="muted" style="margin: 0;">Share your link. You earn each time they buy.</p>
+          <a class="btn ghost" href="#">Get your invite link</a>
+        </div>
+      </article>
+      <article class="grow" style="background-image: url(/_blob/9a9bf784e1d9d444f575979390c15da5);">
+        <div class="grow-in">
+          <span class="founding"><svg width="18" height="16" viewBox="0 0 72 64" aria-hidden="true" fill="currentColor"><path d="M4 8C14 31 58 31 68 8C56 22 16 22 4 8Z"></path><circle cx="36" cy="41" r="16" fill="none" stroke="currentColor" stroke-width="6"></circle><path d="M36 30.5C39.2 35.5 39.2 46.5 36 51.5C32.8 46.5 32.8 35.5 36 30.5Z"></path></svg>Founding Seller</span>
+          <h3 class="grow-h">Turn your farm into real money</h3>
+          <p class="muted" style="margin: 0;">Sell for a 5% fee at launch. Founding sellers keep the badge for good.</p>
+          <a class="btn go" href="Sell.dc.html">Start selling</a>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <footer class="ftr">
+    <div class="wrap">
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <span class="lockup"><img class="m" src="/_blob/d461cb998749e4371beb7ed500b0e30c" alt="" style="height: 24px;"><img class="w" src="/_blob/b7b3ba7993b820b7d9f9b0c8287e262c" alt="Bullizard" style="height: 18px;"></span>
+        <span class="small muted">© 2026 Bullizard</span>
+      </div>
+      <nav aria-label="Footer"><a href="#">Help center</a><a href="#">Rules and policies</a><a href="#">Terms</a><a href="#">Privacy</a><a href="#">Discord</a><a href="#">Telegram</a></nav>
+    </div>
+  </footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1920,"height":1920}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      games: [
+        { name: 'Albion Online', what: 'Silver · Gold · Items', href: 'Game.dc.html' },
+        { name: 'Aion 2', what: 'Kinah · Items', href: '#' },
+        { name: 'Aion', what: 'Kinah · Items', href: '#' },
+        { name: 'Path of Exile 2', what: 'Divines · Exalts · Items', href: '#' },
+        { name: 'Path of Exile', what: 'Divines · Chaos · Items', href: '#' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

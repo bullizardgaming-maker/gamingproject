@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Seller rules test</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="bz.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alexandria:wght@400;500;600;700;800&amp;family=Inter:wght@400;500;600;700&amp;display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="phone {{theme}}" style="width: 390px; height: 900px;">
+  <div class="bar">
+    <button class="iconbtn" aria-label="Close"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"></path></svg></button>
+    <h1>Seller rules test</h1>
+    <span class="mono small muted">3 / 10</span>
+  </div>
+  <div style="height: 4px; background: var(--raised);"><div style="width: 30%; height: 100%; background: var(--ink);"></div></div>
+
+  <div class="body" style="gap: 16px; padding-top: 24px;">
+    <p class="label">Off-platform trading</p>
+    <h2 class="h2" style="font-size: 22px;">A buyer asks you to add them on Discord so the trade goes faster. What do you do?</h2>
+    <sc-for list="{{answers}}" as="a" hint-placeholder-count="3">
+      <button class="{{a.cls}}" onClick="{{a.pick}}">
+        <span class="mono" style="font-weight: 600; flex: none;">{{a.key}}</span>
+        <span style="flex: 1;">{{a.text}}</span>
+      </button>
+    </sc-for>
+    <sc-if value="{{answered}}" hint-placeholder-val="{{false}}">
+      <div class="note" role="status">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5"></path><path d="M12 16h.01"></path></svg>
+        <span><b>{{verdict}}</b> All talk stays in Bullizard chat.</span>
+      </div>
+    </sc-if>
+  </div>
+  <div class="sticky">
+    <a class="btn" href="OnbDone.dc.html">Next question</a>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"$preview":{"width":390,"height":900}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { pick: null }; }
+  renderVals() {
+    const list = [
+      { key: 'A', text: 'Add them. Speed keeps buyers happy.' },
+      { key: 'B', text: 'Decline and keep talking in the order chat.', right: true },
+      { key: 'C', text: 'Send my Telegram name instead. It isn’t Discord.' }
+    ];
+    const answered = this.state.pick !== null;
+    const picked = list.find((a) => a.key === this.state.pick);
+    return {
+      theme: this.props.dark ? 'night' : 'frost',
+      answered,
+      verdict: picked && picked.right ? 'Correct.' : 'Not quite.',
+      answers: list.map((a) => ({
+        key: a.key, text: a.text,
+        cls: answered && a.right ? 'answer right' : (this.state.pick === a.key ? 'answer on' : 'answer'),
+        pick: () => this.setState({ pick: a.key })
+      }))
+    };
+  }
+}
+</script>
+</body>
+</html>

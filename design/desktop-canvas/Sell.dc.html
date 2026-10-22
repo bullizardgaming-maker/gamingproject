@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Create offer</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="desk.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alexandria:wght@400;500;600;700;800&amp;family=Inter:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.gpick{display:flex;align-items:center;gap:10px;min-height:52px;padding:0 14px;border:1px solid #2a3749;border-radius:10px;background:transparent;color:#eef1f5;font:600 14px/1.2 Inter,sans-serif;cursor:pointer;text-align:start}
+.gpick:hover{border-color:#9aa8bb}
+.gpick.on{border:2px solid #eef1f5;padding:0 13px}
+.gpick i{width:30px;height:30px;border-radius:8px;background:#1f2b3c;display:grid;place-items:center;font:800 11px/1 Alexandria,sans-serif;font-style:normal;color:#9aa8bb;flex:none}
+.big{font:800 40px/1 Alexandria,sans-serif;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+textarea.input{height:auto;min-height:96px;padding-block:12px;resize:vertical}
+</style>
+</helmet>
+<div class="page">
+  <header class="hdr">
+    <div class="wrap">
+      <a class="lockup" href="Main.dc.html" aria-label="Bullizard home"><img class="m" src="/_blob/d461cb998749e4371beb7ed500b0e30c" alt=""><img class="w" src="/_blob/b7b3ba7993b820b7d9f9b0c8287e262c" alt=""></a>
+      <nav class="nav" aria-label="Main"><a href="Game.dc.html">Currency</a><a href="#">Items</a><a href="#">Top-ups</a></nav>
+      <div class="hdr-r">
+        <a class="pill" href="Wallet.dc.html">Wallet</a>
+        <span class="avatar">NW</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap" style="padding-block: 32px 64px; display: flex; flex-direction: column; gap: 24px;">
+    <h1 class="h1" style="font-size: 36px;">Create offer</h1>
+
+    <div style="display: flex; gap: 32px; align-items: flex-start; flex-wrap: wrap;">
+      <section style="flex: 999 1 600px; min-width: 0; display: flex; flex-direction: column; gap: 20px;">
+        <div class="card" style="display: flex; flex-direction: column; gap: 14px;">
+          <p class="label">Game</p>
+          <div class="grid2" style="grid-template-columns: repeat(3, 1fr);">
+            <sc-for list="{{games}}" as="g" hint-placeholder-count="5"><button class="{{g.cls}}" onClick="{{g.pick}}"><i>{{g.ini}}</i>{{g.name}}</button></sc-for>
+          </div>
+        </div>
+
+        <div class="card" style="display: flex; flex-direction: column; gap: 18px;">
+          <div class="grid2">
+            <div class="field"><label for="srv">Server</label><select id="srv" class="input"><option>Europe</option><option>Americas</option><option>Asia</option></select></div>
+            <div class="field"><label for="stk">In stock (M)</label><input id="stk" class="input num" type="number" value="820"></div>
+          </div>
+          <div class="grid2">
+            <div class="field"><label for="pr">Your price per 1M</label><div style="display: flex; align-items: center; gap: 8px;"><b class="muted">$</b><input id="pr" class="input num" type="number" step="0.01" min="0" value="{{priceRaw}}" onChange="{{setPrice}}"></div></div>
+            <div class="field"><label for="eta">Delivery time</label><select id="eta" class="input"><option>Up to 15 min</option><option selected>Up to 1 hour</option><option>Up to 6 hours</option></select></div>
+          </div>
+          <div class="field"><label for="how">How you deliver</label><input id="how" class="input" value="Face-to-face trade, Caerleon market"></div>
+          <div class="field"><label for="note">Note for buyers</label><textarea id="note" class="input">Online 10:00–02:00 CET. Send a trade request to NorthWind.</textarea></div>
+        </div>
+      </section>
+
+      <aside class="card" style="flex: 1 1 340px; max-width: 380px; display: flex; flex-direction: column; gap: 18px; position: sticky; top: 16px;">
+        <div class="row"><p class="label">Preview per 1M</p>
+          <div class="seg" role="group" aria-label="Currency"><sc-for list="{{curs}}" as="c" hint-placeholder-count="3"><button class="{{c.cls}}" onClick="{{c.pick}}">{{c.code}}</button></sc-for></div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <span class="small muted">You earn</span>
+          <span class="big">{{earn}}</span>
+        </div>
+        <div class="rows">
+          <div class="row total"><span>Buyer pays</span><span class="price">{{pays}}</span></div>
+        </div>
+        <button class="btn block">Publish offer</button>
+        <span class="small muted">You deliver, upload proof, and get paid when the buyer confirms.</span>
+      </aside>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1920,"height":1160}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { game: 'Albion Online', price: '1.00', cur: 'USD' }; }
+  renderVals() {
+    const p = Math.max(0, parseFloat(this.state.price) || 0);
+    const rate = 0.05; // first 60 days; 13.99% after
+    const fx = { USD: 1, EUR: 0.92, EGP: 48.5 };
+    const sym = { USD: '$', EUR: '€', EGP: 'E£' };
+    const f = (v) => sym[this.state.cur] + (v * fx[this.state.cur]).toFixed(2);
+    const buyer = Math.ceil((p / (1 - rate)) * 100) / 100;
+    const games = [['Albion Online', 'AO'], ['Aion', 'AI'], ['Aion 2', 'A2'], ['Path of Exile', 'P1'], ['Path of Exile 2', 'P2']];
+    return {
+      priceRaw: this.state.price,
+      setPrice: (e) => this.setState({ price: e.target.value }),
+      earn: f(p),
+      pays: f(buyer),
+      games: games.map(([n, i]) => ({ name: n, ini: i, cls: n === this.state.game ? 'gpick on' : 'gpick', pick: () => this.setState({ game: n }) })),
+      curs: ['USD', 'EUR', 'EGP'].map((c) => ({ code: c, cls: c === this.state.cur ? 'on' : '', pick: () => this.setState({ cur: c }) }))
+    };
+  }
+}
+</script>
+</body>
+</html>

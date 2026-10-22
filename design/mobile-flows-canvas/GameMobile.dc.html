@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Path of Exile 2 currency, mobile</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="bz.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alexandria:wght@400;500;600;700;800&amp;family=Inter:wght@400;500;600;700&amp;display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="phone {{theme}}" style="width: 390px; height: 1360px;">
+  <div class="bar">
+    <a class="iconbtn" href="HomeMobile.dc.html" aria-label="Back"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg></a>
+    <h1>Path of Exile 2</h1>
+    <button class="iconbtn" aria-label="Search this game"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg></button>
+  </div>
+
+  <div style="background: var(--paper); border-bottom: 1px solid var(--rule); padding: 12px 16px; display: flex; flex-direction: column; gap: 10px;">
+    <div style="display: flex; gap: 8px;">
+      <button class="pill" style="flex: 1; justify-content: space-between;"><span>[Current league]</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
+      <div class="seg" role="group" aria-label="Mode"><button class="on">Softcore</button><button>Hardcore</button></div>
+    </div>
+    <div class="tabs" style="border-bottom: 0;"><a class="on" href="#">Currency</a><a href="#">Items</a></div>
+  </div>
+
+  <div class="body" style="gap: 10px;">
+    <div class="seg"><button class="on">Divine Orb</button><button>Exalted Orb</button><button>Chaos Orb</button></div>
+    <div class="row" style="padding-block: 4px;">
+      <span class="small muted">Price for 10</span>
+      <button class="pill"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"></path></svg>Filters · 2</button>
+    </div>
+
+    <sc-for list="{{rows}}" as="r" hint-placeholder-count="5">
+      <article class="card" style="gap: 10px; padding: 14px 16px;">
+        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+          <span class="avatar" style="width: 28px; height: 28px;">{{r.ini}}</span>
+          <b style="font-size: 15px;">{{r.name}}</b>
+          <span class="{{r.rankCls}}">{{r.rank}}</span>
+          <sc-if value="{{r.online}}" hint-placeholder-val="{{false}}"><span class="small muted">· online</span></sc-if>
+        </div>
+        <div class="row" style="align-items: flex-end;">
+          <div class="small muted" style="display: flex; flex-direction: column; gap: 2px;">
+            <span><span class="mono">★ {{r.rating}}</span> ({{r.reviews}}) · ~{{r.eta}}</span>
+            <span class="mono">{{r.unit}} each · {{r.stock}} left</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span class="price" style="font-size: 17px;">{{r.total}}</span>
+            <a class="btn sm buy" href="Main.dc.html" style="padding: 0 14px;">Buy</a>
+          </div>
+        </div>
+      </article>
+    </sc-for>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"$preview":{"width":390,"height":1360}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const data = [
+      { name: 'KoiCurrency', ini: 'KC', rank: 'Dragon', rating: '4.97', reviews: '812', eta: '5 min', stock: '640', unit: 0.79, online: true },
+      { name: 'Wraeclast Supply', ini: 'WS', rank: 'Basilisk', rating: '4.93', reviews: '377', eta: '10 min', stock: '210', unit: 0.81, online: true },
+      { name: 'ExileMart', ini: 'EM', rank: 'Fang', rating: '4.88', reviews: '141', eta: '15 min', stock: '95', unit: 0.82, online: false },
+      { name: 'OrbHarbor', ini: 'OH', rank: 'Scale', rating: '4.76', reviews: '38', eta: '20 min', stock: '60', unit: 0.84, online: true },
+      { name: 'Sekhema', ini: 'SK', rank: 'Hatchling', rating: 'new', reviews: '2 orders', eta: '30 min', stock: '25', unit: 0.86, online: true }
+    ];
+    return {
+      theme: this.props.dark ? 'night' : 'frost',
+      rows: data.map((r) => Object.assign({}, r, {
+        rankCls: r.rank === 'Dragon' ? 'rank top' : 'rank',
+        unit: '$' + r.unit.toFixed(2),
+        total: '$' + (r.unit * 10).toFixed(2)
+      }))
+    };
+  }
+}
+</script>
+</body>
+</html>

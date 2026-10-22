@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Seller ranks and badges</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="brand.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alexandria:wght@400;500;600;700;800&amp;family=Inter:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+.rk{display:flex;flex-direction:column;gap:12px;padding:24px;border-inline-start:1px solid var(--rule)}
+.rk:first-child{border-inline-start:0}
+.pips{display:flex;gap:3px}
+.pips i{width:6px;height:16px;border-radius:2px;background:var(--rule)}
+.pips i.on{background:var(--ink)}
+.rk.top .pips i.on{background:var(--rune)}
+.chip{display:inline-flex;align-items:center;gap:8px;padding:6px 12px 6px 10px;border-radius:999px;border:1px solid var(--rule);background:var(--paper);font:600 14px/1 var(--font-body);white-space:nowrap}
+.chip.top{background:var(--rune-soft);border-color:transparent}
+</style>
+</helmet>
+<div class="board {{theme}}" style="width: 1280px; height: 800px; gap: 32px;">
+  <div style="display: flex; justify-content: space-between; align-items: flex-end; gap: 24px;">
+    <div style="display: flex; flex-direction: column; gap: 12px;">
+      <p class="eyebrow">Seller ranks</p>
+      <h1 class="title">From Hatchling to Dragon.</h1>
+    </div>
+    <p class="lede" style="max-width: 440px;">Each rank adds a stroke of detail, and pips count the level, so ranks read without colour. Only Dragon takes the accent.</p>
+  </div>
+
+  <div class="panel" style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));">
+    <sc-for list="{{ranks}}" as="r" hint-placeholder-count="5">
+      <div class="{{r.cls}}">
+        <div style="height: 56px; display: flex; align-items: flex-end; color: {{r.color}};">
+          <sc-if value="{{r.isDragon}}" hint-placeholder-val="{{false}}">
+            <svg width="54" height="48" viewBox="0 0 72 64" fill="currentColor" aria-hidden="true"><path d="M4 8C14 31 58 31 68 8C56 22 16 22 4 8Z"></path><circle cx="36" cy="41" r="16" fill="none" stroke="currentColor" stroke-width="6"></circle><path d="M36 30.5C39.2 35.5 39.2 46.5 36 51.5C32.8 46.5 32.8 35.5 36 30.5Z"></path></svg>
+          </sc-if>
+          <sc-if value="{{r.isEgg}}" hint-placeholder-val="{{false}}">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3c4 0 7 6 7 11a7 7 0 0 1-14 0c0-5 3-11 7-11z"></path><path d="M8 12.5l2 1.5 1.5-2 2 2 2-1.5"></path></svg>
+          </sc-if>
+          <sc-if value="{{r.isScale}}" hint-placeholder-val="{{false}}">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3c4.5 2 7 5.5 7 9.5c0 4.2-3.2 7.3-7 8.5c-3.8-1.2-7-4.3-7-8.5c0-4 2.5-7.5 7-9.5z"></path><path d="M12 7.5v9"></path><path d="M8.5 11.5l3.5 2 3.5-2"></path></svg>
+          </sc-if>
+          <sc-if value="{{r.isFang}}" hint-placeholder-val="{{false}}">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h18"></path><path d="M6 5c.2 4 1.4 7.5 4 10c-.7-3.2-.4-6.8 1-10"></path><path d="M18 5c-.2 4-1.4 7.5-4 10c.7-3.2.4-6.8-1-10"></path></svg>
+          </sc-if>
+          <sc-if value="{{r.isBasilisk}}" hint-placeholder-val="{{false}}">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 13C5 8.5 8.5 6.5 12 6.5s7 2 9.5 6.5c-2.5 4.5-6 6.5-9.5 6.5S5 17.5 2.5 13Z"></path><path d="M12 9.5c1 1.2 1 5.8 0 7c-1-1.2-1-5.8 0-7Z" fill="currentColor"></path><path d="M7 4.5l2 1.5 3-2.5 3 2.5 2-1.5"></path></svg>
+          </sc-if>
+        </div>
+        <div style="font: 650 22px/1.2 var(--font-display); letter-spacing: -0.02em;">{{r.name}}</div>
+        <div class="pips"><sc-for list="{{r.pips}}" as="p" hint-placeholder-count="5"><i class="{{p}}"></i></sc-for></div>
+        <div class="small muted">{{r.how}}</div>
+        <div class="mono small">Fee {{r.fee}}</div>
+      </div>
+    </sc-for>
+  </div>
+
+  <div style="display: flex; gap: 32px; align-items: center; flex: 1;">
+    <div style="display: flex; flex-direction: column; gap: 16px; flex: 1;">
+      <p class="eyebrow">In the interface</p>
+      <div style="display: flex; flex-wrap: wrap; gap: 10px;">
+        <span class="chip"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3c4 0 7 6 7 11a7 7 0 0 1-14 0c0-5 3-11 7-11z"></path><path d="M8 12.5l2 1.5 1.5-2 2 2 2-1.5"></path></svg>Hatchling</span>
+        <span class="chip"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3c4.5 2 7 5.5 7 9.5c0 4.2-3.2 7.3-7 8.5c-3.8-1.2-7-4.3-7-8.5c0-4 2.5-7.5 7-9.5z"></path><path d="M12 7.5v9"></path><path d="M8.5 11.5l3.5 2 3.5-2"></path></svg>Scale</span>
+        <span class="chip"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h18"></path><path d="M6 5c.2 4 1.4 7.5 4 10c-.7-3.2-.4-6.8 1-10"></path><path d="M18 5c-.2 4-1.4 7.5-4 10c.7-3.2.4-6.8-1-10"></path></svg>Fang</span>
+        <span class="chip"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 13C5 8.5 8.5 6.5 12 6.5s7 2 9.5 6.5c-2.5 4.5-6 6.5-9.5 6.5S5 17.5 2.5 13Z"></path><path d="M12 9.5c1 1.2 1 5.8 0 7c-1-1.2-1-5.8 0-7Z" fill="currentColor"></path><path d="M7 4.5l2 1.5 3-2.5 3 2.5 2-1.5"></path></svg>Basilisk</span>
+        <span class="chip top"><svg width="20" height="18" viewBox="0 0 72 64" fill="var(--rune)" aria-hidden="true"><path d="M4 8C14 31 58 31 68 8C56 22 16 22 4 8Z"></path><circle cx="36" cy="41" r="16" fill="none" stroke="var(--rune)" stroke-width="6"></circle><path d="M36 30.5C39.2 35.5 39.2 46.5 36 51.5C32.8 46.5 32.8 35.5 36 30.5Z"></path></svg>Dragon</span>
+      </div>
+      <div dir="rtl" lang="ar" style="display: flex; flex-wrap: wrap; gap: 10px; font-family: var(--font-ar);">
+        <span class="chip" style="font-family: var(--font-ar);">فقس</span>
+        <span class="chip" style="font-family: var(--font-ar);">حراشف</span>
+        <span class="chip" style="font-family: var(--font-ar);">ناب</span>
+        <span class="chip" style="font-family: var(--font-ar);">باسيليسك</span>
+        <span class="chip top" style="font-family: var(--font-ar);">تنين</span>
+      </div>
+      <p class="small muted" style="margin: 0;">Arabic rank names are placeholders for the copywriter.</p>
+    </div>
+    <div style="display: flex; flex-direction: column; align-items: center; gap: 12px; width: 220px; flex: none;">
+      <svg width="176" height="176" viewBox="0 0 176 176" role="img" aria-label="Founding Seller badge">
+        <defs><path id="ring" d="M88 88m-64 0a64 64 0 1 1 128 0a64 64 0 1 1 -128 0"></path></defs>
+        <circle cx="88" cy="88" r="84" fill="var(--ink)"></circle>
+        <circle cx="88" cy="88" r="50" fill="none" stroke="var(--frost)" stroke-width="1.5" stroke-dasharray="2 4"></circle>
+        <text font-family="Alexandria, sans-serif" font-size="11" font-weight="700" letter-spacing="2.2" fill="var(--frost)"><textPath href="#ring">FOUNDING SELLER · BULLIZARD · 2026 ·</textPath></text>
+        <g transform="translate(61 64) scale(.75)" fill="var(--frost)"><path d="M4 8C14 31 58 31 68 8C56 22 16 22 4 8Z"></path><circle cx="36" cy="41" r="16" fill="none" stroke="var(--frost)" stroke-width="6"></circle><path d="M36 30.5C39.2 35.5 39.2 46.5 36 51.5C32.8 46.5 32.8 35.5 36 30.5Z"></path></g>
+      </svg>
+      <span class="chip"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="var(--ink)"></circle><circle cx="12" cy="12" r="5" fill="none" stroke="var(--frost)" stroke-width="2"></circle></svg>Founding seller</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const base = [
+      { name: 'Hatchling', key: 'egg', how: 'New seller. Rules test passed.', fee: '13.99%' },
+      { name: 'Scale', key: 'scale', how: '[Orders and rating to reach]', fee: '[set by CEO]' },
+      { name: 'Fang', key: 'fang', how: '[Orders and rating to reach]', fee: '[set by CEO]' },
+      { name: 'Basilisk', key: 'basilisk', how: '[Orders and rating to reach]', fee: '[set by CEO]' },
+      { name: 'Dragon', key: 'dragon', how: '[Orders and rating to reach]', fee: '[set by CEO]' }
+    ];
+    return {
+      theme: this.props.dark ? 'night' : 'frost',
+      ranks: base.map((r, i) => ({
+        name: r.name, how: r.how, fee: r.fee,
+        cls: r.key === 'dragon' ? 'rk top' : 'rk',
+        color: r.key === 'dragon' ? 'var(--rune)' : 'var(--ink)',
+        isEgg: r.key === 'egg', isScale: r.key === 'scale', isFang: r.key === 'fang', isBasilisk: r.key === 'basilisk', isDragon: r.key === 'dragon',
+        pips: [0, 1, 2, 3, 4].map((n) => (n <= i ? 'on' : ''))
+      }))
+    };
+  }
+}
+</script>
+</body>
+</html>

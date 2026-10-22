@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Checkout: choose a coin and send</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="bz.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alexandria:wght@400;500;600;700;800&amp;family=Inter:wght@400;500;600;700&amp;display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="phone {{theme}}" style="width: 390px; height: 900px;">
+  <div class="bar">
+    <a class="iconbtn" href="Main.dc.html" aria-label="Back"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg></a>
+    <h1>Pay $31.58</h1>
+    <span class="chip held" aria-label="Rate locked for 19 minutes 42 seconds"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 8 0v3"></path></svg><span class="mono">19:42</span></span>
+  </div>
+  <div class="body">
+    <p class="label">Choose a coin</p>
+    <sc-for list="{{coins}}" as="c" hint-placeholder-count="4">
+      <button class="{{c.cls}}" onClick="{{c.pick}}" style="width: 100%; font: inherit; color: var(--ink); text-align: start;">
+        <span style="width: 32px; height: 32px; border-radius: 50%; background: var(--raised); display: grid; place-items: center; font: 600 11px/1 var(--font-mono); flex: none;">{{c.sym}}</span>
+        <span style="flex: 1; min-width: 0;"><b style="display: block; font-size: 15px;">{{c.name}}</b><span class="small muted">{{c.net}}</span></span>
+        <span class="mono small" style="text-align: end;">{{c.amount}}</span>
+      </button>
+    </sc-for>
+
+    <div class="card" style="flex-direction: row; gap: 16px; align-items: center;">
+      <div class="qr" role="img" aria-label="Payment QR code" style="width: 112px; height: 112px; flex: none;">
+        <svg width="88" height="88" viewBox="0 0 7 7" shape-rendering="crispEdges" aria-hidden="true"><path fill="currentColor" d="M0 0h3v3H0zM4 0h3v3H4zM0 4h3v3H0zM1 1v1h1V1zM5 1v1h1V1zM1 5v1h1V5zM4 4h1v1H4zM6 4h1v2H6zM4 6h2v1H4zM5 5h1v1H5zM3 3h1v1H3zM3 0h1v1H3zM3 5h1v2H3z"></path></svg>
+      </div>
+      <div style="min-width: 0; display: flex; flex-direction: column; gap: 6px;">
+        <span class="small muted">Send exactly</span>
+        <span class="price">{{amount}}</span>
+        <span class="small muted">on {{net}} only</span>
+        <button class="btn ghost sm" style="align-self: flex-start;">Copy address</button>
+      </div>
+    </div>
+  </div>
+  <div class="sticky">
+    <a class="btn" href="Underpaid.dc.html">I've sent it</a>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"$preview":{"width":390,"height":900}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { coin: 'USDT' }; }
+  renderVals() {
+    const list = [
+      { sym: 'USDT', name: 'Tether USDT', net: 'TRC-20', amount: '31.58 USDT' },
+      { sym: 'USDC', name: 'USD Coin', net: 'Polygon', amount: '31.58 USDC' },
+      { sym: 'LTC', name: 'Litecoin', net: 'Litecoin', amount: '[LTC amount]' },
+      { sym: 'TRX', name: 'Tron', net: 'TRC-20', amount: '[TRX amount]' }
+    ];
+    const cur = list.find((c) => c.sym === this.state.coin) || list[0];
+    return {
+      theme: this.props.dark ? 'night' : 'frost',
+      amount: cur.amount,
+      net: cur.net,
+      coins: list.map((c) => Object.assign({}, c, {
+        cls: c.sym === this.state.coin ? 'coinrow on' : 'coinrow',
+        pick: () => this.setState({ coin: c.sym })
+      }))
+    };
+  }
+}
+</script>
+</body>
+</html>

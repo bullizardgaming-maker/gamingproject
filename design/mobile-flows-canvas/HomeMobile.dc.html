@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bullizard home, mobile</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="bz.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alexandria:wght@400;500;600;700;800&amp;family=Inter:wght@400;500;600;700&amp;display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="phone {{theme}}" style="width: 390px; height: 1560px;">
+  <div class="bar" style="gap: 8px;">
+    <a class="logo" href="#" aria-label="Bullizard home" style="margin-inline-end: auto;"><svg class="eye" viewBox="0 0 72 64" aria-hidden="true"><path d="M4 8C14 31 58 31 68 8C56 22 16 22 4 8Z" fill="currentColor"></path><circle cx="36" cy="41" r="16" fill="none" stroke="currentColor" stroke-width="6"></circle><path d="M36 30.5C39.2 35.5 39.2 46.5 36 51.5C32.8 46.5 32.8 35.5 36 30.5Z" fill="currentColor"></path></svg><svg class="wm-svg" viewBox="-45 -925 4682 945" aria-hidden="true"><g fill="currentColor" transform="scale(1 -1)"><path transform="translate(0 0)" d="M403 701Q486 701 546.0 679.0Q606 657 639.0 617.5Q672 578 672 524Q672 471 640.0 430.0Q608 389 553 373Q618 359 656.0 311.0Q694 263 694 196Q694 136 660.0 92.0Q626 48 564.5 24.0Q503 0 418 0H59V701ZM392 426Q422 426 440.5 442.5Q459 459 459 487Q459 515 440.5 530.0Q422 545 392 545H266V426ZM392 156Q431 155 455.0 173.0Q479 191 479 222Q479 250 455.0 267.0Q431 284 392 283H266V168L249 74L302 156Z"></path><path d="M-25 905C60 625 692 625 777 905C680 715 72 715 -25 905Z"></path><path transform="translate(720 0)" d="M248 256Q248 216 268.0 192.5Q288 169 321 169Q360 170 382.5 199.0Q405 228 405 275H451Q451 185 425.0 122.0Q399 59 351.5 25.0Q304 -9 238 -9Q181 -9 137.5 17.0Q94 43 70.0 89.5Q46 136 46 199V544H248ZM405 544H607V0H405Z"></path><path transform="translate(1388 0)" d="M66 742H268V0H66Z"></path><path transform="translate(1723 0)" d="M66 742H268V0H66Z"></path><path transform="translate(2058 0)" d="M61 544H263V0H61ZM163 803Q209 803 238.0 773.5Q267 744 267 699Q267 653 238.0 624.0Q209 595 163 595Q118 595 88.5 624.0Q59 653 59 699Q59 744 88.5 773.5Q118 803 163 803Z"></path><path transform="translate(2382 0)" d="M39 544 527 543V424L283 151H537V0H29V119L273 392H39Z"></path><path transform="translate(2944 0)" d="M271 228Q241 228 225.5 215.5Q210 203 210 177Q210 152 226.0 137.5Q242 123 271 123Q292 123 310.0 130.0Q328 137 342.0 149.5Q356 162 363 179L388 107Q368 52 321.0 21.5Q274 -9 204 -9Q146 -9 105.0 12.5Q64 34 42.0 72.5Q20 111 20 162Q20 241 74.0 283.5Q128 326 230 327H381V228ZM363 329Q363 363 339.0 382.0Q315 401 269 401Q236 401 193.0 391.0Q150 381 105 362L55 496Q100 514 144.0 527.0Q188 540 231.5 546.0Q275 552 317 552Q432 552 496.5 500.0Q561 448 561 353V0H363Z"></path><path transform="translate(3551 0)" d="M434 370Q382 377 343.5 365.0Q305 353 284.0 326.5Q263 300 263 260L217 269Q217 356 243.5 420.0Q270 484 319.0 518.0Q368 552 434 552ZM61 544H263V0H61Z"></path><path transform="translate(3995 0)" d="M266 551Q333 551 381.0 517.0Q429 483 456.0 421.0Q483 359 483 274Q483 188 457.0 125.0Q431 62 383.5 27.5Q336 -7 271 -7Q195 -7 138.5 27.5Q82 62 50.5 126.0Q19 190 19 275Q19 359 49.5 420.5Q80 482 136.0 516.5Q192 551 266 551ZM322 391Q292 391 269.5 376.0Q247 361 235.0 333.5Q223 306 223 270Q223 233 235.0 206.0Q247 179 269.5 163.5Q292 148 322 148Q352 148 374.0 163.5Q396 179 408.0 206.0Q420 233 420 270Q420 306 408.0 333.5Q396 361 374.0 376.0Q352 391 322 391ZM420 742H622V0H420Z"></path></g></svg></a>
+    <button class="pill">USD</button>
+    <button class="pill" lang="ar" aria-label="Switch to Arabic">ع</button>
+  </div>
+
+  <div class="body" style="gap: 20px; padding-top: 24px;">
+    <h1 class="h1m">Game currency and items, held in escrow until they land.</h1>
+    <label class="search" for="mq" style="max-width: none;">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+      <input id="mq" placeholder="Search games, currency or items" style="border: 0; outline: 0; background: transparent; flex: 1; font: inherit; color: var(--ink); min-width: 0;">
+    </label>
+
+    <div class="ticket" style="padding: 16px; gap: 12px;">
+      <div class="row"><span class="mono small muted">#7F3AK2Q</span><span class="chip held"><span class="dot"></span>Held</span></div>
+      <div style="display: flex; align-items: center; gap: 14px;">
+        <svg width="45" height="40" viewBox="0 0 72 64" aria-hidden="true"><path d="M4 8C14 31 58 31 68 8C56 22 16 22 4 8Z" fill="var(--ink)"></path><circle cx="36" cy="41" r="16" fill="none" stroke="var(--held)" stroke-width="6"></circle><path d="M36 30.5C39.2 35.5 39.2 46.5 36 51.5C32.8 46.5 32.8 35.5 36 30.5Z" fill="var(--held)"></path></svg>
+        <div style="flex: 1;"><div class="h3">30M Silver for Kaelthar</div><div class="small muted">Delivered. Waiting for the buyer.</div></div>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 10px;">
+      <div class="row" style="align-items: baseline;"><h2 class="h2" style="font-size: 20px;">Games</h2><a href="#" class="small" style="color: var(--ink);">Suggest a game</a></div>
+      <sc-for list="{{games}}" as="g" hint-placeholder-count="5">
+        <a href="{{g.href}}" class="coinrow" style="text-decoration: none; color: var(--ink); min-height: 64px;">
+          <span style="width: 40px; height: 40px; border-radius: 8px; background: var(--ink); color: var(--frost); display: grid; place-items: center; font: 600 13px/1 var(--font-mono); flex: none;">{{g.abbr}}</span>
+          <span style="flex: 1; min-width: 0;"><b style="display: block; font-size: 15px;">{{g.name}}</b><span class="small muted">{{g.what}}</span></span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+        </a>
+      </sc-for>
+    </div>
+
+    <div class="card" style="gap: 14px;">
+      <h2 class="h3">How a trade works</h2>
+      <div style="display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 4px 10px;"><span class="stepn">1</span><b>You pay, we hold it</b></div>
+      <div style="display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 4px 10px;"><span class="stepn">2</span><b>The seller delivers in game</b></div>
+      <div style="display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 4px 10px;"><span class="stepn">3</span><b>You confirm, they get paid</b></div>
+    </div>
+
+    <a href="#" class="card" style="flex-direction: row; align-items: center; text-decoration: none; color: var(--ink); background: var(--rune-soft); border-color: transparent;">
+      <b style="flex: 1;">Sell for a 5% fee at launch</b>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+    </a>
+  </div>
+
+  <nav class="tabbar" aria-label="Main">
+    <a class="tab on" href="#"><svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3l9 8h-3v9h-5v-6h-2v6H6v-9H3z"></path></svg>Home</a>
+    <a class="tab" href="#"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>Search</a>
+    <a class="tab" href="#"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"></path><path d="M9 8h6M9 12h6"></path></svg>Orders</a>
+    <a class="tab" href="Wallet.dc.html"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="14" rx="2"></rect><path d="M16 13h2M3 10h18"></path></svg>Wallet</a>
+    <a class="tab" href="#"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"></path></svg>Account</a>
+  </nav>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"$preview":{"width":390,"height":1560}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      theme: this.props.dark ? 'night' : 'frost',
+      games: [
+        { abbr: 'AO', name: 'Albion Online', what: 'Silver · Gold · Items', href: 'GameDesktop.dc.html' },
+        { abbr: 'A2', name: 'Aion 2', what: 'Kinah · Items', href: '#' },
+        { abbr: 'A1', name: 'Aion', what: 'Kinah · Items', href: '#' },
+        { abbr: 'P2', name: 'Path of Exile 2', what: 'Divines · Exalts · Items', href: 'GameMobile.dc.html' },
+        { abbr: 'P1', name: 'Path of Exile', what: 'Divines · Chaos · Items', href: '#' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

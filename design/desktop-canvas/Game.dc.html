@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Albion Online silver</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="desk.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alexandria:wght@400;500;600;700;800&amp;family=Inter:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+.lrow{display:grid;grid-template-columns:minmax(0,1.5fr) 120px 110px 130px 150px;gap:16px;align-items:center;padding:16px 20px;border-bottom:1px solid #2a3749;}
+.lrow:last-child{border-bottom:0}
+.lrow:hover{background:#1f2b3c}
+.lhead{padding-block:12px;}
+.lhead:hover{background:transparent}
+.opt{display:flex;align-items:center;gap:10px;min-height:34px;font-size:14px}
+.opt input{width:18px;height:18px;margin:0;accent-color:#eef1f5}
+.tabs{display:flex;gap:4px;border-bottom:1px solid #2a3749}
+.tabs a{padding:14px 16px;font:600 15px/1 Inter,sans-serif;color:#9aa8bb;text-decoration:none;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs a.on{color:#eef1f5;border-bottom-color:#eef1f5}
+</style>
+</helmet>
+<div class="page">
+  <header class="hdr">
+    <div class="wrap">
+      <a class="lockup" href="Main.dc.html" aria-label="Bullizard home"><img class="m" src="/_blob/d461cb998749e4371beb7ed500b0e30c" alt=""><img class="w" src="/_blob/b7b3ba7993b820b7d9f9b0c8287e262c" alt=""></a>
+      <nav class="nav" aria-label="Main"><a class="on" href="Game.dc.html">Currency</a><a href="#">Items</a><a href="#">Top-ups</a></nav>
+      <div class="hdr-r">
+        <button class="pill" aria-label="Region and currency">EG · EGP</button>
+        <button class="pill" lang="ar">عربي</button>
+        <a class="ibtn" href="Messages.dc.html" aria-label="Messages"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z"></path></svg></a>
+        <a class="btn sm" href="Sell.dc.html">Create offer</a>
+        <span class="avatar">EJ</span>
+      </div>
+    </div>
+  </header>
+
+  <section style="background: var(--night); border-bottom: 1px solid var(--rule);">
+    <div class="wrap" style="padding-block: 36px 0; display: flex; flex-direction: column; gap: 20px;">
+      <nav class="small muted" aria-label="Breadcrumb"><a href="Main.dc.html" style="color: var(--steel);">Home</a> / Albion Online</nav>
+      <div class="row" style="align-items: flex-end;">
+        <div style="display: flex; align-items: center; gap: 20px;">
+          <div style="width: 72px; height: 72px; border-radius: 12px; background: var(--raised); display: grid; place-items: center; font: 800 20px/1 var(--font-display); color: var(--steel);">AO</div>
+          <div>
+            <h1 class="h1" style="font-size: 38px;">Albion Online</h1>
+            <span class="muted">{{count}} offers on {{server}}</span>
+          </div>
+        </div>
+        <div class="seg" role="group" aria-label="Server">
+          <sc-for list="{{servers}}" as="s" hint-placeholder-count="3"><button class="{{s.cls}}" onClick="{{s.pick}}">{{s.name}}</button></sc-for>
+        </div>
+      </div>
+      <div class="tabs" role="tablist"><a class="on" href="#" role="tab" aria-selected="true">Silver</a><a href="#" role="tab">Gold</a><a href="#" role="tab">Items</a></div>
+    </div>
+  </section>
+
+  <main class="wrap" style="padding-block: 28px 64px; display: flex; gap: 28px; align-items: flex-start; flex-wrap: wrap;">
+    <aside style="flex: 1 1 240px; max-width: 260px; display: flex; flex-direction: column; gap: 24px;">
+      <div class="card" style="padding: 18px; display: flex; flex-direction: column; gap: 10px;">
+        <label for="amt" style="font: 600 14px/1.3 var(--font-body);">How much silver?</label>
+        <div style="display: flex; align-items: center; gap: 8px;"><input id="amt" class="input num" type="number" min="1" value="{{amtRaw}}" onChange="{{setAmt}}"><b>M</b></div>
+      </div>
+      <div><p class="label" style="margin-bottom: 8px;">Delivery</p>
+        <label class="opt"><input type="radio" name="d">Up to 15 min</label>
+        <label class="opt"><input type="radio" name="d" checked>Up to 1 hour</label>
+        <label class="opt"><input type="radio" name="d">Any time</label>
+      </div>
+      <div><p class="label" style="margin-bottom: 8px;">Seller</p>
+        <label class="opt"><input type="checkbox" checked>Online now</label>
+        <label class="opt"><input type="checkbox">Fang rank or higher</label>
+        <label class="opt"><input type="checkbox">Founding sellers</label>
+      </div>
+    </aside>
+
+    <section style="flex: 999 1 640px; min-width: 0; display: flex; flex-direction: column; gap: 12px;">
+      <div class="row">
+        <span class="small muted">Prices for {{amt}}M silver</span>
+        <label class="small" style="display: flex; align-items: center; gap: 8px;">Sort <select class="pill" style="height: 36px; background: var(--paper);"><option>Lowest price</option><option>Fastest delivery</option><option>Best rated</option></select></label>
+      </div>
+      <div class="card" style="padding: 0; overflow: hidden;">
+        <div class="lrow lhead label"><span>Seller</span><span>Delivery</span><span>Stock</span><span style="text-align: end;">Per 1M</span><span style="text-align: end;">Total</span></div>
+        <sc-for list="{{rows}}" as="r" hint-placeholder-count="5">
+          <div class="lrow">
+            <div style="display: flex; align-items: center; gap: 12px; min-width: 0;">
+              <span class="avatar">{{r.ini}}</span>
+              <div style="min-width: 0; display: flex; flex-direction: column; gap: 4px;">
+                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;"><b>{{r.name}}</b><span class="{{r.rankCls}}">{{r.rank}}</span><sc-if value="{{r.founding}}" hint-placeholder-val="{{false}}"><span class="rank">Founding</span></sc-if></div>
+                <span class="small muted num">★ {{r.rating}} · {{r.reviews}}</span>
+              </div>
+            </div>
+            <span class="small">~{{r.eta}}</span>
+            <span class="small num">{{r.stock}}</span>
+            <span class="num" style="text-align: end;">{{r.unit}}</span>
+            <div style="display: flex; align-items: center; justify-content: flex-end; gap: 12px;"><b class="num">{{r.total}}</b><a class="btn sm" href="Offer.dc.html">Buy</a></div>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1920,"height":1560}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { server: 'Europe', amt: '30' }; }
+  renderVals() {
+    const amt = Math.max(1, parseFloat(this.state.amt) || 1);
+    const data = [
+      { name: 'RedTower', ini: 'RT', rank: 'Hatchling', founding: true, rating: 'new', reviews: '3 orders', stock: '90M', unit: 0.989, eta: '45 min' },
+      { name: 'NorthWind', ini: 'NW', rank: 'Fang', founding: true, rating: '4.90', reviews: '190 orders', stock: '820M', unit: 1 / 0.95, eta: '30 min' },
+      { name: 'KaelForge', ini: 'KF', rank: 'Scale', founding: false, rating: '4.81', reviews: '64 orders', stock: '240M', unit: 1.069, eta: '15 min' },
+      { name: 'Mistwalker', ini: 'MW', rank: 'Basilisk', founding: false, rating: '4.92', reviews: '402 orders', stock: '1.4B', unit: 1.074, eta: '20 min' },
+      { name: 'Caerleon Traders', ini: 'CT', rank: 'Dragon', founding: true, rating: '4.97', reviews: '812 orders', stock: '2.1B', unit: 1.112, eta: '10 min' }
+    ];
+    return {
+      server: this.state.server,
+      amtRaw: this.state.amt,
+      amt: String(amt),
+      count: { Americas: '41', Europe: '57', Asia: '23' }[this.state.server],
+      setAmt: (e) => this.setState({ amt: e.target.value }),
+      servers: ['Americas', 'Europe', 'Asia'].map((n) => ({ name: n, cls: n === this.state.server ? 'on' : '', pick: () => this.setState({ server: n }) })),
+      rows: data.map((r) => Object.assign({}, r, {
+        rankCls: r.rank === 'Dragon' ? 'rank top' : 'rank',
+        unit: '$' + r.unit.toFixed(3),
+        total: '$' + (Math.ceil(r.unit * amt * 100) / 100).toFixed(2)
+      }))
+    };
+  }
+}
+</script>
+</body>
+</html>

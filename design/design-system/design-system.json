@@ -1,0 +1,77 @@
+{
+  "v": 3,
+  "assetGroups": {
+    "Logos": {
+      "files": {
+        "bullizard-app-icon.svg": {
+          "blob": "7fdba3bc33fce73ed1294937cda71cea",
+          "name": "bullizard-app-icon.svg",
+          "size": 463,
+          "type": "image/svg+xml"
+        },
+        "bullizard-mark-solid.svg": {
+          "blob": "0cfb32732a173d4882c2de5179444453",
+          "name": "bullizard-mark-solid.svg",
+          "size": 319,
+          "type": "image/svg+xml"
+        },
+        "bullizard-mark.svg": {
+          "blob": "fedcf30977fe34032f159927f036be51",
+          "name": "bullizard-mark.svg",
+          "size": 344,
+          "type": "image/svg+xml"
+        },
+        "bullizard-mark-light.svg": {
+          "blob": "722bea9bd357ccc0a4cded6a0004eebd",
+          "name": "bullizard-mark-light.svg",
+          "size": 344,
+          "type": "image/svg+xml"
+        },
+        "bullizard-logo.svg": {
+          "blob": "7c1abf666cb4a61a211a434e36f4564b",
+          "name": "bullizard-logo.svg",
+          "size": 2564,
+          "type": "image/svg+xml"
+        },
+        "bullizard-logo-light.svg": {
+          "blob": "b6e08f79efd7af6dc480884f8e6bd188",
+          "name": "bullizard-logo-light.svg",
+          "size": 2564,
+          "type": "image/svg+xml"
+        }
+      },
+      "name": "Logos",
+      "order": [
+        "bullizard-mark.svg",
+        "bullizard-mark-light.svg",
+        "bullizard-logo.svg",
+        "bullizard-logo-light.svg",
+        "bullizard-app-icon.svg",
+        "bullizard-mark-solid.svg"
+      ]
+    }
+  },
+  "blobs": {},
+  "createdOnFiles": {
+    "at": "2026-10-21T23:27:25Z",
+    "v": 1
+  },
+  "docs": {
+    "readme": "project/README.md",
+    "sections": []
+  },
+  "groups": [
+    "Logos"
+  ],
+  "lastChange": {
+    "at": "2026-10-22T07:20:00Z",
+    "by": "Claude",
+    "via": "Claude",
+    "note": "Logo: coin-eye mark stays; name's B gets horns and a fang. New outlined logo files and green app icon."
+  },
+  "layout": "files",
+  "libraries": [],
+  "namespace": "Bullizard",
+  "sections": {},
+  "title": "Bullizard"
+}

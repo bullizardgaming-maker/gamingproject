@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Colour and type</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="brand.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alexandria:wght@400;500;600;700;800&amp;family=Inter:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+.sw{display:flex;flex-direction:column;justify-content:flex-end;gap:4px;padding:16px;border-radius:10px;font:500 13px/1.3 var(--font-body)}
+</style>
+</helmet>
+<div class="board" style="width: 1280px; height: 800px; flex-direction: row; gap: 48px;">
+  <div style="width: 520px; flex: none; display: flex; flex-direction: column; gap: 16px;">
+    <p class="eyebrow">Colour</p>
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: 200px 120px 120px; gap: 8px;">
+      <div class="sw" style="grid-column: span 2; background: #16202e; color: #eef1f5;"><b>Ink</b>#16202e · text, primary buttons</div>
+      <div class="sw" style="background: #4bae24; color: #0d131c;"><b>Rune</b>#4bae24 · one per view</div>
+      <div class="sw" style="background: #eef1f5; color: #16202e; border: 1px solid #cfd6e0;"><b>Frost</b>#eef1f5</div>
+      <div class="sw" style="background: #f8fafc; color: #16202e; border: 1px solid #cfd6e0;"><b>Paper</b>#f8fafc</div>
+      <div class="sw" style="background: #4f5e75; color: #ffffff;"><b>Steel</b>#4f5e75</div>
+      <div class="sw" style="background: #fbefd6; color: #8a5a00;"><b>Held</b>money in escrow</div>
+      <div class="sw" style="background: #d8f0ec; color: #075e55;"><b>Released</b>seller paid</div>
+      <div class="sw" style="background: #f6dde8; color: #8f2252;"><b>Disputed</b>money frozen</div>
+    </div>
+    <p class="small muted" style="margin: 0;">Ink and frost carry the brand. Rune marks the one action that matters on a screen. The bottom row only ever describes money.</p>
+  </div>
+
+  <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 24px;">
+    <p class="eyebrow">Type · Alexandria for headings and Arabic, Inter for text</p>
+    <div style="display: flex; flex-direction: column; gap: 6px;">
+      <span style="font: 800 44px/1.1 var(--font-display); letter-spacing: -0.03em;">Your money waits until the goods land.</span>
+      <span class="small muted">800 · headings</span>
+    </div>
+    <div dir="rtl" lang="ar" style="display: flex; flex-direction: column; gap: 6px;">
+      <span style="font: 700 38px/1.4 var(--font-ar);">أموالك محفوظة حتى يصلك طلبك.</span>
+      <span class="small muted">700 · العناوين العربية</span>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--rule); padding-top: 20px;">
+      <span style="font: 400 16px/1.6 var(--font-body); max-width: 56ch;">The seller uploads a video of the trade. You check your silver in game, then confirm.</span>
+      <span class="small muted">400 · 16 / 1.6 body</span>
+    </div>
+    <div style="display: flex; gap: 40px; align-items: baseline; border-top: 1px solid var(--rule); padding-top: 20px;">
+      <span style="font: 600 32px/1 var(--font-body); font-variant-numeric: tabular-nums;">$31.58</span>
+      <span style="font: 600 20px/1 var(--font-body); font-variant-numeric: tabular-nums;">#7F3AK2Q</span>
+      <span class="small muted">600 · tabular figures for money</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

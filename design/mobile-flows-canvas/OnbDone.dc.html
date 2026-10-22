@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Seller onboarding passed</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="bz.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alexandria:wght@400;500;600;700;800&amp;family=Inter:wght@400;500;600;700&amp;display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="phone {{theme}}" style="width: 390px; height: 900px;">
+  <div class="body" style="gap: 20px; padding-top: 48px;">
+    <div style="display: flex; align-items: center; gap: 16px;">
+      <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3c4 0 7 6 7 11a7 7 0 0 1-14 0c0-5 3-11 7-11z"></path><path d="M8 12.5l2 1.5 1.5-2 2 2 2-1.5"></path></svg>
+      <svg width="56" height="56" viewBox="0 0 176 176" role="img" aria-label="Founding Seller badge">
+        <circle cx="88" cy="88" r="84" fill="var(--ink)"></circle>
+        <g transform="translate(43 44) scale(1.25)" fill="var(--frost)"><path d="M4 8C14 31 58 31 68 8C56 22 16 22 4 8Z"></path><circle cx="36" cy="41" r="16" fill="none" stroke="var(--frost)" stroke-width="6"></circle><path d="M36 30.5C39.2 35.5 39.2 46.5 36 51.5C32.8 46.5 32.8 35.5 36 30.5Z"></path></g>
+      </svg>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      <h1 class="h1m" style="font-size: 28px;">You passed. Welcome, Hatchling.</h1>
+      <p class="lead" style="font-size: 15px;">You're also a Founding Seller.</p>
+    </div>
+
+    <div class="card" style="gap: 0; padding: 0;">
+      <div style="display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--rule);">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"></path></svg>
+        <span style="flex: 1;">Rules test</span><span class="small muted">10 / 10</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--rule);">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle></svg>
+        <span style="flex: 1;">Payout address</span><a href="Wallet.dc.html" class="small" style="color: var(--ink);">Add</a>
+      </div>
+      <div style="display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="margin-top: 2px;"><circle cx="12" cy="12" r="8"></circle></svg>
+        <div style="flex: 1; display: flex; flex-direction: column; gap: 4px;">
+          <div class="row"><span>ID verification</span><span class="mono small">30 days left</span></div>
+          <span class="small muted">You can sell now.</span>
+          <div style="height: 4px; border-radius: 2px; background: var(--raised); margin-top: 6px;"><div style="width: 3%; height: 100%; border-radius: 2px; background: var(--ink);"></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="sticky">
+    <a class="btn" href="Sell.dc.html">Create your first listing</a>
+    <button class="btn ghost" style="height: 44px;">Verify ID now</button>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"$preview":{"width":390,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() { return { theme: this.props.dark ? 'night' : 'frost' }; }
+}
+</script>
+</body>
+</html>

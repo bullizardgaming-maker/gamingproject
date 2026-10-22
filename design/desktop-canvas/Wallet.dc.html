@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Wallet and withdrawals</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="desk.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alexandria:wght@400;500;600;700;800&amp;family=Inter:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+.bal{display:flex;flex-direction:column;gap:8px}
+.big{font:800 40px/1 Alexandria,sans-serif;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.hrow{display:grid;grid-template-columns:140px minmax(0,1fr) 140px 130px;gap:16px;align-items:center;padding:14px 20px;border-bottom:1px solid #2a3749;font-size:14px}
+.hrow:last-child{border-bottom:0}
+.confirm{display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:1.45}
+.confirm input{width:18px;height:18px;margin:2px 0 0;accent-color:#eef1f5;flex:none}
+</style>
+</helmet>
+<div class="page">
+  <header class="hdr">
+    <div class="wrap">
+      <a class="lockup" href="Main.dc.html" aria-label="Bullizard home"><img class="m" src="/_blob/d461cb998749e4371beb7ed500b0e30c" alt=""><img class="w" src="/_blob/b7b3ba7993b820b7d9f9b0c8287e262c" alt=""></a>
+      <nav class="nav" aria-label="Main"><a href="Game.dc.html">Currency</a><a href="#">Items</a><a href="#">Top-ups</a></nav>
+      <div class="hdr-r">
+        <a class="btn sm ghost" href="Sell.dc.html">Create offer</a>
+        <span class="avatar">NW</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap" style="padding-block: 32px 64px; display: flex; flex-direction: column; gap: 24px;">
+    <h1 class="h1" style="font-size: 36px;">Wallet</h1>
+
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px;">
+      <div class="card bal"><span class="small muted">Available</span><span class="big">$412.60</span></div>
+      <div class="card bal"><span class="small muted">In escrow</span><span class="big" style="color: var(--steel);">$31.58</span><span class="chip held" style="align-self: flex-start;"><span class="d"></span>1 order</span></div>
+      <div class="card bal"><span class="small muted">Withdrawn</span><span class="big" style="color: var(--steel);">$1,240.00</span></div>
+    </div>
+
+    <div style="display: flex; gap: 32px; align-items: flex-start; flex-wrap: wrap;">
+      <section style="flex: 999 1 600px; min-width: 0; display: flex; flex-direction: column; gap: 12px;">
+        <p class="label">History</p>
+        <div class="card" style="padding: 0; overflow: hidden;">
+          <div class="hrow label" style="padding-block: 12px;"><span>Date</span><span>What</span><span>Status</span><span style="text-align: end;">Amount</span></div>
+          <div class="hrow"><span class="muted">Today 14:02</span><span>order#7F3AK2Q · 30M Silver</span><span><span class="chip held"><span class="d"></span>Held</span></span><b class="num" style="text-align: end;">+$30.00</b></div>
+          <div class="hrow"><span class="muted">Oct 20</span><span>order#Q2M9TX4 · 50M Silver</span><span><span class="chip released"><span class="d"></span>Released</span></span><b class="num" style="text-align: end;">+$50.00</b></div>
+          <div class="hrow"><span class="muted">Oct 18</span><span>Withdrawal · USDT TRC-20</span><span><span class="chip released"><span class="d"></span>Sent</span></span><b class="num muted" style="text-align: end;">−$200.00</b></div>
+          <div class="hrow"><span class="muted">Oct 15</span><span>order#K8P1ZR7 · 20M Silver</span><span><span class="chip disputed"><span class="d"></span>Disputed</span></span><b class="num" style="text-align: end;">+$20.00</b></div>
+        </div>
+      </section>
+
+      <aside class="card" style="flex: 1 1 340px; max-width: 400px; display: flex; flex-direction: column; gap: 18px;">
+        <h2 class="h3">Withdraw</h2>
+        <div class="field"><label>Coin</label>
+          <div class="seg" role="group" aria-label="Coin"><sc-for list="{{coins}}" as="c" hint-placeholder-count="3"><button class="{{c.cls}}" onClick="{{c.pick}}">{{c.name}}</button></sc-for></div>
+        </div>
+        <div class="field"><label for="addr">Your {{net}} address</label><input id="addr" class="input num" placeholder="Paste address"></div>
+        <div class="field"><label for="amt">Amount</label><div style="display: flex; align-items: center; gap: 8px;"><b class="muted">$</b><input id="amt" class="input num" type="number" min="0" value="{{amtRaw}}" onChange="{{setAmt}}"></div></div>
+        <div class="rows">
+          <div class="row"><span class="muted">Fee</span><span class="num">{{fee}}</span></div>
+          <div class="row total"><span>You receive</span><span class="price">{{net_amt}}</span></div>
+        </div>
+        <label class="confirm"><input type="checkbox">I checked the address and network. Crypto sent to a wrong address can't be returned.</label>
+        <button class="btn block">Withdraw</button>
+      </aside>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1920,"height":1000}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { coin: 'USDT', amt: '100' }; }
+  renderVals() {
+    const a = Math.min(412.6, Math.max(0, parseFloat(this.state.amt) || 0));
+    const fee = a > 0 ? Math.max(1.5, Math.round(a * 0.06 * 100) / 100) : 0;
+    const list = [['USDT', 'TRC-20'], ['USDC', 'Polygon'], ['LTC', 'Litecoin']];
+    const cur = list.find((c) => c[0] === this.state.coin);
+    return {
+      amtRaw: this.state.amt,
+      setAmt: (e) => this.setState({ amt: e.target.value }),
+      net: cur[0] + ' ' + cur[1],
+      fee: '$' + fee.toFixed(2),
+      net_amt: '$' + Math.max(0, a - fee).toFixed(2),
+      coins: list.map(([n]) => ({ name: n, cls: n === this.state.coin ? 'on' : '', pick: () => this.setState({ coin: n }) }))
+    };
+  }
+}
+</script>
+</body>
+</html>

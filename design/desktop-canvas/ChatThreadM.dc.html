@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mobile chat thread</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="desk.css">
+<link rel="stylesheet" href="chatm.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alexandria:wght@400;500;600;700;800&amp;family=Inter:wght@400;500;600;700&amp;display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="m">
+  <div class="m-top">
+    <a class="m-back" href="ChatListM.dc.html" aria-label="Back to chats"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg></a>
+    <span class="avatar" style="width: 40px; height: 40px;">MW</span>
+    <div style="flex: 1; min-width: 0;"><div style="display: flex; align-items: center; gap: 6px;"><b>Mistwalker</b><span class="rank" style="padding: 3px 8px;">Basilisk</span></div><span class="small muted">Online</span></div>
+    <button class="m-back" aria-label="More: report chat"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2"></circle><circle cx="12" cy="12" r="2"></circle><circle cx="12" cy="19" r="2"></circle></svg></button>
+  </div>
+  <a class="m-strip" href="Order.dc.html" style="color: var(--ink); text-decoration: none;">
+    <span class="num muted">#K8P1ZR7</span><b>20 Divine Orbs → VexMara</b><span class="chip held"><span class="d"></span>Delivered</span>
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"></path></svg>
+  </a>
+  <details class="m-safety">
+    <summary><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8-8 9c-4.6-1-8-4.5-8-9V6z"></path></svg>Stay safe</summary>
+    <ol>
+      <li>Trade and talk only on Bullizard. Sharing outside contacts can get your account banned right away.</li>
+      <li>Never open links or download files a trader sends.</li>
+      <li>Deliver and receive only through the order page.</li>
+      <li>Someone says they paid but it shows Unpaid? Contact support.</li>
+    </ol>
+  </details>
+  <div class="m-msgs">
+    <span class="m-day">Today</span>
+    <div class="m-sys" role="article" aria-label="Message from Bullizard">
+      <div class="m-sys-h"><img src="/_blob/d461cb998749e4371beb7ed500b0e30c" alt=""><b style="font: 800 13px/1 var(--font-display);">Bullizard</b><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"></path></svg><span style="margin-inline-start: auto; font-size: 12px; opacity: .7;">11:12</span></div>
+      <div class="m-sys-b">
+        <b>Payment received</b>
+        <div class="row"><span class="muted">Order</span><span class="num">#K8P1ZR7</span></div>
+        <div class="row"><span class="muted">Item</span><span>20 Divine Orbs → VexMara</span></div>
+        <div class="row"><span class="muted">Paid</span><span class="chip held"><span class="d"></span>Held</span></div>
+      </div>
+    </div>
+    <div class="m-b me">In my hideout, VexMara.<span class="tm">11:20</span></div>
+    <div class="m-b them"><span class="m-shot">[Trade window screenshot]</span>Delivered, check your bag<span class="tm">11:38</span></div>
+    <span class="m-ev" style="color: var(--held-ink);"><i></i>Mistwalker marked it delivered with proof</span>
+    <div class="m-b them">Please confirm on the order page when you see them.<span class="tm">11:40</span></div>
+    <sc-for list="{{sent}}" as="m" hint-placeholder-count="0">
+      <div class="{{m.cls}}"><sc-if value="{{m.blocked}}" hint-placeholder-val="{{false}}"><b>Not sent.</b> Sharing outside contacts can get your account banned right away.</sc-if><sc-if value="{{m.ok}}" hint-placeholder-val="{{true}}">{{m.text}}<span class="tm">now</span></sc-if></div>
+    </sc-for>
+  </div>
+  <div class="m-compose">
+    <button class="m-icon" aria-label="Add a screenshot"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><circle cx="9" cy="10" r="2"></circle><path d="M21 16l-5-5-9 9"></path></svg></button>
+    <input placeholder="Message" aria-label="Message" value="{{draft}}" onInput="{{setDraft}}" onKeyDown="{{enter}}">
+    <button class="m-send" aria-label="Send" onClick="{{send}}"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></button>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { draft: '', sent: [] }; }
+  renderVals() {
+    const bad = /(discord|telegram|whats\s?app|skype|wechat|t\.me|@\w|\+?\d[\d\s-]{7,}|https?:|www\.)/i;
+    const send = () => {
+      const t = this.state.draft.trim();
+      if (!t) return;
+      this.setState({ draft: '', sent: this.state.sent.concat([{ text: t, blocked: bad.test(t) }]) });
+    };
+    return {
+      draft: this.state.draft,
+      setDraft: (e) => this.setState({ draft: e.target.value }),
+      enter: (e) => { if (e.key === 'Enter') send(); },
+      send,
+      sent: this.state.sent.map((m) => ({ text: m.text, blocked: m.blocked, ok: !m.blocked, cls: m.blocked ? 'm-b blocked' : 'm-b me' }))
+    };
+  }
+}
+</script>
+</body>
+</html>

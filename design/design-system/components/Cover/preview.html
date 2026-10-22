@@ -1,0 +1,37 @@
+<!-- @dsCard height=288 -->
+<style>
+  .cv { position: relative; width: 960px; height: 288px; background: var(--frost); overflow: hidden; }
+  .cv svg { position: absolute; inset: 0; }
+  .rune { fill: var(--rune); } .ink { fill: var(--ink); } .held { fill: var(--held); }
+  .rel { fill: var(--released); } .soft { fill: var(--rune-soft); } .paper { fill: var(--paper); }
+  .ring { fill: none; stroke: var(--held); stroke-width: 3; }
+  .tile { rx: var(--radius-lg); }
+  .cv-text { position: absolute; left: 40px; bottom: 36px; max-width: 440px; }
+  .cv-name { font: 800 68px/.95 var(--font-display); letter-spacing: -0.035em; color: var(--ink); margin: 0; }
+  .cv-tag { font: 400 14px/1.4 var(--font-display); color: var(--steel); margin-top: 12px; }
+</style>
+<div class="cv">
+  <!--
+    blocks: rune slab 160x288 (bleeds top/bottom), ink 192x144, released 144x112, rune-soft 192x128, held coin d=96 (radius-pill)
+    arrangement: one tall rune slab with satellites, right of x=480, bleeding off the right edge
+    pattern: literal motif, the escrow coin. Five coins travel from held ring to released fill, the money's path through an order
+    scales: gaps space-4 (16px), tiles radius-lg (16px), coins radius-pill, pitch 48px (space-12)
+  -->
+  <svg viewBox="0 0 960 288" width="960" height="288" aria-hidden="true">
+    <rect class="soft tile" x="496" y="160" width="192" height="128" />
+    <rect class="rune tile" x="704" y="-16" width="160" height="320" />
+    <rect class="ink tile" x="496" y="0" width="192" height="144" />
+    <rect class="rel tile" x="880" y="176" width="144" height="112" />
+    <circle class="held" cx="928" cy="80" r="48" />
+    <circle class="ring" cx="528" cy="224" r="12" />
+    <circle class="ring" cx="576" cy="224" r="12" />
+    <circle class="held" cx="624" cy="224" r="12" />
+    <circle class="rel" cx="672" cy="224" r="12" />
+    <circle class="paper" cx="784" cy="224" r="12" />
+  </svg>
+  <div class="cv-text">
+    <h1 class="cv-name">Bullizard</h1>
+    <div class="cv-tag">Trade game goods. Your money waits until it's really yours.</div>
+  </div>
+</div>
+<script></script>

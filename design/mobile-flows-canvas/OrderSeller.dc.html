@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Order: seller delivers and uploads proof</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="bz.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alexandria:wght@400;500;600;700;800&amp;family=Inter:wght@400;500;600;700&amp;display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="phone {{theme}}" style="width: 390px; height: 1040px;">
+  <div class="bar">
+    <button class="iconbtn" aria-label="Back"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg></button>
+    <h1>Deliver <span class="mono" style="font-weight: 600;">#7F3AK2Q</span></h1>
+    <span class="chip held"><span class="dot"></span><span class="mono">$30.00</span></span>
+  </div>
+  <div class="body">
+    <div class="card">
+      <p class="label">Deliver to</p>
+      <div class="saved" style="border-width: 1px;">
+        <div class="avatar">K</div>
+        <div style="flex: 1; min-width: 0;">
+          <div style="font: 600 17px/1.2 var(--font-mono);">Kaelthar</div>
+          <div class="small muted">Albion Online · Europe server</div>
+        </div>
+        <button class="btn ghost sm">Copy</button>
+      </div>
+      <div class="rows">
+        <div class="row"><span class="muted">Amount</span><span class="mono">30M Silver</span></div>
+        <div class="row"><span class="muted">You receive</span><span class="mono">$30.00</span></div>
+        <div class="row"><span class="muted">Deliver by</span><span class="mono">14:32 (18 min)</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row"><p class="label">Proof of delivery</p><span class="small muted">Required</span></div>
+      <div class="drop">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 7l-7 5 7 5V7z"></path><rect x="1" y="5" width="15" height="14" rx="2"></rect></svg>
+        <div class="h3">Add a video of the trade</div>
+        <div class="small muted">Show the buyer's name and the amount.</div>
+        <label class="btn ghost sm" for="proofFile">Choose video or photo</label>
+        <input id="proofFile" type="file" accept="video/*,image/*" style="position: absolute; width: 1px; height: 1px; opacity: 0;">
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px;">
+        <div class="row small"><span class="mono">trade-kaelthar.mp4 · 48 MB</span><span class="mono muted">72%</span></div>
+        <div class="bar-progress"><i style="width: 72%;"></i></div>
+      </div>
+    </div>
+
+  </div>
+  <div class="sticky">
+    <button class="btn" disabled>Mark as delivered</button>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"$preview":{"width":390,"height":1040}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { theme: this.props.dark ? 'night' : 'frost' };
+  }
+}
+</script>
+</body>
+</html>

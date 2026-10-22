@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mobile chats list</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="desk.css">
+<link rel="stylesheet" href="chatm.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alexandria:wght@400;500;600;700;800&amp;family=Inter:wght@400;500;600;700&amp;display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="m">
+  <div class="m-top"><h1>Chats</h1></div>
+  <label class="m-search"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg><input placeholder="Search name or order#" aria-label="Search chats"></label>
+  <div class="m-tabs" role="tablist"><sc-for list="{{tabs}}" as="t" hint-placeholder-count="3"><button class="{{t.cls}}" onClick="{{t.pick}}" role="tab">{{t.name}}</button></sc-for></div>
+  <div class="m-list">
+    <sc-for list="{{convs}}" as="c" hint-placeholder-count="5">
+      <a class="{{c.cls}}" href="ChatThreadM.dc.html">
+        <span class="av"><sc-if value="{{c.official}}" hint-placeholder-val="{{false}}"><span class="bz"><img src="/_blob/d461cb998749e4371beb7ed500b0e30c" alt=""></span></sc-if><sc-if value="{{c.person}}" hint-placeholder-val="{{true}}"><span class="avatar">{{c.ini}}</span></sc-if><sc-if value="{{c.online}}" hint-placeholder-val="{{false}}"><i class="dot"></i></sc-if></span>
+        <b style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{c.name}}</b>
+        <span class="t">{{c.time}}</span>
+        <span class="p">{{c.preview}}</span>
+        <sc-if value="{{c.unread}}" hint-placeholder-val="{{false}}"><span class="n">{{c.unread}}</span></sc-if>
+      </a>
+    </sc-for>
+  </div>
+  <nav class="m-tabbar" aria-label="App">
+    <a href="#"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"></path></svg>Home</a>
+    <a href="#"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"></rect><path d="M8 8h8M8 12h8M8 16h5"></path></svg>Orders</a>
+    <a class="on" href="#" aria-current="page"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z"></path></svg>Chats</a>
+    <a href="#"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"></path></svg>Me</a>
+  </nav>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { tab: 'All' }; }
+  renderVals() {
+    const data = [
+      { name: 'Bullizard', official: true, time: '14:02', preview: 'Payment received · #7F3AK2Q', unread: 1, kind: 'Orders' },
+      { name: 'NorthWind', ini: 'NW', online: true, time: '14:06', preview: 'You: Online now, character Kaelthar.', kind: 'Orders' },
+      { name: 'Mistwalker', ini: 'MW', online: true, time: '11:40', preview: 'Please confirm on the order page…', unread: 2, kind: 'Orders' },
+      { name: 'KaelForge', ini: 'KF', time: 'Mon', preview: 'Thanks for the review!', kind: 'Direct' },
+      { name: 'RedTower', ini: 'RT', time: 'Oct 15', preview: 'You opened a dispute', kind: 'Orders' }
+    ];
+    const tab = this.state.tab;
+    return {
+      tabs: ['All', 'Orders', 'Direct'].map((n) => ({ name: n, cls: n === tab ? 'on' : '', pick: () => this.setState({ tab: n }) })),
+      convs: data.filter((c) => tab === 'All' || c.kind === tab).map((c) => Object.assign({}, c, {
+        official: !!c.official, person: !c.official, online: !!c.online, unread: c.unread || false,
+        cls: 'm-conv' + (c.unread ? ' unread' : '')
+      }))
+    };
+  }
+}
+</script>
+</body>
+</html>

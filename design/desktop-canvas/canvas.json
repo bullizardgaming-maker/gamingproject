@@ -1,0 +1,139 @@
+{
+  "v": 3,
+  "createdOnFiles": {
+    "v": 1,
+    "at": "2026-10-22T07:20:00Z"
+  },
+  "title": "Bullizard Desktop",
+  "launch": {
+    "view": "canvas"
+  },
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {
+      "x": 0,
+      "y": 0,
+      "w": 1920,
+      "h": 2040,
+      "title": "Home",
+      "expand": "fill"
+    },
+    "Game.dc.html": {
+      "x": 2040,
+      "y": 0,
+      "w": 1920,
+      "h": 1560,
+      "title": "Game page \u00b7 Albion Online",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "Offer.dc.html": {
+      "x": 4080,
+      "y": 0,
+      "w": 1920,
+      "h": 1160,
+      "title": "Offer \u00b7 buy box",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "Checkout.dc.html": {
+      "x": 0,
+      "y": 2160,
+      "w": 1920,
+      "h": 1040,
+      "title": "Checkout \u00b7 pay with crypto",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "Order.dc.html": {
+      "x": 2040,
+      "y": 2160,
+      "w": 1920,
+      "h": 1160,
+      "title": "Order page + chat",
+      "expand": "fill"
+    },
+    "Sell.dc.html": {
+      "x": 4080,
+      "y": 2160,
+      "w": 1920,
+      "h": 1160,
+      "title": "Create offer",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "Wallet.dc.html": {
+      "x": 0,
+      "y": 3440,
+      "w": 1920,
+      "h": 1000,
+      "title": "Wallet \u00b7 withdraw",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "Messages.dc.html": {
+      "x": 2040,
+      "y": 3440,
+      "w": 1920,
+      "h": 1040,
+      "title": "Messages",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "ChatListM.dc.html": {
+      "x": 4080,
+      "y": 3440,
+      "w": 390,
+      "h": 844,
+      "title": "Mobile \u00b7 chats",
+      "is_interactive": true
+    },
+    "ChatThreadM.dc.html": {
+      "x": 4550,
+      "y": 3440,
+      "w": 390,
+      "h": 844,
+      "title": "Mobile \u00b7 chat thread",
+      "is_interactive": true
+    },
+    "ChatThreadAR.dc.html": {
+      "x": 5020,
+      "y": 3440,
+      "w": 390,
+      "h": 844,
+      "title": "Mobile \u00b7 chat thread (Arabic)",
+      "is_interactive": true
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "Game.dc.html",
+    "Offer.dc.html",
+    "Checkout.dc.html",
+    "Order.dc.html",
+    "Sell.dc.html",
+    "Wallet.dc.html",
+    "Messages.dc.html",
+    "ChatListM.dc.html",
+    "ChatThreadM.dc.html",
+    "ChatThreadAR.dc.html"
+  ],
+  "notes": {
+    "title": {
+      "x": 0,
+      "y": -260,
+      "text": "Bullizard desktop",
+      "kind": "title1",
+      "maxW": 5920
+    }
+  },
+  "designSystems": [
+    {
+      "title": "Bullizard",
+      "namespace": "bullizard",
+      "artifact": "https://claude.ai/code/artifact/7cc67169-de88-492b-9c55-1c3ddfd1e887",
+      "version": null,
+      "copiedAt": "2026-10-22T07:20:00Z"
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>Mobile chat thread, Arabic</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="desk.css">
+<link rel="stylesheet" href="chatm.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alexandria:wght@400;500;600;700;800&amp;family=Inter:wght@400;500;600;700&amp;display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="m" dir="rtl" lang="ar">
+  <div class="m-top">
+    <a class="m-back" href="ChatListM.dc.html" aria-label="رجوع للمحادثات"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg></a>
+    <span class="avatar" style="width: 40px; height: 40px;" dir="ltr">NW</span>
+    <div style="flex: 1; min-width: 0;"><div style="display: flex; align-items: center; gap: 6px;"><b dir="ltr">NorthWind</b><span class="rank" style="padding: 3px 8px;">ناب</span></div><span class="small muted">متصل الآن</span></div>
+  </div>
+  <a class="m-strip" href="Order.dc.html" style="color: var(--ink); text-decoration: none;">
+    <span class="num muted" dir="ltr">#7F3AK2Q</span><b>٣٠ مليون فضة ← <span dir="ltr">Kaelthar</span></b><span class="chip held"><span class="d"></span>محجوز</span>
+  </a>
+  <details class="m-safety">
+    <summary><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8-8 9c-4.6-1-8-4.5-8-9V6z"></path></svg>خليك في أمان</summary>
+    <ol>
+      <li>اتكلم وتاجر على Bullizard بس. مشاركة أي وسيلة تواصل خارجية ممكن تقفل حسابك فورًا.</li>
+      <li>متفتحش لينكات ولا تنزل ملفات من أي تاجر.</li>
+      <li>التسليم والاستلام من صفحة الطلب بس.</li>
+      <li>حد قال إنه دفع والطلب لسه "غير مدفوع"؟ كلم الدعم.</li>
+    </ol>
+  </details>
+  <div class="m-msgs">
+    <span class="m-day">النهارده</span>
+    <div class="m-sys" role="article" aria-label="رسالة من Bullizard">
+      <div class="m-sys-h"><img src="/_blob/d461cb998749e4371beb7ed500b0e30c" alt=""><b style="font: 800 13px/1 var(--font-display);">Bullizard</b><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"></path></svg><span class="num" style="margin-inline-start: auto; font-size: 12px; opacity: .7;" dir="ltr">14:02</span></div>
+      <div class="m-sys-b">
+        <b>تم استلام الدفع</b>
+        <div class="row"><span class="muted">الطلب</span><span class="num" dir="ltr">#7F3AK2Q</span></div>
+        <div class="row"><span class="muted">المنتج</span><span>Albion Online · فضة · أوروبا</span></div>
+        <div class="row"><span class="muted">الكمية</span><span>٣٠ مليون ← <span dir="ltr">Kaelthar</span></span></div>
+        <div class="row"><span class="muted">الدفع</span><span class="chip held"><span class="d"></span>محجوز</span></div>
+      </div>
+    </div>
+    <div class="m-b them">أنا في سوق Caerleon. ابعتلي طلب تبادل لما تكون أونلاين.<span class="tm" dir="ltr">14:05</span></div>
+    <div class="m-b me">أنا أونلاين دلوقتي، الشخصية <span dir="ltr">Kaelthar</span>.<span class="tm" dir="ltr">14:06</span></div>
+    <div class="m-b blocked" role="status"><b>متبعتتش.</b> مشاركة وسائل تواصل خارجية ممكن تقفل حسابك فورًا.</div>
+  </div>
+  <div class="m-compose">
+    <button class="m-icon" aria-label="إضافة صورة"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><circle cx="9" cy="10" r="2"></circle><path d="M21 16l-5-5-9 9"></path></svg></button>
+    <input placeholder="اكتب رسالة" aria-label="رسالة">
+    <button class="m-send" aria-label="إرسال"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></button>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

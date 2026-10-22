@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Seller ranks</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="bz.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alexandria:wght@400;500;600;700;800&amp;family=Inter:wght@400;500;600;700&amp;display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="phone {{theme}}" style="width: 390px; height: 1300px;">
+  <div class="bar">
+    <button class="iconbtn" aria-label="Back"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg></button>
+    <h1>Your rank</h1>
+  </div>
+  <div class="body" style="gap: 16px;">
+    <div class="card" style="gap: 16px;">
+      <div style="display: flex; align-items: center; gap: 16px;">
+        <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h18"></path><path d="M6 5c.2 4 1.4 7.5 4 10c-.7-3.2-.4-6.8 1-10"></path><path d="M18 5c-.2 4-1.4 7.5-4 10c.7-3.2.4-6.8-1-10"></path></svg>
+        <div style="flex: 1;">
+          <div style="font: 700 28px/1.1 var(--font-display); letter-spacing: -0.02em;">Fang</div>
+          <div class="small muted">Rank 3 of 5 · fee [set by CEO]</div>
+        </div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px;">
+        <div class="row small"><span>To Basilisk</span><span class="mono">[142 / 200 orders]</span></div>
+        <div style="height: 8px; border-radius: 4px; background: var(--raised);"><div style="width: 71%; height: 100%; border-radius: 4px; background: var(--ink);"></div></div>
+        <div class="row small"><span class="muted">Rating 4.8 or higher</span><span class="mono">4.90</span></div>
+      </div>
+    </div>
+
+    <p class="label" style="margin-top: 8px;">All ranks</p>
+    <sc-for list="{{ranks}}" as="r" hint-placeholder-count="5">
+      <div class="{{r.cls}}" style="display: flex; flex-direction: row; gap: 14px; align-items: flex-start; padding: 14px 16px; border-radius: var(--radius-md); background: var(--paper);">
+        <div style="width: 28px; display: flex; justify-content: center; padding-top: 2px; color: {{r.color}};">
+          <sc-if value="{{r.isEgg}}" hint-placeholder-val="{{false}}"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3c4 0 7 6 7 11a7 7 0 0 1-14 0c0-5 3-11 7-11z"></path><path d="M8 12.5l2 1.5 1.5-2 2 2 2-1.5"></path></svg></sc-if>
+          <sc-if value="{{r.isScale}}" hint-placeholder-val="{{false}}"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3c4.5 2 7 5.5 7 9.5c0 4.2-3.2 7.3-7 8.5c-3.8-1.2-7-4.3-7-8.5c0-4 2.5-7.5 7-9.5z"></path><path d="M12 7.5v9"></path><path d="M8.5 11.5l3.5 2 3.5-2"></path></svg></sc-if>
+          <sc-if value="{{r.isFang}}" hint-placeholder-val="{{false}}"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h18"></path><path d="M6 5c.2 4 1.4 7.5 4 10c-.7-3.2-.4-6.8 1-10"></path><path d="M18 5c-.2 4-1.4 7.5-4 10c.7-3.2.4-6.8-1-10"></path></svg></sc-if>
+          <sc-if value="{{r.isBasilisk}}" hint-placeholder-val="{{false}}"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 13C5 8.5 8.5 6.5 12 6.5s7 2 9.5 6.5c-2.5 4.5-6 6.5-9.5 6.5S5 17.5 2.5 13Z"></path><path d="M12 9.5c1 1.2 1 5.8 0 7c-1-1.2-1-5.8 0-7Z" fill="currentColor"></path><path d="M7 4.5l2 1.5 3-2.5 3 2.5 2-1.5"></path></svg></sc-if>
+          <sc-if value="{{r.isDragon}}" hint-placeholder-val="{{false}}"><svg width="27" height="24" viewBox="0 0 72 64" fill="currentColor" aria-hidden="true"><path d="M4 8C14 31 58 31 68 8C56 22 16 22 4 8Z"></path><circle cx="36" cy="41" r="16" fill="none" stroke="currentColor" stroke-width="6"></circle><path d="M36 30.5C39.2 35.5 39.2 46.5 36 51.5C32.8 46.5 32.8 35.5 36 30.5Z"></path></svg></sc-if>
+        </div>
+        <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;">
+          <div class="row"><b>{{r.name}}</b><span class="mono small">{{r.fee}}</span></div>
+          <span class="small muted">{{r.need}}</span>
+          <span class="small">{{r.perk}}</span>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"$preview":{"width":390,"height":1300}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const base = [
+      { name: 'Hatchling', key: 'egg', fee: '13.99%', need: 'Pass the rules test', perk: 'Sell in every launch game' },
+      { name: 'Scale', key: 'scale', fee: '[fee]', need: '[orders, rating]', perk: '[perk]' },
+      { name: 'Fang', key: 'fang', fee: '[fee]', need: '[orders, rating]', perk: '[perk]' },
+      { name: 'Basilisk', key: 'basilisk', fee: '[fee]', need: '[orders, rating]', perk: '[perk]' },
+      { name: 'Dragon', key: 'dragon', fee: '[fee]', need: '[orders, rating]', perk: '[perk]' }
+    ];
+    return {
+      theme: this.props.dark ? 'night' : 'frost',
+      ranks: base.map((r) => ({
+        name: r.name, fee: r.fee, need: r.need, perk: r.perk,
+        cls: r.key === 'fang' ? 'card current' : '',
+        color: r.key === 'dragon' ? 'var(--rune)' : 'var(--ink)',
+        isEgg: r.key === 'egg', isScale: r.key === 'scale', isFang: r.key === 'fang', isBasilisk: r.key === 'basilisk', isDragon: r.key === 'dragon'
+      }))
+    };
+  }
+}
+</script>
+</body>
+</html>

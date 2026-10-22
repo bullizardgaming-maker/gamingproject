@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Signature motion</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="brand.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alexandria:wght@400;500;600;700;800&amp;family=Inter:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+.pupil{transform-box:fill-box;transform-origin:center;transition:transform 220ms cubic-bezier(.2,.8,.2,1)}
+.tint{transition:fill 160ms ease-out,stroke 160ms ease-out}
+.st{height:44px;padding:0 16px;border-radius:10px;border:1px solid var(--rule);background:var(--paper);color:var(--ink);font:600 15px/1 var(--font-body);cursor:pointer;transition:background 140ms ease-out,border-color 140ms ease-out}
+.st:hover{border-color:var(--ink)}
+.st.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.st:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+@media (prefers-reduced-motion: reduce){.pupil,.tint{transition:none}}
+</style>
+</helmet>
+<div class="board {{theme}}" style="width: 1280px; height: 800px; flex-direction: row; gap: 64px; align-items: stretch;">
+  <div class="panel" style="width: 560px; flex: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 32px;">
+    <svg width="320" height="284" viewBox="0 0 72 64" role="img" aria-label="{{aria}}">
+      <path class="tint" d="M4 8C14 31 58 31 68 8C56 22 16 22 4 8Z" style="fill: var(--ink);"></path>
+      <circle class="tint" cx="36" cy="41" r="16" fill="none" stroke-width="6" style="stroke: {{ringColor}};"></circle>
+      <ellipse class="pupil tint" cx="36" cy="41" rx="3.2" ry="10.5" style="fill: {{ringColor}}; transform: {{pupil}};"></ellipse>
+    </svg>
+    <div style="display: flex; gap: 8px;">
+      <sc-for list="{{states}}" as="s" hint-placeholder-count="3">
+        <button class="{{s.cls}}" onClick="{{s.pick}}">{{s.label}}</button>
+      </sc-for>
+    </div>
+  </div>
+  <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 28px;">
+    <div style="display: flex; flex-direction: column; gap: 12px;">
+      <p class="eyebrow">Signature motion</p>
+      <h1 class="title">The eye reacts to the money.</h1>
+      <p class="lede">One moment, used only when an order's money changes state. Everything else in the interface stays still.</p>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 16px;">
+      <div style="display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 16px;"><span class="eyebrow" style="padding-top: 4px;">Held</span><span>Narrow slit, amber ring. The payment landed and the eye is watching.</span></div>
+      <div style="display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 16px;"><span class="eyebrow" style="padding-top: 4px;">Released</span><span>The pupil opens into a full coin, teal. The seller has been paid.</span></div>
+      <div style="display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 16px;"><span class="eyebrow" style="padding-top: 4px;">Disputed</span><span>The eye shuts to a line, rose. Money is frozen until staff decide.</span></div>
+    </div>
+    <div class="panel" style="padding: 16px 20px; display: flex; gap: 32px; flex-wrap: wrap;">
+      <span class="mono small">220 ms · ease-out</span>
+      <span class="mono small">transform only</span>
+      <span class="mono small">plays once, never loops</span>
+      <span class="mono small">off with reduced motion</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { s: 'held' }; }
+  renderVals() {
+    const map = {
+      held: { ring: 'var(--held)', pupil: 'scale(1, 1)', aria: 'Mark in the held state' },
+      released: { ring: 'var(--released)', pupil: 'scale(3, 1)', aria: 'Mark in the released state' },
+      disputed: { ring: 'var(--disputed)', pupil: 'scale(3, 0.12)', aria: 'Mark in the disputed state' }
+    };
+    const cur = map[this.state.s];
+    return {
+      theme: this.props.dark ? 'night' : 'frost',
+      ringColor: cur.ring,
+      pupil: cur.pupil,
+      aria: cur.aria,
+      states: [['held', 'Held'], ['released', 'Released'], ['disputed', 'Disputed']].map(([k, label]) => ({
+        label, cls: this.state.s === k ? 'st on' : 'st', pick: () => this.setState({ s: k })
+      }))
+    };
+  }
+}
+</script>
+</body>
+</html>
