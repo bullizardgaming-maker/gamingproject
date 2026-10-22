@@ -12,6 +12,8 @@ const pt: Messages = {
   'nav.allGames': 'Todos os jogos',
   'nav.escrowNote': 'Todo pedido fica em custódia',
   'nav.watchlist': 'Lista de acompanhamento',
+  'nav.messages': 'Mensagens',
+  'brand.home': 'Início da Bullizard',
   'nav.main': 'Principal',
   'nav.categories': 'Categorias',
   'prefs.currency': 'Mostrar preços em',

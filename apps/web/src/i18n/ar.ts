@@ -12,6 +12,8 @@ const ar: Messages = {
   'nav.allGames': 'كل الألعاب',
   'nav.escrowNote': 'كل طلب محفوظ في الضمان',
   'nav.watchlist': 'قائمة المتابعة',
+  'nav.messages': 'الرسائل',
+  'brand.home': 'الصفحة الرئيسية لـ Bullizard',
   'nav.main': 'القائمة الرئيسية',
   'nav.categories': 'الفئات',
   'prefs.currency': 'عرض الأسعار بـ',

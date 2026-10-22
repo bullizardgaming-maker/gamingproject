@@ -11,6 +11,8 @@ const de: Messages = {
   'nav.allGames': 'Alle Spiele',
   'nav.escrowNote': 'Jede Bestellung wird treuhänderisch verwahrt',
   'nav.watchlist': 'Merkliste',
+  'nav.messages': 'Nachrichten',
+  'brand.home': 'Bullizard Startseite',
   'nav.main': 'Hauptmenü',
   'nav.categories': 'Kategorien',
   'prefs.currency': 'Preise anzeigen in',

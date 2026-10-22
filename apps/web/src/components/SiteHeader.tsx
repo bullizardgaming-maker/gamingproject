@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { Heart, LayoutGrid, Moon, Search, ShieldCheck, ShoppingCart, Sun } from 'lucide-react';
+import { Heart, LayoutGrid, MessageSquare, Moon, Search, ShieldCheck, ShoppingCart, Sun } from 'lucide-react';
+import { BrandLockup } from './Brand';
 import { cartCount, useCart } from '@/lib/cart';
 import { useSession } from '../session';
 import { NotificationBell } from './NotificationBell';
@@ -160,14 +161,14 @@ export function SiteHeader() {
   const cat = new URLSearchParams(search).get('category');
   return (
     <header className="topbar site-header">
-      <div className="shell header-main">
-        <Link to="/" className="brand"><span className="brand-mark" aria-hidden />Bullizard</Link>
+      <div className="shell shell-wide header-main">
+        <Link to="/" className="brand" aria-label={t('brand.home')}><BrandLockup size={19} /></Link>
         <div className="header-search"><GameSearch /></div>
         <nav className="nav header-links" aria-label={t('nav.main')}>
           <NavLink to="/market" end>{t('nav.market')}</NavLink>
           <NavLink to="/requests">{t('nav.requests')}</NavLink>
           {user && <NavLink to="/orders">{t('nav.orders')}</NavLink>}
-          <NavLink to="/sell">{t('nav.sell')}</NavLink>
+          <NavLink to="/sell" className="nav-cta">{t('nav.sell')}</NavLink>
           {user && user.role !== 'user' && <NavLink to="/admin">{t('nav.operations')}</NavLink>}
         </nav>
         <div className="who">
@@ -175,6 +176,9 @@ export function SiteHeader() {
           <CartLink />
           {user ? (
             <>
+              <Link to="/messages" aria-label={t('nav.messages')} title={t('nav.messages')} className="icon-link">
+                <MessageSquare className="size-[18px]" strokeWidth={1.8} />
+              </Link>
               <Link to="/watchlist" aria-label={t('nav.watchlist')} title={t('nav.watchlist')} className="grid size-10 place-items-center rounded-lg border border-border text-foreground no-underline transition-colors hover:border-foreground">
                 <Heart className="size-[18px]" strokeWidth={1.8} />
               </Link>
@@ -190,7 +194,7 @@ export function SiteHeader() {
         </div>
       </div>
       <div className="header-cats">
-        <div className="shell">
+        <div className="shell shell-wide">
           <nav aria-label={t('nav.categories')} className="flex items-center gap-1 overflow-x-auto">
             <NavLink to="/games" className={({ isActive }) => cn('cat-link', isActive && 'on')}>
               <LayoutGrid className="size-4" /> {t('nav.allGames')}

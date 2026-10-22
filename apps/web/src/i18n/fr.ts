@@ -11,6 +11,8 @@ const fr: Messages = {
   'nav.allGames': 'Tous les jeux',
   'nav.escrowNote': 'Chaque commande est placée sous séquestre',
   'nav.watchlist': 'Liste de suivi',
+  'nav.messages': 'Messages',
+  'brand.home': 'Accueil Bullizard',
   'nav.main': 'Principal',
   'nav.categories': 'Catégories',
   'prefs.currency': 'Afficher les prix en',

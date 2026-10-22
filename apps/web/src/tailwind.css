@@ -90,7 +90,12 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
-  --font-sans: 'IBM Plex Sans', 'IBM Plex Sans Arabic', system-ui, sans-serif;
-  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
-  --font-display: 'Bricolage Grotesque', 'IBM Plex Sans Arabic', 'Segoe UI', sans-serif;
+  --font-sans: 'Inter', 'Alexandria', system-ui, sans-serif;
+  /* No mono font in the brand: font-mono maps to Inter; pair with tabular-nums for figures. */
+  --font-mono: 'Inter', 'Alexandria', system-ui, sans-serif;
+  --font-display: 'Alexandria', 'Segoe UI', system-ui, sans-serif;
+  --color-rune: var(--rune);
+  --color-rune-soft: var(--rune-soft);
+  --color-on-rune: var(--on-rune);
+  --color-raised: var(--raised);
 }

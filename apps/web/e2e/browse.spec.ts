@@ -71,9 +71,11 @@ test.describe('browsing', () => {
     await expect(page.getByText(/≈ EGP/).first()).toBeVisible();
     await page.getByLabel('Show prices in').first().selectOption('EUR');
     await expect(page.getByText(/≈ €/).first()).toBeVisible();
-    await page.getByRole('button', { name: 'Use dark theme' }).click();
-    await page.reload();
+    // Dark is the default; switching to light sticks across a reload.
     await expect(page.locator('html')).toHaveClass(/dark/);
+    await page.getByRole('button', { name: 'Use light theme' }).click();
+    await page.reload();
+    await expect(page.locator('html')).not.toHaveClass(/dark/);
   });
 
   test('prices default to the local currency on a first visit', async ({ browser }) => {

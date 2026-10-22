@@ -5,6 +5,7 @@ import { useInstall } from '@/lib/pwa';
 import { LOCALES, setLocale, t, useLocale, type Locale } from '../i18n';
 import { DISPLAY_CURRENCIES, setCurrency, useDisplayCurrency, type DisplayCurrency } from '@/lib/prefs';
 import { CATEGORY_META, useCategoryOrder } from '@/lib/catalog';
+import { BrandLockup } from './Brand';
 
 const columns = (categoryOrder: string[]): Array<[string, Array<[string, string]>]> => [
   [t('footer.buy'), categoryOrder.slice(0, 6).map((slug) => [CATEGORY_META[slug]!.label, `/market?category=${slug}`])],
@@ -58,7 +59,7 @@ export function SiteFooter() {
       <div className="shell">
         <div className="grid gap-8 py-10 sm:grid-cols-2 lg:grid-cols-[1.4fr_repeat(5,1fr)]">
           <div className="stack" style={{ maxWidth: 320 }}>
-            <Link to="/" className="brand"><span className="brand-mark" aria-hidden />Bullizard</Link>
+            <Link to="/" className="brand" aria-label={t('brand.home')}><BrandLockup size={18} /></Link>
             <p className="small muted" style={{ margin: '12px 0 0' }}>
               {t('footer.tagline')}
             </p>

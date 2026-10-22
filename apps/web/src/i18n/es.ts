@@ -11,6 +11,8 @@ const es: Messages = {
   'nav.allGames': 'Todos los juegos',
   'nav.escrowNote': 'Cada pedido queda en depósito de garantía',
   'nav.watchlist': 'Lista de seguimiento',
+  'nav.messages': 'Mensajes',
+  'brand.home': 'Inicio de Bullizard',
   'nav.main': 'Principal',
   'nav.categories': 'Categorías',
   'prefs.currency': 'Mostrar precios en',

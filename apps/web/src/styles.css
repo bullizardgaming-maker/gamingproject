@@ -3,7 +3,12 @@
   --frost: #eef1f5;
   --paper: #f8fafc;
   --ink: #16202e;
-  --steel: #536279;
+  --steel: #4f5e75;
+  --raised: #e2e7ee;      /* hover rows, chips, inset panels */
+  --night: #080c12;       /* photo overlays, hero */
+  --rune: #4bae24;        /* the one green: main action per view. Text on it is always --on-rune. */
+  --rune-soft: #e4f3dd;
+  --on-rune: #0d131c;
   --rule: #cfd6e0;
   --held: #d98e04;      /* funds locked in escrow */
   --held-soft: #fbefd6;
@@ -21,13 +26,15 @@
   --viz-1: #2a78d6;         /* chart series (validated for colour-blind separation) */
   --viz-2: #eb6834;
 
-  --display: 'Bricolage Grotesque', 'IBM Plex Sans Arabic', 'Segoe UI', sans-serif;
-  --body: 'IBM Plex Sans', 'IBM Plex Sans Arabic', system-ui, sans-serif;
-  --mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --display: 'Alexandria', 'Segoe UI', system-ui, sans-serif;
+  --body: 'Inter', 'Alexandria', 'Segoe UI', system-ui, sans-serif;
+  /* No mono font: numbers, IDs and timers use Inter with tabular figures (.mono / .num). */
+  --mono: 'Inter', 'Alexandria', system-ui, sans-serif;
 
   --radius: 10px;
   --gutter: clamp(16px, 4vw, 40px);
-  --max: 1160px;
+  --max: 1240px;
+  --max-wide: 1600px;
 }
 
 * { box-sizing: border-box; }
@@ -51,7 +58,7 @@ main:focus { outline: none; }
 label.btn:focus-within { outline: 2px solid var(--ink); outline-offset: 2px; }
 .skip-link { position: absolute; inset-inline-start: 12px; top: 8px; z-index: 100; padding: 10px 14px; border-radius: 8px; background: var(--ink); color: var(--paper); font-weight: 600; transform: translateY(-200%); }
 .skip-link:focus { transform: none; }
-.mono { font-family: var(--mono); font-feature-settings: 'zero'; }
+.mono, .num { font-family: var(--body); font-variant-numeric: tabular-nums; }
 
 /* ---------- Shell ---------- */
 .shell { max-width: var(--max); margin: 0 auto; padding: 0 var(--gutter); }
@@ -307,8 +314,11 @@ table.data td { padding: 12px 8px; border-bottom: 1px solid var(--rule); vertica
 /* ---------- Dark theme (html.dark, set from the header toggle or the system setting) ---------- */
 html.dark {
   --frost: #0d131c;
-  --paper: #151d29;
-  --ink: #e6ebf2;
+  --paper: #16202e;
+  --ink: #eef1f5;
+  --raised: #1f2b3c;
+  --rune: #77bd77;
+  --rune-soft: #2c4620;
   --steel: #9aa8bb;
   --rule: #2a3749;
   --held: #f0a830;
@@ -319,7 +329,7 @@ html.dark {
   --disputed-soft: #3a1527;
   --held-ink: #f6c46a;
   --released-ink: #82e2d6;
-  --field: #0f1621;
+  --field: #111925;
   --btn-hover: #c9d3e0;
   --banner-rule: #c2ccda;
   --shop-steel: #9aa8bb; --shop-teal: #2fbfae; --shop-amber: #f0a830; --shop-rose: #e8709b; --shop-violet: #9a8cf0;
@@ -337,8 +347,51 @@ html.dark .secret { background: #0a0f17; color: #dbe4ef; }
 /* Arabic script is joined: letter-spacing breaks the joins, and it has no capitals to track. */
 html[lang='ar'] * { letter-spacing: normal !important; }
 html[lang='ar'] body { line-height: 1.7; }
-/* Plex Mono has no Arabic glyphs: let Arabic text in mono labels fall back to Plex Sans Arabic. */
-html[lang='ar'] { --mono: 'IBM Plex Mono', 'IBM Plex Sans Arabic', ui-monospace, monospace; --font-mono: 'IBM Plex Mono', 'IBM Plex Sans Arabic', ui-monospace, monospace; }
+/* Arabic text is set in Alexandria; numbers keep Inter's tabular figures. */
+html[lang='ar'] { --body: 'Alexandria', 'Inter', system-ui, sans-serif; --mono: 'Inter', 'Alexandria', system-ui, sans-serif; --font-mono: 'Inter', 'Alexandria', system-ui, sans-serif; }
+
+/* =====================================================================================
+ * Bullizard brand layer (Oct 2026): Alexandria + Inter, Night Frost dark by default, one green.
+ * Rules: one rune-green element per view (the main action), dark text on green, no hover
+ * shadows (hover = border rule -> steel), figures in Inter tabular-nums.
+ * ===================================================================================== */
+body { font-family: var(--body); font-feature-settings: 'cv11'; }
+h1, h2, h3 { font-family: var(--display); letter-spacing: -0.01em; line-height: 1.12; }
+h1 { font-weight: 800; }
+h2 { font-weight: 700; }
+h3 { font-weight: 700; }
+.font-mono, .mono, .price, .num { font-variant-numeric: tabular-nums; }
+.eyebrow { font: 600 12px/1 var(--body); letter-spacing: 0.08em; }
+.chip { font: 500 12px/1 var(--body); font-variant-numeric: tabular-nums; }
+.chip.disputed { color: var(--disputed); }
+html.dark .chip.disputed { color: #f39bbb; }
+table.data th { font: 600 12px/1 var(--body); letter-spacing: 0.06em; }
+.track-clock, .rung .rate, .rung .min, .offer .price, .coin { font-family: var(--body); font-variant-numeric: tabular-nums; }
+.offer .title, .track-stop b, .rung .name { font-family: var(--display); font-weight: 600; }
+
+.shell-wide { max-width: var(--max-wide); }
+.topbar { background: var(--paper); }
+.site-header .header-main { height: 68px; }
+.brand { color: var(--ink); }
+.brand:hover { color: var(--ink); }
+.icon-link { position: relative; display: grid; place-items: center; width: 40px; height: 40px; border-radius: var(--radius); border: 1px solid var(--rule); color: var(--ink); text-decoration: none; transition: border-color .14s ease-out; }
+.icon-link:hover { border-color: var(--steel); }
+.nav a.nav-cta { border: 1px solid var(--rule); }
+.nav a.nav-cta:hover, .nav a.nav-cta.active { border-color: var(--steel); background: transparent; }
+.site-header .header-cats { background: var(--frost); }
+.cat-link.on, .cat-link.active { border-bottom-color: var(--ink); }
+
+.btn { border-radius: var(--radius); font-weight: 600; transition: background-color .14s ease-out, border-color .14s ease-out; }
+.btn.ghost:hover { border-color: var(--steel); }
+.btn.go { background: var(--rune); border-color: var(--rune); color: var(--on-rune); }
+.btn.go:hover { background: color-mix(in srgb, var(--rune) 88%, var(--ink)); border-color: transparent; }
+.btn.release { background: var(--rune); border-color: var(--rune); color: var(--on-rune); }
+.btn.release:hover { background: color-mix(in srgb, var(--rune) 88%, var(--ink)); }
+.card { border-radius: 12px; }
+.cat-tile:hover, .offer:hover { transform: none; border-color: var(--steel); }
+.filters button[aria-pressed='true'], .filters button[aria-selected='true'], .filters a[aria-current='page'] { background: var(--ink); color: var(--frost); }
+input, select, textarea { border-radius: var(--radius); }
+input:focus, select:focus, textarea:focus { border-color: var(--steel); }
 
 /* Crypto checkout: coin picker and payment details */
 .coin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }

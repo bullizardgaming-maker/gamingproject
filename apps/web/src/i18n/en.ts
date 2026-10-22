@@ -11,6 +11,8 @@ const en = {
   'nav.allGames': 'All games',
   'nav.escrowNote': 'Every order is held in escrow',
   'nav.watchlist': 'Watchlist',
+  'nav.messages': 'Messages',
+  'brand.home': 'Bullizard home',
   'nav.main': 'Main',
   'nav.categories': 'Categories',
   'prefs.currency': 'Show prices in',

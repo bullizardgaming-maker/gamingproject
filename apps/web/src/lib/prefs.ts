@@ -25,7 +25,8 @@ const write = (k: string, v: string) => {
   }
 };
 
-let theme: Theme = (read('bz.theme') as Theme) || 'system';
+// Night Frost (dark) is the brand default; light stays one tap away in the header.
+let theme: Theme = (read('bz.theme') as Theme) || 'dark';
 /**
  * First visit: the currency follows where the viewer seems to be (time zone, then language region):
  * Egypt → EGP, the euro area → EUR, everywhere else USD. Their own choice is kept after that.
