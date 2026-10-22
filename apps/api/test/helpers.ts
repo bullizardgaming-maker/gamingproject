@@ -22,7 +22,7 @@ export async function setup(overrides: Record<string, string> = {}, ctxOverrides
   const db = createPool(cfg.DATABASE_URL);
   await db.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
   await migrate(db);
-  await db.query('UPDATE launch_settings SET phase = 3'); // tests cover every category; launch-phase.test.ts checks the gating
+  await db.query('UPDATE launch_settings SET phase = 3, allowed_games = NULL'); // tests cover every category and game; launch-phase.test.ts checks the gating
   const messenger = new ConsoleMessenger(() => {});
   const ctx = createContext(cfg, silent, { db, pubsub: new MemoryPubSub(), messenger, ...ctxOverrides });
   const app = await buildApp(ctx);

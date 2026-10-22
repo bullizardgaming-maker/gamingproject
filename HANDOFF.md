@@ -153,13 +153,17 @@ screens were waiting for, plus a slot for game logos.
    - Order and cart checkout summaries show Price / From your balance / To pay, and the coin step is priced on
      what is left (`charged_cents`).
    - Demo: `window.__bzDemo.credit(cents)` tops up the signed-in user's balance (used by the browser test).
-4. **Game logos.** `apps/web/src/components/GameArt.tsx` shows `/games/<slug>.(webp|png|svg)` when the file exists
+4. **Only launch games can be listed.** Migration 064 adds `launch_settings.allowed_games` (seeded with the five
+   launch games; `NULL` opens every game) and `game_allowed(game)`; `createOffer` refuses others with
+   `game_not_open`. Staff edit the list in Ops → Ranks → "Games sellers can list" (`PUT /v1/admin/launch
+   { allowedGames }`); game-vote winners go there. The test harness sets it to NULL.
+5. **Game logos.** `apps/web/src/components/GameArt.tsx` shows `/games/<slug>.(webp|png|svg)` when the file exists
    (see `apps/web/public/games/README.md`); the owner drops in the official logos under each publisher's fan-kit
    terms. Until then tiles show the name only.
 
-Tests: `cart.test.ts` (balance spent first / fully covered cart), `crypto-payments.test.ts` (greyed coins),
-`e2e/crypto.spec.ts` (greyed Monero with reason; balance → "From your balance" → paid-at-once). 70 API files and
-117 browser tests green.
+Tests: `cart.test.ts` (balance spent first / fully covered cart), `crypto-payments.test.ts` (greyed coins), `launch-phase.test.ts` (allowed games),
+`e2e/crypto.spec.ts` (greyed Monero with reason; balance → "From your balance" → paid-at-once), `e2e/launch.spec.ts`
+(allowed games panel). 70 API files and 119 browser tests green.
 
 ## Suggested next round
 

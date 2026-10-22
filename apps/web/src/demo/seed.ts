@@ -441,7 +441,7 @@ export function seed() {
     texts: {
       chat_safety: { key: 'chat_safety', body: 'Keep the whole trade in this chat. Never pay or deliver anywhere else: deals made outside Bullizard are not in escrow and not protected.\nSharing outside contacts can get your account banned right away.\nThe payment is released only when the buyer confirms delivery. If something is wrong, open a dispute from the order page.', link_label: 'Rules and policies', link_href: '/help/report-a-user', updated_at: ago(10 * day) },
     } as Record<string, { key: string; body: string; link_label: string; link_href: string; updated_at: string }>,
-    launch: { foundingUntil: ago(-45 * day), featuredSlots: 2, featuredDays: 7 },
+    launch: { foundingUntil: ago(-45 * day), featuredSlots: 2, featuredDays: 7, allowedGames: undefined as string[] | null | undefined },
     gameVotes: [
       { id: 'gv-1', name: 'Lost Ark', votes: 184, status: 'planned', staff_note: 'Opening with the next wave of sellers.', suggested_by: null as string | null, voters: [] as string[], created_at: ago(30 * day) },
       { id: 'gv-2', name: 'Throne and Liberty', votes: 97, status: 'open', staff_note: '', suggested_by: null as string | null, voters: [] as string[], created_at: ago(20 * day) },

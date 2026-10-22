@@ -455,9 +455,24 @@ function RoleEditor({ current, onSave, onCancel }: { current: string[]; onSave: 
 
 /** Launch phase: which categories are on sale (1 currency/items/top-ups, 2 + accounts/boosting, 3 everything). */
 function LaunchPhase() {
-  const { data, error, reload, setError } = useLoad(() => api<{ phase: number; categories: Array<{ slug: string; name: string; phase: number }> }>('/admin/launch'));
+  const { data, error, reload, setError } = useLoad(() => api<{ phase: number; allowedGames: string[] | null; categories: Array<{ slug: string; name: string; phase: number }> }>('/admin/launch'));
   const [msg, setMsg] = useState('');
+  const [games, setGames] = useState<string | null>(null);
   if (!data) return <p className="muted">{error || 'Loading…'}</p>;
+  const gamesText = games ?? (data.allowedGames ?? []).join('\n');
+  const saveGames = async () => {
+    setError('');
+    setMsg('');
+    const list = gamesText.split('\n').map((g) => g.trim()).filter(Boolean);
+    try {
+      await api('/admin/launch', { method: 'PUT', body: { allowedGames: list.length ? list : null } });
+      setMsg(list.length ? `Sellers can list in ${list.length} game${list.length === 1 ? '' : 's'}.` : 'Every game is open for listing.');
+      setGames(null);
+      reload();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
   const set = async (phase: number) => {
     setError('');
     setMsg('');
@@ -484,6 +499,14 @@ function LaunchPhase() {
             Phase {p}: {data.categories.filter((c) => c.phase === p).map((c) => c.name).join(', ')}
           </button>
         ))}
+      </div>
+      <label className="stack" style={{ gap: 6 }}>
+        <b>Games sellers can list</b>
+        <span className="small muted">One per line. Leave empty to open every game. Winners of the game vote go here.</span>
+        <textarea rows={6} value={gamesText} onChange={(e) => setGames(e.target.value)} data-testid="allowed-games" />
+      </label>
+      <div className="row">
+        <button className="btn ghost" onClick={saveGames}>Save games</button>
       </div>
     </div>
   );

@@ -299,19 +299,29 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   // --- Launch phase: which categories are on sale ---------------------------------------------
   app.get('/admin/launch', async (req) => {
     requirePermission(req, 'ranks.manage');
-    const l = await one<any>(ctx.db, 'SELECT phase, founding_until, founding_featured_slots, featured_days FROM launch_settings');
-    return { phase: Number(l.phase), foundingUntil: l.founding_until, foundingFeaturedSlots: Number(l.founding_featured_slots), featuredDays: Number(l.featured_days), categories: await many(ctx.db, 'SELECT slug, name, phase FROM categories ORDER BY phase, name') };
+    const l = await one<any>(ctx.db, 'SELECT phase, founding_until, founding_featured_slots, featured_days, allowed_games FROM launch_settings');
+    return { phase: Number(l.phase), foundingUntil: l.founding_until, foundingFeaturedSlots: Number(l.founding_featured_slots), featuredDays: Number(l.featured_days), allowedGames: l.allowed_games, categories: await many(ctx.db, 'SELECT slug, name, phase FROM categories ORDER BY phase, name') };
   });
   app.put('/admin/launch', async (req) => {
     requirePermission(req, 'ranks.manage');
-    const body = z.object({ phase: z.number().int().min(1).max(3).optional(), foundingUntil: z.string().datetime().optional(), foundingFeaturedSlots: z.number().int().min(0).max(10).optional(), featuredDays: z.number().int().min(1).max(90).optional() }).parse(req.body);
+    const body = z
+      .object({
+        phase: z.number().int().min(1).max(3).optional(),
+        foundingUntil: z.string().datetime().optional(),
+        foundingFeaturedSlots: z.number().int().min(0).max(10).optional(),
+        featuredDays: z.number().int().min(1).max(90).optional(),
+        /** Games sellers may list; null opens every game. */
+        allowedGames: z.array(z.string().trim().min(1).max(80)).max(500).nullable().optional(),
+      })
+      .parse(req.body);
     await ctx.db.query(
       'UPDATE launch_settings SET phase = COALESCE($1, phase), founding_until = COALESCE($2, founding_until), founding_featured_slots = COALESCE($3, founding_featured_slots), featured_days = COALESCE($4, featured_days), updated_at = now()',
       [body.phase ?? null, body.foundingUntil ?? null, body.foundingFeaturedSlots ?? null, body.featuredDays ?? null],
     );
+    if (body.allowedGames !== undefined) await ctx.db.query('UPDATE launch_settings SET allowed_games = $1, updated_at = now()', [body.allowedGames]);
     await audit(ctx.db, req, 'launch.settings', { type: 'launch', id: 'launch' }, body);
-    const l = await one<any>(ctx.db, 'SELECT phase, founding_until, founding_featured_slots, featured_days FROM launch_settings');
-    return { phase: Number(l.phase), foundingUntil: l.founding_until, foundingFeaturedSlots: Number(l.founding_featured_slots), featuredDays: Number(l.featured_days) };
+    const l = await one<any>(ctx.db, 'SELECT phase, founding_until, founding_featured_slots, featured_days, allowed_games FROM launch_settings');
+    return { phase: Number(l.phase), foundingUntil: l.founding_until, foundingFeaturedSlots: Number(l.founding_featured_slots), featuredDays: Number(l.featured_days), allowedGames: l.allowed_games };
   });
 
   // --- Seller rules test (questions, pass mark, ID deadline) -----------------------------------

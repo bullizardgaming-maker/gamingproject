@@ -41,6 +41,16 @@ describe('launch phases', () => {
     expect((await admin.api.put('/v1/admin/launch', { phase: 4 })).status).toBe(400);
   });
 
+  it('refuses listings in games outside the launch list until staff add them (null opens every game)', async () => {
+    const admin = await makeUser(h, { role: 'admin' });
+    const seller = await makeUser(h, { tier: 2 });
+    expect((await admin.api.put('/v1/admin/launch', { allowedGames: ['Aion', 'Listed Game'] })).body.allowedGames).toEqual(['Aion', 'Listed Game']);
+    expect((await seller.api.post('/v1/offers', { categorySlug: 'currency', game: 'Phase Game', title: 'Gold', priceCents: 5_00, deliveryMode: 'manual', stock: 1 })).body.error.code).toBe('game_not_open');
+    expect((await seller.api.post('/v1/offers', { categorySlug: 'currency', game: 'listed game', title: 'Silver', priceCents: 5_00, deliveryMode: 'manual', stock: 1 })).status).toBe(201);
+    await admin.api.put('/v1/admin/launch', { allowedGames: null });
+    expect((await seller.api.post('/v1/offers', { categorySlug: 'currency', game: 'Phase Game', title: 'Gold', priceCents: 5_00, deliveryMode: 'manual', stock: 1 })).status).toBe(201);
+  });
+
   it('badges Founding Sellers and gives them free featured spots that lead search while the launch runs', async () => {
     const admin = await makeUser(h, { role: 'admin' });
     const founder = await makeUser(h, { tier: 2 });

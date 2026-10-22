@@ -116,6 +116,9 @@ export async function createOffer(ctx: Ctx, seller: { id: string; kyc_tier: numb
   const cat = await maybeOne(ctx.db, 'SELECT *, category_open(slug) AS open FROM categories WHERE slug = $1', [input.categorySlug]);
   if (!cat) throw badRequest('unknown_category', 'Unknown category');
   if (!cat.open) throw badRequest('category_not_open', `${cat.name} opens in a later launch phase`);
+  if (!(await one<{ ok: boolean }>(ctx.db, 'SELECT game_allowed($1) AS ok', [input.game])).ok) {
+    throw badRequest('game_not_open', `${input.game} isn’t on Bullizard yet; suggest it on the game vote`);
+  }
   if (cat.kind === 'account' && input.deliveryMode === 'auto' && (input.stock ?? 0) > 0) {
     throw badRequest('invalid_stock', 'Account listings with auto-delivery take stock from uploaded inventory');
   }

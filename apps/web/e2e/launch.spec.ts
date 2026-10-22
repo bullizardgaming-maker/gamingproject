@@ -22,6 +22,20 @@ test.describe('launch extras', () => {
     await expect(page.getByTestId('founding-card')).toContainText('1 of 2 free featured spots in use');
   });
 
+  test('staff set which games sellers can list', async ({ page }) => {
+    await signIn(page, 'Admin');
+    await page.goto('/admin');
+    await page.getByRole('tab', { name: 'Ranks' }).click();
+    const games = page.getByTestId('allowed-games');
+    await expect(games).toHaveValue(''); // the test catalogue opens every game; production seeds the 5 launch games
+    await games.fill('Aion\nAlbion Online');
+    await page.getByRole('button', { name: 'Save games' }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Sellers can list in 2 games.' })).toBeVisible();
+    await games.fill('');
+    await page.getByRole('button', { name: 'Save games' }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Every game is open for listing.' })).toBeVisible();
+  });
+
   test('anyone signed in can suggest and vote for the next game', async ({ page }) => {
     await page.goto('/games');
     await page.getByRole('link', { name: 'Vote for the next game' }).click();

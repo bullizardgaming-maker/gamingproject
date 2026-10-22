@@ -13,7 +13,7 @@ describe('game directory', () => {
     const game = `Directory Quest ${Date.now()}`;
     const make = async (body: object) => {
       const res = await s.api.post('/v1/offers', { game, deliveryMode: 'manual', stock: 3, ...body });
-      expect(res.status).toBe(201);
+      expect(res.status, JSON.stringify(res.body)).toBe(201);
       return res.body;
     };
     await make({ categorySlug: 'currency', title: '10k gold', priceCents: 5_00 });

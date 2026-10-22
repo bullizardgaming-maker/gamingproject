@@ -11,6 +11,15 @@ import { checkTiers, effectivePrice, unitPriceFor } from '../../../api/src/domai
 import { detectOffPlatform, matchTerms } from '../../../api/src/domain/safety';
 import { parseCsv } from '../../../api/src/domain/csv';
 import { platformForGame } from '../../../api/src/domain/platforms';
+import { LAUNCH_GAMES, isLaunchGame } from '../lib/launch';
+
+/** Which games sellers may list (staff-set; the launch games by default, every game in the full demo). */
+const gameAllowed = (game: string) => {
+  const list: string[] | null | undefined = state.launch.allowedGames;
+  if (list === null) return true;
+  if (list === undefined) return DEMO_FULL || isLaunchGame(game);
+  return list.some((g) => g.toLowerCase() === game.trim().toLowerCase());
+};
 
 const KEY = DEMO_FULL ? 'bz.demo.v26' : 'bz.demo.launch.v1';
 const day = 86_400_000;
@@ -576,7 +585,7 @@ route('POST', '/me/delete', () => fail(409, 'demo', 'Demo accounts can’t be de
 // The demo previews every phase: all categories are open (production starts at phase 1).
 const PHASE_OF: Record<string, number> = { accounts: 2, boosting: 2, keys: 3, 'gift-cards': 3, 'video-games': 3 };
 route('GET', '/categories', () => CATEGORIES.map((c) => ({ ...c, phase: PHASE_OF[c.slug] ?? 1, open: (PHASE_OF[c.slug] ?? 1) <= state.launchPhase, current_phase: state.launchPhase })));
-route('GET', '/admin/launch', ({ me }) => (needPerm(me, 'ranks.manage'), { phase: state.launchPhase, foundingUntil: state.launch.foundingUntil, foundingFeaturedSlots: state.launch.featuredSlots, featuredDays: state.launch.featuredDays, categories: CATEGORIES.map((c) => ({ slug: c.slug, name: c.name, phase: PHASE_OF[c.slug] ?? 1 })) }));
+route('GET', '/admin/launch', ({ me }) => (needPerm(me, 'ranks.manage'), { phase: state.launchPhase, foundingUntil: state.launch.foundingUntil, foundingFeaturedSlots: state.launch.featuredSlots, featuredDays: state.launch.featuredDays, allowedGames: state.launch.allowedGames === undefined ? (DEMO_FULL ? null : [...LAUNCH_GAMES]) : state.launch.allowedGames, categories: CATEGORIES.map((c) => ({ slug: c.slug, name: c.name, phase: PHASE_OF[c.slug] ?? 1 })) }));
 route('PUT', '/admin/launch', ({ me, body }) => {
   needPerm(me, 'ranks.manage');
   if (body.phase != null) {
@@ -587,6 +596,7 @@ route('PUT', '/admin/launch', ({ me, body }) => {
   if (body.foundingUntil) state.launch.foundingUntil = body.foundingUntil;
   if (body.foundingFeaturedSlots != null) state.launch.featuredSlots = Number(body.foundingFeaturedSlots);
   if (body.featuredDays != null) state.launch.featuredDays = Number(body.featuredDays);
+  if (body.allowedGames !== undefined) state.launch.allowedGames = body.allowedGames;
   save();
   return { phase: state.launchPhase, foundingUntil: state.launch.foundingUntil, foundingFeaturedSlots: state.launch.featuredSlots, featuredDays: state.launch.featuredDays };
 });
@@ -1806,6 +1816,7 @@ route('POST', '/offers', ({ me, body }) => {
   const cat = CATEGORIES.find((c) => c.slug === body.categorySlug) ?? fail(400, 'invalid_category', 'Unknown category');
   if (!body.title || String(body.title).length < 3) fail(400, 'validation_error', 'Give the listing a title');
   if (!(body.priceCents > 0)) fail(400, 'validation_error', 'Set a price');
+  if (!gameAllowed(String(body.game ?? ''))) fail(400, 'game_not_open', `${body.game} isn’t on Bullizard yet; suggest it on the game vote`);
   const attrs = cleanAttributes(String(body.game ?? ''), cat.slug, body.attributes);
   if (!attrs.ok) fail(400, 'invalid_attributes', attrs.error);
   const tiers = checkTiers(Number(body.priceCents), body.priceTiers, cat.kind);
