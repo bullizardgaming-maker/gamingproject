@@ -466,9 +466,10 @@ function LaunchPhase() {
     const list = gamesText.split('\n').map((g) => g.trim()).filter(Boolean);
     try {
       await api('/admin/launch', { method: 'PUT', body: { allowedGames: list.length ? list : null } });
-      setMsg(list.length ? `Sellers can list in ${list.length} game${list.length === 1 ? '' : 's'}.` : 'Every game is open for listing.');
+      // Reload first, so the box shows the saved list before the confirmation appears.
+      await reload();
       setGames(null);
-      reload();
+      setMsg(list.length ? `Sellers can list in ${list.length} game${list.length === 1 ? '' : 's'}.` : 'Every game is open for listing.');
     } catch (e: any) {
       setError(e.message);
     }
