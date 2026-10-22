@@ -1306,6 +1306,23 @@ const en = {
   "messages.viewShop": "View shop",
   "messages.thisOrder": "This chat's order",
   "messages.report": "Report this chat",
+  "prefs.title": "Language, currency and theme",
+  "prefs.theme": "Theme",
+  "prefs.themeDark": "Dark",
+  "prefs.themeLight": "Light",
+  "notif.purchases": "Purchases",
+  "notif.sales": "Sales",
+  "notif.updates": "Updates",
+  "notif.emptyPurchases": "No new purchase updates",
+  "notif.emptySales": "No new sales updates",
+  "notif.emptyUpdates": "Nothing new",
+  "notif.viewPurchases": "All purchases",
+  "notif.viewSales": "All sales",
+  "notif.settings": "Notification settings",
+  "menu.account": "Account menu",
+  "menu.shop": "Your shop",
+  "menu.settings": "Settings and security",
+  "menu.browse": "Browse the market",
 };
 
 export type MessageKey = keyof typeof en;

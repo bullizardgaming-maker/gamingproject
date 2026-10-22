@@ -15,10 +15,10 @@ test.describe('keyboard and screen readers', () => {
 
   test('navigating announces the new page and moves focus to it', async ({ page }) => {
     await page.goto('/');
-    const link = page.getByRole('link', { name: 'Market', exact: true }).first();
+    const link = page.getByRole('link', { name: 'All games A–Z' }).first();
     await link.focus();
     await page.keyboard.press('Enter');
-    await expect(page).toHaveURL(/\/market/);
+    await expect(page).toHaveURL(/\/games/);
     await expect(page.locator('#main')).toBeFocused();
     await expect(page.locator('[role=status][aria-live=polite]').first()).toContainText(/Bullizard|listings/i);
   });

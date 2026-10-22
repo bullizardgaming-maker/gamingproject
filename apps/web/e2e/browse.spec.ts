@@ -67,12 +67,13 @@ test.describe('browsing', () => {
 
   test('dark mode and display currency persist', async ({ page }) => {
     await page.goto('/games/genshin-impact');
-    await page.getByLabel('Show prices in').first().selectOption('EGP');
+    await page.getByLabel('Show prices in', { exact: true }).first().selectOption('EGP');
     await expect(page.getByText(/≈ EGP/).first()).toBeVisible();
-    await page.getByLabel('Show prices in').first().selectOption('EUR');
+    await page.getByLabel('Show prices in', { exact: true }).first().selectOption('EUR');
     await expect(page.getByText(/≈ €/).first()).toBeVisible();
     // Dark is the default; switching to light sticks across a reload.
     await expect(page.locator('html')).toHaveClass(/dark/);
+    await page.getByRole('button', { name: 'Language, currency and theme' }).click();
     await page.getByRole('button', { name: 'Use light theme' }).click();
     await page.reload();
     await expect(page.locator('html')).not.toHaveClass(/dark/);

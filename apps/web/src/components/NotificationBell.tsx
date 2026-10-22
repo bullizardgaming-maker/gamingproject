@@ -1,7 +1,7 @@
 import { t } from '../i18n';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Bell, CheckCheck } from 'lucide-react';
+import { ArrowRight, Bell, CheckCheck } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { api, realtime } from '../api';
 import { cn } from '@/lib/utils';
@@ -27,6 +27,15 @@ const CATEGORY_DOT: Record<string, string> = {
   operations: 'bg-foreground',
 };
 
+/** Which tab a notification belongs to: things you bought, things you sold, everything else. */
+type Tab = 'purchases' | 'sales' | 'updates';
+const TAB_OF = (category: string): Tab => (category === 'orders' || category === 'reminders' ? 'purchases' : category === 'selling' ? 'sales' : 'updates');
+const TABS: Array<{ key: Tab; label: 'notif.purchases' | 'notif.sales' | 'notif.updates'; empty: 'notif.emptyPurchases' | 'notif.emptySales' | 'notif.emptyUpdates' }> = [
+  { key: 'purchases', label: 'notif.purchases', empty: 'notif.emptyPurchases' },
+  { key: 'sales', label: 'notif.sales', empty: 'notif.emptySales' },
+  { key: 'updates', label: 'notif.updates', empty: 'notif.emptyUpdates' },
+];
+
 function ago(iso: string) {
   const s = Math.max(1, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
   if (s < 60) return 'just now';
@@ -40,6 +49,7 @@ export function NotificationBell() {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<Item[] | null>(null);
   const [unread, setUnread] = useState(0);
+  const [tab, setTab] = useState<Tab | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
@@ -93,6 +103,10 @@ export function NotificationBell() {
   };
 
   const button = useRef<HTMLButtonElement>(null);
+  // Open on the tab with the most unread, unless the user picked one.
+  const unreadIn = (k: Tab) => (items ?? []).filter((i) => !i.read_at && TAB_OF(i.category) === k).length;
+  const current: Tab = tab ?? (['purchases', 'sales', 'updates'] as Tab[]).reduce((a, b) => (unreadIn(b) > unreadIn(a) ? b : a), 'purchases');
+  const shown = (items ?? []).filter((i) => TAB_OF(i.category) === current);
   // Stable, so it runs once when the panel opens (not on every re-render inside it).
   const focusPanel = useCallback((el: HTMLDivElement | null) => el?.focus({ preventScroll: true }), []);
   return (
@@ -135,7 +149,7 @@ export function NotificationBell() {
             transition={{ duration: 0.16, ease: 'easeOut' }}
             className="absolute end-0 top-12 z-50 w-[min(380px,calc(100vw-32px))] origin-top-right overflow-hidden rounded-xl border border-border bg-card shadow-[0_18px_50px_-12px_rgba(22,32,46,0.28)]"
           >
-            <div className="flex items-center justify-between border-b border-border px-4 py-3">
+            <div className="flex items-center justify-between px-4 pt-3 pb-2">
               <span className="font-semibold">{t('notif.title')}</span>
               {unread > 0 && (
                 <button type="button" onClick={markAll} className="inline-flex cursor-pointer items-center gap-1.5 border-0 bg-transparent text-sm text-muted-foreground hover:text-foreground">
@@ -143,13 +157,27 @@ export function NotificationBell() {
                 </button>
               )}
             </div>
-            <div className="max-h-[420px] overflow-y-auto">
+            <div className="notif-tabs" role="tablist" aria-label={t('notif.title')}>
+              {TABS.map((tb) => {
+                const n = (items ?? []).filter((i) => !i.read_at && TAB_OF(i.category) === tb.key).length;
+                return (
+                  <button key={tb.key} type="button" role="tab" aria-selected={current === tb.key} onClick={() => setTab(tb.key)}>
+                    {t(tb.label)}
+                    {n > 0 && <span className="notif-count">{n}</span>}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="max-h-[400px] overflow-y-auto" role="tabpanel">
               {items === null ? (
                 <p className="m-0 px-4 py-6 text-sm text-muted-foreground">{t('common.loading')}</p>
-              ) : items.length === 0 ? (
-                <p className="m-0 px-4 py-8 text-center text-sm text-muted-foreground">{t('notif.empty')}</p>
+              ) : shown.length === 0 ? (
+                <p className="notif-empty">
+                  <Bell className="size-5" strokeWidth={1.6} aria-hidden />
+                  {t(TABS.find((x) => x.key === current)!.empty)}
+                </p>
               ) : (
-                items.map((i) => {
+                shown.map((i) => {
                   const body = (
                     <>
                       <span className={cn('mt-1.5 size-2 shrink-0 rounded-full', i.read_at ? 'bg-transparent' : CATEGORY_DOT[i.category] ?? 'bg-foreground')} />
@@ -169,9 +197,14 @@ export function NotificationBell() {
                 })
               )}
             </div>
-            <Link to="/account#notifications" onClick={() => setOpen(false)} className="block border-t border-border px-4 py-2.5 text-center text-sm text-muted-foreground no-underline hover:text-foreground">
-              Notification settings
-            </Link>
+            <div className="notif-foot">
+              {current !== 'updates' ? (
+                <Link to={current === 'sales' ? '/orders?as=seller' : '/orders?as=buyer'} onClick={() => setOpen(false)}>
+                  {t(current === 'sales' ? 'notif.viewSales' : 'notif.viewPurchases')} <ArrowRight className="size-4 rtl:rotate-180" aria-hidden />
+                </Link>
+              ) : <span />}
+              <Link to="/account#notifications" onClick={() => setOpen(false)} className="muted">{t('notif.settings')}</Link>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

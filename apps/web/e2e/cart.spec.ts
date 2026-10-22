@@ -11,9 +11,9 @@ test.describe('cart', () => {
     await page.goto('/offers/offer-2');
     await page.getByLabel('Quantity').fill('2');
     await page.getByRole('button', { name: 'Add to cart' }).click();
-    await expect(page.getByRole('link', { name: 'Cart, 3 items' })).toBeVisible();
-
-    await page.getByRole('link', { name: 'Cart, 3 items' }).click();
+    // The cart lives in the account menu.
+    await page.getByRole('button', { name: 'Account menu' }).click();
+    await page.getByRole('menuitem', { name: 'Cart, 3 items' }).click();
     await expect(page.getByRole('heading', { name: 'Your cart' })).toBeVisible();
     await expect(page.getByText('Elden Ring — Steam key (Global)')).toBeVisible();
     await expect(page.getByText('Baldur’s Gate 3 — Steam key (EU)')).toBeVisible();
@@ -27,7 +27,8 @@ test.describe('cart', () => {
     await page.waitForURL(/\/orders\?checkout=success/);
     await expect(page.getByText('Elden Ring — Steam key (Global)').first()).toBeVisible();
     await expect(page.getByText('Baldur’s Gate 3 — Steam key (EU)').first()).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Cart, 0 items' })).toBeVisible();
+    await page.getByRole('button', { name: 'Account menu' }).click();
+    await expect(page.getByRole('menuitem', { name: 'Cart, 0 items' })).toBeVisible();
     done();
   });
 

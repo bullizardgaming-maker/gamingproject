@@ -1,15 +1,14 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { Heart, LayoutGrid, MessageSquare, Moon, Search, ShieldCheck, ShoppingCart, Sun } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { MessageSquare, Search } from 'lucide-react';
 import { BrandLockup } from './Brand';
-import { cartCount, useCart } from '@/lib/cart';
 import { useSession } from '../session';
 import { NotificationBell } from './NotificationBell';
-import { CATEGORY_ICON, GameArt } from './CatalogUi';
-import { CATEGORY_META, loadGames, popular, slugify, useCategoryOrder, type GameEntry } from '@/lib/catalog';
+import { GameArt } from './CatalogUi';
+import { AccountMenu, PrefsMenu } from './HeaderMenus';
+import { loadGames, popular, slugify, type GameEntry } from '@/lib/catalog';
 import { cn } from '@/lib/utils';
-import { LOCALES, setLocale, t, useLocale, type Locale } from '../i18n';
-import { DISPLAY_CURRENCIES, resolvedTheme, setCurrency, setTheme, useDisplayCurrency, useTheme, type DisplayCurrency } from '@/lib/prefs';
+import { t } from '../i18n';
 
 /** Search box with game suggestions: Enter searches listings, picking a game opens its page. */
 export function GameSearch({ big = false, autoFocus = false }: { big?: boolean; autoFocus?: boolean }) {
@@ -108,109 +107,26 @@ export function GameSearch({ big = false, autoFocus = false }: { big?: boolean; 
   );
 }
 
-/** Display currency and light/dark theme, remembered in this browser. */
-function ViewPrefs() {
-  useTheme();
-  const cur = useDisplayCurrency();
-  const lang = useLocale();
-  const dark = resolvedTheme() === 'dark';
-  return (
-    <div className="flex items-center gap-1.5">
-      <select aria-label={t('prefs.language')} title={t('prefs.language')} value={lang} onChange={(e) => setLocale(e.target.value as Locale)} className="pref-select">
-        {(Object.keys(LOCALES) as Locale[]).map((l) => (
-          <option key={l} value={l} lang={l}>{l === lang ? LOCALES[l].short : LOCALES[l].name}</option>
-        ))}
-      </select>
-      <select
-        aria-label={t('prefs.currency')}
-        title={t('prefs.currency')}
-        value={cur}
-        onChange={(e) => setCurrency(e.target.value as DisplayCurrency)}
-        className="pref-select"
-      >
-        {DISPLAY_CURRENCIES.map((c) => <option key={c}>{c}</option>)}
-      </select>
-      <button
-        type="button"
-        aria-label={dark ? t('prefs.light') : t('prefs.dark')}
-        title={dark ? t('prefs.light') : t('prefs.dark')}
-        onClick={() => setTheme(dark ? 'light' : 'dark')}
-        className="grid size-10 cursor-pointer place-items-center rounded-lg border border-border bg-transparent text-foreground transition-colors hover:border-foreground"
-      >
-        {dark ? <Sun className="size-[18px]" strokeWidth={1.8} /> : <Moon className="size-[18px]" strokeWidth={1.8} />}
-      </button>
-    </div>
-  );
-}
-
-/** Cart icon with its item count (the cart lives in this browser, so it shows signed out too). */
-function CartLink() {
-  const n = cartCount(useCart());
-  return (
-    <Link to="/cart" aria-label={t('cart.linkLabel', { count: n })} title={t('cart.title')} className="relative grid size-10 place-items-center rounded-lg border border-border text-foreground no-underline transition-colors hover:border-foreground">
-      <ShoppingCart className="size-[18px]" strokeWidth={1.8} />
-      {n > 0 && <span className="absolute -end-1.5 -top-1.5 grid min-w-5 place-items-center rounded-full bg-foreground px-1 font-mono text-[11px] font-semibold text-background">{n > 99 ? '99+' : n}</span>}
-    </Link>
-  );
-}
-
 export function SiteHeader() {
-  const categoryOrder = useCategoryOrder();
-  const { user, signOut } = useSession();
-  const { pathname, search } = useLocation();
-  const cat = new URLSearchParams(search).get('category');
+  const { user } = useSession();
   return (
     <header className="topbar site-header">
       <div className="shell shell-wide header-main">
         <Link to="/" className="brand" aria-label={t('brand.home')}><BrandLockup size={19} /></Link>
         <div className="header-search"><GameSearch /></div>
-        <nav className="nav header-links" aria-label={t('nav.main')}>
-          <NavLink to="/market" end>{t('nav.market')}</NavLink>
-          <NavLink to="/requests">{t('nav.requests')}</NavLink>
-          {user && <NavLink to="/orders">{t('nav.orders')}</NavLink>}
-          <NavLink to="/sell" className="nav-cta">{t('nav.sell')}</NavLink>
-          {user && user.role !== 'user' && <NavLink to="/admin">{t('nav.operations')}</NavLink>}
-        </nav>
         <div className="who">
-          <ViewPrefs />
-          <CartLink />
+          <PrefsMenu />
           {user ? (
             <>
               <Link to="/messages" aria-label={t('nav.messages')} title={t('nav.messages')} className="icon-link">
                 <MessageSquare className="size-[18px]" strokeWidth={1.8} />
               </Link>
-              <Link to="/watchlist" aria-label={t('nav.watchlist')} title={t('nav.watchlist')} className="grid size-10 place-items-center rounded-lg border border-border text-foreground no-underline transition-colors hover:border-foreground">
-                <Heart className="size-[18px]" strokeWidth={1.8} />
-              </Link>
               <NotificationBell />
-              <Link to="/account" className="small header-account">
-                <span className="email">{user.display_name} · </span>{t('nav.level', { n: user.kyc_tier })}
-              </Link>
-              <button className="btn ghost" onClick={signOut}>{t('nav.signOut')}</button>
+              <AccountMenu />
             </>
           ) : (
             <Link className="btn" to="/login">{t('nav.signIn')}</Link>
           )}
-        </div>
-      </div>
-      <div className="header-cats">
-        <div className="shell shell-wide">
-          <nav aria-label={t('nav.categories')} className="flex items-center gap-1 overflow-x-auto">
-            <NavLink to="/games" className={({ isActive }) => cn('cat-link', isActive && 'on')}>
-              <LayoutGrid className="size-4" /> {t('nav.allGames')}
-            </NavLink>
-            {categoryOrder.map((slug) => {
-              const Icon = CATEGORY_ICON[slug]!;
-              return (
-                <Link key={slug} to={`/market?category=${slug}`} className={cn('cat-link', pathname === '/market' && cat === slug && 'on')}>
-                  <Icon className="size-4" /> {CATEGORY_META[slug]!.label}
-                </Link>
-              );
-            })}
-            <span className="ms-auto hidden items-center gap-1.5 whitespace-nowrap ps-4 text-xs text-muted-foreground xl:inline-flex">
-              <ShieldCheck className="size-4 text-released" /> {t('nav.escrowNote')}
-            </span>
-          </nav>
         </div>
       </div>
     </header>
