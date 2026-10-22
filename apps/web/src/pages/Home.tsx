@@ -1,5 +1,6 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
+import { GameArt } from '@/components/GameArt';
 import { ArrowRight } from '@phosphor-icons/react';
 import { CATEGORY_ICON, TrustStrip } from '../components/CatalogUi';
 import { GameSearch } from '../components/SiteHeader';
@@ -130,7 +131,7 @@ function GameTile({ game, only }: { game: GameEntry; only?: string[] }) {
   const slug = slugify(game.game);
   return (
     <article className="card home-game">
-      <Link to={`/games/${slug}`} className="home-game-name">{game.game}</Link>
+      <Link to={`/games/${slug}`} className="home-game-name"><GameArt game={game.game} size={28} /> {game.game}</Link>
       <div className="home-game-cats">
         {cats.map((s) => {
           const Icon = CATEGORY_ICON[s]!;

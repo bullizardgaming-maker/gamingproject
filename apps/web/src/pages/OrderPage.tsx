@@ -25,6 +25,8 @@ interface OrderDetail {
   delivery_mode: string;
   quantity: number;
   amount_cents: number;
+  credit_cents?: number;
+  charged_cents?: number;
   currency: string;
   commission_bps: number;
   seller_net_cents: number;
@@ -306,7 +308,7 @@ export function OrderPage() {
       <div className="stack pg-checkout">
         <CheckoutSteps step={2} />
         <div className="pg-split">
-          <CryptoCheckout base={`/orders/${order.id}`} amountCents={order.amount_cents} currency={order.currency} onPaid={load} />
+          <CryptoCheckout base={`/orders/${order.id}`} amountCents={order.charged_cents ?? order.amount_cents} currency={order.currency} onPaid={load} />
           <aside className="card pg-summary">
             <p className="pg-label">{t('checkout.yourOrder')}</p>
             <div className="flex items-center gap-3">
@@ -317,7 +319,8 @@ export function OrderPage() {
             </div>
             <div className="pg-rows">
               <div><span className="muted">{t('checkout.price')}</span><span className="num">{money(order.amount_cents, order.currency)}</span></div>
-              <div className="pg-total"><span>{t('checkout.toPay')}</span><span className="pg-price">{money(order.amount_cents, order.currency)}</span></div>
+              {(order.credit_cents ?? 0) > 0 && <div><span className="muted">{t('checkout.fromBalance')}</span><span className="num" data-testid="from-balance">−{money(order.credit_cents!, order.currency)}</span></div>}
+              <div className="pg-total"><span>{t('checkout.toPay')}</span><span className="pg-price">{money(order.charged_cents ?? order.amount_cents, order.currency)}</span></div>
             </div>
             <span className="small muted num" data-testid="order-ref">{order.ref ?? t('order.ref', { id: order.id.slice(0, 8) })}</span>
             <p className="small muted" style={{ margin: 0 }}>

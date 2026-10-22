@@ -91,7 +91,7 @@ async function paidSoFarCents(q: Queryable, p: { kind: string; id: string }) {
   return toCents(Number(r.paid ?? 0));
 }
 
-/** Coins the buyer can pay with: only those whose minimum fits what is still owed. */
+/** Coins the buyer can pay with; coins whose minimum is above what is still owed come back greyed (`available: false`). */
 export async function coinsFor(ctx: Ctx, ref: PayableRef, buyerId: string) {
   const np = provider(ctx);
   const p = await payable(ctx.db, ref, buyerId);
@@ -140,7 +140,7 @@ export async function startCryptoPayment(ctx: Ctx, ref: PayableRef, buyerId: str
   const owed = o.charged_cents - (await paidSoFarCents(ctx.db, o));
   if (owed <= 0) throw conflict('already_paid', 'This order is paid; waiting for the network to confirm');
   const coins = await np.coinsFor(usd(owed));
-  if (!coins.some((c) => c.coin === coin)) throw badRequest('coin_unavailable', `${coinName(coin)} can’t be used for this amount`);
+  if (!coins.some((c) => c.coin === coin && c.available)) throw badRequest('coin_unavailable', `${coinName(coin)} can’t be used for this amount`);
   const first = await maybeOne<{ purchase_id: string | null }>(ctx.db, `SELECT purchase_id FROM crypto_payments WHERE ${whereRef(o)} ORDER BY created_at LIMIT 1`, [o.id]);
   const p = await np.createPayment({
     amountUsd: usd(owed),

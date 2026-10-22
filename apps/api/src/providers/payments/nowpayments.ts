@@ -134,20 +134,21 @@ export class NowPaymentsProvider implements PaymentProvider {
   }
 
   /** Coins whose minimum covers `amountUsd`, so the buyer never picks one that can't pay the order. */
-  async coinsFor(amountUsd: number): Promise<Array<{ coin: string; minUsd: number }>> {
+  /** Every coin NOWPayments offers, with its minimum and whether it fits the amount owed. */
+  async coinsFor(amountUsd: number): Promise<Array<{ coin: string; minUsd: number; available: boolean }>> {
     const coins = await this.availableCoins();
-    const out: Array<{ coin: string; minUsd: number }> = [];
+    const out: Array<{ coin: string; minUsd: number; available: boolean }> = [];
     await Promise.all(
       coins.map(async (coin) => {
         try {
           const minUsd = await this.minAmountUsd(coin);
-          if (minUsd <= amountUsd) out.push({ coin, minUsd });
+          out.push({ coin, minUsd, available: minUsd <= amountUsd });
         } catch {
           /* a coin whose minimum can't be read right now is left out rather than offered blindly */
         }
       }),
     );
-    return out.sort((a, b) => a.coin.localeCompare(b.coin));
+    return out.sort((a, b) => Number(b.available) - Number(a.available) || a.coin.localeCompare(b.coin));
   }
 
   async estimate(amountUsd: number, coin: string): Promise<number> {

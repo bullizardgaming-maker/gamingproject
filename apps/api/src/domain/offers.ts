@@ -88,7 +88,7 @@ export const OFFER_LIST_SQL = `
          COALESCE((SELECT jsonb_agg(jsonb_set(t, '{priceCents}', to_jsonb(${GROSS_SQL("(t->>'priceCents')::numeric")})) ORDER BY (t->>'minQty')::int) FROM jsonb_array_elements(f.price_tiers) t), '[]'::jsonb) AS price_tiers,
          f.price_tiers AS seller_price_tiers, f.reserved_for, f.request_id, f.warranty_days, f.min_buyer_reputation, la.provider AS linked_platform, la.account_created_at AS linked_account_created_at, f.review_reasons, f.review_note, f.created_at, f.updated_at, f.low_stock_threshold,
          c.kind AS category_kind, c.risk_class, category_open(c.slug) AS category_open, u.display_name AS seller_name, f.delivery_hours,
-         u.founding AS seller_founding, (f.featured_until IS NOT NULL AND f.featured_until > now()) AS featured, f.featured_until,
+         u.founding AS seller_founding, u.seller_rank, (f.featured_until IS NOT NULL AND f.featured_until > now()) AS featured, f.featured_until,
          (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now())) AS shop_paused,
          u.shop_paused_until, u.shop_pause_message, ${ONLINE_SQL} AS seller_online, u.response_minutes AS seller_response_minutes, u.trust_level AS seller_trust_level,
          f.available AS stock, f.is_bundle,

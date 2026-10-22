@@ -98,10 +98,11 @@ describe('crypto checkout (NOWPayments)', () => {
     expect(order.payment_provider).toBe('nowpayments');
     expect(created.body.checkoutUrl).toMatch(new RegExp(`/orders/${order.id}\\?pay=crypto$`));
 
-    // $10: BTC (min $8) and USDT fit; ETH (min $12) is left out.
+    // $10: BTC (min $8) and USDT fit; ETH (min $12) is listed greyed out with its minimum.
     const coins = (await buyer.api.get(`/v1/orders/${order.id}/crypto/coins`)).body;
     expect(coins.owedCents).toBe(10_53); // the seller's 10.00 plus the 5% launch-promo commission
-    expect(coins.coins.map((c: any) => c.coin)).toEqual(['btc', 'ltc', 'usdttrc20']);
+    expect(coins.coins.map((c: any) => [c.coin, c.available])).toEqual([['btc', true], ['ltc', true], ['usdttrc20', true], ['eth', false]]);
+    expect(coins.coins.find((c: any) => c.coin === 'eth').minUsd).toBe(12);
     expect((await buyer.api.post(`/v1/orders/${order.id}/crypto/pay`, { coin: 'eth' })).body.error.code).toBe('coin_unavailable');
 
     const pay = await buyer.api.post(`/v1/orders/${order.id}/crypto/pay`, { coin: 'btc' });
@@ -150,7 +151,7 @@ describe('crypto checkout (NOWPayments)', () => {
     // The coin list is now for the $6.06 shortfall: BTC's $8 minimum no longer fits.
     const coins = (await buyer.api.get(`/v1/orders/${order.id}/crypto/coins`)).body;
     expect(coins.owedCents).toBe(6_06);
-    expect(coins.coins.map((c: any) => c.coin)).toEqual(['ltc', 'usdttrc20']);
+    expect(coins.coins.filter((c: any) => c.available).map((c: any) => c.coin)).toEqual(['ltc', 'usdttrc20']);
     const second = (await buyer.api.post(`/v1/orders/${order.id}/crypto/pay`, { coin: 'usdttrc20' })).body;
     expect(second.price_usd).toBe('6.06');
     const p2 = fake.payments.get(second.payment_id);

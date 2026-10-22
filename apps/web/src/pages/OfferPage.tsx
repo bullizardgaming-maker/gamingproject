@@ -65,7 +65,7 @@ export function OfferPage() {
     setError('');
     try {
       const res = await api<{ order: { id: string }; checkoutUrl: string | null }>('/orders', {
-        body: { offerId: offer.id, quantity: qty, rail, acceptTos: true, ...(code ? { sellerCode: code.code } : {}), ...(needsCharacter ? { characterName: character.value.trim() } : {}) },
+        body: { offerId: offer.id, quantity: qty, rail, acceptTos: true, useCredit: rail === 'fiat', ...(code ? { sellerCode: code.code } : {}), ...(needsCharacter ? { characterName: character.value.trim() } : {}) },
         headers: { 'Idempotency-Key': `${offer.id}:${qty}:${rail}:${Math.floor(Date.now() / 60_000)}` },
       });
       if (res.checkoutUrl) window.location.assign(res.checkoutUrl);

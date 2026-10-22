@@ -103,4 +103,42 @@ describe('cart checkout', () => {
     const closed = (await h.ctx.db.query(`SELECT status FROM chargebacks WHERE provider_ref LIKE 'dp_cart_1:%'`)).rows.map((r) => r.status);
     expect(closed.every((s) => s === 'won')).toBe(true);
   });
+  it('spends the buyer’s balance first: a cart it covers is paid at once, otherwise only the rest is charged', async () => {
+    const seller = await makeUser(h, { tier: 2 });
+    const buyer = await makeUser(h);
+    const { post, accountId } = await import('../src/domain/ledger.js');
+    const { withTx } = await import('../src/db.js');
+    await withTx(h.ctx.db, async (tx) =>
+      post(tx, [
+        { account: await accountId(tx, 'treasury', 'USD'), amountCents: -25_00 },
+        { account: await accountId(tx, 'user_credit', 'USD', buyer.id), amountCents: 25_00 },
+      ], 'test_credit'),
+    );
+    const gold = await makeOffer(seller, { categorySlug: 'currency', deliveryMode: 'manual', stock: 50, priceCents: 10_00 });
+    const gems = await makeOffer(seller, { categorySlug: 'currency', deliveryMode: 'manual', stock: 50, priceCents: 20_00 });
+
+    // 10.53 + 21.06 = 31.59: the 25.00 balance pays the first order and part of the second.
+    const res = await buyer.api.post('/v1/orders/cart', { items: [{ offerId: gold.id }, { offerId: gems.id }], acceptTos: true, useCredit: true });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(res.body.orders.map((o: any) => [o.amount_cents, o.credit_cents, o.charged_cents])).toEqual([[10_53, 10_53, 0], [21_06, 14_47, 6_59]]);
+    expect(res.body.checkout).toMatchObject({ status: 'awaiting_payment', presentment_amount_cents: 6_59 });
+    await pay(res.body.checkout.payment_ref);
+    const ids = res.body.orders.map((o: any) => o.id);
+    expect(await statuses(ids)).toEqual({ [ids[0]]: 'paid', [ids[1]]: 'paid' });
+    expect((await buyer.api.get('/v1/me/credit')).body.availableCents).toBe(0);
+
+    // Nothing left to charge: the cart is paid without a payment step.
+    await withTx(h.ctx.db, async (tx) =>
+      post(tx, [
+        { account: await accountId(tx, 'treasury', 'USD'), amountCents: -50_00 },
+        { account: await accountId(tx, 'user_credit', 'USD', buyer.id), amountCents: 50_00 },
+      ], 'test_credit'),
+    );
+    const covered = await buyer.api.post('/v1/orders/cart', { items: [{ offerId: gold.id }], acceptTos: true, useCredit: true });
+    expect(covered.status, JSON.stringify(covered.body)).toBe(201);
+    expect(covered.body.checkoutUrl).toBeNull();
+    expect(covered.body.checkout).toMatchObject({ status: 'paid', presentment_amount_cents: 0 });
+    expect(covered.body.orders[0]).toMatchObject({ status: 'paid', credit_cents: 10_53, charged_cents: 0 });
+    expect((await buyer.api.get('/v1/me/credit')).body.availableCents).toBe(39_47);
+  });
 });

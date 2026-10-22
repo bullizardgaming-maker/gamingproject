@@ -20,7 +20,7 @@ test.describe('crypto money paths', () => {
     await expect(page.getByText(/Paid \$32\.50 via crypto/)).toBeVisible();
   });
 
-  test('a $1 coin minimum hides big-minimum coins on a small order', async ({ page }) => {
+  test('coins whose minimum is above a small order are greyed out with the reason', async ({ page }) => {
     await signIn(page, 'Buyer');
     await page.goto('/offers/offer-15'); // Diablo IV item, $12.50
     await fillCharacter(page);
@@ -28,9 +28,35 @@ test.describe('crypto money paths', () => {
     await page.getByRole('button', { name: /Buy now/ }).click();
     await page.waitForURL(/pay=crypto/);
     const checkout = page.locator('.crypto-checkout');
-    await expect(checkout.getByRole('button', { name: /Tether \(TRC-20\)/ })).toBeVisible();
-    await expect(checkout.getByRole('button', { name: /Monero/ })).toHaveCount(0); // $15 minimum
+    await expect(checkout.getByRole('button', { name: /Tether \(TRC-20\)/ })).toBeEnabled();
+    const monero = checkout.getByRole('button', { name: /Monero/ }); // $15 minimum
+    await expect(monero).toBeDisabled();
+    await expect(monero).toContainText('Too small for this coin (min $15.00)');
     await payCrypto(page);
+  });
+
+  test('the buyer’s balance is spent first and the summary shows what is left to pay', async ({ page }) => {
+    await signIn(page, 'Buyer');
+    await page.evaluate(() => (window as any).__bzDemo.credit(5_00));
+    await page.goto('/offers/offer-15'); // $12.51 to the buyer
+    await fillCharacter(page);
+    await page.getByLabel(/I accept the Terms of Service/).check();
+    await page.getByRole('button', { name: /Buy now/ }).click();
+    await page.waitForURL(/pay=crypto/);
+    await expect(page.getByTestId('from-balance')).toHaveText('−$5.00');
+    await expect(page.locator('.pg-summary .pg-price')).toHaveText('$7.51');
+    await expect(page.locator('.crypto-checkout').getByText('To pay $7.51')).toBeVisible();
+    await payCrypto(page);
+    await expect(page.getByText(/Paid \$12\.51 via crypto/)).toBeVisible();
+
+    // The balance now covers a whole order: it is paid at once, no coin step.
+    await page.evaluate(() => (window as any).__bzDemo.credit(20_00));
+    await page.goto('/offers/offer-15');
+    await fillCharacter(page);
+    await page.getByLabel(/I accept the Terms of Service/).check();
+    await page.getByRole('button', { name: /Buy now/ }).click();
+    await page.waitForURL(/\/orders\/[^?]+$/);
+    await expect(page.getByText(/Paid \$12\.51/)).toBeVisible();
   });
 
   test('delivered orders wait for the buyer; the seller asks support, support releases', async ({ page }) => {
@@ -59,7 +85,7 @@ test.describe('crypto money paths', () => {
   test('seller withdrawal shows the fee, waits for the CFO, then pays out', async ({ page }) => {
     await signIn(page, 'Seller');
     await page.goto('/sell/money');
-    await expect(page.getByText('Payout address')).toBeVisible();
+    await expect(page.getByText('Payout address', { exact: true })).toBeVisible();
     await expect(page.getByText(/Tether \(TRC-20\)/).first()).toBeVisible();
     await page.getByLabel(/Amount in USD/).fill('20');
     await expect(page.getByTestId('withdrawal-fee')).toContainText('Fee (6%, minimum $1.50)$1.50');

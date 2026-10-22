@@ -135,6 +135,32 @@ Design updates applied: underpayments are never refunded; when the window closes
 Demo: the mock mirrors all of it (`bz.demo.v26`); seeded sellers have ranks/promo states, PoE leagues, a founding seller
 with a featured listing, a creator code `ARCANE-TV`, and a game-vote board.
 
+## Round 17 (Oct 22, 2026) — the Designer's "needs back-end" list, on top of the new look
+
+The Designer's pages (commits cd40cfe…37b9323) sit on top of Round 16; this round closes the three things those
+screens were waiting for, plus a slot for game logos.
+
+1. **Seller rank on listings.** `OFFER_LIST_SQL` now returns `seller_rank` (the name stored on `users.seller_rank`
+   by `refreshSellerRate`), so listing tables and the offer page show the rank pill. Demo mock does the same.
+2. **Coins too small for the order are greyed, not hidden.** `NowPaymentsProvider.coinsFor` returns every coin with
+   `minUsd` and `available`; `GET …/crypto/coins` lists available ones first, and `POST …/crypto/pay` still refuses an
+   unavailable coin (`coin_unavailable`). The checkout shows the greyed coin with "Too small for this coin (min $X)".
+3. **"From your balance" at checkout.** The web now sends `useCredit: true` on every buy and cart checkout, so a
+   buyer's balance (referral rewards, kept underpayments) is spent first:
+   - `POST /v1/orders/cart` accepts `useCredit`; a cart the balance covers completely is funded at once
+     (`fundWithoutCard` per order, checkout `status: 'paid'`, no payment step). Partial cover charges only the rest.
+   - Cart views return `credit_cents`, `charged_cents`, `ref` and `character_name` per order.
+   - Order and cart checkout summaries show Price / From your balance / To pay, and the coin step is priced on
+     what is left (`charged_cents`).
+   - Demo: `window.__bzDemo.credit(cents)` tops up the signed-in user's balance (used by the browser test).
+4. **Game logos.** `apps/web/src/components/GameArt.tsx` shows `/games/<slug>.(webp|png|svg)` when the file exists
+   (see `apps/web/public/games/README.md`); the owner drops in the official logos under each publisher's fan-kit
+   terms. Until then tiles show the name only.
+
+Tests: `cart.test.ts` (balance spent first / fully covered cart), `crypto-payments.test.ts` (greyed coins),
+`e2e/crypto.spec.ts` (greyed Monero with reason; balance → "From your balance" → paid-at-once). 70 API files and
+117 browser tests green.
+
 ## Suggested next round
 
 1. Handover check for Riot/Steam games without a linked listing: let the buyer link any account of the game's

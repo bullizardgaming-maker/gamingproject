@@ -4,7 +4,7 @@ import { many, maybeOne, one } from '../db.js';
 import { badRequest } from '../lib/errors.js';
 import type { PaymentEvent } from '../providers/payments/types.js';
 import { closeChargeback, receiveChargeback } from './chargebacks.js';
-import { cancelOrder, createOrder, handlePaymentCaptured, type CreateOrderInput } from './orders.js';
+import { cancelOrder, createOrder, fundWithoutCard, handlePaymentCaptured, type CreateOrderInput } from './orders.js';
 
 /**
  * Cart checkout: several listings, possibly from several sellers, paid with one card payment.
@@ -15,7 +15,7 @@ import { cancelOrder, createOrder, handlePaymentCaptured, type CreateOrderInput 
  */
 export const MAX_CART_ITEMS = 20;
 
-export interface CartInput extends Omit<CreateOrderInput, 'offerId' | 'quantity' | 'checkoutId' | 'promoCode' | 'useCredit' | 'walletAddress'> {
+export interface CartInput extends Omit<CreateOrderInput, 'offerId' | 'quantity' | 'checkoutId' | 'promoCode' | 'walletAddress'> {
   items: Array<{ offerId: string; quantity: number; characterName?: string }>;
 }
 
@@ -65,6 +65,19 @@ export async function createCartCheckout(ctx: Ctx, input: CartInput) {
   }
 
   const total = created.reduce((s, o) => s + Number(o.presentment_amount_cents), 0);
+  if (total === 0) {
+    // The buyer's balance covers everything: no payment to wait for.
+    try {
+      for (const o of created) await fundWithoutCard(ctx, o.id);
+      await ctx.db.query(
+        `UPDATE checkouts SET status = 'paid', paid_at = now(), payment_provider = 'none', payment_ref = $2, presentment_amount_cents = 0, presentment_currency = $3 WHERE id = $1`,
+        [checkout.id, `nocard_${checkout.id}`, currency],
+      );
+      return { ...(await cartView(ctx.db, checkout.id)), checkoutUrl: null, replayed: false };
+    } catch (err) {
+      return fail(err);
+    }
+  }
   try {
     const session = await ctx.payments.createCheckout({
       orderId: checkout.id,
@@ -91,8 +104,8 @@ export async function cartView(q: Queryable, checkoutId: string) {
   const checkout = await one<any>(q, 'SELECT id, status, presentment_amount_cents, presentment_currency, payment_ref, created_at, paid_at FROM checkouts WHERE id = $1', [checkoutId]);
   const orders = await many<any>(
     q,
-    `SELECT o.id, o.status, o.seller_id, o.offer_id, o.quantity, o.amount_cents, o.currency, o.presentment_amount_cents, o.presentment_currency,
-            o.unit_price_cents, o.character_name, f.title AS offer_title, u.display_name AS seller_name
+    `SELECT o.id, o.status, o.seller_id, o.offer_id, o.quantity, o.amount_cents, o.credit_cents, o.charged_cents, o.currency, o.presentment_amount_cents, o.presentment_currency,
+            o.unit_price_cents, o.character_name, o.ref, f.title AS offer_title, u.display_name AS seller_name
        FROM orders o JOIN offers f ON f.id = o.offer_id JOIN users u ON u.id = o.seller_id
       WHERE o.checkout_id = $1 ORDER BY o.created_at`,
     [checkoutId],

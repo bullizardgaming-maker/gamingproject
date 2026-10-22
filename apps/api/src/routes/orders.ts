@@ -62,6 +62,7 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
         items: z.array(z.object({ offerId: z.string().uuid(), quantity: z.number().int().positive().max(1000).default(1), characterName: z.string().trim().min(1).max(60).optional() })).min(1).max(MAX_CART_ITEMS),
         acceptTos: z.literal(true),
         currency: z.string().length(3).toUpperCase().optional(),
+        useCredit: z.boolean().optional(),
       })
       .parse(req.body);
     const idem = req.headers['idempotency-key'];

@@ -156,6 +156,7 @@ function offerView(o: any) {
     price_tiers: (o.price_tiers ?? []).map((t: any) => ({ ...t, priceCents: grossUp(t.priceCents, rate) })),
     seller_price_tiers: o.price_tiers ?? [],
     seller_founding: !!userById(o.seller_id)?.founding,
+    seller_rank: tierOf(o.seller_id).rank.name,
     featured: !!o.featured_until && Date.parse(o.featured_until) > Date.now(),
     sale_ends_at: price < o.price_cents ? o.sale_ends_at : null,
     seller_online: pr.online,
@@ -287,6 +288,7 @@ export function payDemoOrder(orderId: string) {
   if (!o || o.status !== 'awaiting_payment') return o;
   transition(o, 'paid', 'payment_captured');
   o.paid_at = now();
+  if (o.credit_cents) state.credit[o.buyer_id] = Math.max(0, (state.credit[o.buyer_id] ?? 0) - o.credit_cents);
   state.platform.escrow += o.amount_cents;
   notify(o.seller_id, 'selling', 'order.paid', 'New order', `${o.offer_title}: the buyer has paid. Deliver from the order page.`, `/orders/${o.id}`);
   live(appendMessage(o.room_id, null, 'system', 'Payment received. It stays in escrow until the buyer confirms delivery.'));
@@ -412,7 +414,7 @@ function createOrderRecord(buyer: DemoUser, offer: any, quantity: number, rail: 
   state.rooms.push(room);
   const o: any = {
     id, ref: newOrderRef(), buyer_id: buyer.id, seller_id: offer.seller_id, offer_id: offer.id, offer_title: offer.title, game: offer.game,
-    category_kind: offer.category_kind, delivery_mode: offer.delivery_mode, quantity, amount_cents: amount, currency: 'USD',
+    category_kind: offer.category_kind, delivery_mode: offer.delivery_mode, quantity, amount_cents: amount, credit_cents: 0, charged_cents: amount, currency: 'USD',
     commission_bps: bps, seller_net_cents: amount - commission, seller_tier: tierOf(offer.seller_id).tier.name, rail,
     status: 'awaiting_payment', protection: isAccount ? 'insurance_14d' : 'until_confirmed', protection_ends_at: null, delivered_at: null,
     payment_provider: rail === 'fiat' ? 'nowpayments' : 'escrow_contract',
@@ -427,6 +429,18 @@ function createOrderRecord(buyer: DemoUser, offer: any, quantity: number, rail: 
   if (offer.delivery_mode === 'manual') offer.stock -= quantity;
   appendMessage(room.id, null, 'system', `Order placed for "${offer.title}". Keep every message about this trade here: it's the record an arbiter reads if anything goes wrong.`);
   return o;
+}
+
+/** Spends the buyer's balance on an unpaid order (balance already promised to other unpaid orders is left alone). */
+function applyCredit(buyer: DemoUser, o: any) {
+  const promised = state.orders.filter((x) => x.buyer_id === buyer.id && x.status === 'awaiting_payment' && x.id !== o.id).reduce((s, x) => s + (x.credit_cents ?? 0), 0);
+  const credit = Math.min(Math.max(0, (state.credit[buyer.id] ?? 0) - promised), o.amount_cents);
+  o.credit_cents = credit;
+  o.charged_cents = o.amount_cents - credit;
+  if (o.charged_cents === 0) {
+    o.payment_provider = 'none';
+    payDemoOrder(o.id);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -971,7 +985,8 @@ route('POST', '/orders', ({ me, body }) => {
   const o = createOrderRecord(u, offer, qty, body.rail ?? 'fiat', code?.discount ?? 0);
   if (characterName) rememberCharacter(u, offer, o, characterName);
   if (code) Object.assign(o, { seller_code_id: code.c.id, seller_discount_cents: code.discount });
-  return { order: orderDetail(o), checkoutUrl: o.rail === 'fiat' ? `/orders/${o.id}?pay=crypto` : null };
+  if (body.useCredit && o.rail === 'fiat') applyCredit(u, o);
+  return { order: orderDetail(o), checkoutUrl: o.rail === 'fiat' && o.charged_cents > 0 ? `/orders/${o.id}?pay=crypto` : null };
 });
 // --- Crypto checkout (demo): coins, a fake address, and a payment that confirms itself ------------
 const DEMO_COINS = [
@@ -983,11 +998,11 @@ const coinNameOf = (c: string) => DEMO_COINS.find((x) => x[0] === c)?.[1] ?? c.t
 function payableOf(u: DemoUser, kind: 'orders' | 'checkouts', id: string) {
   if (kind === 'orders') {
     const o = orderFor(u, id);
-    return { kind, id, orders: [o], owed: o.amount_cents, status: o.status };
+    return { kind, id, orders: [o], owed: o.charged_cents ?? o.amount_cents, status: o.status };
   }
   const c = state.checkouts.find((x) => x.id === id && x.buyer_id === u.id) ?? fail(404, 'not_found', 'Checkout not found');
   const orders = c.order_ids.map((oid: string) => state.orders.find((o) => o.id === oid)!);
-  return { kind, id, orders, owed: orders.reduce((s: number, o: any) => s + o.amount_cents, 0), status: orders.every((o: any) => o.status !== 'awaiting_payment') ? 'paid' : 'awaiting_payment' };
+  return { kind, id, orders, owed: orders.reduce((s: number, o: any) => s + (o.charged_cents ?? o.amount_cents), 0), status: orders.every((o: any) => o.status !== 'awaiting_payment') ? 'paid' : 'awaiting_payment' };
 }
 const paymentsOf = (kind: string, id: string) => state.cryptoPayments.filter((p) => p.ref_kind === kind && p.ref_id === id);
 const paidSoFar = (kind: string, id: string) => paymentsOf(kind, id).reduce((s, p) => s + (['partially_paid', 'finished'].includes(p.status) ? Math.round(Number(p.actually_paid_usd) * 100) : 0), 0);
@@ -996,7 +1011,8 @@ for (const kind of ['orders', 'checkouts'] as const) {
   route('GET', `/${kind}/:id/crypto/coins`, ({ me, params }) => {
     const p = payableOf(need(me), kind, params[0]!);
     const owed = p.owed - paidSoFar(kind, p.id);
-    return { owedCents: owed, currency: 'USD', coins: DEMO_COINS.filter(([, , min]) => min * 100 <= owed).map(([coin, name, minUsd]) => ({ coin, name, minUsd })) };
+    const coins = DEMO_COINS.map(([coin, name, minUsd]) => ({ coin, name, minUsd, available: minUsd * 100 <= owed }));
+    return { owedCents: owed, currency: 'USD', coins: coins.sort((a, b) => Number(b.available) - Number(a.available) || a.coin.localeCompare(b.coin)) };
   });
   route('GET', `/${kind}/:id/crypto/payments`, ({ me, params }) => paymentsOf(kind, payableOf(need(me), kind, params[0]!).id).map(view));
   route('POST', `/${kind}/:id/crypto/pay`, ({ me, params, body }) => {
@@ -1121,7 +1137,19 @@ route('GET', '/seller/price-preview', ({ me, query }) => {
   const buyerIn = Object.fromEntries(Object.entries(RATES).map(([c, r]) => [c, Math.round(buyer * (c === 'USD' ? 1 : r * 1.01))]));
   return { sellerCents, listingCurrency, settlementCurrency: 'USD', settlementCents, rateBps: t.rateBps, promo: t.promo, rank: t.rank.name, buyerCents: buyer, buyerIn, commissionCents: buyer - settlementCents, withdrawalFeeBps: WITHDRAWAL_FEE_BPS, withdrawalFeeCents: fee, afterWithdrawalCents: settlementCents - fee };
 });
-// Buyer credit (the demo seeds none; a kept underpayment would land here).
+// Buyer credit (the demo seeds none; a kept underpayment would land here). Tests top it up through
+// window.__bzDemo.credit(cents) for the signed-in user.
+if (typeof window !== 'undefined') {
+  (window as any).__bzDemo = {
+    credit(cents: number) {
+      const token = localStorage.getItem('mkt.token') ?? '';
+      const u = token.startsWith('demo:') ? userById(token.slice(5)) : null;
+      if (!u) throw new Error('no session');
+      state.credit[u.id] = (state.credit[u.id] ?? 0) + cents;
+      save();
+    },
+  };
+}
 route('GET', '/me/credit', ({ me }) => {
   const u = need(me);
   const cents = state.credit[u.id] ?? 0;
@@ -1295,15 +1323,20 @@ route('POST', '/orders/cart', ({ me, body }) => {
     if (characterName) rememberCharacter(u, offer, o, characterName);
     return o.id;
   }), created_at: now() };
-  for (const id of checkout.order_ids) state.orders.find((o) => o.id === id)!.checkout_id = checkout.id;
+  for (const id of checkout.order_ids) {
+    const o = state.orders.find((x) => x.id === id)!;
+    o.checkout_id = checkout.id;
+    if (body.useCredit) applyCredit(u, o);
+  }
   state.checkouts.push(checkout);
-  return { ...checkoutView(checkout), checkoutUrl: `/checkouts/${checkout.id}/pay`, replayed: false };
+  const v = checkoutView(checkout);
+  return { ...v, checkoutUrl: v.checkout.status === 'paid' ? null : `/checkouts/${checkout.id}/pay`, replayed: false };
 });
 const checkoutView = (c: any) => {
   const orders = c.order_ids.map((id: string) => state.orders.find((o) => o.id === id)!);
   return {
-    checkout: { id: c.id, status: orders.every((o: any) => o.status !== 'awaiting_payment') ? 'paid' : 'awaiting_payment', presentment_amount_cents: orders.reduce((s: number, o: any) => s + o.amount_cents, 0), presentment_currency: 'USD', created_at: c.created_at },
-    orders: orders.map((o: any) => ({ id: o.id, status: o.status, seller_id: o.seller_id, offer_id: o.offer_id, offer_title: o.offer_title, quantity: o.quantity, amount_cents: o.amount_cents, currency: o.currency, seller_name: userById(o.seller_id)?.display_name })),
+    checkout: { id: c.id, status: orders.every((o: any) => o.status !== 'awaiting_payment') ? 'paid' : 'awaiting_payment', presentment_amount_cents: orders.reduce((s: number, o: any) => s + (o.charged_cents ?? o.amount_cents), 0), presentment_currency: 'USD', created_at: c.created_at },
+    orders: orders.map((o: any) => ({ id: o.id, ref: o.ref, status: o.status, seller_id: o.seller_id, offer_id: o.offer_id, offer_title: o.offer_title, quantity: o.quantity, amount_cents: o.amount_cents, credit_cents: o.credit_cents ?? 0, charged_cents: o.charged_cents ?? o.amount_cents, currency: o.currency, character_name: o.character_name ?? null, seller_name: userById(o.seller_id)?.display_name })),
   };
 };
 route('GET', '/checkouts/:id', ({ me, params }) => {

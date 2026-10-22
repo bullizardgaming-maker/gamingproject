@@ -715,6 +715,7 @@ html[lang='ar'] .pg-big, html[lang='ar'] .pg-price { font-family: var(--mono); }
 .pg-coin { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 58px; padding: 8px 16px; border: 1px solid var(--rule); border-radius: var(--radius); background: transparent; color: var(--ink); text-align: start; cursor: pointer; transition: border-color .14s ease-out; }
 .pg-coin:hover { border-color: var(--steel); }
 .pg-coin:disabled { opacity: .45; cursor: not-allowed; }
+.pg-coin.off { opacity: .45; cursor: not-allowed; border-style: dashed; }
 .pg-sym { width: 36px; height: 36px; border-radius: 50%; background: var(--raised); display: grid; place-items: center; font: 700 10.5px/1 var(--body); flex: none; }
 .pg-qr-card { display: flex; gap: 28px; align-items: center; flex-wrap: wrap; }
 .pg-qr { width: 180px; height: 180px; border-radius: var(--radius); background: #fff; display: grid; place-items: center; flex: none; }
@@ -807,7 +808,7 @@ span.num, b.num, code.num, .pg-price, .pg-big, .pg-pay-amount { unicode-bidi: is
 .home-games { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
 .home-game { display: flex; flex-direction: column; gap: 0; padding: 0; }
 .home-game > * + * { margin-top: 0; }
-.home-game-name { padding: 16px 20px; font: 700 16px/1.3 var(--display); text-decoration: none; border-bottom: 1px solid var(--rule); }
+.home-game-name { display: flex; align-items: center; gap: 10px; padding: 16px 20px; font: 700 16px/1.3 var(--display); text-decoration: none; border-bottom: 1px solid var(--rule); }
 .home-game-name:hover { text-decoration: underline; }
 .home-game-cats { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 20px; }
 .home-game-skel { height: 120px; }

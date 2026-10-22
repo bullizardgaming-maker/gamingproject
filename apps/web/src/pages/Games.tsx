@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, NavLink, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { GameArt } from '@/components/GameArt';
 import { SealCheck as BadgeCheck, MagnifyingGlass as Search, ShieldCheck, Lightning as Zap } from '@phosphor-icons/react';
 import { api } from '../api';
 import { CATEGORY_ICON, OfferTable } from '../components/CatalogUi';
@@ -190,7 +191,7 @@ export function GamePage() {
         </nav>
         <div className="pg-band-head">
           <div className="min-w-0">
-            <h1>{entry.game}{category ? ` · ${categoryLabel(category)}` : ''}</h1>
+            <h1 className="flex items-center gap-3"><GameArt game={entry.game} size={44} />{entry.game}{category ? ` · ${categoryLabel(category)}` : ''}</h1>
             <span className="muted">
               {t('offers.count', { count: entry.offers })} · {t('game.sellers', { count: entry.sellers })} · {t('offers.from', { price: price(entry.min_price_cents) })}
             </span>

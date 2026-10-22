@@ -58,12 +58,12 @@ export function CartPage() {
     setError('');
     try {
       const res = await api<{ checkoutUrl: string | null }>('/orders/cart', {
-        body: { items: payable.map((l) => ({ offerId: l.offerId, quantity: l.quantity, ...(needsName(l) ? { characterName: names[l.offerId]!.value.trim() } : {}) })), acceptTos: true, currency: [...currencies][0] },
+        body: { items: payable.map((l) => ({ offerId: l.offerId, quantity: l.quantity, ...(needsName(l) ? { characterName: names[l.offerId]!.value.trim() } : {}) })), acceptTos: true, currency: [...currencies][0], useCredit: true },
         headers: { 'Idempotency-Key': `cart:${payable.map((l) => `${l.offerId}x${l.quantity}`).join(',')}:${Math.floor(Date.now() / 60_000)}` },
       });
       for (const l of payable) removeFromCart(l.offerId);
       if (res.checkoutUrl) window.location.assign(res.checkoutUrl);
-      else nav('/orders');
+      else nav('/orders?checkout=success');
     } catch (e: any) {
       setError(e.code === 'kyc_required' ? t('offer.verifyFirst') : e.message);
       setBusy(false);
@@ -162,7 +162,7 @@ export function CartPage() {
 export function CartPayPage() {
   const { id } = useParams();
   const nav = useNavigate();
-  const [view, setView] = useState<{ checkout: { id: string; status: string; presentment_amount_cents: number; presentment_currency: string }; orders: Array<{ id: string; offer_title: string; quantity: number; seller_name: string; amount_cents: number; currency: string }> } | null>(null);
+  const [view, setView] = useState<{ checkout: { id: string; status: string; presentment_amount_cents: number; presentment_currency: string }; orders: Array<{ id: string; offer_title: string; quantity: number; seller_name: string; amount_cents: number; credit_cents?: number; charged_cents?: number; currency: string }> } | null>(null);
   const [error, setError] = useState('');
   const load = useCallback(async () => {
     try {
@@ -179,16 +179,22 @@ export function CartPayPage() {
   if (error) return <div className="card"><h2>Checkout not found</h2><p className="muted">{error}</p><Link to="/cart">Back to the cart</Link></div>;
   if (!view) return <p className="muted">Loading…</p>;
   const total = view.orders.reduce((s, o) => s + o.amount_cents, 0);
+  const fromBalance = view.orders.reduce((s, o) => s + (o.credit_cents ?? 0), 0);
+  const toPay = total - fromBalance;
+  const cur = view.orders[0]?.currency ?? 'USD';
   return (
     <div className="stack" style={{ maxWidth: 640 }}>
       <div>
         <div className="eyebrow">Checkout</div>
-        <h1 style={{ fontSize: 32 }}>{view.orders.length} listing{view.orders.length === 1 ? '' : 's'} · {money(total, view.orders[0]?.currency ?? 'USD')}</h1>
+        <h1 style={{ fontSize: 32 }}>{view.orders.length} listing{view.orders.length === 1 ? '' : 's'} · {money(toPay, cur)}</h1>
       </div>
-      <ul className="card small" style={{ margin: 0, paddingInlineStart: 34 }}>
-        {view.orders.map((o) => <li key={o.id}>{o.offer_title} × {o.quantity} · {o.seller_name} · {money(o.amount_cents, o.currency)}</li>)}
-      </ul>
-      <CryptoCheckout base={`/checkouts/${view.checkout.id}`} amountCents={total} currency={view.orders[0]?.currency ?? 'USD'} onPaid={load} />
+      <div className="card small pg-rows">
+        {view.orders.map((o) => <div key={o.id}><span>{o.offer_title} × {o.quantity} · {o.seller_name}</span><span className="num">{money(o.amount_cents, o.currency)}</span></div>)}
+        <div><span className="muted">{t('checkout.price')}</span><span className="num">{money(total, cur)}</span></div>
+        {fromBalance > 0 && <div><span className="muted">{t('checkout.fromBalance')}</span><span className="num" data-testid="from-balance">−{money(fromBalance, cur)}</span></div>}
+        <div className="pg-total"><span>{t('checkout.toPay')}</span><span className="pg-price">{money(toPay, cur)}</span></div>
+      </div>
+      <CryptoCheckout base={`/checkouts/${view.checkout.id}`} amountCents={toPay} currency={cur} onPaid={load} />
     </div>
   );
 }

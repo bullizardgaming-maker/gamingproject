@@ -661,7 +661,7 @@ async function postRefund(tx: Tx, order: Order, refundSettledCents?: number, rea
 }
 
 /** Orders fully covered by promo/credit are funded straight from those sources. */
-async function fundWithoutCard(ctx: Ctx, orderId: string) {
+export async function fundWithoutCard(ctx: Ctx, orderId: string) {
   await withScope(ctx, async (s) => {
     const order = await lockOrder(s.tx, orderId);
     if (order.status !== 'awaiting_payment') return;

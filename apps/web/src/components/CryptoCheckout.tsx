@@ -24,7 +24,7 @@ export interface CryptoPayment {
   expires_at: string | null;
   created_at: string;
 }
-interface Coins { owedCents: number; currency: string; coins: Array<{ coin: string; name: string; minUsd: number }> }
+interface Coins { owedCents: number; currency: string; coins: Array<{ coin: string; name: string; minUsd: number; available?: boolean }> }
 
 const STATUSES = ['waiting', 'confirming', 'confirmed', 'sending', 'partially_paid', 'finished', 'failed', 'refunded', 'expired'] as const;
 const statusText = (s: string) => ((STATUSES as readonly string[]).includes(s) ? t(`crypto.status.${s as (typeof STATUSES)[number]}`) : s);
@@ -135,14 +135,17 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid }: { base: 
             <h3 style={{ margin: 0 }}>{t('crypto.chooseCoin')}</h3>
             <span className="small muted">{t('crypto.toPayShort', { amount: money(owed, currency) })}</span>
           </div>
-          {coins && coins.coins.length === 0 && <p className="small">{t('crypto.noCoin')}</p>}
+          {coins && !coins.coins.some((c) => c.available !== false) && <p className="small">{t('crypto.noCoin')}</p>}
           <div className="pg-coin-list">
-            {coins?.coins.map((c) => (
-              <button key={c.coin} type="button" className="pg-coin" disabled={busy} onClick={() => pick(c.coin)}>
-                <span className="pg-sym" aria-hidden>{ticker(c.coin).slice(0, 4)}</span>
-                <span className="min-w-0 flex-1"><b className="block">{c.name}</b><span className="small muted">{network(c.name)} · {t('crypto.minimum', { amount: money(Math.round(c.minUsd * 100), 'USD') })}</span></span>
-              </button>
-            ))}
+            {coins?.coins.map((c) => {
+              const off = c.available === false;
+              return (
+                <button key={c.coin} type="button" className={`pg-coin${off ? ' off' : ''}`} disabled={busy || off} aria-disabled={off || undefined} onClick={() => pick(c.coin)} title={off ? t('crypto.tooSmall', { amount: money(Math.round(c.minUsd * 100), 'USD') }) : undefined}>
+                  <span className="pg-sym" aria-hidden>{ticker(c.coin).slice(0, 4)}</span>
+                  <span className="min-w-0 flex-1"><b className="block">{c.name}</b><span className="small muted">{network(c.name)} · {off ? t('crypto.tooSmall', { amount: money(Math.round(c.minUsd * 100), 'USD') }) : t('crypto.minimum', { amount: money(Math.round(c.minUsd * 100), 'USD') })}</span></span>
+                </button>
+              );
+            })}
           </div>
           <p className="small muted" style={{ margin: 0 }}>{t('crypto.onlyFitting')}</p>
         </div>
