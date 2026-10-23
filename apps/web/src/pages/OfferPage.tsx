@@ -12,6 +12,7 @@ import { attributePairs } from '@/lib/attributes';
 import { unitPriceFor } from '@/lib/tiers';
 import { CharacterField, handoverFieldFor } from '../components/CharacterField';
 import { intlLocale, t } from '../i18n';
+import { BuyerProtection } from '../components/Brand';
 
 /**
  * One offer, Eldorado-style: what you get and from whom on the left (kept short), the buy box on
@@ -196,7 +197,7 @@ export function OfferPage() {
             </>
           )}
           <ul className="of-trust">
-            <li><ShieldCheck className="size-4" aria-hidden /> <span><b>{t('offer.guarantee')}</b> {t('offer.guaranteeText')}</span></li>
+            <li><ShieldCheck className="size-4" aria-hidden /> <BuyerProtection /></li>
             <li><Headset className="size-4" aria-hidden /> <span><b>{t('offer.support')}</b> <Link to="/support/new">{t('offer.supportText')}</Link></span></li>
           </ul>
         </aside>

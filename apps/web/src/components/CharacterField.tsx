@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { handoverFieldFor, handoverKey } from '../../../api/src/domain/attributeSets';
 import { useSession } from '../session';
-import { t } from '../i18n';
+import { currentLocale, t } from '../i18n';
 
 export { handoverFieldFor };
 
@@ -32,6 +32,10 @@ export function CharacterField({ game, category, value, onChange, compact = fals
   }, [remembered, game]);
   if (!field) return null;
   const label = t(`handover.${field.key}` as 'handover.character' | 'handover.uid');
+  // Game-specific hints are written in English; other languages get the translated general hint.
+  const en = currentLocale() === 'en';
+  const hint = en ? field.hint : t(`handover.hint.${field.key}` as 'handover.hint.character' | 'handover.hint.uid');
+  const placeholder = en ? field.label : label;
   if (!editing && remembered) {
     return (
       <div className="field" data-testid="character-field">
@@ -63,7 +67,7 @@ export function CharacterField({ game, category, value, onChange, compact = fals
         value={value}
         maxLength={60}
         required
-        placeholder={field.label}
+        placeholder={placeholder}
         aria-describedby={`handover-hint-${field.key}`}
         onChange={(e) => {
           setConfirmed(false);
@@ -71,7 +75,7 @@ export function CharacterField({ game, category, value, onChange, compact = fals
         }}
       />
       <span id={`handover-hint-${field.key}`} className="small muted">
-        {field.hint} {!compact && <>{t('handover.responsible')} <Link to="/help/delivery-in-game">{t('handover.terms')}</Link></>}
+        {hint} {!compact && <>{t('handover.responsible')} <Link to="/help/delivery-in-game">{t('handover.terms')}</Link></>}
       </span>
     </label>
   );

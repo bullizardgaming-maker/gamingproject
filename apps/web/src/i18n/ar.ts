@@ -1294,5 +1294,9 @@ const ar: Messages = {
   "wallet.address": "عنوان USDT (TRC-20)",
   "wallet.amountUsd": "المبلغ بالدولار (حتى {max})",
   "wallet.cancel": "إلغاء",
+  "handover.hint.character": "اسم الشخصية داخل اللعبة الذي سيتاجر معه البائع بالضبط.",
+  "handover.hint.uid": "معرّف UID الخاص بك داخل اللعبة، تجده في إعدادات اللعبة.",
+  "protect.title": "حماية المشتري",
+  "protect.text": "لا يصل المال إلى البائع إلا عندما تؤكد استلام طلبك. إذا حدثت مشكلة نعيد لك أموالك.",
 };
 export default ar;

@@ -920,5 +920,9 @@ const pt: Messages = {
   "wallet.address": "Endereço USDT (TRC-20)",
   "wallet.amountUsd": "Valor em USD (até {max})",
   "wallet.cancel": "Cancelar",
+  "handover.hint.character": "O personagem exato no jogo com quem o vendedor deve negociar.",
+  "handover.hint.uid": "Seu UID no jogo, nas configurações do jogo.",
+  "protect.title": "Proteção ao comprador",
+  "protect.text": "Seu dinheiro só vai para o vendedor quando você confirma o recebimento. Se algo der errado, reembolsamos você.",
 };
 export default pt;

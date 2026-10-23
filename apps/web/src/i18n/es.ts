@@ -919,5 +919,9 @@ const es: Messages = {
   "wallet.address": "Dirección USDT (TRC-20)",
   "wallet.amountUsd": "Importe en USD (hasta {max})",
   "wallet.cancel": "Cancelar",
+  "handover.hint.character": "El personaje exacto del juego con el que el vendedor debe comerciar.",
+  "handover.hint.uid": "Tu UID del juego, en los ajustes del juego.",
+  "protect.title": "Protección al comprador",
+  "protect.text": "Tu dinero llega al vendedor solo cuando confirmas que recibiste el pedido. Si algo falla, te lo devolvemos.",
 };
 export default es;

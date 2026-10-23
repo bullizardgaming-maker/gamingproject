@@ -919,5 +919,9 @@ const de: Messages = {
   "wallet.address": "USDT-Adresse (TRC-20)",
   "wallet.amountUsd": "Betrag in USD (bis {max})",
   "wallet.cancel": "Abbrechen",
+  "handover.hint.character": "Der genaue Spielcharakter, mit dem der Verkäufer handeln soll.",
+  "handover.hint.uid": "Deine Spiel-UID, zu finden in den Spieleinstellungen.",
+  "protect.title": "Käuferschutz",
+  "protect.text": "Dein Geld geht erst an den Verkäufer, wenn du den Erhalt bestätigst. Wenn etwas nicht stimmt, erstatten wir es dir.",
 };
 export default de;

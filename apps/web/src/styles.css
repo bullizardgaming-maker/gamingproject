@@ -1025,3 +1025,24 @@ html[lang='ar'] .od-grid dt { text-transform: none; letter-spacing: 0; font-size
 .wl-fee { display: grid; grid-template-columns: 1fr auto; gap: 6px 16px; padding: 12px 0; border-block: 1px solid var(--rule); }
 .of-total { display: flex; justify-content: space-between; align-items: baseline; font-weight: 600; }
 .of-total b { font-size: 20px; }
+
+/* Bullizard Buyer Protection: the name drawn as the logo */
+.brand-inline { display: inline-block; }
+.wordmark-ar.brand-inline { font-size: 1.3em; line-height: 1; }
+.bp { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.bp-title { color: var(--ink); font-weight: 700; white-space: nowrap; }
+.bp-box { display: flex; gap: 10px; align-items: flex-start; padding: 14px; border: 1px solid var(--rule); border-radius: var(--radius); }
+.bp-box svg { color: var(--released); }
+
+/* Links inside text are always visible */
+:where(p, label, li, dd, td, .small, .muted, .notice, .alert, .field, .chat-official-body, .bp, .od-links) a:not(.btn),
+a.small:not(.btn):not(footer a):not(nav a):not([role='menuitem']):not(.ct-name):not(.of-name):not(.sp-card-title):not(footer a):not(nav a):not(.crumbs a):not(.wl-table b a) {
+  color: var(--released);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  font-weight: 600;
+}
+
+/* Ratings: the chosen one is gold */
+.rate-star.on, .rate-pick.on { background: var(--held-soft); border-color: var(--held); color: var(--held-ink); }
+.rate-star.on { font-weight: 700; }

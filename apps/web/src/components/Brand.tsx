@@ -1,5 +1,5 @@
 import type React from 'react';
-import { useLocale } from '../i18n';
+import { t, useLocale } from '../i18n';
 /**
  * Bullizard brand marks, drawn in currentColor so they follow the theme.
  * Mark (coin-eye) is the main logo and app icon; the wordmark is outlined Alexandria 800 with the
@@ -38,5 +38,25 @@ export function BrandLockup({ className, size = 20 }: { className?: string; size
         <BrandWordmark style={{ height: size, width: 'auto', flex: 'none' }} />
       )}
     </span>
+  );
+}
+
+/** The brand name set inline in running text, drawn as the logo (wordmark, or بوليزارد in Arabic). */
+export function BrandName({ className }: { className?: string }) {
+  const ar = useLocale() === 'ar';
+  return ar ? (
+    <span lang="ar" className={`wordmark-ar brand-inline ${className ?? ''}`}>بوليزارد</span>
+  ) : (
+    <BrandWordmark title="Bullizard" className={`brand-inline ${className ?? ''}`} style={{ height: '1.3em', width: 'auto', verticalAlign: '-0.22em' }} />
+  );
+}
+
+/** "Bullizard Buyer Protection" with the name as the logo. */
+export function BuyerProtection({ text = true }: { text?: boolean }) {
+  return (
+    <div className="bp">
+      <b className="bp-title"><BrandName /> {t('protect.title')}</b>
+      {text && <span className="small muted">{t('protect.text')}</span>}
+    </div>
   );
 }

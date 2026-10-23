@@ -1,3 +1,5 @@
+import { ShieldCheck } from '@phosphor-icons/react';
+import { BuyerProtection } from '../components/Brand';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, apiUpload, money, realtime } from '../api';
@@ -8,7 +10,7 @@ import { formatRemaining, type TrackVariant } from '../components/EscrowTrack';
 import { CheckoutSteps, CryptoCheckout, REFUND_COINS, RefundAddressForm } from '../components/CryptoCheckout';
 import { DeliveryProof, type ProofAttachment } from '../components/DeliveryProof';
 import { useSession } from '../session';
-import { intlLocale, t } from '../i18n';
+import { currentLocale, intlLocale, t } from '../i18n';
 import { usePageMeta } from '@/lib/seo';
 import { attributePairs } from '@/lib/attributes';
 
@@ -329,6 +331,7 @@ export function OrderPage() {
             <p className="small muted" style={{ margin: 0 }}>
               {t('checkout.rules', { link: '\u0000' }).split('\u0000')[0]}<Link to="/help/how-escrow-works">{t('checkout.rulesLink')}</Link>{t('checkout.rules', { link: '\u0000' }).split('\u0000')[1]}
             </p>
+            <div className="bp-box"><ShieldCheck className="size-5 shrink-0" aria-hidden /><BuyerProtection /></div>
           </aside>
         </div>
       </div>
@@ -369,7 +372,7 @@ export function OrderPage() {
               {pairs.map(([label, v]) => <div key={label}><dt>{label}</dt><dd>{v}</dd></div>)}
               <div><dt>{t('od.quantity')}</dt><dd className="num">{order.quantity}</dd></div>
               {order.character_name && (
-                <div><dt>{order.handover_field?.label ?? t('order.character')}</dt><dd data-testid="order-character"><b className="num">{order.character_name}</b></dd></div>
+                <div><dt>{currentLocale() === 'en' ? order.handover_field?.label ?? t('order.character') : t('order.character')}</dt><dd data-testid="order-character"><b className="num">{order.character_name}</b></dd></div>
               )}
               <div><dt>{isSeller ? t('od.buyer') : t('od.seller')}</dt><dd>{isSeller ? order.buyer_name : <Link to={`/sellers/${order.seller_id}`}>{order.seller_name}</Link>}</dd></div>
               <div><dt>{t('od.opened')}</dt><dd>{hm(at('awaiting_payment') ?? order.events[0]?.created_at)}</dd></div>
@@ -559,22 +562,6 @@ export function OrderPage() {
             </div>
           )}
 
-          <details className="card">
-            <summary style={{ cursor: 'pointer' }}><b>{t('order.history')}</b></summary>
-            <div className="table-wrap" style={{ marginTop: 12 }}>
-              <table className="data">
-                <tbody>
-                  {order.events.map((e, i) => (
-                    <tr key={i}>
-                      <td className="mono small">{new Date(e.created_at).toLocaleString()}</td>
-                      <td>{statusText(e.to_status)}</td>
-                      <td className="small muted">{e.reason.replace(/_/g, ' ')}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </details>
           <Link to="/orders" className="small">{t('order.allOrders')}</Link>
         </div>
         <Chat roomId={order.room_id} meId={user.id} names={names} accountOrder={order.category_kind === 'account'} />
@@ -631,7 +618,7 @@ function ReviewForm({ orderId, onDone }: { orderId: string; onDone: () => void }
       <h3>{t('order.rate')}</h3>
       <div className="row" role="radiogroup" aria-label={t('order.rating')}>
         {[1, 2, 3, 4, 5].map((n) => (
-          <button key={n} type="button" className={`btn ${n <= rating ? '' : 'ghost'}`} aria-checked={n === rating} role="radio" onClick={() => setRating(n)}>
+          <button key={n} type="button" className={`btn ghost rate-star${n <= rating ? ' on' : ''}`} aria-checked={n === rating} aria-label={`${n}★`} role="radio" onClick={() => setRating(n)}>
             {n}★
           </button>
         ))}

@@ -76,8 +76,8 @@ export function BuyerCard({ orderId, name, rep, rating, canRate, onDone }: {
       ) : canRate ? (
         <div className="stack" style={{ gap: 8 }}>
           <div className="row" role="radiogroup" aria-label={t('buyerRep.rateAria')}>
-            <button type="button" role="radio" aria-checked={positive === true} className={`btn ${positive === true ? '' : 'ghost'}`} onClick={() => (setPositive(true), setTags([]))}>{t('buyerRep.good')}</button>
-            <button type="button" role="radio" aria-checked={positive === false} className={`btn ${positive === false ? '' : 'ghost'}`} onClick={() => (setPositive(false), setTags([]))}>{t('buyerRep.problem')}</button>
+            <button type="button" role="radio" aria-checked={positive === true} className={`btn ghost rate-pick${positive === true ? ' on' : ''}`} onClick={() => (setPositive(true), setTags([]))}>{t('buyerRep.good')}</button>
+            <button type="button" role="radio" aria-checked={positive === false} className={`btn ghost rate-pick${positive === false ? ' on' : ''}`} onClick={() => (setPositive(false), setTags([]))}>{t('buyerRep.problem')}</button>
           </div>
           {positive !== null && (
             <fieldset className="row" style={{ border: 0, padding: 0, margin: 0, gap: 12 }}>

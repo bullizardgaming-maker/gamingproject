@@ -1492,6 +1492,10 @@ const en = {
   "wallet.address": "USDT (TRC-20) address",
   "wallet.amountUsd": "Amount in USD (up to {max})",
   "wallet.cancel": "Cancel",
+  "handover.hint.character": "The exact in-game character the seller should trade with.",
+  "handover.hint.uid": "Your in-game UID, found in the game settings.",
+  "protect.title": "Buyer Protection",
+  "protect.text": "Your money is released to the seller only when you confirm you got your order. If something is wrong, we refund you.",
 };
 
 export type MessageKey = keyof typeof en;
