@@ -64,16 +64,6 @@ export async function maybeGrantReferral(ctx: Ctx, s: TxScope, order: { id: stri
       [referrer, order.buyer_id, order.id, earned, order.commission_cents, settings.rateBps, order.currency, status, reason],
     );
 
-  // Still active: no gap longer than active_days between the referee's completed orders.
-  const prev = await maybeOne<{ completed_at: string }>(
-    s.tx,
-    `SELECT completed_at FROM orders WHERE buyer_id = $1 AND status = 'completed' AND id <> $2 ORDER BY completed_at DESC LIMIT 1`,
-    [order.buyer_id, order.id],
-  );
-  if (prev && Date.now() - new Date(prev.completed_at).getTime() > settings.activeDays * 86_400_000) {
-    await record('blocked', 'inactive');
-    return null;
-  }
   const linked = await maybeOne(
     s.tx,
     `SELECT 1 FROM risk_signals a JOIN risk_signals b ON a.kind = b.kind AND a.value = b.value
@@ -85,6 +75,21 @@ export async function maybeGrantReferral(ctx: Ctx, s: TxScope, order: { id: stri
     return null;
   }
 
+  // CEO (Oct 24): the share starts AFTER the referee's first completed order, and only while they
+  // are active (a completed order within the last active_days).
+  const prev = await maybeOne<{ completed_at: string }>(
+    s.tx,
+    `SELECT completed_at FROM orders WHERE buyer_id = $1 AND status = 'completed' AND id <> $2 ORDER BY completed_at DESC LIMIT 1`,
+    [order.buyer_id, order.id],
+  );
+  if (!prev) {
+    await record('blocked', 'first_order');
+    return null;
+  }
+  if (Date.now() - new Date(prev.completed_at).getTime() > settings.activeDays * 86_400_000) {
+    await record('blocked', 'inactive');
+    return null;
+  }
   await post(
     s.tx,
     [
@@ -95,9 +100,26 @@ export async function maybeGrantReferral(ctx: Ctx, s: TxScope, order: { id: stri
     order.id,
   );
   await record('granted', null);
-  await enqueueEmail(s.tx, referrer, 'referral_reward', { amount_cents: earned, currency: order.currency, rate_pct: settings.rateBps / 100 });
+  // The email is a daily digest (sendReferralDigests, worker); the in-app event is immediate.
   s.notifyUser(referrer, 'referral.rewarded', { orderId: order.id, amountCents: earned });
   return earned;
+}
+
+/** Worker (hourly): one `referral_earned` email per referrer per day, covering the previous UTC day's granted rewards. */
+export async function sendReferralDigests(ctx: Ctx) {
+  const settings = await referralSettings(ctx.db);
+  const rows = await many<{ referrer_id: string; day: string; amount: number; n: number; currency: string }>(
+    ctx.db,
+    `SELECT referrer_id, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, sum(amount_cents)::bigint AS amount, count(*)::int AS n, min(currency) AS currency
+       FROM referral_rewards WHERE status = 'granted' AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') - interval '1 day' AND created_at < date_trunc('day', now() AT TIME ZONE 'UTC')
+      GROUP BY referrer_id, day`,
+  );
+  let sent = 0;
+  for (const r of rows) {
+    await enqueueEmail(ctx.db, r.referrer_id, 'referral_earned', { amount_cents: Number(r.amount), count: r.n, currency: r.currency, rate_pct: settings.rateBps / 100 }, `referral_earned:${r.referrer_id}:${r.day}`);
+    sent++;
+  }
+  return { sent };
 }
 
 /** Credit not already promised to unpaid orders. */

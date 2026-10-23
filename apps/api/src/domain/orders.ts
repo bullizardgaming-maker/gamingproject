@@ -24,13 +24,14 @@ import { enqueueEmail } from './notifications.js';
 import { assertSupported, getRate } from './fx.js';
 import { quotePromo, reserveRedemption, setRedemptionStatus } from './promos.js';
 import { availableCredit, maybeGrantReferral } from './referrals.js';
+import { tosVersion } from './legal.js';
 import { unitPriceFor, type PriceTier } from './offers.js';
 import { effectivePrice, quoteSellerCode, type SaleFields } from './discounts.js';
 import { listStatements, type DisputeCategory } from './disputes.js';
 import { claimsForOrder } from './warranty.js';
 import { progressFor } from './progress.js';
 import { buyerReputation, ratingForOrder } from './buyerReputation.js';
-import { creditPartialPayments, paymentsForOrder, queueCryptoRefund, refundForOrder } from './cryptoPayments.js';
+import { creditPartialPayments, paymentsForOrder, refundForOrder } from './cryptoPayments.js';
 
 export type OrderStatus = 'awaiting_payment' | 'paid' | 'delivered' | 'completed' | 'disputed' | 'refunded' | 'cancelled' | 'charged_back';
 
@@ -38,6 +39,9 @@ export interface Order {
   id: string;
   /** Human order ID, e.g. order#7F3AK2Q. */
   ref: string;
+  /** The character/UID the buyer confirmed at checkout (games that use one). */
+  character_name?: string | null;
+  tos_version?: string;
   buyer_id: string;
   seller_id: string;
   offer_id: string;
@@ -173,8 +177,8 @@ export function roomOf(tx: Queryable, orderId: string) {
 
 export function emailData(o: Order & { title: string }, extra: Record<string, unknown> = {}) {
   return {
-    order_id: o.id, title: o.title, quantity: o.quantity, amount_cents: o.amount_cents, currency: o.currency,
-    seller_net_cents: o.seller_net_cents, protection: o.protection, ...extra,
+    order_id: o.id, order_ref: o.ref ?? null, title: o.title, quantity: o.quantity, amount_cents: o.amount_cents, currency: o.currency,
+    seller_net_cents: o.seller_net_cents, protection: o.protection, character: o.character_name ?? null, tos_version: o.tos_version ?? null, ...extra,
   };
 }
 
@@ -394,6 +398,7 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
     const split = splitGross(amount, price.sellerAmountCents);
     const { rank } = await sellerTier(s.tx, offer.seller_id);
     const protection = offer.risk_class === 'high' ? 'insurance_14d' : 'until_confirmed';
+    const termsVersion = await tosVersion(s.tx);
     // "High Risk - Secondary Market": account listings without verified Original Owner Proof.
     const sellerProtected = offer.category_kind !== 'account' || offer.owner_proof_status === 'verified';
 
@@ -417,7 +422,7 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
       [
         buyer.id, offer.seller_id, offer.id, input.quantity, price.unitPriceCents, amount, price.settlementCurrency,
         rate, split.commissionCents, split.sellerNetCents, rank.name, input.rail, protection, sellerProtected,
-        ctx.cfg.ORDER_PAYMENT_TTL_MINUTES, ctx.cfg.TOS_VERSION, input.ip ?? null, input.ipCountry ?? null,
+        ctx.cfg.ORDER_PAYMENT_TTL_MINUTES, termsVersion, input.ip ?? null, input.ipCountry ?? null,
         input.device ?? null, input.idempotencyKey ?? null,
         price.discountCents, price.creditCents, price.chargedCents, price.presentmentCurrency,
         price.presentmentAmountCents, price.fxRate, price.listingCurrency, price.listingUnitPriceCents, price.promoId,
@@ -453,7 +458,7 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
         price_cents: offer.price_cents, price_tiers: offer.price_tiers, currency: offer.currency, delivery_mode: offer.delivery_mode,
         owner_proof_status: offer.owner_proof_status, version: offer.version,
       },
-      terms: { protection, tos_version: ctx.cfg.TOS_VERSION, commission_bps: rate },
+      terms: { protection, tos_version: termsVersion, commission_bps: rate },
       price: { ...price, promoId: undefined },
       captured_at: new Date().toISOString(),
     };
@@ -647,14 +652,16 @@ async function postRefund(tx: Tx, order: Order, refundSettledCents?: number, rea
   const card = Math.min(held, order.charged_cents);
   const promo = Math.min(held - card, order.discount_cents);
   const credit = held - card - promo;
-  const manual = order.payment_provider === 'nowpayments';
-  const settledBack = manual ? card : (refundSettledCents ?? card);
-  if (manual && card > 0) await queueCryptoRefund(tx, order, card, reason);
+  // Crypto (NOWPayments) and balance-funded orders are refunded to the buyer's Bullizard balance
+  // (CEO, Oct 24: refunds go to balance; withdrawing them costs the normal fee). Only a card
+  // gateway refund goes back out through the PSP.
+  const toBalance = order.payment_provider === 'nowpayments' || order.payment_provider === 'none' || !order.payment_provider;
+  const settledBack = toBalance ? card : (refundSettledCents ?? card);
   await post(
     tx,
     [
       { account: await accountId(tx, 'escrow', cur), amountCents: -held },
-      { account: await accountId(tx, manual ? 'refunds_payable' : 'gateway_clearing', cur), amountCents: settledBack },
+      { account: await accountId(tx, toBalance ? 'user_credit' : 'gateway_clearing', cur, toBalance ? order.buyer_id : null), amountCents: settledBack },
       { account: await accountId(tx, 'fx_pnl', cur), amountCents: card - settledBack },
       { account: await accountId(tx, 'treasury', cur), amountCents: promo },
       { account: await accountId(tx, 'user_credit', cur, order.buyer_id), amountCents: credit },
@@ -662,6 +669,7 @@ async function postRefund(tx: Tx, order: Order, refundSettledCents?: number, rea
     'refund',
     order.id,
   );
+  void reason;
 }
 
 /** Orders fully covered by promo/credit are funded straight from those sources. */
@@ -686,7 +694,7 @@ async function onFunded(ctx: Ctx, s: TxScope, order: Order & { delivery_mode: st
     [order.delivery_mode],
   );
   const room = await roomOf(s.tx, order.id);
-  await appendMessage(s, room.id, null, 'system', 'Payment received. It stays in escrow until the buyer confirms delivery.', [], undefined, { code: 'payment_received' });
+  await appendMessage(s, room.id, null, 'system', 'Payment received. It stays in escrow until the buyer confirms delivery.', [], undefined, { code: 'paid', params: { character: order.character_name ?? null } });
   await postOrderCard(s, order, 'paid');
 
   const risk = await assessOrder(ctx, s.tx, order.id);
@@ -812,11 +820,12 @@ async function releaseEscrow(ctx: Ctx, s: TxScope, order: Order & { title: strin
   }
   await transition(s.tx, order, 'completed', actorId, reason, ', completed_at = now()');
   const room = await roomOf(s.tx, order.id);
-  await appendMessage(s, room.id, null, 'system', 'Order completed. Funds released to the seller.', [], undefined, { code: reason === 'buyer_confirmed_early' ? 'completed_early' : 'completed', params: { reason } });
+  await appendMessage(s, room.id, null, 'system', 'Order completed. Funds released to the seller.', [], undefined, { code: reason === 'buyer_confirmed_early' ? 'confirmed_early' : reason === 'dispute_resolved_seller' ? 'dispute_seller' : 'completed', params: { reason } });
   await postOrderCard(s, order, 'completed');
   await enqueueWebhook(s.tx, order.seller_id, 'order.completed', orderSummary(order));
   if (order.rail === 'fiat') {
     await enqueueEmail(s.tx, order.seller_id, 'seller_paid', emailData(order));
+    await enqueueEmail(s.tx, order.buyer_id, 'order_completed', emailData(order));
     await maybeGrantReferral(ctx, s, order);
     await maybePayAffiliate(ctx, s, order);
   }
@@ -915,17 +924,20 @@ export async function releaseByStaff(ctx: Ctx, orderId: string, staffId: string,
 }
 
 /** Orders delivered long enough ago for staff to release, oldest first (the support queue). */
+/** Orders above this amount are flagged for the Support Lead in every staff list (playbook: $200). */
+export const LEAD_REVIEW_ABOVE_CENTS = 200_00;
+
 export async function unconfirmedDeliveries(q: Queryable, limit = 100) {
   return many(
     q,
     `SELECT o.id, o.buyer_id, o.seller_id, o.amount_cents, o.currency, o.delivered_at, o.protection, o.protection_ends_at, f.title, f.game,
-            b.display_name AS buyer_name, sl.display_name AS seller_name,
+            (o.amount_cents > $3) AS lead_review, b.display_name AS buyer_name, sl.display_name AS seller_name,
             (SELECT count(*)::int FROM support_tickets t WHERE t.order_id = o.id AND t.status <> 'resolved') AS open_tickets,
             (SELECT max(m.created_at) FROM chat_messages m JOIN chat_rooms r ON r.id = m.room_id WHERE r.order_id = o.id AND m.sender_id = o.buyer_id) AS buyer_last_message_at
        FROM orders o JOIN offers f ON f.id = o.offer_id JOIN users b ON b.id = o.buyer_id JOIN users sl ON sl.id = o.seller_id
       WHERE o.status = 'delivered' AND o.rail = 'fiat' AND NOT o.escrow_frozen AND o.delivered_at <= now() - make_interval(hours => $1)
       ORDER BY o.delivered_at LIMIT $2`,
-    [STAFF_RELEASE_AFTER_HOURS, limit],
+    [STAFF_RELEASE_AFTER_HOURS, limit, LEAD_REVIEW_ABOVE_CENTS],
   );
 }
 
@@ -1045,26 +1057,75 @@ export async function openDispute(ctx: Ctx, orderId: string, userId: string, rea
   });
 }
 
-export async function resolveDispute(ctx: Ctx, disputeId: string, arbiterId: string, outcome: 'buyer' | 'seller', note: string) {
+/**
+ * Arbiter decision: for the buyer (full refund to their balance), for the seller (release), or a
+ * split (`refundCents` back to the buyer's balance, the rest released to the seller, commission
+ * taken on the released part only).
+ */
+export async function resolveDispute(ctx: Ctx, disputeId: string, arbiterId: string, outcome: 'buyer' | 'seller' | 'split', note: string, refundCents?: number) {
   return withScope(ctx, async (s) => {
     const dispute = await maybeOne(s.tx, 'SELECT * FROM disputes WHERE id = $1 FOR UPDATE', [disputeId]);
     if (!dispute) throw notFound('Dispute');
     if (dispute.status !== 'open') throw conflict('already_resolved', 'Dispute already resolved');
     const order = await lockOrder(s.tx, dispute.order_id);
+    let refund = outcome === 'buyer' ? order.amount_cents : outcome === 'seller' ? 0 : Math.round(refundCents ?? -1);
+    if (outcome === 'split' && !(refund > 0 && refund < order.amount_cents)) throw badRequest('invalid_split', 'A split refunds part of the order: more than 0 and less than the full amount');
+    if (outcome === 'split' && refund === order.amount_cents) refund = order.amount_cents;
     await s.tx.query(
-      'UPDATE disputes SET status = $2, resolution_note = $3, resolved_by = $4, resolved_at = now() WHERE id = $1',
-      [disputeId, outcome === 'buyer' ? 'resolved_buyer' : 'resolved_seller', note, arbiterId],
+      'UPDATE disputes SET status = $2, resolution_note = $3, resolved_by = $4, resolved_at = now(), refund_cents = $5 WHERE id = $1',
+      [disputeId, outcome === 'buyer' ? 'resolved_buyer' : outcome === 'seller' ? 'resolved_seller' : 'resolved_split', note, arbiterId, refund],
     );
+    const refundText = (mine: boolean) => (mine ? `${(refund / 100).toFixed(2)} ${order.currency} is back in your balance.` : 'The money went back to the buyer.');
+    const releaseText = (mine: boolean) => (mine ? 'The payment was released to you.' : 'The payment was released to the seller.');
+    const resultFor = (uid: string) => {
+      const isBuyer = uid === order.buyer_id;
+      if (outcome === 'buyer') return refundText(isBuyer);
+      if (outcome === 'seller') return releaseText(!isBuyer);
+      return `${refundText(isBuyer)} ${releaseText(!isBuyer)}`;
+    };
     for (const uid of [order.buyer_id, order.seller_id]) {
-      await enqueueEmail(s.tx, uid, 'dispute_resolved', emailData(order, { outcome, note }));
+      const forYou = outcome === 'split' ? true : outcome === 'buyer' ? uid === order.buyer_id : uid === order.seller_id;
+      await enqueueEmail(s.tx, uid, 'dispute_resolved', emailData(order, { outcome, note, for_you: forYou, result: resultFor(uid) }));
     }
     if (outcome === 'seller') {
       await releaseEscrow(ctx, s, order, arbiterId, 'dispute_resolved_seller');
-    } else {
+    } else if (outcome === 'buyer') {
       await refundOrder(ctx, s, order, arbiterId, 'dispute_resolved_buyer');
+    } else {
+      await splitEscrow(ctx, s, order, arbiterId, refund);
     }
-    return { disputeId, outcome };
+    return { disputeId, outcome, refundCents: refund };
   });
+}
+
+/** Split decision: part of the escrow to the buyer's balance, the rest to the seller (commission pro rata on the released part). */
+async function splitEscrow(ctx: Ctx, s: TxScope, order: Order & { delivery_mode: string; title: string }, arbiterId: string, refundCents: number) {
+  if (order.rail !== 'fiat') throw conflict('onchain', 'On-chain escrow can only be split from the contract');
+  const cur = order.currency;
+  const held = await orderEscrowBalance(s.tx, order.id, cur);
+  if (held !== order.amount_cents) throw new Error(`escrow imbalance for order ${order.id}: ${held}`);
+  const released = order.amount_cents - refundCents;
+  const commission = Math.round((order.commission_cents * released) / order.amount_cents);
+  const sellerPart = released - commission;
+  await post(
+    s.tx,
+    [
+      { account: await accountId(s.tx, 'escrow', cur), amountCents: -order.amount_cents },
+      { account: await accountId(s.tx, 'user_credit', cur, order.buyer_id), amountCents: refundCents },
+      { account: await accountId(s.tx, 'treasury', cur), amountCents: commission },
+      await sellerLeg(s.tx, order, sellerPart, 'escrow_release'),
+    ],
+    'dispute_split',
+    order.id,
+  );
+  await setRedemptionStatus(s.tx, order.id, 'released');
+  await transition(s.tx, order, 'completed', arbiterId, 'dispute_resolved_split', ', completed_at = now()');
+  const room = await roomOf(s.tx, order.id);
+  await appendMessage(s, room.id, null, 'system', 'Dispute closed: part refunded to the buyer, the rest released to the seller.', [], undefined, { code: 'dispute_buyer', params: { split: true, refund_cents: refundCents } });
+  await postOrderCard(s, order, 'completed');
+  await enqueueWebhook(s.tx, order.seller_id, 'order.completed', orderSummary(order));
+  s.notifyUser(order.seller_id, 'order.completed', { orderId: order.id });
+  s.notifyUser(order.buyer_id, 'order.refunded', { orderId: order.id });
 }
 
 async function refundOrder(ctx: Ctx, s: TxScope, order: Order & { delivery_mode: string; title: string }, actorId: string | null, reason: string) {
@@ -1086,7 +1147,7 @@ async function refundOrder(ctx: Ctx, s: TxScope, order: Order & { delivery_mode:
   }
   await transition(s.tx, order, 'refunded', actorId, reason);
   const room = await roomOf(s.tx, order.id);
-  await appendMessage(s, room.id, null, 'system', `Order refunded to the buyer (${(order.amount_cents / 100).toFixed(2)} ${order.currency}).`, [], undefined, { code: 'refunded', params: { reason } });
+  await appendMessage(s, room.id, null, 'system', `Order refunded to the buyer (${(order.amount_cents / 100).toFixed(2)} ${order.currency}).`, [], undefined, { code: reason === 'dispute_resolved_buyer' ? 'dispute_buyer' : 'refunded', params: { reason } });
   await postOrderCard(s, order, 'refunded');
   await enqueueWebhook(s.tx, order.seller_id, 'order.refunded', orderSummary(order));
   if (order.rail === 'fiat') await enqueueEmail(s.tx, order.buyer_id, 'order_refunded', emailData(order));
@@ -1168,6 +1229,7 @@ export async function getOrderFor(ctx: Ctx, orderId: string, user: { id: string;
     : null;
   return {
     ...order, checklist, dispute, events, review, warranty_claims: warrantyClaims, progress, buyer_reputation: buyerRep, buyer_rating: buyerRating,
+    lead_review: staff ? Number(order.amount_cents) > LEAD_REVIEW_ABOVE_CENTS : undefined,
     crypto_payments: cryptoPayments, crypto_refund: cryptoRefund, delivery_proof: deliveryProof,
     handover_field: handoverFieldFor(order.game, order.category_slug ?? ''),
     proof_required: ctx.cfg.DELIVERY_PROOF_REQUIRED && PROOF_REQUIRED_KINDS.has(order.category_kind) && order.delivery_mode === 'manual',
@@ -1189,6 +1251,7 @@ export async function listOrders(q: Queryable, userId: string, role: 'buyer' | '
 // ---------------------------------------------------------------------------
 /** Buyer may cancel for a full refund once the promised delivery time has passed. */
 export async function cancelLateOrder(ctx: Ctx, orderId: string, buyerId: string) {
+  if (!ctx.cfg.AUTO_REFUND_LATE_ORDERS) throw conflict('disputes_only', 'Late orders are not cancelled; open a dispute and staff will decide');
   return withScope(ctx, async (s) => {
     const order = await lockOrder(s.tx, orderId);
     if (order.buyer_id !== buyerId) throw forbidden('not_buyer', 'Only the buyer can cancel');
@@ -1222,11 +1285,14 @@ export async function handleLateDeliveries(ctx: Ctx) {
       const room = await roomOf(s.tx, o.id);
       await appendMessage(
         s, room.id, null, 'warning',
-        `The promised delivery time has passed. The buyer can now cancel for a full refund; the order is refunded automatically if it isn't delivered within ${ctx.cfg.LATE_AUTO_REFUND_HOURS} hours.`,
+        'Delivery time has passed. Seller: deliver now. Buyer: you can open a dispute.',
+        [], undefined, { code: 'delivery_late' },
       );
     });
   }
 
+  // CEO (Oct 24): no order is ever refunded automatically; refunds come only from a staff-decided dispute.
+  if (!ctx.cfg.AUTO_REFUND_LATE_ORDERS) return { notified: late.length, refunded: 0 };
   const overdue = await many<{ id: string }>(
     ctx.db,
     `SELECT id FROM orders WHERE status = 'paid' AND rail = 'fiat' AND NOT escrow_frozen

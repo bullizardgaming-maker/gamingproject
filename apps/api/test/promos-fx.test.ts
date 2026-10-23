@@ -115,23 +115,28 @@ describe('referrals and store credit', () => {
     expect(rateBps).toBe(2000);
 
     const reg = await client(h.app, undefined, { 'x-device-fingerprint': 'friend-laptop' }).post('/v1/auth/register', {
-      email: `friend_${Date.now()}@example.com`, password: 'correct horse battery', displayName: 'Friend', referralCode: code,
+      email: `friend_${Date.now()}@example.com`, password: 'correct horse battery', displayName: 'Friend', referralCode: code, acceptTerms: true,
     });
     const friend = { id: reg.body.user.id, api: client(h.app, reg.body.token) };
     await h.ctx.db.query(`UPDATE users SET kyc_tier = 1 WHERE id = $1`, [friend.id]);
     const seller = await makeUser(h, { tier: 2 });
     const offer = await stockedOffer(seller, { priceCents: 25_00 });
 
-    // 25.00 → buyer pays 26.32, commission 1.32; the referrer gets 20% of it = 0.26 on every completed order.
+    // 25.00 → buyer pays 26.32, commission 1.32; the referrer gets 20% of it = 0.26 on every completed order
+    // AFTER the friend's first one (CEO, Oct 24).
     const o1 = (await order(friend, offer.id)).body.order;
     await friend.api.post(`/v1/orders/${o1.id}/confirm`);
-    expect(await sellerAvailable(h.ctx.db, referrer.id)).toBe(26);
+    expect(await sellerAvailable(h.ctx.db, referrer.id)).toBe(0);
     const o2 = (await order(friend, offer.id)).body.order;
     await friend.api.post(`/v1/orders/${o2.id}/confirm`);
+    expect(await sellerAvailable(h.ctx.db, referrer.id)).toBe(26);
+    const o2b = (await order(friend, offer.id)).body.order;
+    await friend.api.post(`/v1/orders/${o2b.id}/confirm`);
     expect(await sellerAvailable(h.ctx.db, referrer.id)).toBe(52);
     const summary = (await referrer.api.get('/v1/me/referral')).body;
     expect(summary).toMatchObject({ friendsSignedUp: 1, friendsActive: 1, earnedCents: 52, ordersPaid: 2 });
     expect(summary.rewards[0]).toMatchObject({ status: 'granted', amount_cents: 26, commission_cents: 1_32, rate_bps: 2000 });
+    expect(summary.rewards.at(-1)).toMatchObject({ status: 'blocked', reason: 'first_order' });
     expect((await referrer.api.get('/v1/me/wallet')).body.entries.filter((e: any) => e.kind === 'referral')).toHaveLength(2);
 
     // Staff change the share; a friend who went quiet longer than the activity window earns nothing.
@@ -154,7 +159,7 @@ describe('referrals and store credit', () => {
     const referrer = await makeUser(h, { tier: 1, device: 'same-pc' });
     const { code } = (await referrer.api.get('/v1/me/referral')).body;
     const reg = await client(h.app, undefined, { 'x-device-fingerprint': 'same-pc' }).post('/v1/auth/register', {
-      email: `sock_${Date.now()}@example.com`, password: 'correct horse battery', displayName: 'Sock', referralCode: code,
+      email: `sock_${Date.now()}@example.com`, password: 'correct horse battery', displayName: 'Sock', referralCode: code, acceptTerms: true,
     });
     await h.ctx.db.query(`UPDATE users SET kyc_tier = 1 WHERE id = $1`, [reg.body.user.id]);
     const sock = { api: client(h.app, reg.body.token, { 'x-device-fingerprint': 'same-pc' }) };

@@ -15,6 +15,9 @@ import { usePageMeta } from '@/lib/seo';
 import { attributePairs } from '@/lib/attributes';
 
 interface OrderDetail {
+  tos_version?: string | null;
+  tos_accepted_at?: string | null;
+  created_at: string;
   id: string;
   buyer_id: string;
   seller_id: string;
@@ -328,9 +331,13 @@ export function OrderPage() {
               <div className="pg-total"><span>{t('checkout.toPay')}</span><span className="pg-price">{money(order.charged_cents ?? order.amount_cents, order.currency)}</span></div>
             </div>
             <span className="small muted num" data-testid="order-ref">{order.ref ?? t('order.ref', { id: order.id.slice(0, 8) })}</span>
-            <p className="small muted" style={{ margin: 0 }}>
-              {t('checkout.rules', { link: '\u0000' }).split('\u0000')[0]}<Link to="/help/how-escrow-works">{t('checkout.rulesLink')}</Link>{t('checkout.rules', { link: '\u0000' }).split('\u0000')[1]}
-            </p>
+            {order.tos_version && (
+              <p className="small muted" style={{ margin: 0 }} data-testid="order-terms">
+                <Link to={`/terms/versions/${encodeURIComponent(order.tos_version)}`} target="_blank" rel="noopener">
+                  {t('legal.acceptedOn', { version: order.tos_version, date: new Date(order.tos_accepted_at ?? order.created_at).toLocaleDateString() })}
+                </Link>
+              </p>
+            )}
             <div className="bp-box"><BuyerProtection /></div>
           </aside>
         </div>

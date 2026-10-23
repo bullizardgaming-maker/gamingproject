@@ -5,64 +5,9 @@ const es: LocalePack = {
   manage: 'Gestionar correos',
   verifyCode: (code, minutes) => `Tu código de verificación es ${code}. Caduca en ${minutes} minutos.`,
   templates: {
-    order_paid: {
-      subject: (d) => `Pago recibido por ${d.title}`,
-      body: (d, link, h) => `Hemos recibido ${h.money(d.amount_cents, d.currency)} por «${d.title}». Queda en garantía y el vendedor no cobra hasta que tengas lo comprado.\n\nSigue el pedido: ${link(`/orders/${d.order_id}`)}`,
-    },
-    order_delivered: {
-      subject: (d) => `Entregado: ${d.title}`,
-      body: (d, link, h) =>
-        `Tu pedido «${d.title}» se ha entregado. Ábrelo para verlo.\n\n` +
-        (d.protection === 'insurance_14d'
-          ? `Esta cuenta tiene seguro de 14 días hasta el ${h.when(d.protection_ends_at)}. Completa ahora la lista de seguridad: cambia la contraseña, el correo de recuperación y el 2FA.`
-          : d.protection_ends_at
-            ? `Tienes hasta el ${h.when(d.protection_ends_at)} para comprobarlo. Si algo falla, abre una disputa antes.`
-            : `Compruébalo y confirma el pedido; el vendedor solo cobra cuando confirmas. Si algo está mal, abre una disputa.`) +
-        `\n\n${link(`/orders/${d.order_id}`)}`,
-    },
-    order_refunded: {
-      subject: (d) => `Reembolso de ${d.title}`,
-      body: (d, link, h) => `Hemos devuelto ${h.money(d.amount_cents, d.currency)} a tu método de pago original. Los reembolsos con tarjeta suelen aparecer en 5–10 días hábiles.\n\n${link(`/orders/${d.order_id}`)}`,
-    },
-    delivery_late: {
-      subject: (d) => `Tu pedido va con retraso: ${d.title}`,
-      body: (d, link, h) =>
-        `El vendedor prometió entregarlo antes del ${h.when(d.delivery_due_at)} y aún no lo ha hecho. Puedes esperar o cancelar ahora con reembolso completo. ` +
-        `Si no se entrega en ${d.auto_refund_hours} horas, te lo reembolsamos automáticamente.\n\n${link(`/orders/${d.order_id}`)}`,
-    },
-    delivery_overdue: {
-      subject: (d) => `Atrasado: entrega ${d.title} ya`,
-      body: (d, link, h) =>
-        `Prometiste entregar antes del ${h.when(d.delivery_due_at)}. El comprador ya puede cancelar con reembolso completo y el pedido se reembolsará solo en ${d.auto_refund_hours} horas. ` +
-        `Las entregas tardías bajan tu tasa de puntualidad, que los compradores ven en tu perfil.\n\n${link(`/orders/${d.order_id}`)}`,
-    },
-    referral_reward: {
-      subject: (d, h) => `Ganaste ${h.money(d.amount_cents, d.currency)} con el pedido de un amigo`,
-      body: (d, link, h) => `Un amigo que invitaste completó un pedido. Tu ${d.rate_pct}% de nuestra comisión, ${h.money(d.amount_cents, d.currency)}, ya está en tu saldo y seguirá llegando con cada pedido suyo mientras siga activo.\n\n${link('/account')}`,
-    },
     protection_ending: {
       subject: (d) => `Quedan 24 horas para comprobar ${d.title}`,
       body: (d, link, h) => `El vendedor cobrará automáticamente el ${h.when(d.protection_ends_at)}. Si algo va mal con tu pedido, abre una disputa antes.\n\n${link(`/orders/${d.order_id}`)}`,
-    },
-    seller_new_order: {
-      subject: (d) => (d.delivery_mode === 'manual' ? `Nuevo pedido por entregar: ${d.title}` : `Vendido: ${d.title}`),
-      body: (d, link, h) =>
-        (d.delivery_mode === 'manual'
-          ? `Un comprador pagó ${h.money(d.amount_cents, d.currency)} por «${d.title}» x${d.quantity}. Entrégalo desde la página del pedido; el pago queda en garantía hasta entonces.`
-          : `«${d.title}» x${d.quantity} se vendió por ${h.money(d.amount_cents, d.currency)} y se entregó automáticamente de tu stock.`) +
-        `\n\n${link(`/orders/${d.order_id}`)}`,
-    },
-    seller_paid: {
-      subject: (d, h) => `${h.money(d.seller_net_cents, d.currency)} añadidos a tu saldo`,
-      body: (d, link, h) => `El pedido «${d.title}» se ha completado. ${h.money(d.seller_net_cents, d.currency)} ya están en tu saldo, listos para retirar.\n\n${link('/sell')}`,
-    },
-    withdrawal_paid: {
-      subject: (d, h) => `Retiro de ${h.money(d.amount_cents, d.currency)} enviado`,
-      body: (d, _link, h) => `Hemos enviado ${h.money(d.amount_cents, d.currency)} a tu cuenta de cobro (referencia ${d.provider_ref}).`,
-    },
-    dispute_opened: {
-      subject: (d) => `Disputa abierta en ${d.title}`,
-      body: (d, link) => `Se ha abierto una disputa: «${d.reason}». El pago queda congelado hasta que un árbitro revise el chat del pedido. Añade ya tus pruebas al chat.\n\n${link(`/orders/${d.order_id}`)}`,
     },
     dispute_statement: {
       subject: () => 'Nueva declaración en tu disputa',
@@ -87,19 +32,11 @@ const es: LocalePack = {
       subject: (d) => `${d.percent}% hecho: ${d.title}`,
       body: (d, link) => `El vendedor publicó el progreso de «${d.title}»: ${d.percent}%${d.note ? `. «${d.note}»` : '.'}\n\n${link(`/orders/${d.order_id}`)}`,
     },
-    dispute_resolved: {
-      subject: (d) => `Disputa resuelta: ${d.title}`,
-      body: (d, link) => `El árbitro falló a favor del ${d.outcome === 'buyer' ? 'comprador' : 'vendedor'}. Nota: «${d.note}»\n\n${link(`/orders/${d.order_id}`)}`,
-    },
     chargeback_received: {
       subject: (d) => `Contracargo en el pedido ${String(d.order_id).slice(0, 8)}`,
       body: (d, _link, h) =>
         `El banco del comprador revirtió ${h.money(d.amount_cents)} (${d.network} ${d.reason_code}). Hemos enviado las pruebas automáticamente.\n\n` +
         (d.seller_protected ? 'El Escudo de contracargos cubre este pedido: tu saldo no se ve afectado.' : 'Esta oferta no tenía prueba verificada de propietario original, así que el importe se descontó de tu saldo. Si el banco nos da la razón, se te devuelve.'),
-    },
-    kyc_result: {
-      subject: (d) => (d.approved ? 'Tu identidad está verificada' : 'No pudimos verificar tu identidad'),
-      body: (d, link) => (d.approved ? `Ya puedes publicar ofertas, usar la API de vendedores y retirar.\n\n${link('/sell')}` : `Inténtalo de nuevo con una foto nítida de un documento válido.\n\n${link('/account')}`),
     },
     new_signin: {
       subject: () => 'Nuevo inicio de sesión en tu cuenta de Bullizard',

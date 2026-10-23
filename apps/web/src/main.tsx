@@ -11,7 +11,7 @@ import { InquiryChat, Orders } from './pages/Orders';
 import { Sell } from './pages/Sell';
 import { Messages } from './pages/Messages';
 import { Developers } from './pages/Developers';
-import { Terms } from './pages/Terms';
+import { LegalHistory, LegalPage } from './pages/Legal';
 import { useFeatures } from './lib/features';
 import { Account, ForgotPassword, Login, ResetPassword } from './pages/Account';
 import { Admin } from './pages/Admin';
@@ -24,6 +24,7 @@ import { StatusPage } from './pages/StatusPage';
 import { MyProposals, MyRequests, RequestNew, RequestPage, RequestsBoard } from './pages/Requests';
 import { SiteHeader } from './components/SiteHeader';
 import { SiteFooter } from './components/SiteFooter';
+import { LegalNotice } from './components/LegalNotice';
 import { DEMO } from './api';
 import { DemoBanner, DemoCheckout } from './demo/DemoUi';
 import { applyTheme } from '@/lib/prefs';
@@ -80,6 +81,7 @@ function App() {
       <a href="#main" className="skip-link">{t('a11y.skip')}</a>
       {DEMO && <DemoBanner />}
       <SiteHeader />
+      <LegalNotice />
       <ScrollToTop />
       <RouteAnnouncer />
       <main className="shell" id="main" tabIndex={-1}>
@@ -114,7 +116,13 @@ function App() {
           <Route path="/sell/analytics" element={<Sell />} />
           <Route path="/sell/invoices" element={<Navigate to="/sell/money" replace />} />
           <Route path="/developers" element={<DevelopersGate />} />
-          <Route path="/terms" element={<Terms />} />
+          <Route path="/terms" element={<LegalPage doc="terms" />} />
+          <Route path="/terms/history" element={<LegalHistory doc="terms" />} />
+          <Route path="/terms/versions/:version" element={<LegalPage doc="terms" />} />
+          <Route path="/privacy" element={<LegalPage doc="privacy" />} />
+          <Route path="/seller-agreement" element={<LegalPage doc="seller-agreement" />} />
+          <Route path="/refunds" element={<LegalPage doc="refunds" />} />
+          <Route path="/restricted-countries" element={<LegalPage doc="restricted-countries" />} />
           <Route path="/login" element={<Login />} />
           <Route path="/account" element={<Account />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />

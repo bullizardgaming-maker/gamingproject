@@ -5,6 +5,7 @@ import { api, download, money } from '../api';
 import { useSession } from '../session';
 import { cn } from '@/lib/utils';
 import { t, type MessageKey } from '../i18n';
+import { PHASE2_UI } from '@/lib/launch';
 
 interface Hold {
   level: string;
@@ -175,6 +176,8 @@ export function SellerMoney() {
 
       <PayoutAddressCard onChanged={load} onMessage={setMsg} />
 
+      {!PHASE2_UI && <Exports />}
+      {PHASE2_UI && (
       <details className="card wl-more">
         <summary><b>{t('money.taxAndInvoices')}</b></summary>
         <div className="stack" style={{ marginTop: 16 }}>
@@ -231,6 +234,7 @@ export function SellerMoney() {
       <Exports />
         </div>
       </details>
+      )}
     </div>
   );
 }
@@ -485,8 +489,12 @@ const exportsList = (): Array<[string, string, string]> => [
   ['sales', t('money.exp.sales'), t('money.exp.sales.hint')],
   ['statement', t('money.exp.statement'), t('money.exp.statement.hint')],
   ['payouts', t('money.exp.payouts'), t('money.exp.payouts.hint')],
-  ['invoices', t('money.exp.invoices'), t('money.exp.invoices.hint')],
-  ['credit_notes', t('money.exp.credits'), t('money.exp.credits.hint')],
+  ...(PHASE2_UI
+    ? ([
+        ['invoices', t('money.exp.invoices'), t('money.exp.invoices.hint')],
+        ['credit_notes', t('money.exp.credits'), t('money.exp.credits.hint')],
+      ] as Array<[string, string, string]>)
+    : []),
 ];
 
 function Exports() {

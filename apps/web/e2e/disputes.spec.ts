@@ -6,10 +6,10 @@ test('dispute: buyer states the case, the arbiter decides from the case file', a
   await buy(page, '/offers/offer-14'); // AK-47 Redline, manual delivery
   await page.getByText('Open a dispute', { exact: true }).click();
   await page.getByLabel("What's the problem?").selectOption('not_delivered');
-  await page.getByPlaceholder(/What happened\?/).fill('Paid an hour ago and the seller has not traded the skin yet.');
+  await page.getByPlaceholder(/Be specific: what you expected/).fill('Paid an hour ago and the seller has not traded the skin yet.');
   await page.getByRole('button', { name: 'Open dispute' }).click();
   await expect(page.getByText('Buyer statement')).toBeVisible();
-  await page.getByPlaceholder(/Add your statement/).fill('My Steam trade link is in the chat; nothing has arrived.');
+  await page.getByPlaceholder(/Your side for the arbiter/).fill('My Steam trade link is in the chat; nothing has arrived.');
   await page.getByRole('button', { name: 'Add statement' }).click();
   await expect(page.getByText('Buyer statement', { exact: true })).toHaveCount(2); // saved, not just typed
 

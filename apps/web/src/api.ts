@@ -1,4 +1,5 @@
-import { moneyLocale } from './i18n';
+import { moneyLocale, t, type MessageKey } from './i18n';
+import en from './i18n/en';
 const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? '';
 
 /**
@@ -35,9 +36,26 @@ export interface User {
   seller_since?: string | null;
 }
 
+/**
+ * The message people see for an API error (copy deck §2.13): `err.<code>` when the key exists,
+ * otherwise the server's own message (validation text stays useful); `err.generic` for 5xx and
+ * unknown failures, `err.network` when the request never reached the API.
+ */
+export function errorMessage(status: number, code: string, serverMessage?: string): string {
+  if (code === 'network') return t('err.network');
+  if (code === 'too_many_requests' || status === 429) return t('err.too_many');
+  const key = `err.${code}`;
+  if (code && key in en) return t(key as MessageKey);
+  if (status >= 500 || status === 0 || !serverMessage || code === 'internal') return t('err.generic');
+  return serverMessage;
+}
+
 export class ApiError extends Error {
+  /** The API's own message, before localisation. */
+  public serverMessage: string;
   constructor(public status: number, public code: string, message: string) {
-    super(message);
+    super(errorMessage(status, code, message));
+    this.serverMessage = message;
   }
 }
 
@@ -112,7 +130,7 @@ export async function api<T = any>(path: string, init: { method?: string; body?:
     const r = await demoFetch(method, path, init.body, session.token);
     if (r.status === 204) return undefined as T;
     const d = r.data as any;
-    if (r.status >= 400) throw new ApiError(r.status, d.error?.code ?? 'error', d.error?.message ?? `Request failed (${r.status})`);
+    if (r.status >= 400) throw new ApiError(r.status, d.error?.code ?? 'error', d.error?.message ?? '');
     return d as T;
   }
   const res = await fetch(`${BASE}/v1${path}`, {
@@ -120,6 +138,8 @@ export async function api<T = any>(path: string, init: { method?: string; body?:
     headers,
     credentials: 'include',
     body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+  }).catch(() => {
+    throw new ApiError(0, 'network', 'Network request failed');
   });
   if (res.status === 204) return undefined as T;
   const data = await res.json().catch(() => ({}));
@@ -127,7 +147,7 @@ export async function api<T = any>(path: string, init: { method?: string; body?:
     if (res.status === 401 && !retried && session.token && !path.startsWith('/auth/') && (await refreshAccessToken())) {
       return api<T>(path, init, true);
     }
-    throw new ApiError(res.status, data.error?.code ?? 'error', data.error?.message ?? `Request failed (${res.status})`);
+    throw new ApiError(res.status, data.error?.code ?? 'error', data.error?.message ?? '');
   }
   return data as T;
 }
@@ -145,9 +165,11 @@ export async function apiUpload<T = any>(path: string, file: File): Promise<T> {
   }
   const headers: Record<string, string> = { 'Content-Type': file.type || 'application/octet-stream', 'X-Device-Fingerprint': deviceFingerprint() };
   if (session.token) headers.Authorization = `Bearer ${session.token}`;
-  const res = await fetch(`${BASE}/v1${path}`, { method: 'POST', headers, credentials: 'include', body: file });
+  const res = await fetch(`${BASE}/v1${path}`, { method: 'POST', headers, credentials: 'include', body: file }).catch(() => {
+    throw new ApiError(0, 'network', 'Network request failed');
+  });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(res.status, data.error?.code ?? 'error', data.error?.message ?? `Upload failed (${res.status})`);
+  if (!res.ok) throw new ApiError(res.status, data.error?.code ?? 'error', data.error?.message ?? '');
   return data as T;
 }
 
@@ -262,10 +284,12 @@ export async function apiBlob(path: string): Promise<Blob> {
     const { demoBlob } = await demo();
     return demoBlob(path, session.token);
   }
-  const res = await fetch(`${BASE}/v1${path}`, { headers: session.token ? { Authorization: `Bearer ${session.token}` } : {} });
+  const res = await fetch(`${BASE}/v1${path}`, { headers: session.token ? { Authorization: `Bearer ${session.token}` } : {} }).catch(() => {
+    throw new ApiError(0, 'network', 'Network request failed');
+  });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, data.error?.code ?? 'error', data.error?.message ?? `Request failed (${res.status})`);
+    throw new ApiError(res.status, data.error?.code ?? 'error', data.error?.message ?? '');
   }
   return res.blob();
 }

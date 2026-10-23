@@ -10,6 +10,7 @@ import { unitPriceFor } from '@/lib/tiers';
 import type { Offer } from '../pages/Market';
 import { OnlineDot, lastSeenLabel } from '@/lib/presence';
 import { intlLocale, t, type MessageKey } from '../i18n';
+import { isTopRank, rankName, rankPerk } from '@/lib/ranks';
 
 export const CATEGORY_ICON: Record<string, typeof Coins> = {
   accounts: UserRound,
@@ -149,7 +150,7 @@ export function OfferTable({ offers, showGame = false, showSeller = true, empty,
 
 /** Seller rank pill (Hatchling → Dragon). Only the top rank uses the accent. */
 export function RankPill({ name, className }: { name: string; className?: string }) {
-  return <span className={cn('rank', /dragon/i.test(name) && 'top', className)}>{name}</span>;
+  return <span className={cn('rank', isTopRank(name) && 'top', className)} title={rankPerk(name) || undefined} data-rank={name}>{rankName(name)}</span>;
 }
 
 export function TrustStrip({ className }: { className?: string }) {

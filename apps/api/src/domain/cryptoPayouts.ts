@@ -113,6 +113,10 @@ export async function requestCryptoWithdrawal(ctx: Ctx, userId: string, amountCe
     const { aml_hold } = await one<{ aml_hold: boolean }>(s.tx, 'SELECT aml_hold FROM users WHERE id = $1', [userId]);
     if (aml_hold) throw new AppError(423, 'withdrawals_frozen', 'Withdrawals are paused while we complete a routine review');
     if (!user.payout_address || !user.payout_address_currency) throw badRequest('no_payout_address', 'Add and confirm a payout address first');
+    // Unverified sellers withdraw freely for their first 30 days; after the ID deadline passes, earnings wait for verification (refund credit does not).
+    if (source === 'balance' && user.selling_restricted_at && user.kyc_tier < 2) {
+      throw new AppError(403, 'kyc_overdue', 'Verify your identity to withdraw: the 30-day deadline has passed');
+    }
     const owing = await maybeOne<{ currency: string }>(
       s.tx,
       `SELECT a.currency FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id

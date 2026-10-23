@@ -14,11 +14,18 @@ export const launchGameFor = (game: string) => LAUNCH_GAMES.find((g) => g.toLowe
  * (localStorage 'bz-demo-full') opens every known game so older flows can still be exercised.
  */
 export function sellableGames(known: readonly string[]): readonly string[] {
-  let full = false;
-  try {
-    full = import.meta.env.VITE_DEMO === 'true' && localStorage.getItem('bz-demo-full') === '1';
-  } catch {
-    /* storage blocked */
-  }
-  return full ? known : LAUNCH_GAMES;
+  return PHASE2_UI ? known : LAUNCH_GAMES;
 }
+
+/**
+ * Phase-2 UI (card payments, 72h window, 14-day account insurance, keys/boosting, bundles, tax):
+ * hidden at launch. The demo's full test catalogue (VITE_DEMO + localStorage 'bz-demo-full' = '1')
+ * still shows it so the older browser tests keep working.
+ */
+export const PHASE2_UI: boolean = (() => {
+  try {
+    return import.meta.env.VITE_DEMO === 'true' && localStorage.getItem('bz-demo-full') === '1';
+  } catch {
+    return false;
+  }
+})();

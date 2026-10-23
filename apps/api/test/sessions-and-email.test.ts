@@ -110,14 +110,14 @@ describe('email notifications', () => {
 
     const toBuyer = (await emailsTo(buyer.email)).map((m) => m.subject);
     const toSeller = (await emailsTo(seller.email)).map((m) => m.subject);
-    expect(toBuyer).toEqual(expect.arrayContaining(['Payment received for Test Key', 'Delivered: Test Key']));
-    expect(toSeller).toEqual(expect.arrayContaining(['Sold: Test Key', '$20.00 added to your balance']));
-    const delivered = (await emailsTo(buyer.email)).find((m) => m.subject === 'Delivered: Test Key');
+    expect(toBuyer).toEqual(expect.arrayContaining([`Payment in. ${order.ref} is with the seller`, 'Delivered. Check your inventory', 'Order closed. Enjoy the loot']));
+    expect(toSeller).toEqual(expect.arrayContaining(['New order: deliver to the buyer', '$20.00 landed in your balance']));
+    const delivered = (await emailsTo(buyer.email)).find((m) => m.subject === 'Delivered. Check your inventory');
     expect(delivered.body).toContain(`/orders/${order.id}`);
     expect(delivered.html).toContain('<a href=');
   });
 
-  it('sends one reminder 24h before auto-release, and respects opt-outs', async () => {
+  it('the 24h protection reminder is switched off at launch (copy deck §5.13); opt-outs still work', async () => {
     const seller = await makeUser(h, { tier: 2 });
     const buyer = await makeUser(h, { tier: 1 });
     const offer = await makeOffer(seller, { title: 'Reminder Key' });
@@ -127,7 +127,8 @@ describe('email notifications', () => {
     await runJobsOnce(h.ctx);
     await runJobsOnce(h.ctx);
     const reminders = (await emailsTo(buyer.email)).filter((m) => m.subject === '24 hours left to check Reminder Key');
-    expect(reminders).toHaveLength(1);
+    expect(reminders).toHaveLength(0);
+    expect((await h.ctx.db.query(`SELECT status FROM notifications WHERE dedupe_key = $1`, [`protection_ending:${o1.id}`])).rows[0].status).toBe('skipped');
 
     const prefs = await buyer.api.patch('/v1/me/email-preferences', { reminders: false });
     expect(prefs.body.find((p: any) => p.category === 'reminders').enabled).toBe(false);

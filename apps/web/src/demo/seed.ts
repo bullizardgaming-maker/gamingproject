@@ -4,6 +4,7 @@
  * states so escrow, chat, disputes and the operations console all have something to show.
  */
 import { DEFAULT_TERMS } from '../../../api/src/domain/safety';
+import { RULES_QUESTIONS } from './rulesQuestions';
 import { LAUNCH_GAMES } from '../lib/launch';
 
 /**
@@ -32,6 +33,10 @@ export interface DemoUser {
   email: string;
   password: string;
   locale?: string;
+  tos_version?: string | null;
+  tos_accepted_at?: string | null;
+  listing_banned_at?: string | null;
+  listing_ban_reason?: string | null;
   display_name: string;
   role: 'user' | 'arbiter' | 'support' | 'finance' | 'compliance' | 'admin';
   staff_roles?: string[];
@@ -459,7 +464,7 @@ export function seed() {
       { id: 'league-3', game: 'path of exile 2', name: 'Dawn of the Hunt', starts_at: ago(30 * day), ends_at: null, created_at: ago(30 * day), updated_at: ago(30 * day) },
     ] as Array<{ id: string; game: string; name: string; starts_at: string | null; ends_at: string | null; created_at: string; updated_at: string }>,
     handoverNames: {} as Record<string, Record<string, string>>,
-    rulesSettings: { passMarkPct: 100, idDueDays: 30 },
+    rulesSettings: { passMarkPct: 90, idDueDays: 30 },
     launchPhase: 3,
     offplatformActions: ['warn', 'warn', 'ban'] as string[],
     credit: {} as Record<string, number>,
@@ -476,14 +481,7 @@ export function seed() {
     affiliates: [{ id: 'aff-1', user_id: users[4]!.id, code: 'ARCANE-TV', rate_bps: 2000, status: 'active', note: 'Twitch, 40k followers', created_at: ago(20 * day) }] as Array<{ id: string; user_id: string; code: string; rate_bps: number; status: string; note: string; created_at: string }>,
     affiliateOf: {} as Record<string, string>,
     affiliateEarnings: [] as Array<{ id: string; affiliate_id: string; order_id: string; commission_cents: number; earned_cents: number; currency: string; created_at: string }>,
-    rulesQuestions: [
-      ['A buyer asks you to finish the trade on Discord so you both skip the fee. What do you do?', ['Agree, it saves money', 'Decline and keep the whole trade in the Bullizard order chat', 'Share your Discord but trade here', 'Ask them to pay half outside'], 1, 'Trading or sharing outside contacts anywhere on Bullizard can get your account banned right away. Everything stays in the order chat.'],
-      ['When does the payment reach your balance?', ['The moment the buyer pays', 'When you mark the order delivered', 'When the buyer confirms delivery, or staff release it after review', 'After 72 hours automatically'], 2, 'The payment is held in escrow until the buyer confirms. There is no automatic release; staff can release an unconfirmed order after review, never before 24 hours.'],
-      ['What must you attach before marking an in-game delivery as delivered?', ['Nothing', 'A photo or video of the trade (proof of delivery)', 'The buyer’s email', 'A screenshot of your inventory'], 1, 'Proof of delivery is required for currency, items, top-ups and boosting. It is what staff look at in a dispute.'],
-      ['Which price do you enter on the sell form?', ['The price you want to receive; the commission is added on top for the buyer', 'The buyer price; the commission is taken out', 'Any price plus the withdrawal fee', 'The price in the buyer’s currency'], 0, 'You set your price and receive it in full. The buyer sees it with your rank’s commission added on top.'],
-      ['A buyer’s character name on the order is wrong and the trade fails. What do you do?', ['Deliver to any character with a similar name', 'Message the buyer in the order chat and wait; do not deliver elsewhere', 'Cancel and ask them to pay you directly', 'Mark it delivered anyway'], 1, 'The buyer confirmed the name and is responsible for it. Sort it out in the order chat, or open a dispute; never deliver to another name.'],
-      ['What happens on a third off-platform warning?', ['Nothing', 'A listing is removed', 'Your account is banned automatically and reviewed by staff', 'You pay a fee'], 2, 'First and second offences are warnings; the third bans the account automatically pending staff review.'],
-    ].map(([question, options, correct, explanation], i) => ({ id: `rq-${i + 1}`, position: i + 1, question: question as string, options: options as string[], correct: correct as number, explanation: explanation as string, active: true })),
+    rulesQuestions: RULES_QUESTIONS.map((q, i) => ({ id: `rq-${i + 1}`, ...q, question_ar: q.question_ar as string | null, options_ar: q.options_ar as string[] | null, explanation_ar: q.explanation_ar as string | null, active: true })),
     apiKeys: [] as any[],
     watches: [] as any[],
     tickets: [] as any[],

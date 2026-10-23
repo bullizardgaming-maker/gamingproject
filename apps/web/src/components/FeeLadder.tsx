@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, money } from '../api';
 import { t } from '../i18n';
+import { isTopRank, rankName, rankPerk } from '@/lib/ranks';
 
 /** The rank table (GET /ranks): staff can edit it, so the page reads it rather than hard-coding it. */
 export interface Rank {
@@ -51,10 +52,10 @@ export function FeeLadder({ current }: { current?: string }) {
       </div>
       <div className="ladder" role="table" aria-label={t('ranks.aria')}>
         {ranks.map((r) => (
-          <div key={r.position} className={`rung ${current === r.name ? 'current' : ''}`} role="row">
+          <div key={r.position} className={`rung ${current === r.name ? 'current' : ''} ${isTopRank(r.name) ? 'top' : ''}`} role="row" title={rankPerk(r.name) || undefined}>
             <div className="rate" role="cell">{pct(r.rateBps)}</div>
             <div className="bar" style={{ height: `${(r.rateBps / max) * 100}%` }} />
-            <div className="name" role="rowheader">{r.name}</div>
+            <div className="name" role="rowheader">{rankName(r.name)}</div>
             <div className="min" role="cell">{r.minMonthlySalesCents ? `${money(r.minMonthlySalesCents).replace('.00', '')}+/mo` : t('ranks.start')}</div>
           </div>
         ))}

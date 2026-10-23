@@ -5,64 +5,9 @@ const fr: LocalePack = {
   manage: 'Gérer les e-mails',
   verifyCode: (code, minutes) => `Votre code de vérification est ${code}. Il expire dans ${minutes} minutes.`,
   templates: {
-    order_paid: {
-      subject: (d) => `Paiement reçu pour ${d.title}`,
-      body: (d, link, h) => `Nous avons reçu ${h.money(d.amount_cents, d.currency)} pour « ${d.title} ». Le montant est sous séquestre et le vendeur n’est payé qu’une fois l’achat entre vos mains.\n\nSuivre la commande : ${link(`/orders/${d.order_id}`)}`,
-    },
-    order_delivered: {
-      subject: (d) => `Livré : ${d.title}`,
-      body: (d, link, h) =>
-        `Votre commande « ${d.title} » a été livrée. Ouvrez la page de la commande pour la voir.\n\n` +
-        (d.protection === 'insurance_14d'
-          ? `Ce compte est couvert par l’assurance 14 jours jusqu’au ${h.when(d.protection_ends_at)}. Faites dès maintenant la liste de sécurité : mot de passe, e-mail de récupération et 2FA.`
-          : d.protection_ends_at
-            ? `Vous avez jusqu’au ${h.when(d.protection_ends_at)} pour vérifier. En cas de problème, ouvrez un litige avant cette date.`
-            : `Vérifiez-la et confirmez la commande ; le vendeur n’est payé qu’à votre confirmation. En cas de problème, ouvrez plutôt un litige.`) +
-        `\n\n${link(`/orders/${d.order_id}`)}`,
-    },
-    order_refunded: {
-      subject: (d) => `Remboursement de ${d.title}`,
-      body: (d, link, h) => `${h.money(d.amount_cents, d.currency)} ont été remboursés sur votre moyen de paiement d’origine. Les remboursements par carte apparaissent généralement sous 5 à 10 jours ouvrés.\n\n${link(`/orders/${d.order_id}`)}`,
-    },
-    delivery_late: {
-      subject: (d) => `Votre commande est en retard : ${d.title}`,
-      body: (d, link, h) =>
-        `Le vendeur avait promis une livraison avant le ${h.when(d.delivery_due_at)} et n’a pas encore livré. Vous pouvez attendre, ou annuler maintenant avec remboursement intégral. ` +
-        `Sans livraison sous ${d.auto_refund_hours} heures, nous vous remboursons automatiquement.\n\n${link(`/orders/${d.order_id}`)}`,
-    },
-    delivery_overdue: {
-      subject: (d) => `En retard : livrez ${d.title} maintenant`,
-      body: (d, link, h) =>
-        `Vous aviez promis une livraison avant le ${h.when(d.delivery_due_at)}. L’acheteur peut désormais annuler avec remboursement intégral, et la commande sera remboursée automatiquement dans ${d.auto_refund_hours} heures. ` +
-        `Les retards font baisser votre taux de ponctualité, visible sur votre profil.\n\n${link(`/orders/${d.order_id}`)}`,
-    },
-    referral_reward: {
-      subject: (d, h) => `Vous avez gagné ${h.money(d.amount_cents, d.currency)} grâce à la commande d'un ami`,
-      body: (d, link, h) => `Un ami que vous avez invité a terminé une commande. Votre part de ${d.rate_pct}% de notre commission, ${h.money(d.amount_cents, d.currency)}, est sur votre solde et continuera à chaque commande tant qu'il reste actif.\n\n${link('/account')}`,
-    },
     protection_ending: {
       subject: (d) => `Plus que 24 heures pour vérifier ${d.title}`,
       body: (d, link, h) => `Le vendeur sera payé automatiquement le ${h.when(d.protection_ends_at)}. Si quelque chose ne va pas, ouvrez un litige avant.\n\n${link(`/orders/${d.order_id}`)}`,
-    },
-    seller_new_order: {
-      subject: (d) => (d.delivery_mode === 'manual' ? `Nouvelle commande à livrer : ${d.title}` : `Vendu : ${d.title}`),
-      body: (d, link, h) =>
-        (d.delivery_mode === 'manual'
-          ? `Un acheteur a payé ${h.money(d.amount_cents, d.currency)} pour « ${d.title} » x${d.quantity}. Livrez depuis la page de la commande ; le paiement reste sous séquestre d’ici là.`
-          : `« ${d.title} » x${d.quantity} a été vendu ${h.money(d.amount_cents, d.currency)} et livré automatiquement depuis votre stock.`) +
-        `\n\n${link(`/orders/${d.order_id}`)}`,
-    },
-    seller_paid: {
-      subject: (d, h) => `${h.money(d.seller_net_cents, d.currency)} ajoutés à votre solde`,
-      body: (d, link, h) => `La commande « ${d.title} » est terminée. ${h.money(d.seller_net_cents, d.currency)} sont sur votre solde, prêts à être retirés.\n\n${link('/sell')}`,
-    },
-    withdrawal_paid: {
-      subject: (d, h) => `Retrait de ${h.money(d.amount_cents, d.currency)} envoyé`,
-      body: (d, _link, h) => `Nous avons envoyé ${h.money(d.amount_cents, d.currency)} sur votre compte de versement (référence ${d.provider_ref}).`,
-    },
-    dispute_opened: {
-      subject: (d) => `Litige ouvert sur ${d.title}`,
-      body: (d, link) => `Un litige a été ouvert : « ${d.reason} ». Le paiement est gelé jusqu’à ce qu’un arbitre examine le chat de la commande. Ajoutez vos preuves au chat dès maintenant.\n\n${link(`/orders/${d.order_id}`)}`,
     },
     dispute_statement: {
       subject: () => 'Nouvelle déclaration dans votre litige',
@@ -87,19 +32,11 @@ const fr: LocalePack = {
       subject: (d) => `${d.percent} % fait : ${d.title}`,
       body: (d, link) => `Le vendeur a publié l’avancement de « ${d.title} » : ${d.percent} %${d.note ? `. « ${d.note} »` : '.'}\n\n${link(`/orders/${d.order_id}`)}`,
     },
-    dispute_resolved: {
-      subject: (d) => `Litige tranché : ${d.title}`,
-      body: (d, link) => `L’arbitre a tranché en faveur de ${d.outcome === 'buyer' ? 'l’acheteur' : 'du vendeur'}. Note : « ${d.note} »\n\n${link(`/orders/${d.order_id}`)}`,
-    },
     chargeback_received: {
       subject: (d) => `Rétrofacturation sur la commande ${String(d.order_id).slice(0, 8)}`,
       body: (d, _link, h) =>
         `La banque de l’acheteur a annulé ${h.money(d.amount_cents)} (${d.network} ${d.reason_code}). Nous avons transmis les preuves automatiquement.\n\n` +
         (d.seller_protected ? 'Le bouclier anti-rétrofacturation couvre cette commande : votre solde n’est pas touché.' : 'Cette offre n’avait pas de preuve vérifiée de propriétaire d’origine : le montant a été prélevé sur votre solde. Si la banque nous donne raison, il vous sera rendu.'),
-    },
-    kyc_result: {
-      subject: (d) => (d.approved ? 'Votre identité est vérifiée' : 'Nous n’avons pas pu vérifier votre identité'),
-      body: (d, link) => (d.approved ? `Vous pouvez maintenant publier des offres, utiliser l’API vendeur et effectuer des retraits.\n\n${link('/sell')}` : `Réessayez avec une photo nette d’une pièce d’identité valide.\n\n${link('/account')}`),
     },
     new_signin: {
       subject: () => 'Nouvelle connexion à votre compte Bullizard',

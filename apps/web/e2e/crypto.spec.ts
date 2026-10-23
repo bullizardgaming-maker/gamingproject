@@ -29,7 +29,7 @@ test.describe('crypto money paths', () => {
     await expect(checkout.getByRole('button', { name: /Tether \(TRC-20\)/ })).toBeEnabled();
     const monero = checkout.getByRole('button', { name: /Monero/ }); // $15 minimum
     await expect(monero).toBeDisabled();
-    await expect(monero).toContainText('Too small for this coin (min $15.00)');
+    await expect(monero).toContainText("Order is below this coin's minimum ($15.00)");
     await payCrypto(page);
   });
 
@@ -64,7 +64,7 @@ test.describe('crypto money paths', () => {
     const orderUrl = page.url();
     await expect(page.getByText('Until the buyer confirms')).toBeVisible();
     await page.getByRole('button', { name: 'Ask support to release the payment' }).click();
-    await expect(page.getByRole('status').filter({ hasText: 'Support has your request' })).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: 'Sent. Staff will check your proof.' })).toBeVisible();
 
     await signIn(page, 'Admin');
     await page.goto('/admin');
@@ -100,13 +100,13 @@ test.describe('crypto money paths', () => {
     await expect(page.getByRole('status').filter({ hasText: 'Approved' })).toBeVisible();
   });
 
-  test('a refund on a crypto order asks the buyer for an address and the CFO records the transaction', async ({ page }) => {
+  test('a refund on a crypto order lands in the buyer’s balance (no on-chain refund)', async ({ page }) => {
     await signIn(page, 'Buyer');
     await buy(page, '/offers/offer-7'); // 100k Gold, manual delivery
     const orderUrl = page.url().replace(/\?.*$/, '');
     await page.getByText('Open a dispute', { exact: true }).click();
     await page.getByLabel("What's the problem?").selectOption('not_delivered');
-    await page.getByPlaceholder(/What happened\?/).fill('No gold arrived and the seller stopped answering in the chat.');
+    await page.getByPlaceholder(/Be specific: what you expected/).fill('No gold arrived and the seller stopped answering in the chat.');
     await page.getByRole('button', { name: 'Open dispute' }).click();
     await expect(page.getByText('Buyer statement')).toBeVisible();
 
@@ -121,16 +121,9 @@ test.describe('crypto money paths', () => {
 
     await signIn(page, 'Buyer');
     await page.goto(orderUrl);
-    await page.getByLabel('Address').fill('TBuyerRefundAddress123456');
-    await page.getByRole('button', { name: 'Send my refund here' }).click();
-    await expect(page.getByText(/The treasury sends it to/)).toBeVisible();
-
-    await signIn(page, 'Admin');
-    await page.goto('/admin');
-    await page.getByRole('tab', { name: 'Crypto refunds' }).click();
-    const rr = page.getByRole('row', { name: /Pixel Pat/ }).first();
-    await rr.getByLabel(/Transaction hash/).fill('0xabc123def456');
-    await rr.getByRole('button', { name: 'Mark sent' }).click();
-    await expect(page.getByRole('status').filter({ hasText: 'Recorded' })).toBeVisible();
+    await expect(page.locator('.od-status')).toHaveText('Refunded to balance');
+    await expect(page.getByLabel('Address')).toHaveCount(0); // nothing to send on-chain: the money is balance now
+    await page.goto('/wallet');
+    await expect(page.getByRole('heading', { name: /Balance/ })).toBeVisible();
   });
 });

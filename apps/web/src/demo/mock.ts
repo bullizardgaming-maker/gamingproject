@@ -113,6 +113,23 @@ const publicUser = (u: DemoUser) => {
   return rest;
 };
 
+/** Legal documents: interim English text, same version as migration 067's seed. */
+export const TOS_VERSION = '2026-10-24';
+const LEGAL_DOCS = ['terms', 'privacy', 'seller-agreement', 'refunds', 'restricted-countries'] as const;
+const LEGAL_TITLES: Record<string, string> = { terms: 'Terms of Service', privacy: 'Privacy Policy', 'seller-agreement': 'Seller Agreement', refunds: 'Refund & Dispute Policy', 'restricted-countries': 'Restricted Countries' };
+function legalDoc(doc: string) {
+  if (!(LEGAL_DOCS as readonly string[]).includes(doc)) fail(400, 'validation_error', 'Unknown document');
+  const content_md = LEGAL_BODIES[doc] ?? `# ${LEGAL_TITLES[doc]}\n\nInterim text. Legal's approved wording replaces it.`;
+  return { doc, locale: 'en', version: TOS_VERSION, effective_at: '2026-10-24T00:00:00.000Z', title: LEGAL_TITLES[doc], content_md, sha256: hash('legal', content_md).padEnd(64, '0').slice(0, 64), material: false };
+}
+const LEGAL_BODIES: Record<string, string> = {
+  terms: `# Terms of Service\n\n_Interim version. Bullizard is a marketplace where players buy and sell in-game goods from each other; we hold the payment until the buyer confirms delivery._\n\n1. **Who can use Bullizard.** You must be 18 or older and not in a restricted country.\n2. **Orders.** By buying you agree to these Terms. The character name you confirm at checkout is the one the seller delivers to.\n3. **Payment and release.** Payments stay in escrow until you confirm delivery, or until staff release them after a review (never before 24 hours).\n4. **Disputes.** Open a dispute from the order within the protection window; staff decide within 72 hours. Refunds go to your Bullizard balance.\n5. **Conduct.** Keep every message in the order chat. Sharing outside contacts or payment details can get your account banned.\n6. **Fees.** The buyer price includes the seller's rank commission. Withdrawals cost 6% (minimum $1.50).\n7. **Changes.** We announce material changes 14 days before they take effect.`,
+  privacy: `# Privacy Policy\n\n_Interim version._\n\nWe keep your account details, orders, chat records and identity documents to run the marketplace, resolve disputes and meet legal duties. Chat records are kept for dispute evidence. You can ask for a copy or deletion of your data from your account settings.`,
+  'seller-agreement': `# Seller Agreement\n\n_Interim version._\n\n1. Pass the rules test before your first listing; verify your identity within 30 days.\n2. Upload proof (photo or video) of every delivery before marking it delivered.\n3. Deliver only to the character name on the order.\n4. Your price is what you receive; the commission is added on top for the buyer.\n5. Off-platform contact, misdescribed items and bot-farmed currency lead to listing bans or account bans.`,
+  refunds: `# Refund & Dispute Policy\n\n_Interim version._\n\nNo order is cancelled or refunded automatically. Open a dispute from the order; both sides have 48 hours for evidence and staff decide within 72 hours, with one appeal. Refunds (full or partial) land in your Bullizard balance; withdrawing them costs the standard fee.`,
+  'restricted-countries': `# Restricted Countries\n\n_Interim version._\n\nBullizard is not available where sanctions or local law prohibit it. The list is kept current here and in the help centre.`,
+};
+
 function sellerStats(sellerId: string) {
   const reviews = state.reviews.filter((r) => r.seller_id === sellerId);
   const before = state.reviewsBefore[sellerId] ?? { count: 0, sum: 0 };
@@ -286,7 +303,7 @@ function deliverOrder(o: any, payload?: string) {
   }
   transition(o, 'delivered', offer.delivery_mode === 'auto' ? 'auto_delivery' : 'manual_delivery');
   notify(o.buyer_id, 'orders', 'order.delivered', 'Your order was delivered', `${o.offer_title}: check it within your protection window.`, `/orders/${o.id}`);
-  live(appendMessage(o.room_id, null, 'delivery', offer.delivery_mode === 'auto' ? 'Delivered automatically. Your codes are on this order page.' : 'The seller marked this order as delivered.'));
+  live(appendMessage(o.room_id, null, 'delivery', offer.delivery_mode === 'auto' ? 'Delivered automatically. Your codes are on this order page.' : 'The seller marked this order as delivered.', [], { code: 'delivered' }));
 }
 
 function releaseOrder(o: any, reason: string) {
@@ -315,7 +332,7 @@ function releaseOrder(o: any, reason: string) {
     }
   }
   notify(o.seller_id, 'selling', 'order.released', 'Payment released', `$${(o.seller_net_cents / 100).toFixed(2)} from “${o.offer_title}” was added to your balance.`, '/sell/money');
-  live(appendMessage(o.room_id, null, 'system', 'Order completed. Funds released to the seller.', [], { code: reason === 'buyer_confirmed_early' ? 'completed_early' : 'completed', params: { reason } }));
+  live(appendMessage(o.room_id, null, 'system', 'Order completed. Funds released to the seller.', [], { code: reason === 'buyer_confirmed_early' ? 'confirmed_early' : 'completed', params: { reason } }));
 }
 
 /** Demo stand-in for the hosted card checkout: pays the order and runs what the PSP webhook triggers. */
@@ -327,7 +344,7 @@ export function payDemoOrder(orderId: string) {
   if (o.credit_cents) state.credit[o.buyer_id] = Math.max(0, (state.credit[o.buyer_id] ?? 0) - o.credit_cents);
   state.platform.escrow += o.amount_cents;
   notify(o.seller_id, 'selling', 'order.paid', 'New order', `${o.offer_title}: the buyer has paid. Deliver from the order page.`, `/orders/${o.id}`);
-  live(appendMessage(o.room_id, null, 'system', 'Payment received. It stays in escrow until the buyer confirms delivery.', [], { code: 'payment_received' }));
+  live(appendMessage(o.room_id, null, 'system', `Payment received${o.character_name ? ` — deliver to ${o.character_name}` : ''}. It stays in escrow until the buyer confirms delivery.`, [], { code: 'paid', params: { character: o.character_name ?? null } }));
   const offer = state.offers.find((f) => f.id === o.offer_id)!;
   if (offer.delivery_mode === 'auto') deliverOrder(o);
   else scheduleReply(o.room_id, o.seller_id);
@@ -459,6 +476,7 @@ function createOrderRecord(buyer: DemoUser, offer: any, quantity: number, rail: 
     escrow_frozen: false, seller_protected: !isAccount || offer.owner_proof_status === 'verified', room_id: room.id,
     checklist: isAccount ? { items: CHECKLIST.map(([key, label]) => ({ key, label, done: false })), completed_at: null, handover_platform: null, handover_at: null } : null,
     dispute: null, events: [{ from_status: null, to_status: 'awaiting_payment', reason: 'order_created', created_at: now() }],
+    tos_version: TOS_VERSION, tos_accepted_at: now(), lead_review: amount > 200_00,
     created_at: now(), items: [],
     warranty_days: rail === 'fiat' ? offer.warranty_days ?? 0 : 0, warranty_ends_at: null,
   };
@@ -519,10 +537,12 @@ route('POST', '/auth/mfa', ({ body }) => {
 route('POST', '/auth/register', ({ body }) => {
   if (!/^\S+@\S+\.\S+$/.test(body.email ?? '') || String(body.password ?? '').length < 10) fail(400, 'validation_error', 'Invalid request');
   if (state.users.some((x) => x.email === body.email)) fail(409, 'email_taken', 'An account with this email already exists');
+  if (body.acceptTerms !== true) fail(400, 'validation_error', 'You must be 18 or older and accept the Terms and Privacy Policy');
   const u: DemoUser = {
     id: rid(), email: body.email, password: body.password, display_name: body.displayName ?? 'New user', role: 'user', kyc_tier: 0, status: 'active',
     email_verified_at: null, phone_verified_at: null, withdrawals_frozen: false, totp_enabled: false, payouts_enabled: false, legal_name: null, created_at: now(),
     locale: ['ar', 'es', 'fr', 'de', 'pt'].includes(body.locale) ? body.locale : 'en',
+    tos_version: TOS_VERSION, tos_accepted_at: now(),
   };
   state.users.push(u);
   return { token: `demo:${u.id}`, user: publicUser(u) };
@@ -793,7 +813,27 @@ route('PATCH', '/admin/affiliates/:id', ({ me, params, body }) => {
   return affiliateView(a);
 });
 // Feature switches: the Merchant API is hidden at launch (the full test catalogue turns it on so its flows still run).
-route('GET', '/features', () => ({ merchantApi: DEMO_FULL, sandbox: true }));
+route('GET', '/features', () => ({ merchantApi: DEMO_FULL, sandbox: true, legal: { tosVersion: TOS_VERSION, notice: null } }));
+
+// --- Legal documents (versioned; Legal's approved text replaces the interim copy through Ops) ----
+route('GET', '/legal/:doc', ({ params }) => legalDoc(params[0]!));
+route('GET', '/legal/:doc/history', ({ params }) => [(({ content_md: _c, ...rest }) => rest)(legalDoc(params[0]!))]);
+route('GET', '/legal/:doc/versions/:version', ({ params }) => {
+  const d = legalDoc(params[0]!);
+  if (d.version !== params[1]) fail(404, 'not_found', 'Document version not found');
+  return d;
+});
+route('GET', '/me/legal', ({ me }) => {
+  const u = need(me);
+  return { tosVersion: u.tos_version ?? TOS_VERSION, acceptedAt: u.tos_accepted_at ?? u.created_at, currentVersion: TOS_VERSION, reacceptanceRequired: false };
+});
+route('POST', '/me/legal/accept', ({ me }) => {
+  const u = need(me);
+  u.tos_version = TOS_VERSION; u.tos_accepted_at = now(); save();
+  return { tosVersion: TOS_VERSION, acceptedAt: u.tos_accepted_at };
+});
+route('GET', '/admin/legal', ({ me }) => (needStaff(me), LEGAL_DOCS.map((doc) => (({ content_md: _c, ...rest }) => rest)(legalDoc(doc)))));
+route('PUT', '/admin/legal/:doc', ({ me }) => (needStaff(me), fail(409, 'demo_only', 'Legal documents are published through the real API')));
 // Invite friends: 20% of our commission on every order of a referred user (demo: a sample friend with two paid orders).
 route('GET', '/me/referral', ({ me }) => {
   const u = need(me);
@@ -1354,6 +1394,7 @@ route('POST', '/orders/:id/follow-up', ({ me, params, body }) => {
   if (since < RELEASE_AFTER_H * 3_600_000) fail(409, 'too_early', `You can ask for a release ${RELEASE_AFTER_H} hours after delivery`);
   if (state.tickets.some((t) => t.order_id === o.id && t.user_id === u.id && t.status !== 'resolved')) fail(409, 'already_open', 'You already have an open request on this order');
   const t = createTicketRecord(u, { category: 'order', subject: `Release request: ${o.offer_title}`, orderId: o.id, body: `Delivered ${Math.floor(since / 3_600_000)} hours ago and the buyer has not confirmed. Please review the delivery proof in the order chat and release the payment.${body?.message ? `\n\n${body.message}` : ''}` });
+  live(appendMessage(o.room_id, null, 'system', 'The seller asked support to review the delivery and release the payment.', [], { code: 'follow_up' }));
   return { ticketId: t.id };
 });
 
@@ -1801,22 +1842,41 @@ const needSeller = (me: DemoUser | null) => {
   if (u.kyc_tier < 1) fail(403, 'tier1_required', 'Verify your email and phone before selling');
   if (!u.rules_passed_at) fail(403, 'rules_test_required', 'Pass the seller rules test before your first listing');
   if (u.selling_restricted_at && u.kyc_tier < 2) fail(403, 'kyc_overdue', 'Verify your identity to keep selling: the 30-day deadline has passed');
+  if (u.listing_banned_at) fail(403, 'listing_banned', 'Your account cannot list items right now. Open an appeal from the help centre if you think this is a mistake.');
   return u;
 };
+route('POST', '/admin/users/:id/listing-ban', ({ me, params, body }) => {
+  const staff = needStaff(me);
+  const u = state.users.find((x) => x.id === params[0]) ?? fail(404, 'not_found', 'User not found');
+  u.listing_banned_at = body.on ? now() : null;
+  u.listing_ban_reason = body.on ? String(body.reason ?? '') : null;
+  for (const f of state.offers.filter((f) => f.seller_id === u.id)) {
+    if (body.on && f.status === 'active') { f.status = 'paused'; f.expired_reason = 'listing_ban'; }
+    else if (!body.on && f.expired_reason === 'listing_ban') { f.status = 'active'; f.expired_reason = null; }
+  }
+  state.audit.unshift({ id: rid(), created_at: now(), actor_name: staff.display_name, actor_role: staff.role, ip: '203.0.113.7', action: body.on ? 'user.listing_ban' : 'user.listing_unban', target_type: 'user', target_id: u.id, details: { reason: body.reason } });
+  save();
+  return { listingBannedAt: u.listing_banned_at };
+});
 const onboardingOf = (u: DemoUser) => {
   const idDueAt = u.seller_since && u.kyc_tier < 2 ? new Date(Date.parse(u.seller_since) + state.rulesSettings.idDueDays * day).toISOString() : null;
   return { tier1: u.kyc_tier >= 1, rulesPassedAt: u.rules_passed_at ?? null, identityVerified: u.kyc_tier >= 2, sellerSince: u.seller_since ?? null, idDueAt, idDueDays: state.rulesSettings.idDueDays, sellingRestrictedAt: u.selling_restricted_at ?? null, canSell: u.kyc_tier >= 1 && !!u.rules_passed_at && !u.selling_restricted_at };
 };
 route('GET', '/seller/onboarding', ({ me }) => onboardingOf(need(me)));
-route('GET', '/seller/rules-test', ({ me }) => {
+route('GET', '/seller/rules-test', ({ me, query }) => {
   const u = need(me);
-  return { passMarkPct: state.rulesSettings.passMarkPct, passedAt: u.rules_passed_at ?? null, attempts: u.rules_attempts ?? 0, tier1: u.kyc_tier >= 1, questions: state.rulesQuestions.filter((q) => q.active).map(({ id, position, question, options }) => ({ id, position, question, options })) };
+  const ar = query.get('lang') === 'ar';
+  return {
+    passMarkPct: state.rulesSettings.passMarkPct, passedAt: u.rules_passed_at ?? null, attempts: u.rules_attempts ?? 0, tier1: u.kyc_tier >= 1, locale: ar ? 'ar' : 'en',
+    questions: state.rulesQuestions.filter((q) => q.active).map((q: any) => ({ id: q.id, position: q.position, question: ar && q.question_ar ? q.question_ar : q.question, options: ar && q.options_ar ? q.options_ar : q.options })),
+  };
 });
 route('POST', '/seller/rules-test', ({ me, body }) => {
   const u = need(me);
   if (u.kyc_tier < 1) fail(403, 'tier1_required', 'Verify your email and phone before taking the rules test');
   const qs = state.rulesQuestions.filter((q) => q.active);
-  const results = qs.map((q) => ({ id: q.id, correct: body.answers?.[q.id] === q.correct, explanation: body.answers?.[q.id] === q.correct ? null : q.explanation }));
+  const ar = body?.lang === 'ar';
+  const results = qs.map((q: any) => ({ id: q.id, correct: body.answers?.[q.id] === q.correct, explanation: body.answers?.[q.id] === q.correct ? null : (ar && q.explanation_ar) || q.explanation }));
   const scorePct = Math.round((results.filter((r) => r.correct).length * 100) / qs.length);
   const passed = scorePct >= state.rulesSettings.passMarkPct;
   u.rules_attempts = (u.rules_attempts ?? 0) + 1;
@@ -1832,7 +1892,10 @@ route('PUT', '/admin/rules-test', ({ me, body }) => {
     if (!Array.isArray(q.options) || q.options.length < 2 || q.options.length > 6) fail(400, 'invalid_question', 'Each question has 2 to 6 options');
     if (q.correct < 0 || q.correct >= q.options.length) fail(400, 'invalid_question', 'The correct answer must be one of the options');
     const cur = q.id ? state.rulesQuestions.find((x) => x.id === q.id) : null;
-    const row = { id: cur?.id ?? rid(), position: Number(q.position), question: String(q.question).trim(), options: q.options.map(String), correct: Number(q.correct), explanation: String(q.explanation ?? ''), active: q.active ?? true };
+    const row = {
+      id: cur?.id ?? rid(), position: Number(q.position), question: String(q.question).trim(), options: q.options.map(String), correct: Number(q.correct), explanation: String(q.explanation ?? ''), active: q.active ?? true,
+      question_ar: q.question_ar ? String(q.question_ar) : null, options_ar: Array.isArray(q.options_ar) && q.options_ar.length === q.options.length ? q.options_ar.map(String) : null, explanation_ar: q.explanation_ar ? String(q.explanation_ar) : null,
+    };
     if (cur) Object.assign(cur, row);
     else state.rulesQuestions.push(row);
     keep.add(row.id);
@@ -2574,14 +2637,26 @@ route('GET', '/admin/disputes/:id/case', ({ me, params }) => {
 route('POST', '/admin/disputes/:id/resolve', ({ me, params, body }) => {
   const staff = needStaff(me);
   const o = state.orders.find((x) => x.dispute?.id === params[0]) ?? fail(404, 'not_found', 'Dispute not found');
-  o.dispute.status = body.outcome === 'buyer' ? 'resolved_buyer' : 'resolved_seller';
+  if (body.outcome === 'split' && !(body.refundCents > 0 && body.refundCents < o.amount_cents)) fail(400, 'validation_error', 'refundCents must be between 1 and the order amount');
+  o.dispute.status = body.outcome === 'buyer' ? 'resolved_buyer' : body.outcome === 'split' ? 'resolved_split' : 'resolved_seller';
   if (body.outcome === 'buyer') {
+    // Refunds go to the buyer's Bullizard balance (no on-chain refund).
     transition(o, 'refunded', 'dispute_resolved_buyer');
     state.platform.escrow -= o.amount_cents;
-    queueCryptoRefund(o, 'dispute_resolved_buyer');
-    live(appendMessage(o.room_id, null, 'system', `Arbiter decision: refunded to the buyer. “${body.note}”`));
+    state.credit[o.buyer_id] = (state.credit[o.buyer_id] ?? 0) + o.amount_cents;
+    notify(o.buyer_id, 'orders', 'order.refunded', 'Refunded to your balance', `${o.offer_title}: $${(o.amount_cents / 100).toFixed(2)} is back in your Bullizard balance.`, '/account/wallet');
+    live(appendMessage(o.room_id, null, 'system', 'Dispute closed: refunded to the buyer.', [], { code: 'dispute_buyer', params: { note: body.note } }));
+  } else if (body.outcome === 'split') {
+    o.dispute.refund_cents = body.refundCents;
+    state.platform.escrow -= body.refundCents;
+    state.credit[o.buyer_id] = (state.credit[o.buyer_id] ?? 0) + body.refundCents;
+    const keep = o.amount_cents - body.refundCents;
+    o.seller_net_cents = Math.round((o.seller_net_cents * keep) / o.amount_cents);
+    o.amount_cents = keep;
+    releaseOrder(o, 'dispute_resolved_split');
+    live(appendMessage(o.room_id, null, 'system', 'Dispute closed: part refunded to the buyer, the rest released to the seller.', [], { code: 'dispute_buyer', params: { split: true, refund_cents: body.refundCents, note: body.note } }));
   } else {
-    live(appendMessage(o.room_id, null, 'system', `Arbiter decision: released to the seller. “${body.note}”`));
+    live(appendMessage(o.room_id, null, 'system', 'Dispute closed: released to the seller.', [], { code: 'dispute_seller', params: { note: body.note } }));
     releaseOrder(o, 'dispute_resolved_seller');
   }
   state.audit.unshift({ id: rid(), created_at: now(), actor_name: staff.display_name, actor_role: staff.role, ip: '203.0.113.7', action: 'dispute.resolved', target_type: 'dispute', target_id: params[0], details: { outcome: body.outcome } });

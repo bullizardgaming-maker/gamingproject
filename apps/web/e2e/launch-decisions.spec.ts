@@ -10,15 +10,19 @@ test.describe('launch decisions', () => {
     const line = page.getByTestId('buy-agree');
     await expect(line).toHaveText('By buying you agree to the Terms');
     await expect(page.getByRole('button', { name: /Buy now/ })).toBeEnabled();
-    await line.getByRole('link', { name: 'Terms' }).click();
-    await expect(page).toHaveURL(/\/terms$/);
+    // The link opens in a new tab so the order in progress is not lost (Legal, Oct 24).
+    await expect(line.getByRole('link', { name: 'Terms' })).toHaveAttribute('target', '_blank');
+    await page.goto('/terms');
     await expect(page.getByRole('heading', { name: 'Terms of Service' })).toBeVisible();
-    await expect(page.getByText('You must be 18 or older.')).toBeVisible();
+    await expect(page.getByTestId('legal-version')).toContainText('Version 2026-10-24');
+    await expect(page.getByText(/You must be 18 or older/)).toBeVisible();
+    await page.goto('/terms/history');
+    await expect(page.getByRole('link', { name: '2026-10-24' })).toBeVisible();
   });
 
   test('home invites with 20% of our commission and the account page shows the link and earnings', async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: 'Earn 20% of our commission on every friend’s order' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Invite friends. Earn 20% of our fee.' })).toBeVisible();
     await signIn(page, 'Buyer');
     await page.goto('/account');
     const card = page.getByTestId('invite-friends');
@@ -26,7 +30,7 @@ test.describe('launch decisions', () => {
     await expect(card.getByTestId('invite-link')).toContainText('/login?ref=BZ');
     await expect(card.getByText('$0.68', { exact: true })).toBeVisible(); // two paid orders of one friend
     await page.goto('/help/invite-friends');
-    await expect(page.getByRole('heading', { name: 'Invite friends and earn' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Invite friends, earn 20%' })).toBeVisible();
   });
 
   test('chat notices from the server come as codes and read in the chosen language', async ({ page }) => {
@@ -34,9 +38,9 @@ test.describe('launch decisions', () => {
     await buy(page, '/offers/offer-14'); // manual delivery
     await page.getByText('Open a dispute', { exact: true }).click();
     await page.getByLabel("What's the problem?").selectOption('not_delivered');
-    await page.getByPlaceholder(/What happened\?/).fill('Paid an hour ago and nothing was traded yet.');
+    await page.getByPlaceholder(/Be specific: what you expected/).fill('Paid an hour ago and nothing was traded yet.');
     await page.getByRole('button', { name: 'Open dispute' }).click();
-    await page.getByPlaceholder(/Add your statement/).fill('My trade link is in the chat; nothing has arrived.');
+    await page.getByPlaceholder(/Your side for the arbiter/).fill('My trade link is in the chat; nothing has arrived.');
     await page.getByRole('button', { name: 'Add statement' }).click();
     await expect(page.getByText('The buyer added a statement to the dispute. The arbiter reads both sides’ statements with this chat.')).toBeVisible();
     await page.getByLabel('Language', { exact: true }).first().selectOption('ar');
@@ -51,5 +55,31 @@ test.describe('launch decisions', () => {
     await page.evaluate(() => localStorage.setItem('bz-demo-full', '1'));
     await page.goto('/developers');
     await expect(page.getByText(/API/).first()).toBeVisible();
+  });
+
+  test('sign-up needs the 18+ / Terms / Privacy box; legal pages are linked from the footer and help centre', async ({ page }) => {
+    await page.goto('/login');
+    await page.getByRole('button', { name: 'New here? Create an account' }).click();
+    const box = page.getByRole('checkbox', { name: /18 or older/ });
+    await expect(box).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Privacy Policy' })).toHaveAttribute('href', '/privacy');
+    await page.locator('input[name=displayName]').fill('New Trader');
+    await page.locator('input[name=email]').fill(`new-${Date.now()}@example.com`);
+    await page.locator('input[name=password]').fill('correct horse battery');
+    await page.getByRole('button', { name: 'Create account' }).click();
+    await expect(page).toHaveURL(/\/login/); // the browser refuses the form until the box is ticked
+    await box.check();
+    await page.getByRole('button', { name: 'Create account' }).click();
+    await expect(page).toHaveURL(/\/account/);
+
+    await page.goto('/help');
+    const legal = page.getByTestId('help-legal');
+    await expect(legal.getByRole('link', { name: 'Refund & Dispute Policy' })).toBeVisible();
+    await legal.getByRole('link', { name: 'Restricted Countries' }).click();
+    await expect(page.getByTestId('legal-restricted-countries')).toContainText('Version 2026-10-24');
+    const footer = page.getByRole('contentinfo');
+    await expect(footer.getByText('18+ only. Not affiliated with any game publisher.')).toBeVisible();
+    await footer.getByRole('link', { name: 'Seller Agreement' }).click();
+    await expect(page.getByRole('heading', { name: 'Seller Agreement' })).toBeVisible();
   });
 });

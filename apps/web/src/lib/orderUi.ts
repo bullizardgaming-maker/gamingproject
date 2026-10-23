@@ -32,13 +32,12 @@ export const STATUS_CHIP: Record<string, string> = {
   delivered: 'held',
   completed: 'released',
   disputed: 'disputed',
-  charged_back: 'disputed',
   refunded: '',
   cancelled: '',
   expired: '',
 };
 
-const KNOWN = ['awaiting_payment', 'paid', 'delivered', 'completed', 'disputed', 'charged_back', 'refunded', 'cancelled', 'expired'] as const;
+const KNOWN = ['awaiting_payment', 'paid', 'delivered', 'completed', 'disputed', 'refunded', 'cancelled', 'expired'] as const;
 /** Short, human status for chips: "Paid · held", "Delivered", "In dispute"… */
 export function statusLabel(status: string): string {
   return (KNOWN as readonly string[]).includes(status) ? t(`ostatus.${status as (typeof KNOWN)[number]}`) : status.replace(/_/g, ' ');

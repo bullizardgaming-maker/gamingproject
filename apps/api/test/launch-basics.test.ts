@@ -183,6 +183,6 @@ describe('GDPR export and deletion', () => {
     const chain = await seller.api.get(`/v1/chat/rooms/${(await seller.api.get(`/v1/orders/${order.id}`)).body.room_id}/verify`);
     expect(chain.body.valid).toBe(true);
     // The email address can be registered again.
-    expect((await client(h.app).post('/v1/auth/register', { email: buyer.email, password: PASSWORD, displayName: 'Back again' })).status).toBe(201);
+    expect((await client(h.app).post('/v1/auth/register', { email: buyer.email, password: PASSWORD, displayName: 'Back again' , acceptTerms: true})).status).toBe(201);
   });
 });

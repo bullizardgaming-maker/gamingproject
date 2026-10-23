@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { CaretRight as ChevronRight, Lifebuoy as LifeBuoy, MagnifyingGlass as Search } from '@phosphor-icons/react';
 import { api, money } from '../api';
 import { useSession } from '../session';
+import { LEGAL_DOCS, legalTitle } from './Legal';
 import { HELP_ARTICLES, HELP_TOPICS, TICKET_CATEGORY_LABEL, articleBySlug, searchHelp, type HelpArticle, type HelpTopic } from '@/lib/help';
 import { usePageMeta } from '@/lib/seo';
 import { cn } from '@/lib/utils';
@@ -76,6 +77,13 @@ export function HelpCentre() {
               {HELP_ARTICLES.filter((a) => a.topic === t).map((a) => <ArticleLink key={a.slug} a={a} />)}
             </section>
           ))}
+          <section className="overflow-hidden rounded-xl border border-border bg-card" data-testid="help-legal">
+            <div className="border-b border-border px-4 py-3">
+              <h2 style={{ fontSize: 18, margin: 0 }}>{t('legal.nav')}</h2>
+              <div className="small muted">{t('legal.lede')}</div>
+            </div>
+            {LEGAL_DOCS.map((d) => <Link key={d} to={`/${d}`} className="block border-b border-border px-4 py-3 last:border-b-0">{legalTitle(d)}</Link>)}
+          </section>
         </div>
       )}
       <ContactCard />

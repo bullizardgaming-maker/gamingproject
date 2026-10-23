@@ -266,6 +266,12 @@ export async function applyCryptoPayment(ctx: Ctx, ev: Extract<PaymentEvent, { t
     if (ev.status === 'partially_paid' && row.status !== 'partially_paid') {
       const link = target.kind === 'order' ? target.id : `cart:${target.id}`;
       await enqueueEmail(ctx.db, target.buyer_id, 'crypto_underpaid', { order_id: link, paid_cents: paid, owed_cents: target.charged_cents - paid, currency: target.currency }, `crypto_underpaid:${ev.paymentId}`);
+      if (target.kind === 'order') {
+        await withScope(ctx, async (s) => {
+          const room = await maybeOne<{ id: string }>(s.tx, 'SELECT id FROM chat_rooms WHERE order_id = $1', [target.id]);
+          if (room) await appendMessage(s, room.id, null, 'system', 'Payment arrived short. Buyer: send the rest or it goes to your balance.', [], undefined, { code: 'underpaid' });
+        });
+      }
     }
     return target;
   }

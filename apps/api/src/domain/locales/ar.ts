@@ -6,63 +6,80 @@ const ar: LocalePack = {
   verifyCode: (code, minutes) => `رمز التحقق الخاص بك هو ${code}. ينتهي خلال ${minutes} دقيقة.`,
   templates: {
     order_paid: {
-      subject: (d) => `استلمنا دفعتك مقابل ${d.title}`,
-      body: (d, link, h) => `استلمنا ${h.money(d.amount_cents, d.currency)} مقابل «${d.title}». المبلغ محفوظ في الضمان ولن يحصل عليه البائع حتى تستلم طلبك.\n\nتتبّع الطلب: ${link(`/orders/${d.order_id}`)}`,
+      subject: (d) => `وصل الدفع. ${d.order_ref ?? d.title} عند البائع`,
+      body: (d, link, h) => `استلمنا ${h.money(d.amount_cents, d.currency)} مقابل ${d.title} وهو محجوز لدينا. يسلّم البائع إلى ${d.character ?? 'شخصيتك'} داخل اللعبة ويرفع الفيديو، ولا يصله شيء قبل مراجعة هذا الفيديو.\n\nتابع طلبك: ${link(`/orders/${d.order_id}`)}\n\nالشروط (الإصدار ${d.tos_version ?? ''}) المقبولة لهذا الطلب: ${link('/terms')}`,
+    },
+    welcome: {
+      subject: () => 'حسابك في Bullizard جاهز',
+      body: (_d, link) => `أهلًا بك. Bullizard مكانك للذهب والآيتمز والشحن التي لا تريد أن تفرمها، في Aion وAion 2 وAlbion Online ولعبتي Path of Exile.\n\nعندما تشتري تبقى أموالك عندنا. يسلّم البائع لشخصيتك ويصوّر التريد ويرفعه، ويراجع إنسانٌ هذا الفيديو، أنت أو فريقنا، قبل أن يصل أي شيء للبائع.\n\nقاعدة واحدة لا نتساهل فيها: كل كلمة في الصفقة تبقى في محادثة الطلب، ومشاركة وسائل تواصل خارجية قد تؤدي إلى حظر الحساب فورًا.\n\nاختر لعبتك: ${link('/games')}`,
+    },
+    seller_new_order: {
+      subject: (d) => `طلب جديد: سلّم إلى ${d.character ?? 'المشتري'}`,
+      body: (d, link) => `تم دفع ${d.title} ×${d.quantity} وهو بانتظارك. سلّم إلى ${d.character ?? 'المشتري'} داخل اللعبة، وصوّر التريد بحيث يظهر الاسم والكمية، ثم ارفعه على الطلب. تستلم أموالك عند تأكيد الطلب.\n\nافتح الطلب: ${link(`/orders/${d.order_id}`)}`,
     },
     order_delivered: {
-      subject: (d) => `تم التسليم: ${d.title}`,
-      body: (d, link, h) =>
-        `تم تسليم طلبك «${d.title}». افتح صفحة الطلب لرؤيته.\n\n` +
-        (d.protection === 'insurance_14d'
-          ? `هذا الحساب مشمول بتأمين الأصول لمدة 14 يومًا حتى ${h.when(d.protection_ends_at)}. أكمل قائمة الأمان الآن: غيّر كلمة المرور وبريد الاسترداد والمصادقة الثنائية.`
-          : d.protection_ends_at
-            ? `أمامك حتى ${h.when(d.protection_ends_at)} للتحقق منه. إن كان فيه خلل فافتح نزاعًا قبل ذلك.`
-            : `تحقق منه ثم أكّد الطلب؛ لا يُدفع للبائع إلا عند تأكيدك. وإن كان فيه خلل فافتح نزاعًا بدلًا من ذلك.`) +
-        `\n\n${link(`/orders/${d.order_id}`)}`,
+      subject: () => 'تم التسليم. افحص حقيبتك',
+      body: (d, link) => `يقول البائع إن ${d.title} تم ورفع الفيديو. ادخل اللعبة وافحص شخصيتك، ثم أكّد من صفحة الطلب. إن كان هناك أي خلل فافتح نزاعًا بدل التأكيد.\n\nتحقق وأكّد: ${link(`/orders/${d.order_id}`)}`,
+    },
+    order_completed: {
+      subject: () => 'اكتمل الطلب. استمتع بالغنيمة',
+      body: (d, link) => `اكتمل ${d.title} واستلم البائع أمواله. ثلاثون ثانية لتقييمه تساعد المشتري التالي على اختيار البائع المناسب.\n\nقيّم البائع: ${link(`/orders/${d.order_id}`)}`,
+    },
+    seller_paid: {
+      subject: (d, h) => `وصل ${h.money(d.seller_net_cents, d.currency)} إلى رصيدك`,
+      body: (d, link, h) => `اكتمل ${d.order_ref ?? d.title}، و${h.money(d.seller_net_cents, d.currency)} أصبح لك وجاهزًا للسحب.\n\nافتح المحفظة: ${link('/sell/money')}`,
+    },
+    dispute_opened: {
+      subject: (d) => `الطلب ${d.order_ref ?? d.title} مجمّد`,
+      body: (d, link) => `تم فتح نزاع على ${d.title}: «${d.reason}». يبقى المبلغ مجمّدًا بينما يراجع حَكَم من Bullizard الطلب. الحَكَم يقرأ محادثة الطلب والإثبات، فضع فيها الآن كل ما تريده أن يراه.\n\nافتح الطلب: ${link(`/orders/${d.order_id}`)}`,
+    },
+    dispute_resolved: {
+      subject: (d) => `قرار الحَكَم في ${d.order_ref ?? d.title}`,
+      body: (d, link) => `${d.for_you ? 'قرر الحَكَم لصالحك.' : 'قرر الحَكَم لصالح الطرف الآخر.'} ${d.result ?? ''} ملاحظة الحَكَم: «${d.note}»\n\nافتح الطلب: ${link(`/orders/${d.order_id}`)}`,
+    },
+    withdrawal_requested: {
+      subject: (d, h) => `استلمنا طلب سحب ${h.money(d.amount_cents, d.currency)}`,
+      body: (d, link, h) => `سنرسل ${h.money(d.net_cents, d.currency)} إلى عنوانك على ${d.coin} بعد خصم رسوم ${h.money(d.fee_cents, d.currency)} وبعد الموافقة، وعادةً يستغرق ذلك حتى 3 أيام عمل. لم تطلب هذا؟ غيّر كلمة المرور الآن.\n\nعرض المحفظة: ${link('/sell/money')}`,
+    },
+    withdrawal_paid: {
+      subject: (d, h) => `أُرسل ${h.money(d.net_cents ?? d.amount_cents, d.currency)} على الشبكة`,
+      body: (d, link, h) => `${h.money(d.net_cents ?? d.amount_cents, d.currency)} في طريقه إلى ${d.address ?? 'عنوان السحب'}. المعاملة: ${d.tx ?? d.provider_ref ?? 'قيد الإرسال'}. حسب الشبكة، قد يستغرق ظهوره في محفظتك بضع دقائق.\n\nعرض المحفظة: ${link('/sell/money')}`,
     },
     order_refunded: {
-      subject: (d) => `تم استرداد مبلغ ${d.title}`,
-      body: (d, link, h) => `أُعيد ${h.money(d.amount_cents, d.currency)} إلى وسيلة الدفع الأصلية. يظهر استرداد البطاقات عادة خلال 5 إلى 10 أيام عمل.\n\n${link(`/orders/${d.order_id}`)}`,
+      subject: (d) => `استرداد ${d.title}`,
+      body: (d, link, h) => `عاد ${h.money(d.amount_cents, d.currency)} إلى رصيدك في Bullizard. استخدمه عند الدفع أو اسحبه.\n\n${link(`/orders/${d.order_id}`)}`,
     },
     delivery_late: {
       subject: (d) => `طلبك متأخر: ${d.title}`,
-      body: (d, link, h) =>
-        `وعد البائع بالتسليم قبل ${h.when(d.delivery_due_at)} ولم يسلّم بعد. يمكنك الانتظار أو الإلغاء الآن واسترداد المبلغ كاملًا. ` +
-        `إن لم يُسلَّم خلال ${d.auto_refund_hours} ساعة نعيد لك المال تلقائيًا.\n\n${link(`/orders/${d.order_id}`)}`,
+      body: (d, link) => `انتهت مدة التسليم لدى البائع. ذكّره في محادثة الطلب أو افتح نزاعًا.\n\n${link(`/orders/${d.order_id}`)}`,
     },
     delivery_overdue: {
       subject: (d) => `متأخر: سلّم ${d.title} الآن`,
-      body: (d, link, h) =>
-        `وعدت بالتسليم قبل ${h.when(d.delivery_due_at)}. يمكن للمشتري الآن الإلغاء واسترداد المبلغ كاملًا، وسيُسترد تلقائيًا خلال ${d.auto_refund_hours} ساعة. ` +
-        `التأخير يخفض نسبة التسليم في الوقت المحدد التي يراها المشترون في ملفك.\n\n${link(`/orders/${d.order_id}`)}`,
+      body: (d, link) => `انتهت مدة تسليم ${d.title}. سلّم الآن، فالمشتري يمكنه فتح نزاع، والتأخير يخفض نسبة تسليمك في الموعد.\n\n${link(`/orders/${d.order_id}`)}`,
     },
-    referral_reward: {
-      subject: (d, h) => `حصلت على ${h.money(d.amount_cents, d.currency)} من طلب صديقك`,
-      body: (d, link, h) => `أكمل صديق دعوته طلبًا. نصيبك ${d.rate_pct}% من عمولتنا، ${h.money(d.amount_cents, d.currency)}، أُضيف إلى رصيدك ويستمر مع كل طلب يقوم به ما دام نشطًا.\n\n${link('/account')}`,
+    kyc_due_reminder: {
+      subject: (d) => (Number(d.days_left) <= 0 ? 'البيع متوقف حتى توثّق هويتك' : `الأيام المتبقية لتوثيق هويتك: ${d.days_left}`),
+      body: (d, link, h) =>
+        (Number(d.days_left) <= 0
+          ? 'انتهت مهلة الـ 30 يومًا، فتوقف البيع والسحب. وثّق هويتك ويعود الاثنان للعمل، وعروضك ورصيدك محفوظة في هذه الأثناء.'
+          : `موعد توثيق هويتك قبل ${h.when(d.date)}، ويستغرق نحو خمس دقائق: هوية بصورة وفيديو سيلفي قصير. إن فاتك الموعد يتوقف البيع والسحب حتى تكمله.`) +
+        `\n\nوثّق الآن: ${link('/account')}`,
+    },
+    referral_earned: {
+      subject: (d, h) => `دعواتك ربحت ${h.money(d.amount_cents, d.currency)}`,
+      body: (d, link, h) => `أكمل أصدقاؤك الذين دعوتهم طلبات عددها ${d.count}. حصتك ${d.rate_pct}% من عمولتنا، أي ${h.money(d.amount_cents, d.currency)}، في رصيدك الآن، وتستمر على كل طلب يكملونه طالما بقوا نشطين.\n\nشارك رابطك: ${link('/account#invite')}`,
+    },
+    legal_change: {
+      subject: (d, h) => `تغيير في ${d.title} اعتبارًا من ${h.when(d.effective_at)}`,
+      body: (d, link, h) => `حدّثنا ${d.title} (الإصدار ${d.version}). يسري الإصدار الجديد في ${h.when(d.effective_at)}، وسنطلب منك قبوله عند تسجيل الدخول التالي بعد ذلك. اقرأه الآن: ${link(`/${d.doc}`)}`,
+    },
+    kyc_result: {
+      subject: (d) => (d.approved ? 'تم توثيق هويتك' : 'لم نتمكن من توثيق هويتك'),
+      body: (d, link) => (d.approved ? `تم توثيقك. البيع والسحب متاحان.\n\n${link('/sell')}` : `حاول مجددًا بصورة واضحة لهوية سارية.\n\n${link('/account')}`),
     },
     protection_ending: {
       subject: (d) => `تبقّت 24 ساعة لفحص ${d.title}`,
       body: (d, link, h) => `سيحصل البائع على المال تلقائيًا في ${h.when(d.protection_ends_at)}. إن كان في طلبك خلل فافتح نزاعًا قبل ذلك.\n\n${link(`/orders/${d.order_id}`)}`,
-    },
-    seller_new_order: {
-      subject: (d) => (d.delivery_mode === 'manual' ? `طلب جديد للتسليم: ${d.title}` : `تم البيع: ${d.title}`),
-      body: (d, link, h) =>
-        (d.delivery_mode === 'manual'
-          ? `دفع مشترٍ ${h.money(d.amount_cents, d.currency)} مقابل «${d.title}» ×${d.quantity}. سلّمه من صفحة الطلب؛ يبقى المبلغ في الضمان حتى ذلك الحين.`
-          : `بيع «${d.title}» ×${d.quantity} بمبلغ ${h.money(d.amount_cents, d.currency)} وسُلِّم تلقائيًا من مخزونك.`) +
-        `\n\n${link(`/orders/${d.order_id}`)}`,
-    },
-    seller_paid: {
-      subject: (d, h) => `أُضيف ${h.money(d.seller_net_cents, d.currency)} إلى رصيدك`,
-      body: (d, link, h) => `اكتمل الطلب «${d.title}». أصبح ${h.money(d.seller_net_cents, d.currency)} في رصيدك وجاهزًا للسحب.\n\n${link('/sell')}`,
-    },
-    withdrawal_paid: {
-      subject: (d, h) => `أُرسل سحب بقيمة ${h.money(d.amount_cents, d.currency)}`,
-      body: (d, _link, h) => `أرسلنا ${h.money(d.amount_cents, d.currency)} إلى حساب السحب الخاص بك (المرجع ${d.provider_ref}).`,
-    },
-    dispute_opened: {
-      subject: (d) => `فُتح نزاع على ${d.title}`,
-      body: (d, link) => `فُتح نزاع: «${d.reason}». المبلغ مجمّد حتى يراجع المحكّم محادثة الطلب. أضف أي أدلة إلى المحادثة الآن.\n\n${link(`/orders/${d.order_id}`)}`,
     },
     dispute_statement: {
       subject: () => 'بيان جديد في نزاعك',
@@ -87,19 +104,11 @@ const ar: LocalePack = {
       subject: (d) => `اكتمل ${d.percent}%: ${d.title}`,
       body: (d, link) => `نشر البائع تقدّمًا في «${d.title}»: ${d.percent}%${d.note ? `. «${d.note}»` : '.'}\n\n${link(`/orders/${d.order_id}`)}`,
     },
-    dispute_resolved: {
-      subject: (d) => `حُسم النزاع: ${d.title}`,
-      body: (d, link) => `قرر المحكّم لصالح ${d.outcome === 'buyer' ? 'المشتري' : 'البائع'}. ملاحظة: «${d.note}»\n\n${link(`/orders/${d.order_id}`)}`,
-    },
     chargeback_received: {
       subject: (d) => `اعتراض بنكي على الطلب ${String(d.order_id).slice(0, 8)}`,
       body: (d, _link, h) =>
         `استرجع بنك المشتري ${h.money(d.amount_cents)} (${d.network} ${d.reason_code}). قدّمنا الأدلة تلقائيًا.\n\n` +
         (d.seller_protected ? 'درع الاسترداد البنكي يغطي هذا الطلب: رصيدك لا يتأثر.' : 'لم يكن لهذا العرض إثبات موثّق للمالك الأصلي، فخُصم المبلغ من رصيدك. إن حكم البنك لصالحنا يُعاد إليك.'),
-    },
-    kyc_result: {
-      subject: (d) => (d.approved ? 'تم توثيق هويتك' : 'تعذّر توثيق هويتك'),
-      body: (d, link) => (d.approved ? `يمكنك الآن نشر العروض واستخدام الواجهة البرمجية للبائعين والسحب.\n\n${link('/sell')}` : `يرجى المحاولة مجددًا بصورة واضحة لهوية سارية.\n\n${link('/account')}`),
     },
     new_signin: {
       subject: () => 'تسجيل دخول جديد إلى حسابك في Bullizard',

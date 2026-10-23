@@ -21,13 +21,18 @@ function BlockedNotice() {
 /** The server's English text, or the same event in the reader's language when it carries a code. */
 export function systemText(m: Pick<ChatMessage, 'body' | 'code' | 'params'>): string {
   if (!m.code) return m.body ?? '';
-  const key = `chat.ev.${m.code}` as any;
   const p = (m.params ?? {}) as Record<string, any>;
   const vars: Record<string, string | number> = {};
   for (const [k, v] of Object.entries(p)) vars[k] = v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v);
   if (typeof p.amount_cents === 'number') vars.amount = money(p.amount_cents, String(p.currency ?? 'USD'));
   if (p.role === 'buyer' || p.role === 'seller') vars.role = t(p.role === 'buyer' ? 'chat.roleBuyer' : 'chat.roleSeller');
   if (typeof p.rate_pct === 'number') vars.rate = String(p.rate_pct);
+  if (!vars.character) vars.character = t('chat.theBuyer');
+  // Official order messages (copy deck §2.8) by code; older event keys as a fallback; the server's English last.
+  const sysKey = `sys.${m.code}` as any;
+  const sys = t(sysKey, vars);
+  if (sys !== sysKey) return sys;
+  const key = `chat.ev.${m.code}` as any;
   const text = t(key, vars);
   return text === key ? (m.body ?? '') : text;
 }
@@ -128,7 +133,7 @@ export function Chat({ roomId, meId, names, accountOrder = false }: { roomId: st
     if (m.kind === 'delivery' || m.kind === 'warning')
       return (
         <div className={`chat-event ${m.kind === 'delivery' ? 'held' : 'disputed'}`}>
-          <i aria-hidden /> <span>{m.body}</span> <span className="muted">· {time(m.created_at)}</span>
+          <i aria-hidden /> <span dir="auto">{systemText(m)}</span> <span className="muted">· {time(m.created_at)}</span>
         </div>
       );
     const mine = m.sender_id === meId;

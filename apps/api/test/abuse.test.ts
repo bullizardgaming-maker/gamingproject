@@ -30,7 +30,7 @@ describe('CAPTCHA', () => {
   it('advertises the widget and requires it for sign-up and password reset', async () => {
     const anon = client(h.app);
     expect((await anon.get('/v1/auth/config')).body).toEqual({ captcha: { provider: 'turnstile', siteKey: 'site-key' } });
-    const reg = { email: `bot${Date.now()}@example.com`, password: 'correct horse battery', displayName: 'Bot' };
+    const reg = { email: `bot${Date.now()}@example.com`, password: 'correct horse battery', displayName: 'Bot', acceptTerms: true };
     expect((await anon.post('/v1/auth/register', reg)).body.error.code).toBe('captcha_required');
     expect((await anon.post('/v1/auth/register', { ...reg, captchaToken: 'forged' })).body.error.code).toBe('captcha_failed');
     expect((await anon.post('/v1/auth/register', { ...reg, captchaToken: 'captcha-ok' })).status).toBe(201);
@@ -41,7 +41,7 @@ describe('CAPTCHA', () => {
 
   it('asks for it at sign-in only after failures from the same IP, for known and unknown emails alike', async () => {
     const email = `known${Date.now()}@example.com`;
-    await client(h.app).post('/v1/auth/register', { email, password: 'correct horse battery', displayName: 'Known', captchaToken: 'captcha-ok' });
+    await client(h.app).post('/v1/auth/register', { email, password: 'correct horse battery', displayName: 'Known', acceptTerms: true, captchaToken: 'captcha-ok' });
 
     const fromA = client(h.app, undefined, { 'x-forwarded-for': '203.0.113.10' });
     const fromB = client(h.app, undefined, { 'x-forwarded-for': '203.0.113.11' });

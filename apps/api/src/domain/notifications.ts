@@ -29,6 +29,8 @@ interface Template {
   category: EmailCategory;
   /** false for messages carrying secrets (reset links) that must only go to the mailbox. */
   inbox?: boolean;
+  /** Switched off at launch (copy deck §5.13): the event is recorded nowhere and nothing is sent. */
+  disabled?: boolean;
   subject: (d: Data) => string;
   body: (d: Data, link: (path: string) => string) => string;
 }
@@ -39,8 +41,43 @@ const when = (iso: string) => new Date(iso).toUTCString().replace(' GMT', ' UTC'
 export const TEMPLATES = {
   order_paid: {
     category: 'orders',
-    subject: (d) => `Payment received for ${d.title}`,
-    body: (d, link) => `We've received ${money(d.amount_cents, d.currency)} for "${d.title}". It's held in escrow and the seller isn't paid until you have the goods.\n\nTrack the order: ${link(`/orders/${d.order_id}`)}`,
+    subject: (d) => `Payment in. ${d.order_ref ?? d.title} is with the seller`,
+    body: (d, link) =>
+      `We have your ${money(d.amount_cents, d.currency)} for ${d.title}, and we're holding it. The seller trades with ${d.character ?? 'your character'} in-game and uploads the video. Nothing reaches them until that video is checked.\n\n` +
+      `Track your order: ${link(`/orders/${d.order_id}`)}\n\nTerms v${d.tos_version ?? ''} accepted for this order: ${link('/terms')}`,
+  },
+  welcome: {
+    category: 'account',
+    subject: () => 'Your Bullizard account is ready',
+    body: (_d, link) =>
+      `Welcome in. Bullizard is for the gold, items and top-ups you'd rather not farm, in Aion, Aion 2, Albion Online and both Path of Exile games.\n\n` +
+      `When you buy, your money waits with us. The seller trades with your character, films the trade and uploads it. A person checks that video, you or our staff, before anything reaches the seller.\n\n` +
+      `One rule we don't bend: every word of a deal stays in the order chat. Sharing outside contacts can get an account banned right away.\n\nFind your game: ${link('/games')}`,
+  },
+  order_completed: {
+    category: 'orders',
+    subject: () => 'Order closed. Enjoy the loot',
+    body: (d, link) => `${d.title} is complete and the seller has been paid. Thirty seconds on a rating helps the next buyer pick the right seller.\n\nRate the seller: ${link(`/orders/${d.order_id}`)}`,
+  },
+  kyc_due_reminder: {
+    category: 'selling',
+    subject: (d) => (Number(d.days_left) <= 0 ? 'Selling paused until you verify your ID' : `${d.days_left} days left to verify your ID`),
+    body: (d, link) =>
+      (Number(d.days_left) <= 0
+        ? `Your 30 days are up, so selling and withdrawals are paused. Verify your ID and both switch back on. Your offers and balance are safe in the meantime.`
+        : `Your ID check is due by ${when(d.date)}. It takes about five minutes: a photo ID and a short selfie video. Miss the date and selling and withdrawals pause until it's done.`) +
+      `\n\nVerify now: ${link('/account')}`,
+  },
+  referral_earned: {
+    category: 'orders',
+    subject: (d) => `Your invites earned ${money(d.amount_cents, d.currency)}`,
+    body: (d, link) =>
+      `Friends you invited completed ${d.count} orders. Your ${d.rate_pct}% of our commission, ${money(d.amount_cents, d.currency)}, is in your balance. It keeps coming on every order they complete, for as long as they stay active.\n\nShare your link: ${link('/account#invite')}`,
+  },
+  legal_change: {
+    category: 'account',
+    subject: (d) => `${d.title} is changing on ${when(d.effective_at).slice(0, 16)}`,
+    body: (d, link) => `We updated our ${d.title} (version ${d.version}). The new version takes effect on ${when(d.effective_at)}; you'll be asked to accept it at your next sign-in after that. Read it now: ${link(`/${d.doc}`)}`,
   },
   crypto_underpaid: {
     category: 'orders',
@@ -62,58 +99,40 @@ export const TEMPLATES = {
   },
   order_delivered: {
     category: 'orders',
-    subject: (d) => `Delivered: ${d.title}`,
-    body: (d, link) =>
-      `Your order "${d.title}" has been delivered. Open your order page to see it.\n\n` +
-      (d.protection === 'insurance_14d'
-        ? `This account is covered by 14-day asset insurance until ${when(d.protection_ends_at)}. Complete the security checklist now: change the password, recovery email and 2FA.`
-        : d.protection_ends_at
-          ? `You have until ${when(d.protection_ends_at)} to check it. If something is wrong, open a dispute before then.`
-          : `Check it and confirm the order; the seller is paid only when you confirm. If something is wrong, open a dispute instead.`) +
-      `\n\n${link(`/orders/${d.order_id}`)}`,
+    subject: () => 'Delivered. Check your inventory',
+    body: (d, link) => `The seller says ${d.title} is done and uploaded the video. Log in, check your character, then confirm on the order page. If anything is off, open a dispute instead of confirming.\n\nCheck and confirm: ${link(`/orders/${d.order_id}`)}`,
   },
   order_refunded: {
     category: 'orders',
-    subject: (d) => `Refund issued for ${d.title}`,
-    body: (d, link) => `${money(d.amount_cents, d.currency)} has been refunded to your original payment method. Card refunds usually appear within 5–10 business days.\n\n${link(`/orders/${d.order_id}`)}`,
+    subject: (d) => `Refund for ${d.title}`,
+    body: (d, link) => `${money(d.amount_cents, d.currency)} is back in your Bullizard balance. Spend it at checkout or withdraw it.\n\n${link(`/orders/${d.order_id}`)}`,
   },
   delivery_late: {
     category: 'orders',
     subject: (d) => `Your order is late: ${d.title}`,
-    body: (d, link) =>
-      `The seller promised delivery by ${when(d.delivery_due_at)} and hasn't delivered yet. You can wait, or cancel now for a full refund. ` +
-      `If it still isn't delivered within ${d.auto_refund_hours} hours, we refund you automatically.\n\n${link(`/orders/${d.order_id}`)}`,
+    body: (d, link) => `The seller's delivery time has passed. Give them a nudge in the order chat, or open a dispute.\n\n${link(`/orders/${d.order_id}`)}`,
   },
   delivery_overdue: {
     category: 'selling',
     subject: (d) => `Overdue: deliver ${d.title} now`,
-    body: (d, link) =>
-      `You promised delivery by ${when(d.delivery_due_at)}. The buyer can now cancel for a full refund, and the order is refunded automatically in ${d.auto_refund_hours} hours. ` +
-      `Late deliveries lower your on-time rate, which buyers see on your profile.\n\n${link(`/orders/${d.order_id}`)}`,
-  },
-  referral_reward: {
-    category: 'orders',
-    subject: (d) => `You earned ${money(d.amount_cents, d.currency)} from a friend's order`,
-    body: (d, link) => `A friend you invited completed an order. Your ${d.rate_pct}% share of our commission, ${money(d.amount_cents, d.currency)}, is in your balance and keeps coming on every order they make while they stay active.\n\n${link('/account')}`,
+    body: (d, link) => `Your delivery time for ${d.title} has passed. Deliver now. The buyer can open a dispute, and late deliveries lower your on-time rate.\n\n${link(`/orders/${d.order_id}`)}`,
   },
   protection_ending: {
     category: 'reminders',
+    disabled: true, // no auto-release at launch
     subject: (d) => `24 hours left to check ${d.title}`,
     body: (d, link) => `The seller is paid automatically at ${when(d.protection_ends_at)}. If anything is wrong with your order, open a dispute before then.\n\n${link(`/orders/${d.order_id}`)}`,
   },
   seller_new_order: {
     category: 'selling',
-    subject: (d) => (d.delivery_mode === 'manual' ? `New order to deliver: ${d.title}` : `Sold: ${d.title}`),
+    subject: (d) => `New order: deliver to ${d.character ?? 'the buyer'}`,
     body: (d, link) =>
-      (d.delivery_mode === 'manual'
-        ? `A buyer paid ${money(d.amount_cents, d.currency)} for "${d.title}" x${d.quantity}. Deliver it from the order page; the payment stays in escrow until then.`
-        : `"${d.title}" x${d.quantity} sold for ${money(d.amount_cents, d.currency)} and was delivered automatically from your stock.`) +
-      `\n\n${link(`/orders/${d.order_id}`)}`,
+      `${d.title} ×${d.quantity} is paid and waiting. Trade with ${d.character ?? 'the buyer'} in-game, record the trade with the name and amount on screen, then upload it to the order. You're paid when the order is confirmed.\n\nOpen the order: ${link(`/orders/${d.order_id}`)}`,
   },
   seller_paid: {
     category: 'selling',
-    subject: (d) => `${money(d.seller_net_cents, d.currency)} added to your balance`,
-    body: (d, link) => `Order "${d.title}" is complete. ${money(d.seller_net_cents, d.currency)} is now in your balance and ready to withdraw.\n\n${link('/sell')}`,
+    subject: (d) => `${money(d.seller_net_cents, d.currency)} landed in your balance`,
+    body: (d, link) => `${d.order_ref ?? d.title} is complete. ${money(d.seller_net_cents, d.currency)} is yours and ready to withdraw.\n\nOpen wallet: ${link('/sell/money')}`,
   },
   payout_address_confirm: {
     category: 'security',
@@ -130,19 +149,19 @@ export const TEMPLATES = {
   },
   withdrawal_requested: {
     category: 'selling',
-    subject: (d) => `Withdrawal of ${money(d.amount_cents, d.currency)} requested`,
+    subject: (d) => `Withdrawal of ${money(d.amount_cents, d.currency)} received`,
     body: (d, link) =>
-      `We received your withdrawal of ${money(d.amount_cents, d.currency)}. After the ${money(d.fee_cents, d.currency)} fee, ${money(d.net_cents, d.currency)} will be sent in ${d.coin} once the treasury approves it, usually within three working days.\n\n${link('/sell/money')}`,
+      `We'll send ${money(d.net_cents, d.currency)} to your ${d.coin} address after the ${money(d.fee_cents, d.currency)} fee, once it's approved. That usually takes up to 3 working days. Didn't ask for this? Change your password now.\n\nView wallet: ${link('/sell/money')}`,
   },
   withdrawal_paid: {
     category: 'selling',
-    subject: (d) => `Withdrawal of ${money(d.amount_cents, d.currency)} sent`,
-    body: (d) => `We've sent ${money(d.amount_cents, d.currency)} to your payout account (reference ${d.provider_ref}).`,
+    subject: (d) => `Sent. ${money(d.net_cents ?? d.amount_cents, d.currency)} is on the chain`,
+    body: (d, link) => `${money(d.net_cents ?? d.amount_cents, d.currency)} is on its way to ${d.address ?? 'your payout address'}. Transaction: ${d.tx ?? d.provider_ref ?? 'pending'}. Depending on the network, it can take a few minutes to show in your wallet.\n\nView wallet: ${link('/sell/money')}`,
   },
   dispute_opened: {
     category: 'disputes',
-    subject: (d) => `Dispute opened on ${d.title}`,
-    body: (d, link) => `A dispute was opened: "${d.reason}". The payment is frozen until an arbiter reviews the order chat. Add any evidence to the chat now.\n\n${link(`/orders/${d.order_id}`)}`,
+    subject: (d) => `${d.order_ref ?? d.title} is on hold`,
+    body: (d, link) => `A dispute was opened on ${d.title}: "${d.reason}". The money stays frozen while a Bullizard arbiter reviews the order. They read the order chat and the proof, so put everything you want them to see there now.\n\nOpen the order: ${link(`/orders/${d.order_id}`)}`,
   },
   dispute_statement: {
     category: 'disputes',
@@ -150,6 +169,7 @@ export const TEMPLATES = {
     body: (d, link) => `The ${d.role} added a statement to the dispute. Read it and reply in the order chat or with your own statement before the arbiter decides.\n\n${link(`/orders/${d.order_id}`)}`,
   },
   warranty_claim: {
+    disabled: true, // not at launch (copy deck §5.13)
     category: 'disputes',
     subject: (d) => `Warranty claim on ${d.title}`,
     body: (d, link) =>
@@ -157,6 +177,7 @@ export const TEMPLATES = {
       `You have ${d.hours} hours to fix it, refund, or contest it; after that an arbiter decides. This order's payout stays on hold until the claim is settled.\n\n${link(`/orders/${d.order_id}`)}`,
   },
   warranty_update: {
+    disabled: true, // not at launch (copy deck §5.13)
     category: 'disputes',
     subject: (d) => `Warranty claim update: ${d.title}`,
     body: (d, link) =>
@@ -170,17 +191,23 @@ export const TEMPLATES = {
       } as Record<string, string>)[d.status as string] ?? 'The claim was updated.'}\n\n${link(`/orders/${d.order_id}`)}`,
   },
   order_progress: {
+    disabled: true, // not at launch (copy deck §5.13)
     category: 'orders',
     subject: (d) => `${d.percent}% done: ${d.title}`,
     body: (d, link) => `The seller posted progress on "${d.title}": ${d.percent}%${d.note ? `. "${d.note}"` : '.'}\n\n${link(`/orders/${d.order_id}`)}`,
   },
   dispute_resolved: {
     category: 'disputes',
-    subject: (d) => `Dispute resolved: ${d.title}`,
-    body: (d, link) => `The arbiter decided in favour of the ${d.outcome}. Note: "${d.note}"\n\n${link(`/orders/${d.order_id}`)}`,
+    subject: (d) => `Decision on ${d.order_ref ?? d.title}`,
+    body: (d, link) => {
+      // `for_you` and `result` are set per recipient (orders.ts resolveDispute).
+      const lead = d.for_you ? 'The arbiter ruled in your favour.' : 'The arbiter ruled in the other side\'s favour.';
+      return `${lead} ${d.result ?? ''} The arbiter's note: "${d.note}"\n\nOpen the order: ${link(`/orders/${d.order_id}`)}`;
+    },
   },
   chargeback_received: {
     category: 'disputes',
+    disabled: true, // no card payments at launch
     subject: (d) => `Chargeback on order ${String(d.order_id).slice(0, 8)}`,
     body: (d) =>
       `The buyer's bank reversed ${money(d.amount_cents)} (${d.network} ${d.reason_code}). We've filed the evidence automatically.\n\n` +
@@ -189,7 +216,7 @@ export const TEMPLATES = {
   kyc_result: {
     category: 'account',
     subject: (d) => (d.approved ? 'Your identity is verified' : 'We could not verify your identity'),
-    body: (d, link) => (d.approved ? `You can now list items, use the seller API and withdraw.\n\n${link('/sell')}` : `Please try again with a clear photo of a valid ID.\n\n${link('/account')}`),
+    body: (d, link) => (d.approved ? `You're verified. Selling and withdrawals are on.\n\n${link('/sell')}` : `Please try again with a clear photo of a valid ID.\n\n${link('/account')}`),
   },
   new_signin: {
     category: 'security',
@@ -325,18 +352,21 @@ export const TEMPLATES = {
       `A ${d.game} listing you're watching for is ${d.target_cents ? `at or below your ${money(d.target_cents, d.currency)} target` : 'at a new low'}: "${d.title}" for ${money(d.price_cents, d.currency)}.\n\n${link(`/offers/${d.offer_id}`)}`,
   },
   request_posted: {
+    disabled: true, // not at launch (copy deck §5.13)
     category: 'selling',
     subject: (d) => `New request in ${d.game}: ${d.title}`,
     body: (d, link) =>
       `A buyer is looking for "${d.title}"${d.budget_cents ? ` with a budget of ${money(d.budget_cents, d.currency)}` : ''}. You list in ${d.game}, so you may have what they need. Send a price and delivery time.\n\n${link(`/requests/${d.request_id}`)}`,
   },
   request_proposal: {
+    disabled: true, // not at launch (copy deck §5.13)
     category: 'orders',
     subject: (d) => `${d.revised ? 'Updated proposal' : 'New proposal'} for "${d.title}"`,
     body: (d, link) =>
       `${d.seller_name} offers ${money(d.price_cents, d.currency)} with delivery within ${d.delivery_hours} hours. Accept it to check out; your payment is held in escrow as for any order.\n\n${link(`/requests/${d.request_id}`)}`,
   },
   request_accepted: {
+    disabled: true, // not at launch (copy deck §5.13)
     category: 'selling',
     subject: (d) => `Proposal accepted: ${d.title}`,
     body: (d, link) =>
@@ -347,18 +377,6 @@ export const TEMPLATES = {
     subject: (d) => `${money(d.amount_cents, d.currency)} kept in your balance`,
     body: (d, link) =>
       `The payment window for your order closed before the full amount arrived, so the ${money(d.amount_cents, d.currency)} you sent is now in your Bullizard balance. Use it on your next order at checkout, or withdraw it to your wallet (6% fee, minimum 1.50).\n\n${link('/account#credit')}`,
-  },
-  id_reminder: {
-    category: 'selling',
-    subject: (d) => (Number(d.days_left) <= 1 ? 'Verify your identity today to keep selling' : `Verify your identity within ${d.days_left} days`),
-    body: (d, link) =>
-      `New sellers have 30 days to verify their identity (photo ID + liveness). ${Number(d.days_left) <= 1 ? 'Your deadline is tomorrow' : `You have ${d.days_left} days left`}: after that your listings pause and withdrawals stop until it is done. It takes a few minutes.\n\n${link('/account')}`,
-  },
-  id_overdue: {
-    category: 'selling',
-    subject: () => 'Your listings are paused until you verify your identity',
-    body: (_d, link) =>
-      `The 30 days to verify your identity have passed, so your listings are paused and withdrawals are on hold. Verify now and everything comes back automatically; your balance is safe.\n\n${link('/account')}`,
   },
   listing_expired_league: {
     category: 'selling',
@@ -425,9 +443,11 @@ async function localeOf(q: Queryable, userId: string): Promise<Locale> {
 }
 
 export async function enqueueEmail(q: Queryable, userId: string, template: TemplateName, data: Data, dedupeKey?: string) {
+  // A template switched off at launch (copy deck §5.13) sends no email; the inbox item still appears.
+  const disabled = !!(TEMPLATES[template] as Template).disabled;
   const { rowCount } = await q.query(
-    `INSERT INTO notifications (user_id, template, data, dedupe_key) VALUES ($1, $2, $3, $4) ON CONFLICT (dedupe_key) DO NOTHING RETURNING id`,
-    [userId, template, JSON.stringify(data), dedupeKey ?? null],
+    `INSERT INTO notifications (user_id, template, data, dedupe_key, status, sent_at) VALUES ($1, $2, $3, $4, $5, CASE WHEN $5 = 'skipped' THEN now() END) ON CONFLICT (dedupe_key) DO NOTHING RETURNING id`,
+    [userId, template, JSON.stringify(data), dedupeKey ?? null, disabled ? 'skipped' : 'pending'],
   );
   if (!rowCount) return; // duplicate (dedupe key): already notified
   const t = templateFor(template, await localeOf(q, userId));

@@ -95,7 +95,10 @@ describe('flagged chats', () => {
     const { room_id } = (await buyer.api.get(`/v1/orders/${order.id}`)).body;
 
     await buyer.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'Is it the EU version?' });
-    await seller.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'Yes. Pay me with friends and family next time, cheaper' });
+    // Payment details are an instant ban (playbook, Oct 24); sharing a contact walks the warn → suspend → ban ladder.
+    const banned = await seller.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'Yes. Pay me with friends and family next time, cheaper' });
+    expect(banned.status).toBe(422);
+    expect(banned.body.error.details.action).toBe('ban');
     await buyer.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'my whatsapp is +44 7700 900123' });
 
     const queue = (await mod.api.get('/v1/admin/moderation/chats')).body.filter((f: any) => f.room_id === room_id);

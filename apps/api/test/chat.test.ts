@@ -113,8 +113,8 @@ describe('chat ledger', () => {
     expect(flag.context.at(-1)).toMatchObject({ body: 'add me on discord for a discount' });
     expect((await seller.api.get('/v1/me')).body.user.status).toBe('active'); // 1st offence: warn
 
-    // Staff set the policy: first offence warns, the second bans.
-    expect((await mod.api.get('/v1/admin/moderation/offplatform-policy')).body.actions).toEqual(['warn', 'warn', 'ban']);
+    // Launch policy (CEO, Oct 24): warn → suspend → ban. Staff can shorten it: first offence warns, the second bans.
+    expect((await mod.api.get('/v1/admin/moderation/offplatform-policy')).body.actions).toEqual(['warn', 'suspend', 'ban']);
     expect((await mod.api.put('/v1/admin/moderation/offplatform-policy', { actions: ['warn', 'ban'] })).body.actions).toEqual(['warn', 'ban']);
     await seller.api.post(`/v1/chat/rooms/${roomId}/messages`, { body: 'telegram: t.me/cheapgold' });
     expect((await seller.api.get('/v1/me')).body.user.status).toBe('suspended');

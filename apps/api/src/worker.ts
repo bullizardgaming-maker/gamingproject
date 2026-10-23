@@ -20,6 +20,7 @@ import { expireRequests } from './domain/requests.js';
 import { syncSales } from './domain/discounts.js';
 import { expireEndedLeagueListings } from './domain/leagues.js';
 import { enforceIdDeadlines } from './domain/onboarding.js';
+import { sendReferralDigests } from './domain/referrals.js';
 import { maybeRefreshTrustLevels } from './domain/trust.js';
 import { maybeSendDigests } from './domain/savedSearches.js';
 import { maybeRepairCounters } from './domain/counters.js';
@@ -77,6 +78,7 @@ export async function runJobsOnce(ctx: Ctx) {
   await job(ctx, 'seller_rates', () => refreshSellerRates(ctx), null);
   await job(ctx, 'league_expiry', () => expireEndedLeagueListings(ctx), 0);
   await job(ctx, 'id_deadlines', () => enforceIdDeadlines(ctx), null);
+  await job(ctx, 'referral_digests', () => sendReferralDigests(ctx), null);
   // Send after the jobs above so emails they queued go out in the same tick.
   const emails = await job(ctx, 'emails', () => dispatchEmails(ctx), 0);
   await job(ctx, 'inbox', () => dispatchInbox(ctx), 0);

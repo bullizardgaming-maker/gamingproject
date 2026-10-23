@@ -10,7 +10,7 @@ import { notify } from './notifications.js';
  * priority. Staff reply publicly or leave internal notes; a staff reply waits on the customer,
  * and a ticket left waiting a week resolves itself. Any reply reopens a resolved ticket.
  */
-export const TICKET_CATEGORIES = ['order', 'payment', 'account', 'selling', 'report', 'other'] as const;
+export const TICKET_CATEGORIES = ['order', 'payment', 'account', 'selling', 'report', 'appeal', 'other'] as const;
 export type TicketCategory = (typeof TICKET_CATEGORIES)[number];
 export const MAX_OPEN_TICKETS = 5;
 export const AUTO_RESOLVE_DAYS = 7;

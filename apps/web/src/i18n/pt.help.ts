@@ -9,24 +9,6 @@ const help: HelpPack = {
     account: { title: 'Conta e segurança', blurb: 'Verificação, login em duas etapas e seus dados.' },
   },
   articles: {
-    'how-escrow-works': {
-      title: "Como a custódia protege seu pedido",
-      summary: "Seu pagamento fica conosco até você confirmar que recebeu o que pagou.",
-      body: [
-        "Quando você paga, o dinheiro vai para a custódia, não para o vendedor. O vendedor só vê que o pedido está pago e pode entregar.",
-        "Não há cronômetro: o dinheiro fica em custódia até você confirmar que recebeu o pedido. Confirme só quando tiver tudo.",
-        "Se algo der errado, abra uma disputa na página do pedido em vez de confirmar. O dinheiro fica congelado até a resolução.",
-      ],
-    },
-    'order-not-delivered': {
-      title: 'Meu pedido não foi entregue',
-      summary: 'O que fazer quando o vendedor atrasa e quando você recebe o dinheiro de volta automaticamente.',
-      body: [
-        'Anúncios com entrega imediata são entregues assim que o pagamento é aprovado; confira a página do pedido. Em anúncios manuais, o vendedor promete um prazo de entrega que aparece no anúncio.',
-        'Fale primeiro com o vendedor no chat do pedido; a maioria dos atrasos se resolve ali. Se o prazo prometido passar, lembramos o vendedor, e se ele ainda não entregar, o pedido é cancelado e reembolsado automaticamente.',
-        'Você também pode abrir uma disputa pela página do pedido a qualquer momento enquanto o pagamento estiver em custódia.',
-      ],
-    },
     'open-a-dispute': {
       title: "Abrir uma disputa",
       summary: "Quando algo não é como descrito, um árbitro decide com o chat do pedido e as provas.",
@@ -43,14 +25,6 @@ const help: HelpPack = {
         'Um dono anterior pode recuperar uma conta, por isso pedidos de contas têm seguro de 14 dias após a entrega: se a conta for recuperada nesse período, você é reembolsado.',
         'Anúncios com dono verificado vêm do dono original, que nos mostrou o e-mail de cadastro e recibos das primeiras compras. Os que não têm isso são marcados como alto risco; a custódia e o seguro continuam valendo.',
         'Depois da entrega, troque imediatamente o e-mail, a senha e a verificação em duas etapas.',
-      ],
-    },
-    'game-fields-and-filters': {
-      title: 'Filtrar por servidor, região, plataforma e elo',
-      summary: 'Use os seletores da página de cada jogo para ver só os anúncios que servem para você.',
-      body: [
-        'Muitos jogos dividem o mercado: League of Legends por servidor, Valorant por região, World of Warcraft por reino e facção, skins de CS2 por desgaste. Abra um jogo, escolha uma categoria e use os seletores acima da tabela de anúncios.',
-        'Cada opção mostra quantos anúncios ativos ela tem com os outros filtros aplicados. Os vendedores precisam preencher esses campos, então os filtros são confiáveis.',
       ],
     },
     'price-alerts': {
@@ -71,22 +45,6 @@ const help: HelpPack = {
         "O dinheiro do seu saldo Bullizard é usado primeiro.",
       ],
     },
-    'refund-timing': {
-      title: "Quando vejo meu reembolso?",
-      summary: "Reembolsos caem no seu saldo Bullizard na hora.",
-      body: [
-        "Quando um pedido é reembolsado, o dinheiro vai para o seu saldo Bullizard na hora. Você vê na página Carteira.",
-        "Use no próximo pedido ou saque para sua carteira cripto (USDT TRC-20). Há uma taxa de saque e a tesouraria envia após aprovar.",
-      ],
-    },
-    'selling-fees': {
-      title: 'Comissão e patentes de vendedor',
-      summary: 'Você define o preço e o recebe integralmente; a comissão entra por cima para o comprador e cai conforme sua patente sobe.',
-      body: [
-        'Você digita o preço que quer. A comissão da sua patente entra por cima para o comprador, então o valor digitado é exatamente o que cai no seu saldo quando o pedido é concluído. As patentes são definidas pelas vendas concluídas nos últimos 30 dias; vendedores novos pagam uma taxa de lançamento reduzida nos primeiros 60 dias.',
-        'O formulário de venda mostra, antes de publicar, o que os compradores pagarão em cada moeda e o que sobra para você após a taxa de saque. Sua patente e progresso ficam no painel do vendedor.',
-      ],
-    },
     'delivery-in-game': {
       title: 'Como funciona a entrega no jogo',
       summary: 'Moeda e itens são negociados para o nome de personagem que você confirma no checkout; o vendedor anexa uma prova e você libera o pagamento.',
@@ -96,29 +54,12 @@ const help: HelpPack = {
         'O pagamento fica em custódia até você confirmar o recebimento. Se algo estiver errado, abra uma disputa na página do pedido em vez de confirmar; a equipe compara a prova com a troca e decide.',
       ],
     },
-    'getting-paid': {
-      title: 'Recebendo',
-      summary: 'Saque para sua carteira cripto (USDT) quando o comprador confirmar; há uma taxa de 6%.',
-      body: [
-        'O dinheiro de uma venda fica disponível quando o comprador confirma o pedido. Saque pelo painel do vendedor para o endereço de recebimento confirmado por e-mail; a tesouraria aprova e envia em USDT.',
-        'Vendedores novos podem ter uma breve retenção de saque enquanto criamos confiança; o painel mostra quando o valor retido é liberado.',
-        'Se um reembolso ou chargeback deixar seu saldo negativo, novas vendas cobrem o valor primeiro e os saques ficam pausados até a quitação.',
-      ],
-    },
     'seller-analytics': {
       title: 'Entendendo as estatísticas da sua loja',
       summary: 'Visualizações, conversão e compradores recorrentes, e como são contados.',
       body: [
         'A aba Estatísticas mostra vendas, visualizações de anúncios, conversão (pedidos divididos por visualizações), ticket médio e compradores recorrentes, comparados com o período anterior.',
         'Uma visualização conta uma vez por visitante, anúncio e hora, e nunca quando você olha seu próprio anúncio.',
-      ],
-    },
-    'verify-identity': {
-      title: 'Verificando sua identidade',
-      summary: 'Nível 1 para comprar, nível 2 (documento com foto) para vender.',
-      body: [
-        'O nível 1 é um e-mail e um telefone verificados; basta para comprar. O nível 2 adiciona um documento com foto e uma prova de vida com nosso parceiro de verificação, e é obrigatório para vender.',
-        'A verificação costuma levar poucos minutos. Se falhar, confira se a foto está nítida e se todos os cantos do documento aparecem, e tente de novo.',
       ],
     },
     'two-factor': {
@@ -135,26 +76,6 @@ const help: HelpPack = {
       body: [
         'Se alguém pedir para você pagar fora da Bullizard, mandar um link suspeito ou for abusivo, não responda mais. Envie uma solicitação na categoria “Denunciar um usuário” com o nome da pessoa e o pedido ou chat em que aconteceu.',
         'Nossa equipe de confiança e segurança analisa toda denúncia. Nem sempre podemos contar o resultado, mas tomamos providências.',
-      ],
-    },
-    'buyer-protection': {
-      title: "Proteção ao comprador Bullizard",
-      summary: "Seu dinheiro só chega ao vendedor quando você confirma que recebeu o pedido.",
-      body: [
-        "Quando você paga, a Bullizard guarda o dinheiro. O vendedor vê que o pedido está pago e entrega.",
-        "O vendedor só recebe quando você confirma que recebeu o pedido. Você pode confirmar assim que tiver, mesmo antes de o vendedor marcar como entregue.",
-        "- Não entregue no prazo prometido: o pedido é cancelado e você é reembolsado.\n- Diferente do anunciado: abra uma disputa na página do pedido antes de confirmar. O dinheiro fica congelado até um árbitro da Bullizard decidir.\n- Contas de jogo: 14 dias de seguro após a entrega.",
-        "Mantenha toda a negociação no chat do pedido. Acordos fora da Bullizard não são protegidos.",
-      ],
-    },
-    'invite-friends': {
-      title: "Convida amigos e ganha",
-      summary: "20% da comissão do Bullizard em cada pedido dos teus amigos, enquanto se mantiverem ativos.",
-      body: [
-        "O teu link de convite está na página da conta. Quem se registar com ele é teu amigo no Bullizard para sempre.",
-        "Em cada pedido que concluam ganhas uma parte da comissão do Bullizard nesse pedido (20% no lançamento; o Bullizard pode alterar a taxa). Começa com o primeiro pedido concluído e continua enquanto se mantiverem ativos — sem mais de um ano entre pedidos.",
-        "- Os ganhos vão para o teu saldo e levantam-se com as regras normais (6%, mínimo 1,50 $).\n- A parte é da nossa comissão, não do total: num pedido de 100 $ com 13,99% de comissão, ganhas 20% de 13,99 $.\n- Nada é pago entre contas que partilham dispositivo, cartão ou carteira.",
-        "Criadores com código ganham à parte; os dois programas não se somam no mesmo pedido para a mesma pessoa.",
       ],
     },
     'wallet': {

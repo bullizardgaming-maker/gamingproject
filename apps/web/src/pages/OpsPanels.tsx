@@ -357,3 +357,88 @@ export function PrivacyPanel() {
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Legal documents (Legal pack, Oct 24): publish a version of the Terms, Privacy Policy, Seller Agreement,
+// Refund & Dispute Policy or restricted-countries list. A material change needs 14 days' notice.
+// ---------------------------------------------------------------------------
+const LEGAL_DOC_LABEL: Record<string, string> = { terms: 'Terms of Service', privacy: 'Privacy Policy', 'seller-agreement': 'Seller Agreement', refunds: 'Refund & Dispute Policy', 'restricted-countries': 'Restricted Countries' };
+export function LegalPanel() {
+  const { data, error, reload, setError } = useLoad(() => api<any[]>('/admin/legal'));
+  const [form, setForm] = useState({ doc: 'terms', lang: 'en', version: '', effectiveAt: '', title: '', contentMd: '', material: false });
+  const [msg, setMsg] = useState('');
+  if (!data) return <p className="muted">{error || 'Loading…'}</p>;
+  const publish = async () => {
+    setError(''); setMsg('');
+    try {
+      const body: any = { ...form, effectiveAt: form.effectiveAt ? new Date(form.effectiveAt).toISOString() : undefined };
+      await api(`/admin/legal/${form.doc}`, { method: 'PUT', body });
+      setMsg(form.material ? 'Published. Every active user gets the notice email now; the banner shows until it takes effect.' : 'Published.');
+      setForm((f) => ({ ...f, version: '', contentMd: '' }));
+      reload();
+    } catch (e: any) { setError(e.message); }
+  };
+  return (
+    <div className="stack">
+      <p className="muted small">Every version is kept with its hash. The current Terms version is what sign-ups and orders record. A <b>material</b> change must take effect at least 14 days after publishing: users are emailed, the app shows a banner, and they accept the new Terms at their next sign-in.</p>
+      {error && <div className="alert" role="alert">{error}</div>}
+      {msg && <div className="ok" role="status">{msg}</div>}
+      <table className="table">
+        <thead><tr><th>Document</th><th>Language</th><th>Version</th><th>In force since</th><th>Material</th><th>SHA-256</th></tr></thead>
+        <tbody>
+          {data.map((r: any) => (
+            <tr key={`${r.doc}-${r.locale}-${r.version}`}>
+              <td>{LEGAL_DOC_LABEL[r.doc] ?? r.doc}</td><td>{String(r.locale).toUpperCase()}</td><td>{r.version}</td>
+              <td>{new Date(r.effective_at).toLocaleString()}</td><td>{r.material ? 'yes' : ''}</td><td className="mono small">{String(r.sha256).slice(0, 12)}…</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="card stack" style={{ maxWidth: 760 }}>
+        <h3 style={{ margin: 0 }}>Publish a version</h3>
+        <div className="row" style={{ gap: 12, flexWrap: 'wrap' }}>
+          <label className="field">Document
+            <select value={form.doc} onChange={(e) => setForm({ ...form, doc: e.target.value })}>{Object.entries(LEGAL_DOC_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+          </label>
+          <label className="field">Language<select value={form.lang} onChange={(e) => setForm({ ...form, lang: e.target.value })}><option value="en">English</option><option value="ar">Arabic</option></select></label>
+          <label className="field">Version<input value={form.version} placeholder="2026-11-15" onChange={(e) => setForm({ ...form, version: e.target.value })} /></label>
+          <label className="field">Takes effect<input type="datetime-local" value={form.effectiveAt} onChange={(e) => setForm({ ...form, effectiveAt: e.target.value })} /></label>
+        </div>
+        <label className="field">Title<input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></label>
+        <label className="field">Text (Markdown)<textarea value={form.contentMd} rows={14} onChange={(e) => setForm({ ...form, contentMd: e.target.value })} /></label>
+        <label className="row" style={{ gap: 8 }}><input type="checkbox" style={{ width: 'auto' }} checked={form.material} onChange={(e) => setForm({ ...form, material: e.target.checked })} /> Material change (14-day notice, users accept again)</label>
+        <button className="btn" onClick={publish} disabled={!form.version.trim() || form.title.trim().length < 2 || form.contentMd.trim().length < 20}>Publish</button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Listing ban (penalty ladder: warning → listing ban → account ban → frozen balance)
+// ---------------------------------------------------------------------------
+export function ListingBanPanel() {
+  const [userId, setUserId] = useState('');
+  const [reason, setReason] = useState('');
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'alert'; text: string } | null>(null);
+  const set = async (on: boolean) => {
+    setMsg(null);
+    try {
+      await api(`/admin/users/${userId.trim()}/listing-ban`, { body: { on, reason } });
+      setMsg({ kind: 'ok', text: on ? 'Listing ban set: their listings are paused and they cannot list until it is lifted.' : 'Listing ban lifted: their paused listings are back.' });
+      setUserId(''); setReason('');
+    } catch (e: any) { setMsg({ kind: 'alert', text: e.message }); }
+  };
+  return (
+    <div className="card stack" style={{ maxWidth: 640 }}>
+      <h3 style={{ margin: 0 }}>Listing ban</h3>
+      <p className="small muted" style={{ margin: 0 }}>The step between a warning and an account ban. The seller keeps their account and balance but cannot create or relist offers; their active listings are paused. They can appeal through a support ticket (category “Appeal”).</p>
+      <label className="field">User ID<input value={userId} onChange={(e) => setUserId(e.target.value)} className="mono" /></label>
+      <label className="field">Reason (kept in the audit log)<input value={reason} onChange={(e) => setReason(e.target.value)} /></label>
+      {msg && <div className={msg.kind} role={msg.kind === 'ok' ? 'status' : 'alert'}>{msg.text}</div>}
+      <div className="row">
+        <button className="btn dispute" disabled={!userId.trim() || reason.trim().length < 3} onClick={() => set(true)}>Set listing ban</button>
+        <button className="btn ghost" disabled={!userId.trim()} onClick={() => set(false)}>Lift listing ban</button>
+      </div>
+    </div>
+  );
+}

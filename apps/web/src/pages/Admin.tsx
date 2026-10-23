@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { api, apiBlob, money } from '../api';
 import { useSession } from '../session';
 import { AffiliatesPanel, AmlPanel, LeaguesPanel, RanksPanel, RulesTestPanel, StaffPanel, TaxPanel, TreasuryPanel } from './AdminPanels';
-import { CurrencyPanel, DebtsPanel, FraudModelPanel, IncidentsPanel, PrivacyPanel } from './OpsPanels';
+import { CurrencyPanel, DebtsPanel, FraudModelPanel, IncidentsPanel, LegalPanel, ListingBanPanel, PrivacyPanel } from './OpsPanels';
 import { CryptoRefundsPanel, PayoutsPanel, ReleasesPanel } from './CryptoOpsPanels';
 import { usePageMeta } from '@/lib/seo';
 import { currentLocale, t } from '../i18n';
@@ -16,7 +16,7 @@ import { ModerationPanel } from './ModerationPanel';
 import { WarrantyPanel } from './WarrantyPanel';
 
 type ListTab = 'disputes' | 'risk' | 'proofs' | 'chargebacks' | 'ledger' | 'recon' | 'audit';
-type PanelTab = 'business' | 'retention' | 'support' | 'releases' | 'moderation' | 'warranty' | 'aml' | 'treasury' | 'payouts' | 'refunds' | 'tax' | 'staff' | 'status' | 'debts' | 'currency' | 'model' | 'privacy' | 'ranks' | 'leagues' | 'rules' | 'affiliates';
+type PanelTab = 'business' | 'retention' | 'support' | 'releases' | 'moderation' | 'warranty' | 'aml' | 'treasury' | 'payouts' | 'refunds' | 'tax' | 'staff' | 'status' | 'debts' | 'currency' | 'model' | 'privacy' | 'ranks' | 'leagues' | 'rules' | 'affiliates' | 'legal' | 'listingban';
 type Tab = ListTab | PanelTab;
 
 /** Each tab is shown to whoever holds its permission (see the API's domain/permissions.ts). */
@@ -49,10 +49,12 @@ const TABS: Array<{ id: Tab; label: string; perm: string }> = [
   { id: 'staff', label: 'Staff', perm: 'staff.manage' },
   { id: 'status', label: 'Status page', perm: 'status.manage' },
   { id: 'privacy', label: 'Privacy', perm: 'retention.manage' },
+  { id: 'legal', label: 'Legal', perm: 'support.manage' },
+  { id: 'listingban', label: 'Listing bans', perm: 'moderation.manage' },
 ];
 const PANELS: Record<PanelTab, () => React.ReactElement> = {
   business: BusinessPanel, retention: RetentionPanel, support: SupportPanel, moderation: ModerationPanel, warranty: WarrantyPanel, aml: AmlPanel, treasury: TreasuryPanel, tax: TaxPanel, staff: StaffPanel,
-  status: IncidentsPanel, debts: DebtsPanel, currency: CurrencyPanel, model: FraudModelPanel, privacy: PrivacyPanel,
+  status: IncidentsPanel, debts: DebtsPanel, currency: CurrencyPanel, model: FraudModelPanel, privacy: PrivacyPanel, legal: LegalPanel, listingban: ListingBanPanel,
   releases: ReleasesPanel, payouts: PayoutsPanel, refunds: CryptoRefundsPanel, ranks: RanksPanel, leagues: LeaguesPanel, rules: RulesTestPanel, affiliates: AffiliatesPanel,
 };
 const isPanel = (t: Tab): t is PanelTab => t in PANELS;
@@ -170,7 +172,7 @@ export function Admin() {
         <div className="card"><p className="muted">Nothing waiting here.</p></div>
       ) : tab === 'disputes' ? (
         <div className="stack">
-          {rows.map((d) => <DisputeCard key={d.id} d={d} onResolve={(outcome, note) => act(() => api(`/admin/disputes/${d.id}/resolve`, { body: { outcome, note } }))} />)}
+          {rows.map((d) => <DisputeCard key={d.id} d={d} onResolve={(outcome, note, refundCents) => act(() => api(`/admin/disputes/${d.id}/resolve`, { body: refundCents ? { outcome, note, refundCents } : { outcome, note } }))} />)}
         </div>
       ) : tab === 'risk' ? (
         <div className="card table-wrap">
@@ -299,7 +301,7 @@ export function Admin() {
   );
 }
 
-function DisputeCard({ d, onResolve }: { d: any; onResolve: (outcome: 'buyer' | 'seller', note: string) => void }) {
+function DisputeCard({ d, onResolve }: { d: any; onResolve: (outcome: 'buyer' | 'seller' | 'split', note: string, refundCents?: number) => void }) {
   const [note, setNote] = useState('');
   const [open, setOpen] = useState(false);
   if (open)
@@ -314,6 +316,7 @@ function DisputeCard({ d, onResolve }: { d: any; onResolve: (outcome: 'buyer' | 
       <div className="row spread">
         <div>
           <b>{money(d.amount_cents, d.currency)}</b> <span className="muted small">opened {fmt(d.created_at)}</span>
+          {d.lead_review && <span className="chip disputed" style={{ marginInlineStart: 8 }} title="Orders above $200 go to the Support Lead">Lead</span>}
         </div>
         <span className="row" style={{ gap: 12 }}>
           <button className="btn" onClick={() => setOpen(true)}>Open case file</button>

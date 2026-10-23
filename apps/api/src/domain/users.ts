@@ -13,6 +13,7 @@ import { accountId, post, sellerAvailable } from './ledger.js';
 import { checkSecondFactor } from './mfa.js';
 import { withdrawable } from './payoutholds.js';
 import { ensureScreenedForPayout, screenUser } from './aml.js';
+import { tosVersion } from './legal.js';
 import { referrerForCode } from './referrals.js';
 import { enqueueEmail } from './notifications.js';
 import { enqueueWebhook } from './webhooks.js';
@@ -50,7 +51,7 @@ export interface User {
 }
 
 export const PUBLIC_USER_COLUMNS =
-  'id, email, display_name, role, kyc_tier, status, email_verified_at, phone, phone_verified_at, withdrawals_frozen, stripe_account_id, legal_name, created_at, (totp_enabled_at IS NOT NULL) AS totp_enabled, payouts_enabled, staff_roles, locale, handover_names, rules_passed_at, selling_restricted_at, seller_since';
+  'id, email, display_name, role, kyc_tier, status, email_verified_at, phone, phone_verified_at, withdrawals_frozen, stripe_account_id, legal_name, created_at, (totp_enabled_at IS NOT NULL) AS totp_enabled, payouts_enabled, staff_roles, locale, handover_names, rules_passed_at, selling_restricted_at, seller_since, listing_banned_at';
 
 // ---------------------------------------------------------------------------
 // Authentication. Sessions live in ./sessions.ts (15-minute access tokens +
@@ -104,10 +105,11 @@ export async function register(ctx: Ctx, input: { email: string; password: strin
   try {
     const user = await one<User>(
       ctx.db,
-      `INSERT INTO users (email, password_hash, display_name, referred_by, locale) VALUES ($1, $2, $3, $4, $5) RETURNING ${PUBLIC_USER_COLUMNS}`,
-      [input.email, hash, input.displayName, referrer, isLocale(input.locale) ? input.locale : 'en'],
+      `INSERT INTO users (email, password_hash, display_name, referred_by, locale, tos_version, tos_accepted_at) VALUES ($1, $2, $3, $4, $5, $6, now()) RETURNING ${PUBLIC_USER_COLUMNS}`,
+      [input.email, hash, input.displayName, referrer, isLocale(input.locale) ? input.locale : 'en', await tosVersion(ctx.db)],
     );
     await recordSignals(ctx.db, user.id, { device: input.device, ip_subnet: subnetOf(input.ip) });
+    await enqueueEmail(ctx.db, user.id, 'welcome', { name: input.displayName }, `welcome:${user.id}`);
     // A creator's code at signup (a wrong one is ignored rather than failing the signup).
     if (input.creatorCode) await attributeBuyer(ctx.db, user.id, input.creatorCode).catch(() => null);
     return sessionResponse(user, await createSession(ctx, user.id, { mfa: false, userAgent: input.userAgent, ip: input.ip }));

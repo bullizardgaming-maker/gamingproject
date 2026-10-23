@@ -41,7 +41,7 @@ export interface ChatMessage {
 
 // Off-platform contact detection lives in safety.ts (shared with the web app).
 export { detectOffPlatform } from './safety.js';
-import { detectOffPlatform } from './safety.js';
+import { detectOffPlatform, detectSplit, isInstantBan } from './safety.js';
 
 /** v1 (messages written before per-user keys): the chain covers the text itself. */
 export function messageHash(prevHash: string, seq: number, senderId: string | null, kind: string, body: string, createdAt: string) {
@@ -205,6 +205,14 @@ export async function postUserMessage(ctx: Ctx, roomId: string, user: { id: stri
     ? !!(await maybeOne(ctx.db, `SELECT 1 FROM orders o JOIN offers f ON f.id = o.offer_id JOIN categories c ON c.slug = f.category_slug WHERE o.id = $1 AND c.kind = 'account'`, [room0.order_id]))
     : false;
   const violations = detectOffPlatform(body, { allowEmail: accountOrder });
+  if (!violations.length && user.role === 'user') {
+    // Split messages ("dis" … "cord"): the sender's last few lines, joined with this one.
+    const recent = await many<{ seq: number }>(ctx.db, 'SELECT seq FROM chat_messages WHERE room_id = $1 AND sender_id = $2 AND NOT hidden AND created_at > now() - interval \'10 minutes\' ORDER BY seq DESC LIMIT 3', [roomId, user.id]);
+    if (recent.length) {
+      const tail = (await listMessages(ctx.keyring, ctx.db, roomId, Math.min(...recent.map((r) => r.seq)) - 1, 10)).filter((m) => m.sender_id === user.id).map((m) => m.body ?? '');
+      violations.push(...detectSplit(tail, body));
+    }
+  }
   const flags = violations.map((v) => `offplatform:${v}`);
 
   if (violations.length && user.role === 'user') {
@@ -219,7 +227,8 @@ export async function postUserMessage(ctx: Ctx, roomId: string, user: { id: stri
         [user.id],
       );
       const policy = await offplatformPolicy(s.tx);
-      const act = policy[Math.min(offplatform_strikes, policy.length) - 1]!;
+      // Payment details, outside deals, recruiting, impersonation and ban dodging are an instant ban.
+      const act = isInstantBan(violations) ? 'ban' : policy[Math.min(offplatform_strikes, policy.length) - 1]!;
       if (act !== 'warn') {
         await s.tx.query(`UPDATE users SET status = 'suspended', suspension_reason = $2 WHERE id = $1`, [user.id, act === 'ban' ? 'off_platform_ban' : 'off_platform_contact']);
         await appendMessage(s, roomId, null, 'warning', act === 'ban'

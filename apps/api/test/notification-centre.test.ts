@@ -26,8 +26,8 @@ describe('notification centre', () => {
 
     const inbox = (await buyer.api.get('/v1/me/notifications')).body;
     const paid = inbox.items.find((i: any) => i.template === 'order_paid');
-    expect(paid).toMatchObject({ title: 'Payment received for Rank boost', link: `/orders/${order.id}`, read_at: null, category: 'orders' });
-    expect(paid.body).toMatch(/held in escrow/);
+    expect(paid).toMatchObject({ title: `Payment in. ${order.ref} is with the seller`, link: `/orders/${order.id}`, read_at: null, category: 'orders' });
+    expect(paid.body).toMatch(/we're holding it/);
     expect(paid.body).not.toMatch(/http|\u0000/);
     expect(inbox.unread).toBeGreaterThanOrEqual(1);
     expect((await seller.api.get('/v1/me/notifications')).body.items.map((i: any) => i.template)).toContain('seller_new_order');
@@ -72,7 +72,7 @@ describe('notification centre', () => {
     await dispatchInbox(h.ctx);
 
     const toU = live.filter((m) => m.channel === `user:${u.id}` && m.payload.event === 'inbox.new');
-    expect(toU.map((m) => m.payload.data.title)).toContain('Payment received for Push test key');
+    expect(toU.map((m) => m.payload.data.title)).toContain(`Payment in. ${order.ref} is with the seller`);
     const pushed = push.sent.filter((p) => p.endpoint.endsWith(u.id));
     expect(pushed.length).toBeGreaterThanOrEqual(2); // both devices
     expect(pushed.find((p) => p.msg.tag === 'order_paid')?.msg.url).toBe(`${h.ctx.cfg.PUBLIC_WEB_URL}/orders/${order.id}`);

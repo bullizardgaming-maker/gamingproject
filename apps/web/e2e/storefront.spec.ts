@@ -13,7 +13,7 @@ test('a seller customises their shop page and buyers see it', async ({ page }) =
   // Contact details are refused, like in listings.
   await editor.getByLabel('Intro').fill('DM me on telegram for cheaper keys');
   await editor.getByRole('button', { name: 'Save shop page' }).click();
-  await expect(editor.getByRole('alert')).toContainText(/Contact details/);
+  await expect(editor.getByRole('alert')).toContainText('Sharing outside contacts can get your account banned right away.');
 
   await editor.getByLabel('Intro').fill('Instant Steam keys and gift cards. Replacement promise on every code.');
   await editor.locator('input[type=file]').setInputFiles({ name: 'banner.png', mimeType: 'image/png', buffer: PNG });

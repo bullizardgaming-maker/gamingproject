@@ -167,7 +167,7 @@ describe('crypto checkout (NOWPayments)', () => {
     expect(Number(gw.amount_cents)).toBe(-2093);
   });
 
-  it('refunds are queued for the treasury: the buyer gives an address, the CFO records the transaction', async () => {
+  it('refunds land in the buyer’s balance; withdrawing it costs 6% with a $1.50 floor', async () => {
     const seller = await makeUser(h, { tier: 2 });
     const buyer = await makeUser(h, { tier: 1 });
     const offer = await makeOffer(seller, { deliveryMode: 'manual', stock: 5, categorySlug: 'currency', title: 'Gold 50k', priceCents: 10_00 });
@@ -181,25 +181,34 @@ describe('crypto checkout (NOWPayments)', () => {
     const decided = await arbiter.api.post(`/v1/admin/disputes/${dispute.id}/resolve`, { outcome: 'buyer', note: 'Seller never delivered' });
     expect(decided.status, JSON.stringify(decided.body)).toBe(200);
 
-    let detail = (await buyer.api.get(`/v1/orders/${order.id}`)).body;
+    const detail = (await buyer.api.get(`/v1/orders/${order.id}`)).body;
     expect(detail.status).toBe('refunded');
-    expect(detail.crypto_refund).toMatchObject({ status: 'awaiting_address', amount_cents: 1053 });
-    // The liability sits in refunds_payable, not in the gateway, until the coins are sent.
+    expect(detail.crypto_refund).toBeNull(); // nothing goes back on-chain: the money is balance now
     const bal = async (kind: string) => Number((await h.ctx.db.query(`SELECT COALESCE(SUM(e.amount_cents), 0) AS s FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id WHERE a.kind = $1 AND e.order_id = $2`, [kind, order.id])).rows[0].s);
-    expect(await bal('refunds_payable')).toBe(1053);
-    expect(await bal('escrow')).toBe(0);
-
-    await buyer.api.put(`/v1/orders/${order.id}/refund-address`, { address: 'TXYZabc1234567890refund', currency: 'usdttrc20' });
-    detail = (await buyer.api.get(`/v1/orders/${order.id}`)).body;
-    expect(detail.crypto_refund.status).toBe('pending');
-    const queue = (await arbiter.api.get('/v1/admin/crypto/refunds?status=pending')).body;
-    expect(queue.find((r: any) => r.order_id === order.id)).toMatchObject({ refund_address: 'TXYZabc1234567890refund' });
-    const sentRes = await arbiter.api.post(`/v1/admin/crypto/refunds/${detail.crypto_refund.id}/sent`, { txHash: '0xdeadbeefdeadbeef' });
-    expect(sentRes.status, JSON.stringify(sentRes.body)).toBe(200);
     expect(await bal('refunds_payable')).toBe(0);
-    expect(await bal('gateway_clearing')).toBe(10); // captured −1048, provider fee +5 (paid from revenue), refund +1053
+    expect(await bal('escrow')).toBe(0);
+    expect((await buyer.api.get('/v1/me/credit')).body).toMatchObject({ balanceCents: 1053, availableCents: 1053 });
+    expect((await buyer.api.get(`/v1/chat/rooms/${detail.room_id}/messages`)).body.some((m: any) => m.code === 'dispute_buyer')).toBe(true);
     await dispatchEmails(h.ctx);
-    expect(sent.some((m) => m.to === buyer.email && /Refund of \$10\.53 sent/.test(m.subject ?? ''))).toBe(true);
+    expect(sent.some((m) => m.to === buyer.email && /back in your Bullizard balance/.test(m.body ?? ''))).toBe(true);
+
+    // Withdrawing the balance: 6% fee, minimum $1.50 → 10.53 costs 1.50, nets 9.03. Needs a confirmed payout address.
+    expect((await buyer.api.post('/v1/me/withdrawals', { amountCents: 1053 })).body.error.code).toBe('no_payout_address');
+    await h.ctx.db.query(`UPDATE users SET payout_address = 'TXYZabc1234567890refund', payout_address_currency = 'usdttrc20' WHERE id = $1`, [buyer.id]);
+    const w = await buyer.api.post('/v1/me/withdrawals', { amountCents: 1053 });
+    expect(w.status, JSON.stringify(w.body)).toBe(201);
+    expect(w.body).toMatchObject({ amount_cents: 1053, fee_cents: 150, net_cents: 903, source: 'credit', status: 'pending_approval' });
+    expect((await buyer.api.get('/v1/me/credit')).body.balanceCents).toBe(0);
+  });
+
+  it('unverified sellers withdraw during their first 30 days; after the ID deadline their earnings wait for verification', async () => {
+    const seller = await makeUser(h, { tier: 1, rulesPassed: true });
+    await h.ctx.db.query(`UPDATE users SET payout_address = 'TXYZabc1234567890seller', payout_address_currency = 'usdttrc20', payout_hold_days = 0 WHERE id = $1`, [seller.id]);
+    // Day 10: allowed (balance permitting).
+    expect((await seller.api.post('/v1/seller/withdrawals', { amountCents: 2000 })).body.error.code).toBe('insufficient_funds');
+    // Day 31: restricted until Tier 2.
+    await h.ctx.db.query(`UPDATE users SET seller_since = now() - interval '31 days', selling_restricted_at = now() WHERE id = $1`, [seller.id]);
+    expect((await seller.api.post('/v1/seller/withdrawals', { amountCents: 2000 })).body.error.code).toBe('kyc_overdue');
   });
 
   it('seller payouts: address confirmed by email link and 2FA, 6% fee with a $1.50 floor, CFO approval, paid by IPN', async () => {

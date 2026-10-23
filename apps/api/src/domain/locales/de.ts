@@ -5,64 +5,9 @@ const de: LocalePack = {
   manage: 'E-Mail-Einstellungen',
   verifyCode: (code, minutes) => `Dein Bestätigungscode lautet ${code}. Er läuft in ${minutes} Minuten ab.`,
   templates: {
-    order_paid: {
-      subject: (d) => `Zahlung für ${d.title} erhalten`,
-      body: (d, link, h) => `Wir haben ${h.money(d.amount_cents, d.currency)} für „${d.title}“ erhalten. Das Geld liegt treuhänderisch bereit, der Verkäufer wird erst bezahlt, wenn du die Ware hast.\n\nBestellung verfolgen: ${link(`/orders/${d.order_id}`)}`,
-    },
-    order_delivered: {
-      subject: (d) => `Geliefert: ${d.title}`,
-      body: (d, link, h) =>
-        `Deine Bestellung „${d.title}“ wurde geliefert. Öffne die Bestellseite, um sie zu sehen.\n\n` +
-        (d.protection === 'insurance_14d'
-          ? `Dieser Account ist bis ${h.when(d.protection_ends_at)} mit 14 Tagen Versicherung geschützt. Arbeite jetzt die Sicherheits-Checkliste ab: Passwort, Wiederherstellungs-E-Mail und 2FA ändern.`
-          : d.protection_ends_at
-            ? `Du hast bis ${h.when(d.protection_ends_at)} Zeit, alles zu prüfen. Stimmt etwas nicht, eröffne vorher einen Streitfall.`
-            : `Prüfe sie und bestätige die Bestellung; der Verkäufer wird erst mit deiner Bestätigung bezahlt. Stimmt etwas nicht, eröffne stattdessen einen Streitfall.`) +
-        `\n\n${link(`/orders/${d.order_id}`)}`,
-    },
-    order_refunded: {
-      subject: (d) => `Erstattung für ${d.title}`,
-      body: (d, link, h) => `${h.money(d.amount_cents, d.currency)} wurden auf dein ursprüngliches Zahlungsmittel erstattet. Kartenerstattungen erscheinen meist innerhalb von 5–10 Werktagen.\n\n${link(`/orders/${d.order_id}`)}`,
-    },
-    delivery_late: {
-      subject: (d) => `Deine Bestellung ist verspätet: ${d.title}`,
-      body: (d, link, h) =>
-        `Der Verkäufer hat die Lieferung bis ${h.when(d.delivery_due_at)} zugesagt und noch nicht geliefert. Du kannst warten oder jetzt mit voller Erstattung stornieren. ` +
-        `Kommt die Lieferung nicht innerhalb von ${d.auto_refund_hours} Stunden, erstatten wir automatisch.\n\n${link(`/orders/${d.order_id}`)}`,
-    },
-    delivery_overdue: {
-      subject: (d) => `Überfällig: Liefere ${d.title} jetzt`,
-      body: (d, link, h) =>
-        `Du hast die Lieferung bis ${h.when(d.delivery_due_at)} zugesagt. Der Käufer kann jetzt mit voller Erstattung stornieren, und in ${d.auto_refund_hours} Stunden wird automatisch erstattet. ` +
-        `Verspätungen senken deine Pünktlichkeitsquote, die Käufer in deinem Profil sehen.\n\n${link(`/orders/${d.order_id}`)}`,
-    },
-    referral_reward: {
-      subject: (d, h) => `Du hast ${h.money(d.amount_cents, d.currency)} mit der Bestellung eines Freundes verdient`,
-      body: (d, link, h) => `Ein von dir eingeladener Freund hat eine Bestellung abgeschlossen. Dein Anteil von ${d.rate_pct}% unserer Provision, ${h.money(d.amount_cents, d.currency)}, liegt auf deinem Guthaben und kommt bei jeder weiteren Bestellung, solange er aktiv bleibt.\n\n${link('/account')}`,
-    },
     protection_ending: {
       subject: (d) => `Noch 24 Stunden, um ${d.title} zu prüfen`,
       body: (d, link, h) => `Der Verkäufer wird am ${h.when(d.protection_ends_at)} automatisch bezahlt. Stimmt etwas mit deiner Bestellung nicht, eröffne vorher einen Streitfall.\n\n${link(`/orders/${d.order_id}`)}`,
-    },
-    seller_new_order: {
-      subject: (d) => (d.delivery_mode === 'manual' ? `Neue Bestellung zu liefern: ${d.title}` : `Verkauft: ${d.title}`),
-      body: (d, link, h) =>
-        (d.delivery_mode === 'manual'
-          ? `Ein Käufer hat ${h.money(d.amount_cents, d.currency)} für „${d.title}“ x${d.quantity} bezahlt. Liefere über die Bestellseite; bis dahin bleibt die Zahlung treuhänderisch verwahrt.`
-          : `„${d.title}“ x${d.quantity} wurde für ${h.money(d.amount_cents, d.currency)} verkauft und automatisch aus deinem Bestand geliefert.`) +
-        `\n\n${link(`/orders/${d.order_id}`)}`,
-    },
-    seller_paid: {
-      subject: (d, h) => `${h.money(d.seller_net_cents, d.currency)} deinem Guthaben gutgeschrieben`,
-      body: (d, link, h) => `Die Bestellung „${d.title}“ ist abgeschlossen. ${h.money(d.seller_net_cents, d.currency)} sind jetzt in deinem Guthaben und können ausgezahlt werden.\n\n${link('/sell')}`,
-    },
-    withdrawal_paid: {
-      subject: (d, h) => `Auszahlung von ${h.money(d.amount_cents, d.currency)} gesendet`,
-      body: (d, _link, h) => `Wir haben ${h.money(d.amount_cents, d.currency)} an dein Auszahlungskonto gesendet (Referenz ${d.provider_ref}).`,
-    },
-    dispute_opened: {
-      subject: (d) => `Streitfall zu ${d.title} eröffnet`,
-      body: (d, link) => `Ein Streitfall wurde eröffnet: „${d.reason}“. Die Zahlung ist eingefroren, bis ein Schlichter den Bestell-Chat prüft. Füge jetzt Nachweise im Chat hinzu.\n\n${link(`/orders/${d.order_id}`)}`,
     },
     dispute_statement: {
       subject: () => 'Neue Stellungnahme in deinem Streitfall',
@@ -87,19 +32,11 @@ const de: LocalePack = {
       subject: (d) => `${d.percent} % erledigt: ${d.title}`,
       body: (d, link) => `Der Verkäufer hat den Fortschritt für „${d.title}“ gemeldet: ${d.percent} %${d.note ? `. „${d.note}“` : '.'}\n\n${link(`/orders/${d.order_id}`)}`,
     },
-    dispute_resolved: {
-      subject: (d) => `Streitfall entschieden: ${d.title}`,
-      body: (d, link) => `Der Schlichter hat zugunsten des ${d.outcome === 'buyer' ? 'Käufers' : 'Verkäufers'} entschieden. Hinweis: „${d.note}“\n\n${link(`/orders/${d.order_id}`)}`,
-    },
     chargeback_received: {
       subject: (d) => `Rückbuchung zu Bestellung ${String(d.order_id).slice(0, 8)}`,
       body: (d, _link, h) =>
         `Die Bank des Käufers hat ${h.money(d.amount_cents)} zurückgebucht (${d.network} ${d.reason_code}). Wir haben die Nachweise automatisch eingereicht.\n\n` +
         (d.seller_protected ? 'Der Chargeback-Schutz deckt diese Bestellung ab: Dein Guthaben bleibt unberührt.' : 'Dieses Angebot hatte keinen verifizierten Erstbesitzer-Nachweis, daher wurde der Betrag von deinem Guthaben abgezogen. Entscheidet die Bank zu unseren Gunsten, bekommst du ihn zurück.'),
-    },
-    kyc_result: {
-      subject: (d) => (d.approved ? 'Deine Identität ist bestätigt' : 'Wir konnten deine Identität nicht bestätigen'),
-      body: (d, link) => (d.approved ? `Du kannst jetzt Angebote einstellen, die Verkäufer-API nutzen und auszahlen.\n\n${link('/sell')}` : `Bitte versuche es erneut mit einem scharfen Foto eines gültigen Ausweises.\n\n${link('/account')}`),
     },
     new_signin: {
       subject: () => 'Neue Anmeldung bei deinem Bullizard-Konto',

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, NavLink, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { GameBanner } from '@/components/GameArt';
-import { SealCheck as BadgeCheck, MagnifyingGlass as Search, ShieldCheck, Lightning as Zap } from '@phosphor-icons/react';
+import { MagnifyingGlass as Search, ShieldCheck, Lightning as Zap } from '@phosphor-icons/react';
 import { api } from '../api';
 import { CATEGORY_ICON, CurrencyTable, OfferTable } from '../components/CatalogUi';
 import { CATEGORY_META, categoryLabel, slugify, useCategoryOrder, useGames, type GameEntry } from '@/lib/catalog';
@@ -18,12 +18,39 @@ import { recordBrowse } from '@/lib/recent';
 type AttrFacet = { key: string; value: string; count: number };
 
 const LETTERS = ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
+
+/** Launch games with an SEO page (copy deck §6): title tag, description, H1, intro, FAQ. */
+const SEO_SLUGS = ['aion', 'aion-2', 'albion-online', 'path-of-exile', 'path-of-exile-2'] as const;
+type SeoSlug = (typeof SEO_SLUGS)[number];
+const seoSlug = (slug: string): SeoSlug | null => (SEO_SLUGS as readonly string[]).includes(slug) ? (slug as SeoSlug) : null;
+const seoKey = (slug: SeoSlug, field: 'title' | 'description' | 'h1' | 'intro' | 'buy' | 'servers') => `seo.${slug}.${field}` as MessageKey;
+
+/** "How buying works" + FAQ: the shared SEO copy under every launch game's offer table. */
+function SeoFooter() {
+  return (
+    <section className="card stack pg-seo" aria-labelledby="seo-how">
+      <h2 id="seo-how" style={{ margin: 0, fontSize: 18 }}>{t('seo.how.title')}</h2>
+      <ol className="stack" style={{ margin: 0, paddingInlineStart: 20, gap: 4 }}>
+        {(['seo.how.1', 'seo.how.2', 'seo.how.3', 'seo.how.4'] as const).map((k) => <li key={k}>{t(k)}</li>)}
+      </ol>
+      <h2 style={{ margin: '8px 0 0', fontSize: 18 }}>{t('seo.faq.title')}</h2>
+      <dl className="stack" style={{ margin: 0, gap: 8 }}>
+        {([1, 2, 3, 4] as const).map((i) => (
+          <div key={i}>
+            <dt><b>{t(`seo.faq.${i}.q` as MessageKey)}</b></dt>
+            <dd className="muted" style={{ margin: 0 }}>{t(`seo.faq.${i}.a` as MessageKey)}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  );
+}
 const letterOf = (g: string) => (/^[a-z]/i.test(g) ? g[0]!.toUpperCase() : '#');
 
 /** /games: every game with live offers, A–Z, each with direct links into its categories. */
 export function Games() {
   const categoryOrder = useCategoryOrder();
-  usePageMeta({ title: t('games.title'), description: 'Every game with live offers on Bullizard: accounts, currency, items, keys, top-ups and boosting, all escrow-protected.' });
+  usePageMeta({ title: t('games.title'), description: t('home.meta') });
   const { games, error } = useGames();
   const [params, setParams] = useSearchParams();
   const filter = params.get('q') ?? '';
@@ -121,10 +148,13 @@ export function GamePage() {
   useEffect(() => {
     if (entry) recordBrowse(entry.game, category || undefined);
   }, [entry?.game, category]);
+  const seo = seoSlug(slug);
   usePageMeta({
-    title: entry ? `${entry.game} · ${category ? categoryLabel(category) : t('game.marketplace')}` : undefined,
+    title: entry ? (seo && !category ? t(seoKey(seo, 'title')).replace(/\s*·\s*Bullizard$/, '') : `${entry.game} · ${category ? categoryLabel(category) : t('game.marketplace')}`) : undefined,
     description: entry
-      ? `${entry.offers} ${entry.game} offers from ${entry.sellers} sellers${category ? ` in ${categoryLabel(category).toLowerCase()}` : ''}. Compare price, delivery time and seller rating; every order is held in escrow.`
+      ? seo
+        ? t(seoKey(seo, 'description'))
+        : `${entry.offers} ${entry.game} offers from ${entry.sellers} sellers${category ? ` in ${categoryLabel(category).toLowerCase()}` : ''}. Compare price, delivery time and seller rating; every order is held until it's checked.`
       : undefined,
   });
   const get = (k: string) => params.get(k) ?? '';
@@ -191,7 +221,8 @@ export function GamePage() {
         </nav>
         <div className="pg-band-head">
           <div className="min-w-0">
-            <h1>{entry.game}{category ? ` · ${categoryLabel(category)}` : ''}</h1>
+            <h1>{seo && !category ? t(seoKey(seo, 'h1')) : `${entry.game}${category ? ` · ${categoryLabel(category)}` : ''}`}</h1>
+            {seo && !category && <p className="pg-seo-intro" style={{ margin: '0 0 8px', maxWidth: 640 }}>{t(seoKey(seo, 'intro'))}</p>}
             <span className="muted">
               {t('offers.count', { count: entry.offers })} · {t('game.sellers', { count: entry.sellers })} · {t('offers.from', { price: price(entry.min_price_cents) })}
             </span>
@@ -229,6 +260,13 @@ export function GamePage() {
             {t('req.cta')}{' '}
             <Link to={`/requests/new?${new URLSearchParams({ game: entry.game })}`}>{t('req.post')}</Link>
           </p>
+          {seo && (
+            <div className="stack" style={{ gap: 6 }}>
+              <h3 style={{ margin: 0, fontSize: 16 }}>{t('seo.buy.title')}</h3>
+              <p style={{ margin: 0 }}>{t(seoKey(seo, 'buy'))}</p>
+              <p className="muted" style={{ margin: 0 }}>{t(seoKey(seo, 'servers'))}</p>
+            </div>
+          )}
         </section>
       ) : category === 'currency' ? (
         <section className="ct-wrap" aria-labelledby="ct-title">
@@ -303,8 +341,8 @@ export function GamePage() {
           </fieldset>
           {meta && (
             <p className="pg-protect small muted">
-              {meta.protection === '14d' ? <BadgeCheck className="size-4 shrink-0" aria-hidden /> : <ShieldCheck className="size-4 shrink-0" aria-hidden />}
-              <span>{meta.protection === '14d' ? t('game.protect14') : t('offer.guaranteeText')}</span>
+              <ShieldCheck className="size-4 shrink-0" aria-hidden />
+              <span>{t('offer.guaranteeText')}</span>
             </p>
           )}
         </aside>
@@ -362,6 +400,7 @@ export function GamePage() {
         </section>
       </div>
       )}
+      {seo && <SeoFooter />}
     </div>
   );
 }

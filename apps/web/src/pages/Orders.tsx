@@ -6,8 +6,8 @@ import { useSession } from '../session';
 import { t } from '../i18n';
 import { usePageMeta } from '@/lib/seo';
 
-const CHIP: Record<string, string> = { completed: 'released', delivered: 'held', paid: 'held', disputed: 'disputed', charged_back: 'disputed' };
-const STATUSES = ['awaiting_payment', 'paid', 'delivered', 'completed', 'disputed', 'refunded', 'cancelled', 'charged_back'] as const;
+const CHIP: Record<string, string> = { completed: 'released', delivered: 'held', paid: 'held', disputed: 'disputed' };
+const STATUSES = ['awaiting_payment', 'paid', 'delivered', 'completed', 'disputed', 'refunded', 'cancelled'] as const;
 const statusText = (s: string) => ((STATUSES as readonly string[]).includes(s) ? t(`orders.status.${s as (typeof STATUSES)[number]}`) : s.replace('_', ' '));
 
 export function Orders() {

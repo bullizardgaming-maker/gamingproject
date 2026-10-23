@@ -17,7 +17,7 @@ afterAll(async () => h.close());
 
 describe('messages in the user’s language', () => {
   it('stores the language at sign-up and when the user switches', async () => {
-    const res = await client(h.app).post('/v1/auth/register', { email: `ar_${Date.now()}@example.com`, password: 'correct horse battery', displayName: 'Layla', locale: 'ar' });
+    const res = await client(h.app).post('/v1/auth/register', { email: `ar_${Date.now()}@example.com`, password: 'correct horse battery', displayName: 'Layla', acceptTerms: true, locale: 'ar' });
     expect(res.status).toBe(201);
     expect(res.body.user.locale).toBe('ar');
     const u = await makeUser(h);
@@ -32,17 +32,17 @@ describe('messages in the user’s language', () => {
     await u.api.put('/v1/me/locale', { locale: 'ar' });
     await notify(h.ctx.db, u.id, 'order_paid', { title: 'Elden Ring key', amount_cents: 32_49, currency: 'USD', order_id: '00000000-0000-4000-8000-000000000001' });
     const inbox = (await u.api.get('/v1/me/notifications')).body.items;
-    expect(inbox[0].title).toBe('استلمنا دفعتك مقابل Elden Ring key');
+    expect(inbox[0].title).toBe('وصل الدفع. Elden Ring key عند البائع');
     expect(inbox[0].body).toContain('$32.49'); // Latin prices inside Arabic text
 
     await dispatchEmails(h.ctx);
-    const mail = sent.find((m) => m.to === u.email)!;
-    expect(mail.subject).toBe('استلمنا دفعتك مقابل Elden Ring key');
+    const mail = sent.find((m) => m.to === u.email && !/جاهز/.test(m.subject ?? ''))!; // the welcome email comes first
+    expect(mail.subject).toBe('وصل الدفع. Elden Ring key عند البائع');
     expect(mail.body).toContain('— فريق Bullizard');
     expect(mail.html).toContain('dir="rtl"');
 
-    const fr = render(h.ctx, 'order_refunded', { title: 'Clé', amount_cents: 10_00, currency: 'EUR', order_id: 'x' }, 'fr');
-    expect(fr.subject).toBe('Remboursement de Clé');
+    const fr = render(h.ctx, 'clawback', { title: 'Clé', amount_cents: 10_00, currency: 'EUR', order_id: 'x', reason: 'r', credit_note: 'CN-1' }, 'fr');
+    expect(fr.subject).toBe('Remboursement après versement : Clé');
     expect(fr.text).toMatch(/10,00\s€/); // French puts a narrow no-break space before the symbol
     expect(render(h.ctx, 'reconciliation_alert', { status: 'failed', issues: 1, started_at: 'today', summary: ['x'] }, 'fr').subject).toMatch(/^Reconciliation/);
   });
@@ -65,6 +65,8 @@ describe('messages in the user’s language', () => {
       request_id: 'q', budget_cents: 70, seller_name: 'S', delivery_hours: 6, revised: false,
       name: 'N', count: 2, path: '/market', top: [{ title: 'T', price_cents: 100, currency: 'USD', offer_id: 'f' }], role: 'buyer',
       hours: 48, status: 'escalated', percent: 40, note: 'Gold II',
+      order_ref: 'BZ-1', character: 'Ryo', tos_version: '2026-10-24', for_you: 'refund', result: 'Refunded to your balance', date: '2026-11-01',
+      days_left: 3, coin: 'USDT (TRC20)', fee_cents: 6, doc: 'terms', version: '2026-11-08', effective_at: new Date().toISOString(), address: '0xabc', tx: '0xtx', withdrawal_id: 'w', net_cents: 94,
     };
     for (const [locale, pack] of Object.entries(PACKS)) {
       for (const name of Object.keys(pack.templates) as TemplateName[]) {

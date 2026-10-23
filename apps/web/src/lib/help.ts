@@ -1,4 +1,5 @@
 import { helpPack, onLocaleChange } from '../i18n';
+import { PHASE2_UI } from './launch';
 
 /**
  * Help-centre articles. Plain data so it ships with the app and works offline; each article is a
@@ -28,12 +29,12 @@ const BASE_ARTICLES: HelpArticle[] = [
     slug: 'buyer-protection',
     topic: 'protection',
     title: "Bullizard Buyer Protection",
-    summary: "Your money reaches the seller only when you confirm you got your order.",
+    summary: "Your money is held until the delivery is proven and checked.",
     body: [
-      "When you pay, Bullizard holds the money. The seller sees the order is paid and delivers.",
-      "The seller is paid only when you confirm you received your order. You can confirm as soon as you have it, even before the seller marks it delivered.",
-      "- Not delivered in the promised time: the order is cancelled and you are refunded.\n- Not as described: open a dispute from the order page before you confirm. The money stays frozen until a Bullizard arbiter decides.\n- Game accounts: 14 days of insurance after delivery.",
-      "Keep the whole trade in the order chat. Deals made outside Bullizard are not protected.",
+      "When you pay, Bullizard holds the money. The seller delivers in-game and uploads a video or photo of the trade.",
+      "The seller is paid when you confirm. If you don't confirm, our staff check the proof and release it: never before 24 hours after delivery.",
+      "Not delivered, or wrong amount or item: open a dispute before you confirm. The money stays frozen until an arbiter decides; if they decide for you, it's refunded to your balance.",
+      "Keep the whole trade in the order chat. Deals made outside Bullizard aren't protected, and sharing outside contacts can get your account banned right away.",
     ],
     ticket: 'order',
   },
@@ -44,7 +45,7 @@ const BASE_ARTICLES: HelpArticle[] = [
     summary: "Your payment waits with us until you confirm you have what you paid for.",
     body: [
       "When you pay, the money goes into escrow, not to the seller. The seller only sees that the order is paid and can deliver.",
-      "There is no timer: the money stays in escrow until you confirm you received the order. Confirm only when you have everything.",
+      "There's no auto-release. The money stays held until you confirm, or until staff check the proof (never before 24 hours after delivery). Confirm only when you have everything.",
       "If something is wrong, open a dispute from the order page instead of confirming. The money stays frozen until it is settled.",
     ],
     ticket: 'order',
@@ -53,11 +54,10 @@ const BASE_ARTICLES: HelpArticle[] = [
     slug: 'order-not-delivered',
     topic: 'buying',
     title: 'My order hasn’t been delivered',
-    summary: 'What to do when a seller is late, and when you get your money back automatically.',
+    summary: 'What to do when a seller is late, and how you get your money back.',
     body: [
-      'Instant-delivery offers deliver the moment payment clears; check the order page. For manual offers, the seller promises a delivery time shown on the listing.',
-      'Message the seller in the order chat first; most delays are sorted there. If the promised time passes, we remind the seller, and if they still don’t deliver the order is cancelled and refunded to you automatically.',
-      'You can also open a dispute from the order page at any point while the payment is in escrow.',
+      "The seller's delivery time is on the offer. Message them in the order chat first. Most delays are sorted there.",
+      "Still nothing? Open a dispute from the order page. Staff check the chat and proof; if the order wasn't delivered, you're refunded to your balance. Orders are never cancelled automatically.",
     ],
     ticket: 'order',
   },
@@ -103,7 +103,7 @@ const BASE_ARTICLES: HelpArticle[] = [
     title: 'Filtering by server, region, platform and rank',
     summary: 'Use the pickers on each game page to see only offers that work for you.',
     body: [
-      'Many games split their market: League of Legends by server, Valorant by region, World of Warcraft by realm and faction, CS2 skins by exterior. Open a game, pick a category, and use the pickers above the offer table.',
+      'Each game splits its market: Albion Online by server, Path of Exile by league and mode (Softcore/Hardcore), Aion by server and region. Pick a category, then use the filters above the offers.',
       'Each option shows how many live offers it has with your other filters applied. Sellers must fill these fields in, so a filter is reliable.',
     ],
   },
@@ -137,7 +137,7 @@ const BASE_ARTICLES: HelpArticle[] = [
     summary: "Refunds land in your Bullizard balance straight away.",
     body: [
       "When an order is refunded, the money goes to your Bullizard balance at once. You can see it on your Wallet page.",
-      "Use it on your next order, or withdraw it to your crypto wallet (USDT TRC-20). A withdrawal fee applies and the treasury sends it after approval.",
+      "Use it on your next order, or withdraw it in crypto. 6% withdrawal fee, minimum $1.50. It's sent after approval.",
     ],
     ticket: 'payment',
   },
@@ -156,13 +156,10 @@ const BASE_ARTICLES: HelpArticle[] = [
   {
     slug: 'invite-friends',
     topic: 'account',
-    title: "Invite friends and earn",
-    summary: "20% of Bullizard’s commission on every order your friends make, for as long as they stay active.",
+    title: "Invite friends, earn 20%",
+    summary: "Share your invite link and earn 20% of Bullizard's commission on every order your friends complete, for as long as they stay active.",
     body: [
-      "Your invite link is on your account page. Anyone who signs up through it is your friend on Bullizard for good.",
-      "On every order they complete, you earn a share of Bullizard’s commission on that order (20% at launch; Bullizard can change the rate). It starts with their first completed order and keeps coming while they stay active — no gap of more than a year between their orders.",
-      "- Earnings land in your balance and can be withdrawn under the normal withdrawal rules (6%, minimum $1.50).\n- The share is of our commission, not of the order total: on a $100 order with a 13.99% commission, you earn 20% of $13.99.\n- Nothing is paid between accounts that share a device, card or wallet.",
-      "Creators with a creator code earn separately; the two programs don’t stack on the same order for the same person.",
+      "Share your invite link. When a friend signs up with it and completes their first order, you start earning 20% of Bullizard's commission on every order they complete, for as long as they stay active. Earnings land in your balance: spend them or withdraw.",
     ],
     ticket: 'account',
   },
@@ -173,7 +170,8 @@ const BASE_ARTICLES: HelpArticle[] = [
     summary: 'You set your price and receive it in full; the commission is added on top for the buyer and falls as your rank grows.',
     body: [
         'You enter the price you want. The commission for your rank is added on top for the buyer, so the amount you typed is exactly what lands in your balance when the order completes. Ranks are set by your completed sales over the last 30 days; new sellers pay a reduced launch rate for their first 60 days.',
-        'The sell form shows what buyers will pay in each currency, and what you keep after the withdrawal fee, before you publish. Your rank and progress are on the seller hub.',
+        'The sell form shows what buyers will pay in each currency before you publish. Your rank and progress are on the seller hub.',
+        'Ranks by 30-day sales: Hatchling $0 · 13.99% → Scale $500 · 12.99% → Fang $2,000 · 11.99% → Basilisk $5,000 · 10.99% → Dragon $15,000 · 9.99%. New sellers pay 5% for their first 60 days. Example: you set $10 → the buyer pays $11.63 (or $10.53 in the promo), and you earn $10.',
       ],
     ticket: 'selling',
   },
@@ -181,11 +179,9 @@ const BASE_ARTICLES: HelpArticle[] = [
     slug: 'getting-paid',
     topic: 'selling',
     title: 'Getting paid',
-    summary: 'Withdraw to your crypto wallet (USDT) once the buyer confirms; a 6% fee applies.',
+    summary: 'Withdraw in crypto once the order is confirmed or released; a 6% fee applies.',
     body: [
-        'Money from a sale becomes available when the buyer confirms the order. Withdraw it from the seller hub to the payout address you confirmed by email; the treasury approves and sends it in USDT.',
-        'New sellers may have a short payout hold while we build trust; the hub shows when held money is released.',
-        'If a refund or chargeback takes your balance below zero, new sales pay it down first and withdrawals pause until it is settled.',
+        'Money from a sale becomes available when the buyer confirms, or when staff release the order after checking your proof (never before 24 hours). Withdraw in crypto to the address you confirmed by email. Fee: 6%, minimum $1.50. Withdrawals are approved and sent within about 3 working days.',
       ],
     ticket: 'selling',
   },
@@ -226,9 +222,9 @@ const BASE_ARTICLES: HelpArticle[] = [
     slug: 'verify-identity',
     topic: 'account',
     title: 'Verifying your identity',
-    summary: 'Level 1 to buy, level 2 (photo ID) to sell.',
+    summary: 'Level 1 to buy and start selling; level 2 (photo ID) within 30 days of your first offer.',
     body: [
-      'Level 1 means a verified email and phone number; it’s enough to buy. Level 2 adds a photo ID and a liveness check through our verification partner, and is required to sell.',
+      'Level 1 is a verified email and phone. That\'s enough to buy and to start selling. Level 2 is a photo ID and a short selfie video, due within 30 days of your first offer; after that, selling and withdrawals pause until it\'s done.',
       'Verification usually takes a few minutes. If it fails, check the photo is sharp and every corner of the document is visible, then try again.',
     ],
     ticket: 'account',
@@ -268,13 +264,16 @@ const BASE_TICKET_LABELS: Record<string, string> = {
 
 // The exports below are live bindings: they are rebuilt in the active language whenever it changes
 // (falling back to English for anything a translation leaves out).
+/** Articles about phase-2 features (account insurance): kept for the full demo, hidden at launch. */
+const HIDDEN_AT_LAUNCH = new Set(['account-insurance']);
+const visible = (a: HelpArticle) => PHASE2_UI || !HIDDEN_AT_LAUNCH.has(a.slug);
 export let HELP_TOPICS = BASE_TOPICS;
-export let HELP_ARTICLES = BASE_ARTICLES;
+export let HELP_ARTICLES = BASE_ARTICLES.filter(visible);
 export let TICKET_CATEGORY_LABEL = BASE_TICKET_LABELS;
 function localize() {
   const pack = helpPack();
   HELP_TOPICS = pack ? (Object.fromEntries(Object.entries(BASE_TOPICS).map(([k, v]) => [k, pack.topics[k] ?? v])) as typeof BASE_TOPICS) : BASE_TOPICS;
-  HELP_ARTICLES = pack ? BASE_ARTICLES.map((a) => ({ ...a, ...pack.articles[a.slug] })) : BASE_ARTICLES;
+  HELP_ARTICLES = (pack ? BASE_ARTICLES.map((a) => ({ ...a, ...pack.articles[a.slug] })) : BASE_ARTICLES).filter(visible);
   TICKET_CATEGORY_LABEL = pack ? { ...BASE_TICKET_LABELS, ...pack.ticketCategories } : BASE_TICKET_LABELS;
 }
 localize();

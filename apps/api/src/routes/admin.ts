@@ -6,7 +6,7 @@ import { many, maybeOne, one, withTx } from '../db.js';
 import { receiveChargeback } from '../domain/chargebacks.js';
 import { withScope } from '../domain/events.js';
 import { reviewOwnerProof } from '../domain/offers.js';
-import { releaseByStaff, resolveDispute, unconfirmedDeliveries } from '../domain/orders.js';
+import { LEAD_REVIEW_ABOVE_CENTS, releaseByStaff, resolveDispute, unconfirmedDeliveries } from '../domain/orders.js';
 import { setReviewHidden } from '../domain/reviews.js';
 import { runReconciliation } from '../domain/reconciliation.js';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
@@ -40,6 +40,7 @@ import { listCryptoRefunds, markRefundSent } from '../domain/cryptoPayments.js';
 import { decideWithdrawal, listPendingWithdrawals } from '../domain/cryptoPayouts.js';
 import { commissionSettings, listRanks, updateRanks } from '../domain/commission.js';
 import { referralSettings, updateReferralSettings } from '../domain/referrals.js';
+import { LEGAL_DOCS, publishDocument } from '../domain/legal.js';
 import { INACTIVE_SELLER_DAYS, LEAGUE_GAMES, createLeague, expireEndedLeagueListings, listLeagues, updateLeague } from '../domain/leagues.js';
 import { enforceIdDeadlines, listQuestions, rulesSettings, updateRulesTest } from '../domain/onboarding.js';
 import { createAffiliate, listAffiliates, updateAffiliate } from '../domain/affiliates.js';
@@ -71,9 +72,11 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return many(
       ctx.db,
       `SELECT d.*, o.amount_cents, o.currency, o.buyer_id, o.seller_id, r.id AS room_id, f.title AS offer_title,
+              (o.amount_cents > $1) AS lead_review,
               (SELECT count(*)::int FROM dispute_statements s WHERE s.dispute_id = d.id) AS statements
          FROM disputes d JOIN orders o ON o.id = d.order_id JOIN chat_rooms r ON r.order_id = o.id JOIN offers f ON f.id = o.offer_id
         WHERE d.status = 'open' ORDER BY d.created_at LIMIT 200`,
+      [LEAD_REVIEW_ABOVE_CENTS],
     );
   });
   /** The arbiter's case file: one timeline, the listing as bought, payment checks, both sides' records. */
@@ -87,9 +90,9 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.post('/admin/disputes/:id/resolve', async (req) => {
     const arbiter = requirePermission(req, 'disputes.manage');
-    const body = z.object({ outcome: z.enum(['buyer', 'seller']), note: z.string().min(3).max(2_000) }).parse(req.body);
+    const body = z.object({ outcome: z.enum(['buyer', 'seller', 'split']), refundCents: z.number().int().positive().optional(), note: z.string().min(3).max(2_000) }).parse(req.body);
     const { id } = Id.parse(req.params);
-    const res = await resolveDispute(ctx, id, arbiter.id, body.outcome, body.note);
+    const res = await resolveDispute(ctx, id, arbiter.id, body.outcome, body.note, body.refundCents);
     await audit(ctx.db, req, 'dispute.resolve', { type: 'dispute', id }, body);
     return res;
   });
@@ -209,6 +212,45 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     await ctx.db.query(`UPDATE users SET status = 'suspended', suspension_reason = $2 WHERE id = $1`, [id, reason]);
     await audit(ctx.db, req, 'user.suspend', { type: 'user', id }, { reason });
     return { suspended: true };
+  });
+
+  /** Listing ban (penalty ladder step 2): the account stays, but it can't create or relist offers; live offers pause. */
+  app.post('/admin/users/:id/listing-ban', async (req) => {
+    requirePermission(req, 'moderation.manage'); // the penalty ladder's middle rung: support (the Lead) and arbiters
+    const { on, reason } = z.object({ on: z.boolean(), reason: z.string().trim().min(3).max(500).optional() }).parse(req.body);
+    const { id } = Id.parse(req.params);
+    if (on) {
+      await ctx.db.query(`UPDATE users SET listing_banned_at = now(), listing_ban_reason = $2 WHERE id = $1`, [id, reason ?? null]);
+      await ctx.db.query(`UPDATE offers SET status = 'paused', expired_reason = 'listing_ban', version = version + 1, updated_at = now() WHERE seller_id = $1 AND status = 'active'`, [id]);
+    } else {
+      await ctx.db.query(`UPDATE users SET listing_banned_at = NULL, listing_ban_reason = NULL WHERE id = $1`, [id]);
+      await ctx.db.query(`UPDATE offers SET status = 'active', expired_reason = NULL, version = version + 1, updated_at = now() WHERE seller_id = $1 AND status = 'paused' AND expired_reason = 'listing_ban'`, [id]);
+    }
+    await audit(ctx.db, req, on ? 'user.listing_ban' : 'user.listing_unban', { type: 'user', id }, { reason });
+    return { listingBanned: on };
+  });
+
+  // --- Legal documents (Terms, Privacy, Seller Agreement, Refunds, restricted countries) -------------
+  app.get('/admin/legal', async (req) => {
+    requirePermission(req, 'support.manage');
+    return many(ctx.db, 'SELECT doc, locale, version, effective_at, title, sha256, material, created_at FROM legal_documents ORDER BY doc, effective_at DESC, locale');
+  });
+  app.put('/admin/legal/:doc', async (req) => {
+    const staff = requirePermission(req, 'support.manage');
+    const { doc } = z.object({ doc: z.enum(LEGAL_DOCS) }).parse(req.params);
+    const body = z
+      .object({
+        lang: z.string().regex(/^[a-z]{2}$/).default('en'),
+        version: z.string().trim().min(1).max(40),
+        effectiveAt: z.string().datetime().optional(),
+        title: z.string().trim().min(2).max(120),
+        contentMd: z.string().min(20).max(400_000),
+        material: z.boolean().default(false),
+      })
+      .parse(req.body);
+    const row = await publishDocument(ctx, staff.id, { doc, ...body });
+    await audit(ctx.db, req, 'legal.publish', { type: 'legal_document', id: `${doc}:${body.lang}:${body.version}` }, { material: body.material, effectiveAt: body.effectiveAt });
+    return row;
   });
 
   app.get('/admin/reconciliation', async (req) => {
@@ -359,7 +401,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const user = requirePermission(req, 'rules.manage');
     const body = z
       .object({
-        questions: z.array(z.object({ id: z.string().uuid().optional(), position: z.number().int().min(1).max(100), question: z.string().trim().min(10).max(500), options: z.array(z.string().trim().min(1).max(200)).min(2).max(6), correct: z.number().int().min(0).max(5), explanation: z.string().trim().max(600).default(''), active: z.boolean().default(true) })).min(1).max(50),
+        questions: z.array(z.object({ id: z.string().uuid().optional(), position: z.number().int().min(1).max(100), question: z.string().trim().min(10).max(500), options: z.array(z.string().trim().min(1).max(200)).min(2).max(6), correct: z.number().int().min(0).max(5), explanation: z.string().trim().max(600).default(''), active: z.boolean().default(true), question_ar: z.string().trim().max(500).nullable().optional(), options_ar: z.array(z.string().trim().min(1).max(200)).max(6).nullable().optional(), explanation_ar: z.string().trim().max(600).nullable().optional() })).min(1).max(50),
         settings: z.object({ passMarkPct: z.number().int().min(1).max(100).optional(), idDueDays: z.number().int().min(1).max(365).optional() }).optional(),
       })
       .parse(req.body);

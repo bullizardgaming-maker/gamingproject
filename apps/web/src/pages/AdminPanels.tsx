@@ -642,7 +642,7 @@ export function LeaguesPanel() {
 
 /** The seller rules test: questions, the right answer, the pass mark and the ID deadline (support). */
 export function RulesTestPanel() {
-  type Q = { id?: string; position: number; question: string; options: string[]; correct: number; explanation: string; active: boolean };
+  type Q = { id?: string; position: number; question: string; options: string[]; correct: number; explanation: string; active: boolean; question_ar?: string | null; options_ar?: string[] | null; explanation_ar?: string | null };
   const { data, error, reload, setError } = useLoad(() => api<{ questions: Q[]; settings: { passMarkPct: number; idDueDays: number } }>('/admin/rules-test'));
   const [qs, setQs] = useState<Q[]>([]);
   const [settings, setSettings] = useState({ passMarkPct: 100, idDueDays: 30 });
@@ -659,7 +659,7 @@ export function RulesTestPanel() {
     setError('');
     setMsg('');
     try {
-      await api('/admin/rules-test', { method: 'PUT', body: { questions: qs.map((q, i) => ({ ...q, position: i + 1 })), settings } });
+      await api('/admin/rules-test', { method: 'PUT', body: { questions: qs.map((q, i) => ({ ...q, position: i + 1, options_ar: q.options_ar?.every((o) => o?.trim()) ? q.options_ar : null })), settings } });
       setMsg('Saved. New sellers get the updated test at once.');
       reload();
     } catch (e: any) {
@@ -693,6 +693,16 @@ export function RulesTestPanel() {
             {q.options.length < 6 && <button className="btn ghost small" style={{ alignSelf: 'start' }} onClick={() => set(i, { options: [...q.options, ''] })}>Add option</button>}
           </div>
           <label className="field">Explanation shown when missed<input value={q.explanation} onChange={(e) => set(i, { explanation: e.target.value })} /></label>
+          <details>
+            <summary className="small muted" style={{ cursor: 'pointer' }}>Arabic (shown to sellers using the app in Arabic){q.question_ar ? ' ✓' : ' — not yet'}</summary>
+            <div className="stack" style={{ marginTop: 8 }} dir="rtl">
+              <label className="field">السؤال<textarea aria-label={`Question ${i + 1} (Arabic)`} value={q.question_ar ?? ''} rows={2} onChange={(e) => set(i, { question_ar: e.target.value || null })} /></label>
+              {q.options.map((_, k) => (
+                <input key={k} aria-label={`Question ${i + 1} option ${k + 1} (Arabic)`} placeholder={`الخيار ${k + 1}`} value={q.options_ar?.[k] ?? ''} onChange={(e) => set(i, { options_ar: q.options.map((__, j) => (j === k ? e.target.value : (q.options_ar?.[j] ?? ''))) })} />
+              ))}
+              <label className="field">الشرح عند الخطأ<input value={q.explanation_ar ?? ''} onChange={(e) => set(i, { explanation_ar: e.target.value || null })} /></label>
+            </div>
+          </details>
         </div>
       ))}
       <div className="row">

@@ -99,6 +99,8 @@ const Env = z.object({
   PAYOUT_HOLD_DAYS_TRUSTED: z.coerce.number().int().min(0).max(90).default(0),
   PAYOUT_HOLD_DAYS_WATCH: z.coerce.number().int().min(0).max(90).default(14),
   LATE_AUTO_REFUND_HOURS: z.coerce.number().int().min(1).default(48),
+  /** Off at launch (CEO, Oct 24): no automatic cancel/refund of late orders and no buyer self-cancel; disputes only. */
+  AUTO_REFUND_LATE_ORDERS: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
   // Seller debt collection: reminder days after a balance goes negative, then pause the shop.
   DEBT_REMINDER_DAYS: z.string().default('0,3,7').transform((v) => v.split(',').map(Number).filter((n) => Number.isFinite(n) && n >= 0).sort((a, b) => a - b)),
   DEBT_PAUSE_AFTER_DAYS: z.coerce.number().min(0).default(14),
@@ -184,7 +186,6 @@ const Env = z.object({
   // Off-platform contact: the offence that bans (1 = instant ban on the first offence). Earlier ones warn.
   OFFPLATFORM_SUSPEND_STRIKES: z.coerce.number().int().min(1).default(3),
   ORDER_PAYMENT_TTL_MINUTES: z.coerce.number().default(30),
-  TOS_VERSION: z.string().default('2026-09-01'),
   // Admin/arbiter actions need a session signed in with a second factor (PCI DSS 8.4). Defaults to on in production.
   STAFF_MFA_REQUIRED: z.enum(['true', 'false']).optional(),
   RUN_WORKER_IN_PROCESS: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),

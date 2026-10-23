@@ -60,7 +60,6 @@ export function BuyerCard({ orderId, name, rep, rating, canRate, onDone }: {
       <ul className="m-0 flex list-none flex-wrap gap-x-4 gap-y-1 p-0 small muted">
         <li>{positiveLine(rep)}</li>
         <li>{t('buyerRep.disputesLost', { lost: rep.disputesLost, opened: rep.disputesOpened })}</li>
-        <li>{t('buyerRep.chargebacks', { n: rep.chargebacks })}</li>
       </ul>
       {rep.topTags.length > 0 && (
         <div className="row" style={{ gap: 6 }}>
@@ -116,7 +115,6 @@ export function MyBuyerReputation() {
         <li>{t('buyerRep.purchases', { count: rep.completedOrders })}</li>
         <li>{positiveLine(rep)}</li>
         <li>{t('buyerRep.disputesLost', { lost: rep.disputesLost, opened: rep.disputesOpened })}</li>
-        <li>{t('buyerRep.chargebacks', { n: rep.chargebacks })}</li>
       </ul>
       {rep.topTags.length > 0 && (
         <div className="row" style={{ gap: 6 }}>

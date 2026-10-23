@@ -34,7 +34,7 @@ export function EscrowTrack({ amountCents, stage, variant, elapsed = 0, windowLa
       <div className="track-stops">
         <div className={`track-stop ${stage >= 0 ? 'on' : ''}`}>
           <b>{t('escrow.buyerPays')}</b>
-          <span>{variant === 'refunded' ? t('escrow.refundedToCard') : t('escrow.cardOrUsdc')}</span>
+          <span>{variant === 'refunded' ? t('order.status.refunded') : t('trust.crypto.text')}</span>
         </div>
         <div className={`track-stop ${stage >= 1 ? 'on' : ''}`}>
           <b>{variant === 'disputed' ? t('escrow.frozenByDispute') : t('escrow.heldInEscrow')}</b>

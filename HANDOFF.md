@@ -242,7 +242,87 @@ Tests: `frontend-requests.test.ts` (one case per item), coin order/fields in `cr
 
 Tests: `promos-fx.test.ts` (recurring referral, rate change, inactivity), `merchant-api-switch.test.ts`,
 `e2e/launch-decisions.spec.ts` (terms line + Terms page, invite card and help article, translated chat notice, hidden
-Developers page). 72 API files and 123 browser tests green.
+Developers page).
+
+### Round 19, second pass (Oct 24) — copy deck, legal pack, support console gaps
+
+Shared contract for the API/web split: `docs/ROUND19-CONTRACT.md`. The copy deck as read: `docs/copy-deck.md`.
+
+**A. Front-end fixes and CEO decisions**
+- Chat: the API now emits the deck's codes (`order_created`, `paid` {character}, `delivered`, `confirmed_early`,
+  `completed`, `staff_released`, `follow_up`, `dispute_opened`, `dispute_buyer`, `dispute_seller`, `refunded`,
+  `underpaid`, `delivery_late` as a warning). `systemText()` renders `sys.<code>` (deck §2.8, EN+AR) first, then the
+  older `chat.ev.*` keys, then the server's English. No amounts in any of them.
+- Referral: the share starts after the friend's **first** completed order (`referral_rewards.reason = first_order` for
+  that one); active = a completed order in the last **30 days** (`referral_settings.active_days` now 30, migration
+  067); still staff-editable. No per-order email: the hourly job `referral_digests` sends one `referral_earned` email
+  per referrer per day (dedupe `referral_earned:<id>:<day>`).
+- Buy box: "By buying you agree to the Terms" sits directly under Buy now at 13px (`.of-agree`), the link opens
+  `/terms` in a new tab. `offer.tos` and `checkout.rules` are gone; the order page shows "Terms v{version} accepted on
+  {date}" instead, linking to that exact version.
+- Merchant API stays hidden (Round 19 first pass); `footer.api` deleted.
+
+**B. Copy deck §8** — applied by the web pass: all `[CHANGE]`/`[NEW]` keys EN+AR, §0.4 keys deleted or gated behind
+`PHASE2_UI` (full demo only), `err.<code>` mapping in `src/api.ts` (server message when no key; `err.generic` only for
+5xx/unknown; `err.network` offline), `rank.name.*`/`rank.perk.*` wherever a rank shows, help-centre fixes +
+`invite-friends`, per-game SEO blocks on the five launch game pages. Emails (`notifications.ts`, Arabic in
+`locales/ar.ts`): new `welcome` (on sign-up), `order_completed`, `kyc_due_reminder` (replaces id_reminder/id_overdue),
+`referral_earned` (daily digest), `legal_change`; rewritten per §5: `order_paid` (order ref, character, Terms version
++ link), `seller_new_order`, `order_delivered`, `seller_paid`, `dispute_opened`, `dispute_resolved` (per-side text),
+`withdrawal_requested`, `withdrawal_paid`, `order_refunded` (back in balance), `delivery_late`, `delivery_overdue`,
+`kyc_result`. Switched off (§5.13; inbox item still appears, no email, `notifications.status = skipped`):
+`protection_ending`, `chargeback_received`, `warranty_claim`, `warranty_update`, `order_progress`, `request_posted`,
+`request_proposal`, `request_accepted`. ES/FR/DE/PT copies of changed templates removed (English fallback until
+translated). `site_texts.chat_safety` EN updated + AR row (§2.8). Auto-cancel/auto-refund of late orders is off:
+`AUTO_REFUND_LATE_ORDERS=false` (default); `POST /orders/:id/cancel-late` answers 409 `disputes_only` and the worker
+job skips; the late-delivery chat warning (`delivery_late`) still posts. Tests run with it on.
+
+**C. Legal pack** (migration 067, `src/domain/legal.ts`, `apps/web/src/pages/Legal.tsx`)
+- `legal_documents` (doc, locale, version, effective_at, title, content_md, sha256, material, created_by), seeded with
+  interim English rows version `2026-10-24` for terms, privacy, seller-agreement, refunds, restricted-countries.
+  Legal's approved text goes in through Ops: `PUT /admin/legal/:doc { lang, version, effectiveAt, title, contentMd,
+  material }` (`support.manage`); a material change must take effect ≥ 14 days later, emails every active user once
+  (`legal_change`) and shows a banner from `GET /features.legal.notice` until then; after it takes effect
+  `GET /me/legal` reports `reacceptanceRequired` and the app shows an accept bar (`POST /me/legal/accept`).
+- `TOS_VERSION` env var removed; the version comes from the table (`tosVersion()`), recorded on sign-up
+  (`users.tos_version`, `tos_accepted_at`) and on every order (`orders.tos_version`), and sent in the order-paid email.
+- Sign-up requires `acceptTerms: true` ("I'm 18 or older and agree to the Terms and Privacy Policy", links open in a
+  new tab); 400 without it.
+- Public pages `/terms`, `/privacy`, `/seller-agreement`, `/refunds`, `/restricted-countries` (API-backed, version +
+  date on each, Arabic when a row exists), `/terms/history` (every version with its hash), `/terms/versions/:v`.
+  Linked from the footer (with the `footer.legal` 18+ line) and a "Legal documents" block in the help centre.
+
+**D. Support console gaps**
+- Split decisions: `POST /admin/disputes/:id/resolve { outcome: 'split', refundCents, note }` → `refundCents` to the
+  buyer's balance, the rest (minus its share of the commission) to the seller; `disputes.status = resolved_split`,
+  `refund_cents`. Buyer-favour refunds of crypto/balance orders now land in the buyer's balance too (no on-chain refund
+  queue; `postRefund`), withdrawable at the standard fee.
+- Listing ban: `POST /admin/users/:id/listing-ban { on, reason }` (`moderation.manage`) sets `users.listing_banned_at`,
+  pauses the seller's active listings (`expired_reason = listing_ban`) and restores them on lift; creating/relisting
+  answers 403 `listing_banned`. Ticket category `appeal`.
+- Rules test: `rules_questions.question_ar/options_ar/explanation_ar`, `GET /seller/rules-test?lang=ar`, pass mark 90%,
+  the 13 deck questions seeded (old six retired). `PUT /admin/rules-test` accepts the Arabic fields.
+- Ops → Moderation offence actions now `warn, suspend, ban`; instant ban for payment details (incl. Fawry, Orange Cash,
+  Vodafone Cash, InstaPay, Etisalat Cash, bank/IBAN), wallet addresses, other marketplaces, recruiting, impersonation,
+  ban dodging. Filter also catches Egyptian local numbers (01x…, Arabic digits), look-alike letters (Cyrillic/Greek/
+  full-width), and platform names split across the sender's last three messages (`detectSplit`).
+- Orders above $200 carry `lead_review: true` in `GET /admin/disputes`, `GET /admin/orders/unconfirmed` and the staff
+  view of an order.
+
+**E. Checked**
+- Unverified sellers withdraw during their first 30 days; once `selling_restricted_at` is set (ID deadline passed) the
+  crypto withdrawal path answers 403 `kyc_overdue` for earnings (refund credit stays withdrawable).
+- Refunds (full and split) land in the buyer balance; `POST /me/withdrawals` charges 6% with the $1.50 floor.
+
+**F. Staging** waits on the CEO's Render/Neon/domain/Vercel accounts (`docs/HOSTING.md`); then deploy and run
+`apps/api/scripts/money-paths.ts`.
+
+Tests: `round19.test.ts` (legal docs + notice + re-acceptance, split decisions, Lead flag, listing ban + appeal, filter
+additions incl. split messages and instant ban, Arabic rules test, referral first-order rule), updates in
+`crypto-payments` (refund to balance + withdrawal fee; 30-day withdrawal rule), `moderation`, `chat`, `promos-fx`,
+`onboarding`, `locale`, `sessions-and-email`, `notification-centre`, `frontend-requests`; e2e `onboarding`, `crypto`,
+`launch-decisions` updated. 73 API files green (the four date-window tests — analytics, exports, tax, clawback
+statement — only fail when run between 22:00 and 24:00 UTC because the DB runs in Africa/Cairo); browser suite green.
 
 ## Suggested next round
 

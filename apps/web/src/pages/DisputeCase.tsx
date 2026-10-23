@@ -16,11 +16,12 @@ const FACTS: Array<[string, string, (v: any) => 'good' | 'bad' | 'neutral']> = [
 ];
 
 /** Operations → Disputes → case file: everything for one decision on one screen (reads are audited). */
-export function DisputeCase({ id, onResolve }: { id: string; onResolve: (outcome: 'buyer' | 'seller', note: string) => void }) {
+export function DisputeCase({ id, onResolve }: { id: string; onResolve: (outcome: 'buyer' | 'seller' | 'split', note: string, refundCents?: number) => void }) {
   const [file, setFile] = useState<any>(null);
   const [error, setError] = useState('');
   const [only, setOnly] = useState<string>('all');
   const [note, setNote] = useState('');
+  const [split, setSplit] = useState('');
   useEffect(() => void api(`/admin/disputes/${id}/case`).then(setFile).catch((e) => setError(e.message)), [id]);
   if (error) return <div className="alert" role="alert">{error}</div>;
   if (!file) return <p className="muted">Loading case file…</p>;
@@ -127,10 +128,22 @@ export function DisputeCase({ id, onResolve }: { id: string; onResolve: (outcome
       {dispute.status === 'open' && (
         <div className="card stack">
           <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Decision note (shared in the order record)" style={{ minHeight: 70 }} />
-          <div className="row">
+          <div className="row" style={{ flexWrap: 'wrap', gap: 10 }}>
             <button className="btn ghost" disabled={note.trim().length < 3} onClick={() => onResolve('buyer', note)}>Refund buyer</button>
             <button className="btn release" disabled={note.trim().length < 3} onClick={() => onResolve('seller', note)}>Release to seller</button>
+            <span className="row" style={{ gap: 6 }}>
+              <label className="small muted" htmlFor="split-amount">Split: refund the buyer</label>
+              <input id="split-amount" type="number" min={0.01} max={order.amount_cents / 100 - 0.01} step={0.01} value={split} onChange={(e) => setSplit(e.target.value)} style={{ width: 110 }} placeholder="0.00" aria-label="Refund amount for a split decision" />
+              <button
+                className="btn ghost"
+                disabled={note.trim().length < 3 || !(Number(split) > 0) || Math.round(Number(split) * 100) >= order.amount_cents}
+                onClick={() => onResolve('split', note, Math.round(Number(split) * 100))}
+              >
+                Split: rest to seller
+              </button>
+            </span>
           </div>
+          <p className="small muted" style={{ margin: 0 }}>Refunds go to the buyer's Bullizard balance. A split sends the amount above to the buyer and releases the rest to the seller.{order.amount_cents > 200_00 ? ' This order is above $200: the Lead decides.' : ''}</p>
         </div>
       )}
     </div>

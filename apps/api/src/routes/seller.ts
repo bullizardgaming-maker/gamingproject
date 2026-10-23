@@ -254,10 +254,10 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
   });
   /** Sell-form preview: buyer price at the seller's rate and what is left after the withdrawal fee. */
   // ---- Onboarding: the rules test before the first listing; the ID deadline on the dashboard ----
-  app.get('/seller/rules-test', async (req) => rulesTestFor(ctx.db, me(req)));
+  app.get('/seller/rules-test', async (req) => rulesTestFor(ctx.db, me(req), z.object({ lang: z.string().max(10).optional() }).parse(req.query).lang ?? me(req).locale ?? 'en'));
   app.post('/seller/rules-test', async (req) => {
-    const { answers } = z.object({ answers: z.record(z.string().uuid(), z.number().int().min(0).max(9)) }).parse(req.body);
-    return submitRulesTest(ctx, me(req), answers);
+    const { answers, lang } = z.object({ answers: z.record(z.string().uuid(), z.number().int().min(0).max(9)), lang: z.string().max(10).optional() }).parse(req.body);
+    return submitRulesTest(ctx, me(req), answers, lang ?? me(req).locale ?? 'en');
   });
   app.get('/seller/onboarding', async (req) => onboardingStatus(ctx.db, me(req).id));
 

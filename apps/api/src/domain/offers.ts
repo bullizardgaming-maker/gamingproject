@@ -124,8 +124,9 @@ export const OFFER_LIST_SQL = `
  * (Tier 2) is due within 30 days of the first listing (domain/onboarding.ts), after which selling
  * is restricted until it is done.
  */
-export function requireSeller(user: { kyc_tier: number; status: string; rules_passed_at?: string | null; selling_restricted_at?: string | null }) {
+export function requireSeller(user: { kyc_tier: number; status: string; rules_passed_at?: string | null; selling_restricted_at?: string | null; listing_banned_at?: string | null }) {
   if (user.status !== 'active') throw forbidden('suspended', 'Account suspended');
+  if (user.listing_banned_at) throw forbidden('listing_banned', 'Your account can’t list offers right now. Open an appeal from the help centre.');
   if (user.kyc_tier < 1) throw forbidden('tier1_required', 'Verify your email and phone before selling');
   if (!user.rules_passed_at) throw forbidden('rules_test_required', 'Pass the seller rules test before your first listing');
   if (user.selling_restricted_at && user.kyc_tier < 2) throw forbidden('kyc_overdue', 'Verify your identity to keep selling: the 30-day deadline has passed');

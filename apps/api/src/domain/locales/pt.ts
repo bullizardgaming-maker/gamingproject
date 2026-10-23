@@ -6,64 +6,9 @@ const pt: LocalePack = {
   manage: 'Gerenciar e-mails',
   verifyCode: (code, minutes) => `Seu código de verificação é ${code}. Ele expira em ${minutes} minutos.`,
   templates: {
-    order_paid: {
-      subject: (d) => `Pagamento recebido por ${d.title}`,
-      body: (d, link, h) => `Recebemos ${h.money(d.amount_cents, d.currency)} por “${d.title}”. O valor fica em custódia e o vendedor só recebe quando você tiver o produto.\n\nAcompanhe o pedido: ${link(`/orders/${d.order_id}`)}`,
-    },
-    order_delivered: {
-      subject: (d) => `Entregue: ${d.title}`,
-      body: (d, link, h) =>
-        `Seu pedido “${d.title}” foi entregue. Abra a página do pedido para ver.\n\n` +
-        (d.protection === 'insurance_14d'
-          ? `Esta conta tem seguro de 14 dias até ${h.when(d.protection_ends_at)}. Complete agora o checklist de segurança: troque a senha, o e-mail de recuperação e o 2FA.`
-          : d.protection_ends_at
-            ? `Você tem até ${h.when(d.protection_ends_at)} para conferir. Se algo estiver errado, abra uma disputa antes disso.`
-            : `Confira e confirme o pedido; o vendedor só recebe quando você confirma. Se algo estiver errado, abra uma disputa.`) +
-        `\n\n${link(`/orders/${d.order_id}`)}`,
-    },
-    order_refunded: {
-      subject: (d) => `Reembolso de ${d.title}`,
-      body: (d, link, h) => `${h.money(d.amount_cents, d.currency)} foram devolvidos ao seu meio de pagamento original. Reembolsos no cartão costumam aparecer em 5 a 10 dias úteis.\n\n${link(`/orders/${d.order_id}`)}`,
-    },
-    delivery_late: {
-      subject: (d) => `Seu pedido está atrasado: ${d.title}`,
-      body: (d, link, h) =>
-        `O vendedor prometeu entregar até ${h.when(d.delivery_due_at)} e ainda não entregou. Você pode esperar ou cancelar agora com reembolso total. ` +
-        `Se não for entregue em ${d.auto_refund_hours} horas, reembolsamos automaticamente.\n\n${link(`/orders/${d.order_id}`)}`,
-    },
-    delivery_overdue: {
-      subject: (d) => `Atrasado: entregue ${d.title} agora`,
-      body: (d, link, h) =>
-        `Você prometeu entregar até ${h.when(d.delivery_due_at)}. O comprador já pode cancelar com reembolso total, e o pedido será reembolsado automaticamente em ${d.auto_refund_hours} horas. ` +
-        `Atrasos reduzem sua taxa de pontualidade, que aparece no seu perfil.\n\n${link(`/orders/${d.order_id}`)}`,
-    },
-    referral_reward: {
-      subject: (d, h) => `Ganhaste ${h.money(d.amount_cents, d.currency)} com o pedido de um amigo`,
-      body: (d, link, h) => `Um amigo que convidaste concluiu um pedido. A tua parte de ${d.rate_pct}% da nossa comissão, ${h.money(d.amount_cents, d.currency)}, está no teu saldo e continua a chegar em cada pedido dele enquanto se mantiver ativo.\n\n${link('/account')}`,
-    },
     protection_ending: {
       subject: (d) => `Faltam 24 horas para conferir ${d.title}`,
       body: (d, link, h) => `O vendedor recebe automaticamente em ${h.when(d.protection_ends_at)}. Se algo estiver errado com seu pedido, abra uma disputa antes disso.\n\n${link(`/orders/${d.order_id}`)}`,
-    },
-    seller_new_order: {
-      subject: (d) => (d.delivery_mode === 'manual' ? `Novo pedido para entregar: ${d.title}` : `Vendido: ${d.title}`),
-      body: (d, link, h) =>
-        (d.delivery_mode === 'manual'
-          ? `Um comprador pagou ${h.money(d.amount_cents, d.currency)} por “${d.title}” x${d.quantity}. Entregue pela página do pedido; o pagamento fica em custódia até lá.`
-          : `“${d.title}” x${d.quantity} foi vendido por ${h.money(d.amount_cents, d.currency)} e entregue automaticamente do seu estoque.`) +
-        `\n\n${link(`/orders/${d.order_id}`)}`,
-    },
-    seller_paid: {
-      subject: (d, h) => `${h.money(d.seller_net_cents, d.currency)} adicionados ao seu saldo`,
-      body: (d, link, h) => `O pedido “${d.title}” foi concluído. ${h.money(d.seller_net_cents, d.currency)} estão no seu saldo, prontos para saque.\n\n${link('/sell')}`,
-    },
-    withdrawal_paid: {
-      subject: (d, h) => `Saque de ${h.money(d.amount_cents, d.currency)} enviado`,
-      body: (d, _link, h) => `Enviamos ${h.money(d.amount_cents, d.currency)} para sua conta de recebimento (referência ${d.provider_ref}).`,
-    },
-    dispute_opened: {
-      subject: (d) => `Disputa aberta em ${d.title}`,
-      body: (d, link) => `Uma disputa foi aberta: “${d.reason}”. O pagamento fica congelado até um árbitro analisar o chat do pedido. Adicione suas provas ao chat agora.\n\n${link(`/orders/${d.order_id}`)}`,
     },
     dispute_statement: {
       subject: () => 'Nova declaração na sua disputa',
@@ -88,19 +33,11 @@ const pt: LocalePack = {
       subject: (d) => `${d.percent}% concluído: ${d.title}`,
       body: (d, link) => `O vendedor publicou o progresso de “${d.title}”: ${d.percent}%${d.note ? `. “${d.note}”` : '.'}\n\n${link(`/orders/${d.order_id}`)}`,
     },
-    dispute_resolved: {
-      subject: (d) => `Disputa resolvida: ${d.title}`,
-      body: (d, link) => `O árbitro decidiu a favor do ${d.outcome === 'buyer' ? 'comprador' : 'vendedor'}. Observação: “${d.note}”\n\n${link(`/orders/${d.order_id}`)}`,
-    },
     chargeback_received: {
       subject: (d) => `Chargeback no pedido ${String(d.order_id).slice(0, 8)}`,
       body: (d, _link, h) =>
         `O banco do comprador estornou ${h.money(d.amount_cents)} (${d.network} ${d.reason_code}). Enviamos as provas automaticamente.\n\n` +
         (d.seller_protected ? 'A proteção contra chargeback cobre este pedido: seu saldo não é afetado.' : 'Este anúncio não tinha prova verificada de dono original, então o valor foi descontado do seu saldo. Se o banco decidir a nosso favor, ele é devolvido.'),
-    },
-    kyc_result: {
-      subject: (d) => (d.approved ? 'Sua identidade foi verificada' : 'Não conseguimos verificar sua identidade'),
-      body: (d, link) => (d.approved ? `Agora você pode anunciar, usar a API de vendedor e sacar.\n\n${link('/sell')}` : `Tente novamente com uma foto nítida de um documento válido.\n\n${link('/account')}`),
     },
     new_signin: {
       subject: () => 'Novo acesso à sua conta Bullizard',

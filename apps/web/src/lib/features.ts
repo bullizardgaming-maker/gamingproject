@@ -9,14 +9,16 @@ import { api } from '../api';
 export interface Features {
   merchantApi: boolean;
   sandbox: boolean;
+  /** Legal (Oct 24): the Terms version in force and, during the 14-day notice, the change that is coming. */
+  legal: { tosVersion: string | null; notice: { version: string; effective_at?: string; effectiveAt?: string } | null };
 }
-let features: Features = { merchantApi: false, sandbox: false };
+let features: Features = { merchantApi: false, sandbox: false, legal: { tosVersion: null, notice: null } };
 let loading: Promise<void> | null = null;
 const listeners = new Set<() => void>();
 export function loadFeatures() {
   loading ??= api<Features>('/features')
     .then((f) => {
-      features = { merchantApi: !!f.merchantApi, sandbox: !!f.sandbox };
+      features = { merchantApi: !!f.merchantApi, sandbox: !!f.sandbox, legal: f.legal ?? { tosVersion: null, notice: null } };
       listeners.forEach((l) => l());
     })
     .catch(() => {

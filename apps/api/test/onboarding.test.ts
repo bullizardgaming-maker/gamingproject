@@ -15,8 +15,8 @@ describe('seller onboarding', () => {
     expect((await u.api.post('/v1/offers', listing)).body.error.code).toBe('rules_test_required');
 
     const test = (await u.api.get('/v1/seller/rules-test')).body;
-    expect(test.passMarkPct).toBe(100);
-    expect(test.questions.length).toBeGreaterThanOrEqual(6);
+    expect(test.passMarkPct).toBe(90);
+    expect(test.questions.length).toBe(13);
     expect(test.questions[0]).not.toHaveProperty('correct');
     expect(test.passedAt).toBeNull();
 
@@ -39,7 +39,7 @@ describe('seller onboarding', () => {
     expect((await u.api.get('/v1/seller/onboarding')).body).toMatchObject({ tier1: true, identityVerified: false, canSell: true, idDueDays: 30 });
     expect((await u.api.get('/v1/seller/onboarding')).body.idDueAt).toBeTruthy();
 
-    const edited = admin.questions.slice(0, 3).map((q: any, i: number) => ({ ...q, position: i + 1 }));
+    const edited = admin.questions.filter((q: any) => q.active).slice(0, 3).map((q: any, i: number) => ({ ...q, position: i + 1 }));
     edited.push({ position: 4, question: 'Can you ask a buyer for their password?', options: ['Yes', 'No, never'], correct: 1, explanation: 'Never ask for credentials.' });
     const put = await support.api.put('/v1/admin/rules-test', { questions: edited, settings: { passMarkPct: 75 } });
     expect(put.status, JSON.stringify(put.body)).toBe(200);
@@ -62,10 +62,10 @@ describe('seller onboarding', () => {
     expect(await enforceIdDeadlines(h.ctx)).toMatchObject({ reminded: 0, restricted: 0 }); // once
     await h.ctx.db.query(`UPDATE users SET seller_since = now() - interval '29 days' WHERE id = $1`, [s.id]);
     expect(await enforceIdDeadlines(h.ctx)).toMatchObject({ reminded: 1, restricted: 0 });
-    expect((await sent()).filter((t: string) => t === 'id_reminder')).toHaveLength(2);
+    expect((await sent()).filter((t: string) => t === 'kyc_due_reminder')).toHaveLength(2);
     await h.ctx.db.query(`UPDATE users SET seller_since = now() - interval '31 days' WHERE id = $1`, [s.id]);
     expect(await enforceIdDeadlines(h.ctx)).toMatchObject({ restricted: 1 });
-    expect(await sent()).toContain('id_overdue');
+    expect((await sent()).filter((t: string) => t === 'kyc_due_reminder')).toHaveLength(3); // 7 days, 1 day, overdue
     expect((await client(h.app).get(`/v1/offers/${offer.id}`)).body.status).toBe('paused');
     expect((await s.api.post('/v1/offers', { categorySlug: 'currency', game: 'Test Game', title: 'More', priceCents: 5_00, deliveryMode: 'manual', stock: 1 })).body.error.code).toBe('kyc_overdue');
     expect((await s.api.get('/v1/seller/dashboard')).body.onboarding).toMatchObject({ canSell: false, identityVerified: false });

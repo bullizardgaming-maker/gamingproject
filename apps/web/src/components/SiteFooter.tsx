@@ -15,6 +15,14 @@ const links = (): Array<[string, string]> => [
   [t('footer.contact'), '/support/new'],
   [t('footer.status'), '/status'],
 ];
+/** Legal pages (Legal pack, Oct 24): all five, always in the footer. */
+const legalLinks = (): Array<[string, string]> => [
+  [t('footer.terms'), '/terms'],
+  [t('footer.privacy'), '/privacy'],
+  [t('footer.sellerAgreement'), '/seller-agreement'],
+  [t('footer.refunds'), '/refunds'],
+  [t('footer.restricted'), '/restricted-countries'],
+];
 
 /** "Install the app": the browser's own prompt, or the iOS Add to Home Screen steps. */
 function InstallApp() {
@@ -74,6 +82,12 @@ export function SiteFooter() {
             {links().map(([label, to]) => <Link key={to} to={to} className="ftr-link">{label}</Link>)}
           </nav>
           <InstallApp />
+        </div>
+        <div className="ftr-bottom ftr-legal">
+          <nav className="ftr-links" aria-label={t('legal.nav')}>
+            {legalLinks().map(([label, to]) => <Link key={to} to={to} className="ftr-link">{label}</Link>)}
+          </nav>
+          <span className="small muted">{t('footer.legal')}</span>
         </div>
       </div>
     </footer>

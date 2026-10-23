@@ -65,7 +65,7 @@ test.describe('launch extras', () => {
     const card = page.getByTestId('creator-code');
     await card.getByPlaceholder('e.g. STREAMER-X').fill('nope-1');
     await card.getByRole('button', { name: 'Apply code' }).click();
-    await expect(card.getByRole('alert')).toContainText('not valid');
+    await expect(card.getByRole('alert')).toContainText("isn't valid");
     await card.getByPlaceholder('e.g. STREAMER-X').fill('arcane-tv');
     await card.getByRole('button', { name: 'Apply code' }).click();
     await expect(card.getByRole('status')).toContainText('Code ARCANE-TV is on your account');

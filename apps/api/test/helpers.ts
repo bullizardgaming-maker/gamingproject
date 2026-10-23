@@ -75,7 +75,7 @@ export async function makeUser(h: Harness, opts: { tier?: 0 | 1 | 2; role?: 'use
   const res = await client(h.app, undefined, {
     ...(opts.device ? { 'x-device-fingerprint': opts.device } : {}),
     ...(opts.ip ? { 'x-forwarded-for': opts.ip } : {}),
-  }).post('/v1/auth/register', { email, password: 'correct horse battery', displayName: opts.name ?? `User ${seq}` });
+  }).post('/v1/auth/register', { email, password: 'correct horse battery', displayName: opts.name ?? `User ${seq}`, acceptTerms: true });
   if (res.status !== 201) throw new Error(`register failed: ${JSON.stringify(res.body)}`);
   const { user, token } = res.body;
   const tier = opts.tier ?? 1;
@@ -116,7 +116,7 @@ export async function buyAndPay(h: Harness, buyer: { api: Api }, offerId: string
   const ref = res.body.order.payment_ref;
   const pay = await client(h.app).post(`/v1/payments/mock/checkout/${ref}/pay`, payExtra, { accept: 'application/json' });
   if (pay.status !== 200) throw new Error(`pay failed: ${JSON.stringify(pay.body)}`);
-  return res.body.order as { id: string; payment_ref: string; amount_cents: number };
+  return res.body.order as { id: string; ref: string; payment_ref: string; amount_cents: number; seller_net_cents: number };
 }
 
 export function mockKyc(h: Harness) {

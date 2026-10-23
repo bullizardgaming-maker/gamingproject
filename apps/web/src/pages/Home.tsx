@@ -39,6 +39,7 @@ export function Home() {
         <div className="shell home-hero2-inner">
           <h1>{t('home.hero.title')}</h1>
           <p className="lede">{t('home.hero.lede')}</p>
+          <p className="small muted" style={{ margin: 0 }}>{t('home.hero.soon')}</p>
           <div className="home-search"><GameSearch big /></div>
           {trending.length > 0 && (
             <div className="row" style={{ gap: 8 }}>

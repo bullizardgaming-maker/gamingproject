@@ -3,6 +3,9 @@ import { z } from 'zod';
 import type { Ctx } from '../context.js';
 import { maybeOne, one } from '../db.js';
 import { getOrCreateInquiryRoom, listMessages, listRooms, postUserMessage, roomForParticipant, verifyChain } from '../domain/chat.js';
+import { appendMessage } from '../domain/chat.js';
+import { withScope } from '../domain/events.js';
+import { roomOf } from '../domain/orders.js';
 import { revealDelivered } from '../domain/inventory.js';
 import {
   cancelLateOrder, cancelOrder, confirmOrder, createOrder, quoteOrder, deliverManually, getOrderFor, listOrders, openDispute, updateChecklist,
@@ -151,6 +154,10 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
       subject: `Release request: ${o.title}`,
       orderId: id,
       body: `Delivered ${hours} hours ago and the buyer has not confirmed. Please review the delivery proof in the order chat and release the payment.${message ? `\n\n${message}` : ''}`,
+    });
+    await withScope(ctx, async (s) => {
+      const room = await roomOf(s.tx, id);
+      await appendMessage(s, room.id, null, 'system', 'Seller asked staff to review this order.', [], undefined, { code: 'follow_up' });
     });
     return reply.status(201).send({ ticketId });
   });

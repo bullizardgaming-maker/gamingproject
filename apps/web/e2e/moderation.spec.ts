@@ -28,7 +28,7 @@ test.describe('safety and moderation', () => {
     await page.locator('input[name=title]').fill('Carding guide');
     await page.locator('input[name=price]').fill('3');
     await page.getByRole('button', { name: 'Publish offer' }).click();
-    await expect(page.getByText(/prohibited goods/)).toBeVisible();
+    await expect(page.getByText('This offer breaks the rules on what can be sold.')).toBeVisible(); // err.listing_blocked (copy deck §2.13)
   });
 
   test('staff approve listings, dismiss flags and edit terms', async ({ page }) => {

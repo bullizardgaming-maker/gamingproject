@@ -14,9 +14,9 @@ test.describe('wallet', () => {
   test('a buyer can confirm before the seller marks it delivered', async ({ page }) => {
     await signIn(page, 'Buyer');
     await buy(page, '/offers/offer-52'); // Albion silver, delivered by hand in game
-    await page.getByRole('button', { name: 'I received my order' }).click();
+    await page.getByRole('button', { name: 'Got it · release payment' }).click();
     const dialog = page.getByRole('dialog');
-    await expect(dialog).toContainText('By this you confirm you received the order');
+    await expect(dialog).toContainText('The seller is paid now and the order closes');
     await dialog.getByRole('button', { name: 'Yes, I received it' }).click();
     await expect(page.getByTestId('order-card').or(page.locator('.od-status')).first()).toContainText(/Completed|Released/);
   });

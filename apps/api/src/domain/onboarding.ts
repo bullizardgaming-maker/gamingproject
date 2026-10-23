@@ -21,6 +21,10 @@ export interface RulesQuestion {
   correct: number;
   explanation: string;
   active: boolean;
+  /** Arabic text (optional; English is used when missing). */
+  question_ar?: string | null;
+  options_ar?: string[] | null;
+  explanation_ar?: string | null;
 }
 
 export async function rulesSettings(q: Queryable) {
@@ -29,12 +33,13 @@ export async function rulesSettings(q: Queryable) {
 }
 
 export async function listQuestions(q: Queryable, opts: { activeOnly?: boolean } = {}): Promise<RulesQuestion[]> {
-  const rows = await many<any>(q, `SELECT id, position, question, options, correct, explanation, active FROM rules_questions ${opts.activeOnly ? 'WHERE active' : ''} ORDER BY position, created_at`);
-  return rows.map((r) => ({ ...r, position: Number(r.position), correct: Number(r.correct), options: r.options as string[] }));
+  const rows = await many<any>(q, `SELECT id, position, question, options, correct, explanation, active, question_ar, options_ar, explanation_ar FROM rules_questions ${opts.activeOnly ? 'WHERE active' : ''} ORDER BY position, created_at`);
+  return rows.map((r) => ({ ...r, position: Number(r.position), correct: Number(r.correct), options: r.options as string[], options_ar: (r.options_ar as string[] | null) ?? null }));
 }
 
 /** The test as a seller sees it: no answers. */
-export async function rulesTestFor(q: Queryable, user: Pick<User, 'id' | 'kyc_tier'>) {
+export async function rulesTestFor(q: Queryable, user: Pick<User, 'id' | 'kyc_tier'>, lang = 'en') {
+  const ar = lang.toLowerCase().startsWith('ar');
   const [questions, settings, me] = await Promise.all([
     listQuestions(q, { activeOnly: true }),
     rulesSettings(q),
@@ -45,19 +50,26 @@ export async function rulesTestFor(q: Queryable, user: Pick<User, 'id' | 'kyc_ti
     passedAt: me.rules_passed_at,
     attempts: Number(me.rules_attempts),
     tier1: user.kyc_tier >= 1,
-    questions: questions.map(({ id, position, question, options }) => ({ id, position, question, options })),
+    locale: ar && questions.some((qn) => qn.question_ar) ? 'ar' : 'en',
+    questions: questions.map((qn) => ({
+      id: qn.id,
+      position: qn.position,
+      question: ar && qn.question_ar ? qn.question_ar : qn.question,
+      options: ar && qn.options_ar?.length === qn.options.length ? qn.options_ar : qn.options,
+    })),
   };
 }
 
 /** Grade a submission: every active question answered by index. Passing is recorded on the user. */
-export async function submitRulesTest(ctx: Ctx, user: Pick<User, 'id' | 'kyc_tier' | 'status'>, answers: Record<string, number>) {
+export async function submitRulesTest(ctx: Ctx, user: Pick<User, 'id' | 'kyc_tier' | 'status'>, answers: Record<string, number>, lang = 'en') {
+  const ar = lang.toLowerCase().startsWith('ar');
   if (user.status !== 'active') throw forbidden('suspended', 'Account suspended');
   if (user.kyc_tier < 1) throw forbidden('tier1_required', 'Verify your email and phone before taking the rules test');
   const [questions, settings] = await Promise.all([listQuestions(ctx.db, { activeOnly: true }), rulesSettings(ctx.db)]);
   if (!questions.length) throw conflict('no_test', 'The rules test is not set up yet');
   const results = questions.map((qn) => {
     const given = answers[qn.id];
-    return { id: qn.id, correct: given === qn.correct, explanation: given === qn.correct ? null : qn.explanation };
+    return { id: qn.id, correct: given === qn.correct, explanation: given === qn.correct ? null : (ar && qn.explanation_ar) || qn.explanation };
   });
   const right = results.filter((r) => r.correct).length;
   const scorePct = Math.round((right * 100) / questions.length);
@@ -72,6 +84,7 @@ export async function submitRulesTest(ctx: Ctx, user: Pick<User, 'id' | 'kyc_tie
 export async function updateRulesTest(ctx: Ctx, staffId: string, input: { questions: Array<Omit<RulesQuestion, 'id'> & { id?: string }>; settings?: { passMarkPct?: number; idDueDays?: number } }) {
   for (const qn of input.questions) {
     if (qn.options.length < 2 || qn.options.length > 6) throw badRequest('invalid_question', 'Each question has 2 to 6 options');
+    if (qn.options_ar?.length && qn.options_ar.length !== qn.options.length) throw badRequest('invalid_question', 'Arabic options must match the English options one for one');
     if (qn.correct < 0 || qn.correct >= qn.options.length) throw badRequest('invalid_question', 'The correct answer must be one of the options');
   }
   await ctx.db.query('BEGIN');
@@ -81,8 +94,8 @@ export async function updateRulesTest(ctx: Ctx, staffId: string, input: { questi
       const row = qn.id
         ? await maybeOne<{ id: string }>(
             ctx.db,
-            `UPDATE rules_questions SET position = $2, question = $3, options = $4, correct = $5, explanation = $6, active = $7, updated_by = $8, updated_at = now() WHERE id = $1 RETURNING id`,
-            [qn.id, qn.position, qn.question.trim(), JSON.stringify(qn.options), qn.correct, qn.explanation ?? '', qn.active ?? true, staffId],
+            `UPDATE rules_questions SET position = $2, question = $3, options = $4, correct = $5, explanation = $6, active = $7, updated_by = $8, updated_at = now(), question_ar = $9, options_ar = $10, explanation_ar = $11 WHERE id = $1 RETURNING id`,
+            [qn.id, qn.position, qn.question.trim(), JSON.stringify(qn.options), qn.correct, qn.explanation ?? '', qn.active ?? true, staffId, qn.question_ar?.trim() || null, qn.options_ar?.length ? JSON.stringify(qn.options_ar) : null, qn.explanation_ar?.trim() || null],
           )
         : null;
       const id =
@@ -90,8 +103,8 @@ export async function updateRulesTest(ctx: Ctx, staffId: string, input: { questi
         (
           await one<{ id: string }>(
             ctx.db,
-            `INSERT INTO rules_questions (position, question, options, correct, explanation, active, updated_by) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-            [qn.position, qn.question.trim(), JSON.stringify(qn.options), qn.correct, qn.explanation ?? '', qn.active ?? true, staffId],
+            `INSERT INTO rules_questions (position, question, options, correct, explanation, active, updated_by, question_ar, options_ar, explanation_ar) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+            [qn.position, qn.question.trim(), JSON.stringify(qn.options), qn.correct, qn.explanation ?? '', qn.active ?? true, staffId, qn.question_ar?.trim() || null, qn.options_ar?.length ? JSON.stringify(qn.options_ar) : null, qn.explanation_ar?.trim() || null],
           )
         ).id;
       keep.push(id);
@@ -147,11 +160,13 @@ export async function enforceIdDeadlines(ctx: Ctx) {
     if (u.days_left <= 0) {
       await ctx.db.query(`UPDATE users SET selling_restricted_at = now() WHERE id = $1`, [u.id]);
       await ctx.db.query(`UPDATE offers SET status = 'paused', expired_reason = 'id_overdue', version = version + 1, updated_at = now() WHERE seller_id = $1 AND status = 'active'`, [u.id]);
-      await notify(ctx.db, u.id, 'id_overdue', {}, `id_overdue:${u.id}`);
+      await notify(ctx.db, u.id, 'kyc_due_reminder', { days_left: 0 }, `id_overdue:${u.id}`);
       restricted++;
     } else if ((u.days_left <= 7 && u.id_reminders_sent < 1) || (u.days_left <= 1 && u.id_reminders_sent < 2)) {
+      // 7 days before and 1 day before (the "on the day" message is the overdue one above).
       await ctx.db.query(`UPDATE users SET id_reminders_sent = $2 WHERE id = $1`, [u.id, u.days_left <= 1 ? 2 : 1]);
-      await notify(ctx.db, u.id, 'id_reminder', { days_left: u.days_left }, `id_reminder:${u.id}:${u.days_left <= 1 ? 'last' : 'week'}`);
+      const date = new Date(new Date(u.seller_since).getTime() + settings.idDueDays * 86_400_000).toISOString();
+      await notify(ctx.db, u.id, 'kyc_due_reminder', { days_left: u.days_left, date }, `id_reminder:${u.id}:${u.days_left <= 1 ? 'last' : 'week'}`);
       reminded++;
     }
   }

@@ -190,7 +190,7 @@ export function OfferPage() {
                 {busy ? t('offer.opening') : t('offer.pay', { amount: money(total, offer.currency) })}
               </button>
               <p className="small muted of-agree" style={{ margin: 0 }} data-testid="buy-agree">
-                {t('offer.agree', { terms: '\u0000' }).split('\u0000')[0]}<Link to="/terms">{t('offer.agreeTerms')}</Link>{t('offer.agree', { terms: '\u0000' }).split('\u0000')[1]}
+                {t('offer.agree', { terms: '\u0000' }).split('\u0000')[0]}<Link to="/terms" target="_blank" rel="noopener">{t('offer.agreeTerms')}</Link>{t('offer.agree', { terms: '\u0000' }).split('\u0000')[1]}
               </p>
             </>
           )}

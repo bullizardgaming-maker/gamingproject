@@ -9,24 +9,6 @@ const help: HelpPack = {
     account: { title: 'Konto & Sicherheit', blurb: 'Verifizierung, Zwei-Faktor-Anmeldung und deine Daten.' },
   },
   articles: {
-    'how-escrow-works': {
-      title: "Wie Treuhand deine Bestellung schützt",
-      summary: "Deine Zahlung bleibt bei uns, bis du bestätigst, dass du hast, wofür du bezahlt hast.",
-      body: [
-        "Wenn du bezahlst, geht das Geld in die Treuhand, nicht an den Verkäufer. Der Verkäufer sieht nur, dass die Bestellung bezahlt ist, und kann liefern.",
-        "Es gibt keinen Timer: Das Geld bleibt in der Treuhand, bis du den Erhalt bestätigst. Bestätige erst, wenn du alles hast.",
-        "Wenn etwas nicht stimmt, eröffne statt zu bestätigen einen Streitfall auf der Bestellseite. Das Geld bleibt gesperrt, bis er geklärt ist.",
-      ],
-    },
-    'order-not-delivered': {
-      title: 'Meine Bestellung wurde nicht geliefert',
-      summary: 'Was du tun kannst, wenn ein Verkäufer zu spät ist, und wann du automatisch dein Geld zurückbekommst.',
-      body: [
-        'Angebote mit Sofortlieferung werden geliefert, sobald die Zahlung durch ist; sieh auf der Bestellseite nach. Bei manuellen Angeboten verspricht der Verkäufer eine Lieferzeit, die im Angebot steht.',
-        'Schreib dem Verkäufer zuerst im Bestell-Chat; die meisten Verzögerungen klären sich dort. Ist die zugesagte Zeit vorbei, erinnern wir den Verkäufer, und liefert er dann immer noch nicht, wird die Bestellung storniert und automatisch erstattet.',
-        'Du kannst auch jederzeit einen Streitfall auf der Bestellseite eröffnen, solange die Zahlung in der Treuhand ist.',
-      ],
-    },
     'open-a-dispute': {
       title: "Einen Streitfall eröffnen",
       summary: "Wenn etwas nicht wie beschrieben ist, entscheidet ein Schiedsrichter anhand von Chat und Belegen.",
@@ -43,14 +25,6 @@ const help: HelpPack = {
         'Ein Vorbesitzer kann einen Account zurückholen, deshalb sind Account-Bestellungen 14 Tage nach Lieferung versichert: Wird der Account in dieser Zeit zurückgeholt, bekommst du dein Geld zurück.',
         'Angebote mit „Inhaber verifiziert“ stammen vom Erstbesitzer, der uns die Registrierungs-E-Mail und frühe Kaufbelege gezeigt hat. Angebote ohne Nachweis gelten als riskant; Treuhand und Versicherung gelten trotzdem.',
         'Ändere nach der Übergabe sofort E-Mail, Passwort und Zwei-Faktor-Einstellungen.',
-      ],
-    },
-    'game-fields-and-filters': {
-      title: 'Nach Server, Region, Plattform und Rang filtern',
-      summary: 'Nutze die Auswahlfelder auf jeder Spieleseite, um nur passende Angebote zu sehen.',
-      body: [
-        'Viele Spiele teilen ihren Markt auf: League of Legends nach Server, Valorant nach Region, World of Warcraft nach Realm und Fraktion, CS2-Skins nach Zustand. Öffne ein Spiel, wähle eine Kategorie und nutze die Auswahlfelder über der Angebotstabelle.',
-        'Jede Option zeigt, wie viele aktive Angebote sie mit deinen übrigen Filtern hat. Verkäufer müssen diese Felder ausfüllen, deshalb sind die Filter verlässlich.',
       ],
     },
     'price-alerts': {
@@ -71,22 +45,6 @@ const help: HelpPack = {
         "Dein Bullizard-Guthaben wird zuerst verwendet.",
       ],
     },
-    'refund-timing': {
-      title: "Wann sehe ich meine Erstattung?",
-      summary: "Erstattungen landen sofort in deinem Bullizard-Guthaben.",
-      body: [
-        "Wird eine Bestellung erstattet, geht das Geld sofort auf dein Bullizard-Guthaben. Du siehst es auf deiner Wallet-Seite.",
-        "Nutze es für die nächste Bestellung oder zahle es auf deine Krypto-Wallet aus (USDT TRC-20). Es fällt eine Auszahlungsgebühr an; die Treasury sendet nach Freigabe.",
-      ],
-    },
-    'selling-fees': {
-      title: 'Verkäuferprovision und Ränge',
-      summary: 'Du legst deinen Preis fest und erhältst ihn vollständig; die Provision kommt für den Käufer obendrauf und sinkt mit deinem Rang.',
-      body: [
-        'Du gibst den Preis ein, den du willst. Die Provision deines Rangs wird für den Käufer aufgeschlagen, sodass genau dein Betrag auf deinem Guthaben landet, wenn die Bestellung abgeschlossen ist. Ränge richten sich nach deinen abgeschlossenen Verkäufen der letzten 30 Tage; neue Verkäufer zahlen in den ersten 60 Tagen einen reduzierten Startsatz.',
-        'Das Verkaufsformular zeigt vor dem Veröffentlichen, was Käufer in jeder Währung zahlen und was dir nach der Auszahlungsgebühr bleibt. Rang und Fortschritt siehst du im Verkäuferbereich.',
-      ],
-    },
     'delivery-in-game': {
       title: 'So funktioniert die Lieferung im Spiel',
       summary: 'Währung und Items werden an den Charakternamen gehandelt, den du beim Bezahlen bestätigst; der Verkäufer hängt einen Nachweis an und du gibst die Zahlung frei.',
@@ -96,29 +54,12 @@ const help: HelpPack = {
         'Die Zahlung bleibt im Treuhandkonto, bis du den Erhalt bestätigst. Stimmt etwas nicht, eröffne auf der Bestellseite einen Streitfall statt zu bestätigen; das Team vergleicht den Nachweis mit dem Handel und entscheidet.',
       ],
     },
-    'getting-paid': {
-      title: 'Auszahlungen erhalten',
-      summary: 'Zahle nach der Bestätigung des Käufers auf dein Krypto-Wallet (USDT) aus; es gilt eine Gebühr von 6 %.',
-      body: [
-        'Geld aus einem Verkauf wird verfügbar, wenn der Käufer die Bestellung bestätigt. Zahle es im Verkäuferbereich an die per E-Mail bestätigte Auszahlungsadresse aus; die Treasury gibt es frei und sendet es in USDT.',
-        'Neue Verkäufer können eine kurze Auszahlungssperre haben, bis Vertrauen aufgebaut ist; der Verkäuferbereich zeigt, wann gesperrtes Geld frei wird.',
-        'Bringt eine Erstattung oder Rückbuchung dein Guthaben unter null, gleichen neue Verkäufe es zuerst aus und Auszahlungen pausieren bis dahin.',
-      ],
-    },
     'seller-analytics': {
       title: 'Deine Shop-Statistiken verstehen',
       summary: 'Aufrufe, Konversion und Stammkunden – und wie sie gezählt werden.',
       body: [
         'Der Tab „Statistiken“ zeigt Umsatz, Angebotsaufrufe, Konversion (Bestellungen geteilt durch Aufrufe), durchschnittlichen Bestellwert und Stammkunden im Vergleich zum Vorzeitraum.',
         'Ein Aufruf zählt einmal pro Besucher, Angebot und Stunde – nie, wenn du dein eigenes Angebot ansiehst.',
-      ],
-    },
-    'verify-identity': {
-      title: 'Deine Identität bestätigen',
-      summary: 'Stufe 1 zum Kaufen, Stufe 2 (Ausweis mit Foto) zum Verkaufen.',
-      body: [
-        'Stufe 1 bedeutet bestätigte E-Mail und Telefonnummer; das reicht zum Kaufen. Stufe 2 ergänzt einen Ausweis mit Foto und einen Lebendigkeitstest über unseren Verifizierungspartner und ist zum Verkaufen nötig.',
-        'Die Verifizierung dauert meist ein paar Minuten. Schlägt sie fehl, prüfe, ob das Foto scharf ist und alle Ecken des Dokuments sichtbar sind, und versuche es erneut.',
       ],
     },
     'two-factor': {
@@ -135,26 +76,6 @@ const help: HelpPack = {
       body: [
         'Fordert dich jemand auf, außerhalb von Bullizard zu zahlen, schickt einen verdächtigen Link oder wird ausfallend, antworte nicht weiter. Schick uns eine Anfrage in der Kategorie „Nutzer melden“ mit dem Namen und der Bestellung oder dem Chat, in dem es passiert ist.',
         'Unser Trust-&-Safety-Team prüft jede Meldung. Das Ergebnis können wir dir nicht immer mitteilen, aber wir handeln.',
-      ],
-    },
-    'buyer-protection': {
-      title: "Bullizard Käuferschutz",
-      summary: "Dein Geld geht erst an den Verkäufer, wenn du den Erhalt bestätigst.",
-      body: [
-        "Wenn du bezahlst, hält Bullizard das Geld. Der Verkäufer sieht, dass die Bestellung bezahlt ist, und liefert.",
-        "Der Verkäufer wird erst bezahlt, wenn du den Erhalt bestätigst. Du kannst bestätigen, sobald du die Ware hast, auch bevor der Verkäufer sie als geliefert markiert.",
-        "- Nicht in der versprochenen Zeit geliefert: Die Bestellung wird storniert und du bekommst dein Geld zurück.\n- Nicht wie beschrieben: Eröffne vor dem Bestätigen einen Streitfall auf der Bestellseite. Das Geld bleibt gesperrt, bis ein Bullizard-Schiedsrichter entscheidet.\n- Spielkonten: 14 Tage Versicherung nach der Lieferung.",
-        "Wickle den ganzen Handel im Bestell-Chat ab. Deals außerhalb von Bullizard sind nicht geschützt.",
-      ],
-    },
-    'invite-friends': {
-      title: "Freunde einladen und verdienen",
-      summary: "20 % von Bullizards Provision bei jeder Bestellung deiner Freunde, solange sie aktiv bleiben.",
-      body: [
-        "Dein Einladungslink steht auf deiner Kontoseite. Wer sich darüber registriert, ist dauerhaft dein Freund auf Bullizard.",
-        "Bei jeder Bestellung, die sie abschließen, verdienst du einen Anteil an Bullizards Provision für diese Bestellung (20 % zum Start; Bullizard kann den Satz ändern). Es beginnt mit ihrer ersten abgeschlossenen Bestellung und läuft weiter, solange sie aktiv bleiben – nicht mehr als ein Jahr zwischen zwei Bestellungen.",
-        "- Die Einnahmen landen auf deinem Guthaben und lassen sich nach den üblichen Regeln auszahlen (6 %, mindestens 1,50 $).\n- Der Anteil bezieht sich auf unsere Provision, nicht auf die Bestellsumme: bei 100 $ und 13,99 % Provision verdienst du 20 % von 13,99 $.\n- Zwischen Konten mit gleichem Gerät, gleicher Karte oder Wallet wird nichts gezahlt.",
-        "Creator mit Creator-Code verdienen separat; beide Programme gelten nicht gleichzeitig für dieselbe Bestellung derselben Person.",
       ],
     },
     'wallet': {

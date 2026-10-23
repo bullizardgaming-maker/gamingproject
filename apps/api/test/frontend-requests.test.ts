@@ -111,8 +111,8 @@ describe('front-end requests', () => {
     expect(after.events.map((e: any) => e.reason)).toContain('buyer_confirmed_early');
     // The chat log carries the event as a code the app can translate.
     const msgs = (await buyer.api.get(`/v1/chat/rooms/${after.room_id}/messages`)).body;
-    expect(msgs.map((m: any) => m.code).filter(Boolean)).toEqual(['order_created', 'payment_received', 'completed_early']);
-    expect(msgs.find((m: any) => m.code === 'completed_early').params).toEqual({ reason: 'buyer_confirmed_early' });
+    expect(msgs.map((m: any) => m.code).filter(Boolean)).toEqual(['order_created', 'paid', 'confirmed_early']);
+    expect(msgs.find((m: any) => m.code === 'confirmed_early').params).toEqual({ reason: 'buyer_confirmed_early' });
   });
 
   it('6. one wallet: balances, entries (held → completed) and buyer withdrawals', async () => {
@@ -158,8 +158,9 @@ describe('front-end requests', () => {
 
   it('8. site texts per locale with an English fallback', async () => {
     const support = await makeUser(h, { role: 'support' });
-    const en = (await client(h.app).get('/v1/texts/chat_safety?lang=ar')).body;
-    expect(en.locale).toBe('en'); // nothing in Arabic yet
+    const fr = (await client(h.app).get('/v1/texts/chat_safety?lang=fr')).body;
+    expect(fr.locale).toBe('en'); // nothing in French: English fallback
+    expect((await client(h.app).get('/v1/texts/chat_safety?lang=ar')).body.locale).toBe('ar'); // seeded (copy deck §2.8)
     const ar = await support.api.put('/v1/admin/texts/chat_safety', { body: 'أبقِ الصفقة كاملة داخل هذه المحادثة.', linkLabel: 'القواعد', linkHref: '/help/rules', lang: 'ar' });
     expect(ar.status, JSON.stringify(ar.body)).toBe(200);
     expect((await client(h.app).get('/v1/texts/chat_safety?lang=ar')).body).toMatchObject({ locale: 'ar', link_label: 'القواعد' });

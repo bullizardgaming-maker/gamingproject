@@ -12,15 +12,15 @@ test.describe('seller onboarding', () => {
     // Everything wrong: fail, with the explanation on each missed question.
     const groups = form.getByRole('group');
     const n = await groups.count();
-    expect(n).toBeGreaterThanOrEqual(6);
+    expect(n).toBe(13);
     for (let i = 0; i < n; i++) await groups.nth(i).getByRole('radio').last().check();
     await groups.first().getByRole('radio').first().check();
     await check.click();
-    await expect(form.getByRole('status')).toContainText('you need 100%');
-    await expect(form.getByText('Trading or sharing outside contacts anywhere on Bullizard can get your account banned right away.')).toBeVisible();
+    await expect(form.getByRole('status')).toContainText('You need 90%');
+    await expect(form.getByText('The order chat is the record an arbiter reads. Sharing outside contacts can get your account banned right away.')).toBeVisible();
 
-    // The right answers (the demo's question set).
-    const right = [1, 2, 1, 0, 1, 2];
+    // The right answers (the 13 deck questions, migration 067).
+    const right = [2, 1, 1, 2, 2, 2, 0, 1, 2, 2, 1, 2, 2];
     for (let i = 0; i < right.length; i++) await groups.nth(i).getByRole('radio').nth(right[i]!).check();
     await check.click();
     await expect(page.getByText('Your rank')).toBeVisible();
@@ -44,20 +44,20 @@ test.describe('seller onboarding', () => {
     await signIn(page, 'Admin');
     await page.goto('/admin');
     await page.getByRole('tab', { name: 'Rules test' }).click();
-    await expect(page.getByTestId('rules-question')).toHaveCount(6);
+    await expect(page.getByTestId('rules-question')).toHaveCount(13);
     await page.getByLabel('Pass mark').fill('80');
     await page.getByRole('button', { name: 'Add question' }).click();
-    await expect(page.getByTestId('rules-question')).toHaveCount(7);
-    await page.getByLabel('Question 7', { exact: true }).fill('Can you ask a buyer for their account password?');
-    await page.getByLabel('Question 7 option 1').fill('Yes');
-    await page.getByLabel('Question 7 option 2').fill('No, never');
-    await page.getByLabel('Question 7 correct answer 2').check();
+    await expect(page.getByTestId('rules-question')).toHaveCount(14);
+    await page.getByLabel('Question 14', { exact: true }).fill('Can you ask a buyer for their account password?');
+    await page.getByLabel('Question 14 option 1').fill('Yes');
+    await page.getByLabel('Question 14 option 2').fill('No, never');
+    await page.getByLabel('Question 14 correct answer 2').check();
     await page.getByRole('button', { name: 'Save test' }).click();
     await expect(page.getByText('Saved. New sellers get the updated test at once.')).toBeVisible();
     await signOut(page);
     await signIn(page, 'Buyer');
     await page.goto('/sell');
-    await expect(page.getByTestId('rules-test')).toContainText('80% is a pass');
+    await expect(page.getByTestId('rules-test')).toContainText('Pass mark: 80%');
     await expect(page.getByTestId('rules-test')).toContainText('Can you ask a buyer for their account password?');
   });
 });

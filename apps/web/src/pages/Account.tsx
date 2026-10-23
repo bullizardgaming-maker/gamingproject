@@ -27,7 +27,7 @@ export function Login() {
     const f = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>;
     setError('');
     try {
-      const res = await api<{ token?: string; mfaRequired?: boolean; mfaToken?: string }>(mode === 'login' ? '/auth/login' : '/auth/register', { body: mode === 'login' ? f : { ...f, locale: currentLocale() } });
+      const res = await api<{ token?: string; mfaRequired?: boolean; mfaToken?: string }>(mode === 'login' ? '/auth/login' : '/auth/register', { body: mode === 'login' ? f : { ...f, acceptTerms: f.acceptTerms === 'true', locale: currentLocale() } });
       if (res.mfaRequired && res.mfaToken) setMfaToken(res.mfaToken);
       else finish(res.token!, mode === 'register');
     } catch (err: any) {
@@ -74,6 +74,14 @@ export function Login() {
           Password
           <input name="password" type="password" required minLength={10} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
         </label>
+        {mode === 'register' && (
+          <label className="small" style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 13 }}>
+            <input name="acceptTerms" type="checkbox" required value="true" style={{ marginTop: 3 }} />
+            <span>
+              {t('auth.accept.before')}<Link to="/terms" target="_blank" rel="noopener">{t('auth.accept.terms')}</Link>{t('auth.accept.and')}<Link to="/privacy" target="_blank" rel="noopener">{t('auth.accept.privacy')}</Link>
+            </span>
+          </label>
+        )}
         {error && <div className="alert" role="alert">{error}</div>}
         <button className="btn" type="submit">{mode === 'login' ? 'Sign in' : 'Create account'}</button>
       </form>

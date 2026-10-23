@@ -18,7 +18,7 @@ describe('creator affiliate codes', () => {
     expect((await finance.api.post('/v1/admin/affiliates', { userId: creator.id, code: 'STREAMER-X', rateBps: 100 })).body.error.code).toBe('code_taken');
 
     // A buyer signs up with the code; a second code is refused; the creator's own code too.
-    const reg = await client(h.app).post('/v1/auth/register', { email: `fan_${Date.now()}@example.com`, password: 'correct horse battery', displayName: 'Fan', creatorCode: 'streamer-x' });
+    const reg = await client(h.app).post('/v1/auth/register', { email: `fan_${Date.now()}@example.com`, password: 'correct horse battery', displayName: 'Fan', acceptTerms: true, creatorCode: 'streamer-x' });
     expect(reg.status).toBe(201);
     const fan = { id: reg.body.user.id, api: client(h.app, reg.body.token) };
     await h.ctx.db.query(`UPDATE users SET kyc_tier = 1 WHERE id = $1`, [fan.id]);

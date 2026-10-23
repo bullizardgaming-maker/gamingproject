@@ -17,6 +17,7 @@ import { ATTR_KEY, ATTR_VALUE_MAX, CATEGORY_DEFAULTS, GAME_SETS, attributesFor, 
 import { listLeagues } from '../domain/leagues.js';
 import { affiliateSummary, attributeBuyer } from '../domain/affiliates.js';
 import { wallet } from '../domain/wallet.js';
+import { LEGAL_DOCS, acceptTerms, acceptanceStatus, currentDocument, documentHistory, documentVersion, pendingNotice, tosVersion } from '../domain/legal.js';
 import { requestCryptoWithdrawal } from '../domain/cryptoPayouts.js';
 import { listSuggestions, suggestGame, vote } from '../domain/gameVotes.js';
 import { deleteAccount, exportData } from '../domain/privacy.js';
@@ -74,7 +75,14 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   }));
 
   app.post('/auth/register', strict, async (req, reply) => {
-    const body = Credentials.extend({ displayName: z.string().trim().min(2).max(40), referralCode: z.string().trim().max(20).optional(), creatorCode: z.string().trim().max(20).optional(), locale: z.enum(LOCALES).optional() }).parse(req.body);
+    const body = Credentials.extend({
+      displayName: z.string().trim().min(2).max(40),
+      referralCode: z.string().trim().max(20).optional(),
+      creatorCode: z.string().trim().max(20).optional(),
+      locale: z.enum(LOCALES).optional(),
+      /** "I'm 18 or older and agree to the Terms and Privacy Policy" — required (Legal, Oct 24). */
+      acceptTerms: z.literal(true, { message: 'You must be 18 or older and accept the Terms and Privacy Policy' }),
+    }).parse(req.body);
     await requireCaptcha(req, body.captchaToken);
     const res = await register(ctx, { ...body, ...meta(req) });
     return reply.status(201).send(deliver(req, reply, res));
@@ -455,11 +463,26 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     if (game && category) return { game, category, fields: attributesFor(game, category), handover: handoverFieldFor(game, category) };
     return { defaults: CATEGORY_DEFAULTS, games: GAME_SETS, leagues: LEAGUES };
   });
-  /** Feature switches the app reads at boot. */
+  /** Feature switches the app reads at boot (+ the Terms version and any announced material change). */
   app.get('/features', async (_req, reply) => {
     reply.header('Cache-Control', 'public, max-age=60');
-    return { merchantApi: ctx.cfg.MERCHANT_API_ENABLED, sandbox: ctx.cfg.SANDBOX_MODE };
+    const [version, notice] = await Promise.all([tosVersion(ctx.dbRead), pendingNotice(ctx.dbRead)]);
+    return { merchantApi: ctx.cfg.MERCHANT_API_ENABLED, sandbox: ctx.cfg.SANDBOX_MODE, legal: { tosVersion: version, notice: notice ? { doc: notice.doc, version: notice.version, effectiveAt: notice.effective_at } : null } };
   });
+  // --- Legal documents: Terms, Privacy, Seller Agreement, Refunds, restricted countries --------
+  const LegalDocParam = z.object({ doc: z.enum(LEGAL_DOCS) });
+  const Lang = z.object({ lang: z.string().regex(/^[A-Za-z]{2}(-[A-Za-z]{2,4})?$/).optional() });
+  app.get('/legal/:doc', async (req, reply) => {
+    reply.header('Cache-Control', 'public, max-age=300');
+    return currentDocument(ctx.dbRead, LegalDocParam.parse(req.params).doc, Lang.parse(req.query).lang);
+  });
+  app.get('/legal/:doc/history', async (req) => documentHistory(ctx.dbRead, LegalDocParam.parse(req.params).doc));
+  app.get('/legal/:doc/versions/:version', async (req) => {
+    const p = LegalDocParam.extend({ version: z.string().min(1).max(40) }).parse(req.params);
+    return documentVersion(ctx.dbRead, p.doc, p.version, Lang.parse(req.query).lang);
+  });
+  app.get('/me/legal', async (req) => acceptanceStatus(ctx.db, me(req).id));
+  app.post('/me/legal/accept', async (req) => acceptTerms(ctx.db, me(req).id));
   /** Staff-managed texts shown in the product (the "Stay safe" panel in order chats). */
   app.get('/texts/:key', async (req, reply) => {
     const { key } = z.object({ key: z.enum(['chat_safety']) }).parse(req.params);

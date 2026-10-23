@@ -14,7 +14,8 @@ import { replyLabel } from '@/lib/presence';
 import { TrustBadge } from '../components/CatalogUi';
 import { StorefrontEditor } from '../components/StorefrontEditor';
 import { GamePicker } from '../components/GamePicker';
-import { sellableGames } from '@/lib/launch';
+import { PHASE2_UI, sellableGames } from '@/lib/launch';
+import { rankName, rankPerk } from '@/lib/ranks';
 import { KNOWN_GAMES } from '@/lib/gameList';
 import { BulkListings } from '../components/BulkListings';
 import { LinkedAccounts, platformName, type LinkedAccount } from '../components/LinkedAccounts';
@@ -92,7 +93,6 @@ function TrustCard() {
         ['ageDays', t('trust.req.age', { n: info.next.requirements.ageDays }), `${m.ageDays}`],
         ['onTimePct', t('trust.req.onTime', { n: info.next.requirements.onTimePct }), m.onTimePct == null ? '—' : `${m.onTimePct}%`],
         ['disputePct', t('trust.req.disputes', { n: info.next.requirements.disputePct }), m.disputePct == null ? '—' : `${m.disputePct}%`],
-        ['chargebackPct', t('trust.req.chargebacks', { n: info.next.requirements.chargebackPct }), m.chargebackPct == null ? '—' : `${m.chargebackPct}%`],
       ] as const)
     : [];
   return (
@@ -152,7 +152,7 @@ function PresenceSettings({ shop }: { shop?: Dashboard['shop'] }) {
 }
 
 export function Sell() {
-  usePageMeta({ title: 'Sell on Bullizard', description: 'Open a shop: you set your price and receive it in full, commission falls as your rank grows, instant delivery for codes, Chargeback Shield and crypto payouts.' });
+  usePageMeta({ title: 'Sell on Bullizard', description: t('grow.sellText') });
   const { user, refresh } = useSession();
   const { pathname } = useLocation();
   const navigate = useNavigate();
@@ -162,6 +162,8 @@ export function Sell() {
   const [offers, setOffers] = useState<SellerOffer[]>([]);
   const [linked, setLinked] = useState<LinkedAccount[]>([]);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'alert'; text: string } | null>(null);
+  /** Just passed the rules test: show "You're in" once instead of the ID-deadline notice. */
+  const [justPassed, setJustPassed] = useState(false);
 
   const load = useCallback(async () => {
     const [d, o, l] = await Promise.all([api<Dashboard>('/seller/dashboard'), api<SellerOffer[]>('/seller/offers'), api<LinkedAccount[]>('/seller/linked-accounts').catch(() => [])]);
@@ -198,7 +200,7 @@ export function Sell() {
       <div className="stack" style={{ maxWidth: 820 }}>
         <h1 style={{ fontSize: 40 }}>{t('sell.kyc.title')}</h1>
         <p className="lede">{t('rules.gate')}</p>
-        <RulesTest onPassed={() => refresh()} />
+        <RulesTest onPassed={() => (setJustPassed(true), refresh())} />
         <div className="card"><FeeLadder /></div>
       </div>
     );
@@ -242,7 +244,13 @@ export function Sell() {
     <div className="stack">
       <h1 style={{ fontSize: 40 }}>{t('sell.title')}</h1>
       {tabs}
-      {dash.onboarding && !dash.onboarding.identityVerified && (
+      {justPassed && offers.length === 0 && dash.onboarding && !dash.onboarding.identityVerified && !dash.onboarding.sellingRestrictedAt ? (
+        <div className="notice stack" role="status" data-testid="onboarding-done" style={{ gap: 6 }}>
+          <b>{t('onb.done.title')}</b>
+          <span>{t('onb.done.text', { date: dash.onboarding.idDueAt ? new Date(dash.onboarding.idDueAt).toLocaleDateString(intlLocale(), { month: 'short', day: 'numeric' }) : '' })}</span>
+          <a className="btn" href="#create-offer" style={{ alignSelf: 'flex-start' }}>{t('onb.done.cta')}</a>
+        </div>
+      ) : dash.onboarding && !dash.onboarding.identityVerified && (
         <div className={dash.onboarding.sellingRestrictedAt ? 'alert' : 'notice'} role={dash.onboarding.sellingRestrictedAt ? 'alert' : 'status'} data-testid="id-deadline">
           <b>{dash.onboarding.sellingRestrictedAt ? t('onb.restricted') : t('onb.due', { date: dash.onboarding.idDueAt ? new Date(dash.onboarding.idDueAt).toLocaleDateString(intlLocale(), { month: 'short', day: 'numeric' }) : '' })}</b>{' '}
           {t('onb.why')} <Link to="/account">{t('sell.kyc.verify')}</Link>
@@ -259,7 +267,8 @@ export function Sell() {
       <div className="grid three">
         <div className="card stack">
           <div className="eyebrow">{t('ranks.yourRank')}</div>
-          <h2 style={{ margin: 0 }}>{dash.rank?.name ?? dash.tier.name}</h2>
+          <h2 style={{ margin: 0 }}>{rankName(dash.rank?.name ?? dash.tier.name)}</h2>
+          {rankPerk(dash.rank?.name ?? dash.tier.name) && <p className="small" style={{ margin: 0 }}>{rankPerk(dash.rank?.name ?? dash.tier.name)}</p>}
           <p className="small muted" data-testid="seller-rate">
             {dash.promo
               ? t('ranks.promoRate', { rate: pct(dash.rateBps), until: new Date(dash.promo.endsAt).toLocaleDateString(intlLocale(), { month: 'short', day: 'numeric' }), rankRate: pct(dash.rank?.rateBps ?? dash.tier.otherRateBps) })
@@ -267,7 +276,7 @@ export function Sell() {
           </p>
           <div className="progress" role="progressbar" aria-label={t('sell.progress')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.min(100, progress * 100))}><div style={{ width: `${Math.min(100, progress * 100)}%` }} /></div>
           <p className="small muted">
-            {dash.next ? t('sell.nextLevel', { amount: money(dash.next.remainingCents), level: dash.next.tier.name }) : t('sell.topLevel')}
+            {dash.next ? t('sell.nextLevel', { amount: money(dash.next.remainingCents), level: rankName(dash.next.tier.name) }) : t('sell.topLevel')}
           </p>
         </div>
         <div className="card stack">
@@ -290,7 +299,7 @@ export function Sell() {
         <div className="card stack">
           <div className="eyebrow">{t('nav.orders')}</div>
           <p className="mono">{t('sell.ordersLine1', { completed: dash.stats.completed, open: dash.stats.in_progress })}</p>
-          <p className="mono">{t('sell.ordersLine2', { disputed: dash.stats.disputed, chargedBack: dash.stats.charged_back })}</p>
+          <p className="mono">{t('sell.ordersLine2', { disputed: dash.stats.disputed })}</p>
           <Link to="/orders?as=seller">{t('sell.manageOrders')}</Link>
         </div>
       </div>
@@ -312,8 +321,8 @@ export function Sell() {
         )}
       </div>
 
-      <LinkedAccounts accounts={linked} onChange={load} />
-      <NewOffer onCreated={load} offers={offers} linked={linked} />
+      {PHASE2_UI && <LinkedAccounts accounts={linked} onChange={load} />}
+      <NewOffer onCreated={() => (setJustPassed(false), load())} offers={offers} linked={linked} />
       <BulkListings onApplied={load} />
       <div className="card"><FeeLadder current={dash.rank?.name ?? dash.tier.name} /></div>
     </div>
@@ -622,13 +631,17 @@ function NewOffer({ onCreated, offers, linked }: { onCreated: () => void; offers
           {byAmount ? t('sell.f.pricePerUnit', { unit: unit.trim() }) : t('sell.f.price')}
           <input name="price" className="num" type="number" step="0.01" min="0.01" required value={price} onChange={(e) => setPrice(e.target.value)} aria-describedby="price-preview" />
         </label>
-        <label className="field">
-          {t('table.delivery')}
-          <select name="deliveryMode" defaultValue="auto">
-            <option value="auto">{t('sell.f.auto')}</option>
-            <option value="manual">{t('sell.f.manual')}</option>
-          </select>
-        </label>
+        {PHASE2_UI ? (
+          <label className="field">
+            {t('table.delivery')}
+            <select name="deliveryMode" defaultValue="auto">
+              <option value="auto">{t('sell.f.auto')}</option>
+              <option value="manual">{t('sell.f.manual')}</option>
+            </select>
+          </label>
+        ) : (
+          <input type="hidden" name="deliveryMode" value="manual" />
+        )}
         {category !== 'accounts' && <label className="field">{byAmount ? t('sell.f.stockUnits', { unit: unit.trim() }) : t('sell.f.stock')}<input name="stock" type="number" min="1" defaultValue="1" /></label>}
         {byAmount && <label className="field">{t('sell.f.minQty', { unit: unit.trim() })}<input name="minQty" type="number" min="1" defaultValue="1" /></label>}
         {category === 'accounts' && (
@@ -692,7 +705,7 @@ function NewOffer({ onCreated, offers, linked }: { onCreated: () => void; offers
           </div>
         </fieldset>
       )}
-      {category !== 'accounts' && bundleable.length >= 2 && (
+      {PHASE2_UI && category !== 'accounts' && bundleable.length >= 2 && (
         <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0, gap: 8 }}>
           <label className="row small" style={{ gap: 8 }}>
             <input type="checkbox" style={{ width: 'auto' }} checked={bundleOn} onChange={(e) => setBundleOn(e.target.checked)} />
@@ -776,7 +789,7 @@ function SellPreview({ price }: { price: string }) {
         </div>
       </div>
       {!(cents > 0) || !p ? (
-        <p className="small muted" style={{ margin: 0 }}>{cents > 0 ? '…' : t('preview.hint')}</p>
+        <p className="small muted" style={{ margin: 0 }}>{cents > 0 ? '…' : ''}</p>
       ) : (
         <>
           <div className="pg-earn">
@@ -832,7 +845,7 @@ export function PricePreview({ price, currency = 'USD' }: { price: string; curre
       clearTimeout(id);
     };
   }, [cents, currency]);
-  if (!(cents > 0)) return <span id="price-preview" className="small muted">{t('preview.hint')}</span>;
+  if (!(cents > 0)) return <span id="price-preview" className="small muted" />;
   if (!p) return <span id="price-preview" className="small muted">…</span>;
   const others = Object.entries(p.buyerIn).filter(([c]) => c !== 'USD');
   return (
