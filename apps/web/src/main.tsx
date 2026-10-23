@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { SessionProvider } from './session';
 import { Home } from './pages/Home';
+import { WalletPage } from './pages/Wallet';
 import { Market } from './pages/Market';
 import { OfferPage } from './pages/OfferPage';
 import { OrderPage } from './pages/OrderPage';
@@ -18,7 +19,6 @@ import { SellerPage } from './pages/SellerPage';
 import { Watchlist } from './pages/Watchlist';
 import { HelpArticlePage, HelpCentre, SupportList, SupportNew, SupportTicket } from './pages/Help';
 import { StatusPage } from './pages/StatusPage';
-import { CartPage, CartPayPage } from './pages/Cart';
 import { MyProposals, MyRequests, RequestNew, RequestPage, RequestsBoard } from './pages/Requests';
 import { SiteHeader } from './components/SiteHeader';
 import { SiteFooter } from './components/SiteFooter';
@@ -91,7 +91,6 @@ function App() {
           <Route path="/sellers/:id" element={<SellerPage />} />
           <Route path="/status" element={<StatusPage />} />
           <Route path="/watchlist" element={<Watchlist />} />
-          <Route path="/cart" element={<CartPage />} />
           <Route path="/requests" element={<RequestsBoard />} />
           <Route path="/requests/new" element={<RequestNew />} />
           <Route path="/requests/mine" element={<MyRequests />} />
@@ -104,8 +103,8 @@ function App() {
           <Route path="/support/:id" element={<SupportTicket />} />
           <Route path="/offers/:id" element={<OfferPage />} />
           <Route path="/orders" element={<Orders />} />
+          <Route path="/wallet" element={<WalletPage />} />
           <Route path="/orders/:id" element={<OrderPage />} />
-          <Route path="/checkouts/:id/pay" element={<CartPayPage />} />
           <Route path="/chat/:id" element={<InquiryChat />} />
           <Route path="/messages" element={<Messages />} />
           <Route path="/sell" element={<Sell />} />

@@ -313,7 +313,6 @@ export function Sell() {
       </div>
 
       <LinkedAccounts accounts={linked} onChange={load} />
-      <DiscountCodes />
       <NewOffer onCreated={load} offers={offers} linked={linked} />
       <BulkListings onApplied={load} />
       <div className="card"><FeeLadder current={dash.rank?.name ?? dash.tier.name} /></div>

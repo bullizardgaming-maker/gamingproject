@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
-import { SealCheck as BadgeCheck, CalendarBlank as CalendarDays, ChatCircle as MessageCircle, Package as PackageCheck, Star, Timer } from '@phosphor-icons/react';
+import { Link, useParams } from 'react-router-dom';
+import { SealCheck as BadgeCheck, Star, ThumbsDown, ThumbsUp } from '@phosphor-icons/react';
 import { api, assetUrl } from '../api';
-import { Avatar, FoundingBadge, OfferTable, TrustBadge } from '../components/CatalogUi';
-import { cn } from '@/lib/utils';
+import { DeliveryTag, FoundingBadge, SellerAvatar, TrustBadge, fmtUnits } from '../components/CatalogUi';
+import { categoryLabel } from '@/lib/catalog';
+import { usePrice } from '@/lib/prefs';
 import type { Offer } from './Market';
 import { usePageMeta } from '@/lib/seo';
-import { OnlineDot, lastSeenLabel, replyLabel } from '@/lib/presence';
+import { lastSeenLabel, replyLabel } from '@/lib/presence';
 import { t } from '../i18n';
 
 interface Profile {
@@ -36,7 +37,7 @@ const ago = (iso: string) => {
   return d < 1 ? 'today' : d === 1 ? 'yesterday' : d < 30 ? `${d} days ago` : new Date(iso).toLocaleDateString();
 };
 
-/** A seller's public storefront: trust stats, every live listing grouped by game, and reviews. */
+/** A seller's public shop, G2G-style: one plain profile box, offers as cards, reviews as cards. */
 export function SellerPage() {
   const { id = '' } = useParams();
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -65,111 +66,116 @@ export function SellerPage() {
   if (!profile) return <p className="muted">{error || 'Loading seller…'}</p>;
   const r = profile.rating;
   const shown = (offers ?? []).filter((o) => !game || o.game === game);
-
   const shop = profile.storefront;
+  const reply = replyLabel(profile.response_minutes);
+
   return (
-    <div className="stack">
+    <div className="stack sp">
       {shop?.banner_url && <img className="shop-banner" src={assetUrl(shop.banner_url)} alt={`${profile.display_name} shop banner`} />}
-      <div className="card seller-head" style={{ padding: 24, borderTop: `4px solid var(--shop-${shop?.accent ?? 'steel'})` }}>
-        <Avatar name={profile.display_name} className="size-20 text-2xl" />
-        <div className="min-w-0">
-          <h1 style={{ fontSize: 36, margin: 0 }} className="flex flex-wrap items-center gap-2">
-            {profile.display_name}
-            {profile.identity_verified && (
-              <span className="chip released"><BadgeCheck className="size-3.5" /> ID verified</span>
-            )}
-            <TrustBadge level={profile.trust_level} />
-            {profile.founding && <FoundingBadge />}
-          </h1>
-          <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm text-muted-foreground">
-            <span className="inline-flex items-center gap-1.5"><CalendarDays className="size-4" /> Selling since {since(profile.member_since)}</span>
-            <span className="inline-flex items-center gap-1.5"><PackageCheck className="size-4" /> {profile.completed_orders.toLocaleString()} completed orders</span>
-            {profile.on_time_delivery_pct != null && <span className="inline-flex items-center gap-1.5"><Timer className="size-4" /> {Number(profile.on_time_delivery_pct)}% delivered on time</span>}
-            {replyLabel(profile.response_minutes) && <span className="inline-flex items-center gap-1.5"><MessageCircle className="size-4" /> {replyLabel(profile.response_minutes)}</span>}
-            {profile.online ? (
-              <span className="inline-flex items-center gap-1.5 font-medium text-released"><OnlineDot /> {t('presence.online')}</span>
-            ) : (
-              lastSeenLabel(profile.last_seen_at) && <span>{lastSeenLabel(profile.last_seen_at)}</span>
-            )}
-          </div>
-          {shop?.intro && <p style={{ margin: '12px 0 0', maxWidth: '70ch', whiteSpace: 'pre-line' }}>{shop.intro}</p>}
-          {profile.shop_paused && <div className="notice" style={{ marginTop: 12 }}>{profile.shop_pause_message || 'This shop is taking a short break.'}</div>}
-        </div>
-        <div className="rounded-xl border border-border bg-background px-5 py-3 text-center">
-          <div className="flex items-center justify-center gap-1.5 font-mono text-3xl font-semibold">
-            <Star className="size-6 fill-held text-held" />
-            {r.count ? Number(r.average).toFixed(2) : '—'}
-          </div>
-          <div className="text-xs text-muted-foreground">
-            {r.count ? `${r.count.toLocaleString()} reviews · ${Number(r.positive_pct)}% positive` : 'No reviews yet'}
+      <section className="card sp-head">
+        <div className="sp-who">
+          <SellerAvatar name={profile.display_name} online={profile.online} size="size-20 text-2xl" className="sp-avatar" />
+          <div className="min-w-0">
+            <h1 className="sp-name">{profile.display_name}</h1>
+            <div className="sp-badges">
+              {profile.identity_verified && <span className="rank"><BadgeCheck className="size-3" aria-hidden /> {t('badge.idVerified')}</span>}
+              <TrustBadge level={profile.trust_level} />
+              {profile.founding && <FoundingBadge />}
+            </div>
+            <p className="sp-presence small">
+              {profile.online ? <span className="presence on">{t('presence.online')}</span> : lastSeenLabel(profile.last_seen_at) && <span className="presence">{lastSeenLabel(profile.last_seen_at)}</span>}
+              {reply && <span className="muted">{reply}</span>}
+            </p>
           </div>
         </div>
-      </div>
+        <dl className="sp-stats">
+          <div><dt>{t('sp.positive')}</dt><dd className="num">{r.count ? `${Number(r.positive_pct)}%` : '—'}</dd></div>
+          <div><dt>{t('sp.rating')}</dt><dd className="num"><Star className="size-4 text-held" weight="fill" aria-hidden /> {r.count ? Number(r.average).toFixed(2) : '—'} <span className="small muted">({r.count.toLocaleString()})</span></dd></div>
+          <div><dt>{t('sp.sold')}</dt><dd className="num">{profile.completed_orders.toLocaleString()}</dd></div>
+          {profile.on_time_delivery_pct != null && <div><dt>{t('sp.onTime')}</dt><dd className="num">{Number(profile.on_time_delivery_pct)}%</dd></div>}
+          <div><dt>{t('sp.since')}</dt><dd>{since(profile.member_since)}</dd></div>
+        </dl>
+        {shop?.intro && <p className="sp-intro" dir="auto">{shop.intro}</p>}
+        {profile.shop_paused && <div className="notice">{profile.shop_pause_message || 'This shop is taking a short break.'}</div>}
+      </section>
 
       {shop && shop.pinned.length > 0 && (
-        <section className="stack" aria-labelledby="pinned-title" style={{ gap: 8 }}>
-          <h2 id="pinned-title" style={{ fontSize: 20, margin: 0, borderInlineStart: `4px solid var(--shop-${shop.accent})`, paddingInlineStart: 10 }}>Featured</h2>
-          <OfferTable offers={shop.pinned} showGame showSeller={false} />
+        <section className="stack" aria-labelledby="pinned-title" style={{ gap: 12 }}>
+          <h2 id="pinned-title" className="sp-h2">Featured</h2>
+          <OfferCards offers={shop.pinned} />
         </section>
       )}
 
-      <div className="game-tabs" role="tablist">
-        <a href="#offers" role="tab" aria-selected={tab === 'offers'} className={cn(tab === 'offers' && 'active')} onClick={(e) => (e.preventDefault(), setTab('offers'))}>
-          Offers <span className="count">{profile.active_listings}</span>
-        </a>
-        <a href="#reviews" role="tab" aria-selected={tab === 'reviews'} className={cn(tab === 'reviews' && 'active')} onClick={(e) => (e.preventDefault(), setTab('reviews'))}>
-          Reviews <span className="count">{r.count.toLocaleString()}</span>
-        </a>
+      <div className="sp-tabs" role="tablist">
+        <button type="button" role="tab" aria-selected={tab === 'offers'} onClick={() => setTab('offers')}>
+          Offers <span className="muted">{profile.active_listings}</span>
+        </button>
+        <button type="button" role="tab" aria-selected={tab === 'reviews'} onClick={() => setTab('reviews')}>
+          Reviews <span className="muted">{r.count.toLocaleString()}</span>
+        </button>
       </div>
 
       {tab === 'offers' ? (
         <>
           {games.length > 1 && (
-            <div className="filters" role="group" aria-label="Game" style={{ marginBottom: 0 }}>
-              <button aria-pressed={!game} onClick={() => setGame('')}>All games</button>
+            <div className="pg-seg sp-games" role="group" aria-label="Game">
+              <button type="button" aria-pressed={!game} onClick={() => setGame('')}>All games</button>
               {games.map(([g, n]) => (
-                <button key={g} aria-pressed={game === g} onClick={() => setGame(g)}>{g} <span className="muted">{n}</span></button>
+                <button key={g} type="button" aria-pressed={game === g} onClick={() => setGame(g)}>{g} <span className="muted">{n}</span></button>
               ))}
             </div>
           )}
-          {offers === null ? <p className="muted">Loading offers…</p> : <OfferTable offers={shown} showGame showSeller={false} empty="This seller has no live offers right now." />}
+          {offers === null ? <p className="muted">Loading offers…</p> : shown.length === 0 ? <div className="card muted">This seller has no live offers right now.</div> : <OfferCards offers={shown} />}
         </>
       ) : profile.reviews.length === 0 ? (
         <div className="card muted">No written reviews yet.</div>
       ) : (
-        <div className="card" style={{ padding: 0 }}>
-          {r.count > profile.reviews.length && (
-            <p className="small muted" style={{ margin: 0, padding: '14px 20px', borderBottom: '1px solid var(--rule)' }}>
-              Showing the {profile.reviews.length} most recent written reviews of {r.count.toLocaleString()}.
-            </p>
-          )}
-          <ul className="m-0 list-none p-0">
-            {profile.reviews.map((rv) => (
-              <li key={rv.id} className="border-b border-border px-5 py-4 last:border-b-0">
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <span className="inline-flex">
-                    {Array.from({ length: 5 }, (_, i) => <Star key={i} className={cn('size-4', i < rv.rating ? 'fill-held text-held' : 'text-border')} />)}
-                  </span>
-                  <b className="text-sm">{rv.buyer_name}</b>
-                  <span className="text-xs text-muted-foreground">{ago(rv.created_at)}</span>
-                  {rv.offer_title && (
-                    <span className="text-xs text-muted-foreground">
-                      · bought {rv.offer_title}
+        <>
+          {r.count > profile.reviews.length && <p className="small muted" style={{ margin: 0 }}>Showing the {profile.reviews.length} most recent written reviews of {r.count.toLocaleString()}.</p>}
+          <ul className="sp-reviews">
+            {profile.reviews.map((rv) => {
+              const good = rv.rating >= 4;
+              return (
+                <li key={rv.id} className="card sp-review">
+                  <div className="sp-review-head">
+                    <span className={good ? 'sp-thumb good' : 'sp-thumb bad'} role="img" aria-label={`${rv.rating} of 5`}>
+                      {good ? <ThumbsUp className="size-4" weight="fill" aria-hidden /> : <ThumbsDown className="size-4" weight="fill" aria-hidden />}
                     </span>
-                  )}
-                </div>
-                {rv.comment && <p style={{ margin: '6px 0 0' }}>{rv.comment}</p>}
-                {rv.seller_reply && (
-                  <div className="mt-2 border-s-2 border-border ps-3 text-sm text-muted-foreground">
-                    <b className="text-foreground">{profile.display_name}:</b> {rv.seller_reply}
+                    <b className="text-sm">{rv.buyer_name}</b>
+                    <span className="small muted">{ago(rv.created_at)}</span>
                   </div>
-                )}
-              </li>
-            ))}
+                  {rv.offer_title && <span className="small muted" dir="auto">{rv.offer_title}</span>}
+                  {rv.comment && <p dir="auto">{rv.comment}</p>}
+                  {rv.seller_reply && (
+                    <div className="sp-reply small"><b>{profile.display_name}:</b> {rv.seller_reply}</div>
+                  )}
+                </li>
+              );
+            })}
           </ul>
-        </div>
+        </>
       )}
       <p className="small muted">Reviews can only be left by buyers who paid for and received an order. Ratings count every review, including ones without a comment.</p>
     </div>
+  );
+}
+
+/** Offer cards: game, title, delivery, stock and price; the whole card opens the offer. */
+function OfferCards({ offers }: { offers: Offer[] }) {
+  const price = usePrice();
+  return (
+    <ul className="sp-cards">
+      {offers.map((o) => (
+        <li key={o.id} className="sp-card">
+          <span className="small muted">{o.game} · {categoryLabel(o.category_slug)}</span>
+          <Link to={`/offers/${o.id}`} className="sp-card-title" dir="auto">{o.title}</Link>
+          <div className="sp-card-meta small muted">
+            <DeliveryTag offer={o} />
+            <span className="num">{t('offer.inStock', { n: fmtUnits(o.stock, o.unit_label) })}</span>
+          </div>
+          <b className="sp-card-price num">{price.offer(o as any)}{o.unit_label && <span className="small muted"> / {o.unit_label}</span>}</b>
+        </li>
+      ))}
+    </ul>
   );
 }

@@ -9,7 +9,8 @@ test.describe('seller discounts', () => {
     await expect(page.getByText(/Sale ends/)).toBeVisible();
   });
 
-  test('a buyer applies a seller code at checkout', async ({ page }) => {
+  // Discount codes were removed by the owner (Oct 2026).
+  test.skip('a buyer applies a seller code at checkout', async ({ page }) => {
     await signIn(page, 'Buyer');
     await page.goto('/offers/offer-1');
     await page.getByLabel('Seller discount code').fill('northwind10');
@@ -21,7 +22,7 @@ test.describe('seller discounts', () => {
     await expect(page.getByText('That code isn’t valid for this seller')).toBeVisible();
   });
 
-  test('a seller starts a sale and creates a code', async ({ page }) => {
+  test('a seller starts a sale', async ({ page }) => {
     await signIn(page, 'Seller');
     await page.goto('/sell');
     const row = page.getByRole('row', { name: /Elden Ring — Steam key/ });
@@ -29,11 +30,8 @@ test.describe('seller discounts', () => {
     await page.getByLabel('Sale price (USD)').fill('25');
     await page.getByRole('button', { name: 'Start sale' }).click();
     await expect(page.getByText(/Sale \$25\.00 until/)).toBeVisible();
-    await page.getByLabel('Code', { exact: true }).fill('WEEKEND15');
-    await page.getByLabel('% off').fill('15');
-    await page.getByRole('button', { name: 'Create code' }).click();
-    await expect(page.getByRole('cell', { name: 'WEEKEND15' })).toBeVisible();
     await page.goto('/offers/offer-1');
-    await expect(page.getByText('$25.00').first()).toBeVisible();
+    await expect(page.locator('.line-through').first()).toBeVisible(); // the regular price, crossed out
+    await expect(page.getByText(/Sale ends/)).toBeVisible();
   });
 });

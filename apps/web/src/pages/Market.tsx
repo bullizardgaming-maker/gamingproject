@@ -24,6 +24,12 @@ export interface Offer {
   seller_founding?: boolean;
   /** Seller rank name (Hatchling … Dragon), when the API sends it. */
   seller_rank?: string | null;
+  /** Up to two badges the seller chose to show: `rank:<name>`, `founding`, `trust:<level>`, `verified`. */
+  seller_badges?: string[];
+  seller_last_seen_at?: string | null;
+  /** Currency sold by amount: price_cents is per one `unit_label` ("1M"), bought from `min_qty` up to `stock`. */
+  unit_label?: string | null;
+  min_qty?: number | null;
   featured?: boolean;
   is_bundle?: boolean;
   /** Account listings: warranty after escrow releases, in days (0 = none). */
@@ -92,9 +98,7 @@ export function OfferBadges({ offer }: { offer: Offer }) {
           {offer.linked_platform && <LinkedBadge offer={offer} />}
           {!!offer.warranty_days && <span className="chip released" title={t('warranty.badgeHint', { days: offer.warranty_days })}>{t('warranty.badge', { days: offer.warranty_days })}</span>}
         </>
-      ) : (
-        <span className="chip held">{t('badge.inspection')}</span>
-      )}
+      ) : null}
       {offer.min_buyer_reputation && <span className="chip held" title={t('minRep.badgeHint')}>{t('minRep.badge')}</span>}
     </div>
   );

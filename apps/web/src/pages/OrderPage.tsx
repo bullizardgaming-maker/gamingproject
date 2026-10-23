@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, apiUpload, money, realtime } from '../api';
 import { Chat } from '../components/Chat';
@@ -399,6 +399,7 @@ export function OrderPage() {
                     <p className="small muted" style={{ margin: 0 }}>{t('order.working.text')}</p>
                   </>
                 )}
+                {isBuyer && order.status === 'paid' && order.rail === 'fiat' && !order.escrow_frozen && <EarlyConfirm onYes={() => act('confirm')} />}
                 <div className="od-links">
                   <button type="button" className="pg-wrong" onClick={openDispute}>{t('order.somethingWrong')}</button>
                   <Link className="small muted" to={`/support/new?category=order&order=${order.id}`}>{t('order.getHelp')}</Link>
@@ -639,5 +640,30 @@ function ReviewForm({ orderId, onDone }: { orderId: string; onDone: () => void }
       {error && <div className="alert" role="alert">{error}</div>}
       <button className="btn" onClick={submit}>{t('order.postReview')}</button>
     </div>
+  );
+}
+
+/** The buyer can confirm before the seller marks it delivered; a short pop-up makes sure they mean it. */
+function EarlyConfirm({ onYes }: { onYes: () => Promise<void> }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const [busy, setBusy] = useState(false);
+  const yes = async () => {
+    setBusy(true);
+    await onYes();
+    setBusy(false);
+    ref.current?.close();
+  };
+  return (
+    <>
+      <button type="button" className="btn release" onClick={() => ref.current?.showModal()}>{t('order.gotIt')}</button>
+      <dialog ref={ref} className="bz-dialog" aria-labelledby="ec-title">
+        <h2 id="ec-title">{t('order.gotIt.title')}</h2>
+        <p>{t('order.gotIt.text')}</p>
+        <div className="bz-dialog-actions">
+          <button type="button" className="btn ghost" onClick={() => ref.current?.close()}>{t('order.gotIt.no')}</button>
+          <button type="button" className="btn release" disabled={busy} onClick={yes}>{t('order.gotIt.yes')}</button>
+        </div>
+      </dialog>
+    </>
   );
 }

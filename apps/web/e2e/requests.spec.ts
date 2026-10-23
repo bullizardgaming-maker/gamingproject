@@ -25,7 +25,7 @@ test.describe('buyer requests', () => {
     await page.getByRole('button', { name: 'Accept' }).first().click();
     await expect(page).toHaveURL(/\/offers\/offer-r-/);
     await expect(page.getByText(/This listing was made for you/)).toBeVisible();
-    await expect(page.getByText('$98.00').first()).toBeVisible();
+    await expect(page.getByRole('heading', { name: /EU account with Reaver Vandal/ })).toBeVisible();
     // Private: not in the game's public offers.
     const url = page.url();
     await page.goto('/games/valorant/accounts');

@@ -8,8 +8,8 @@ import { attributePairs } from '@/lib/attributes';
 import { usePrice } from '@/lib/prefs';
 import { unitPriceFor } from '@/lib/tiers';
 import type { Offer } from '../pages/Market';
-import { OnlineDot } from '@/lib/presence';
-import { t, type MessageKey } from '../i18n';
+import { OnlineDot, lastSeenLabel } from '@/lib/presence';
+import { intlLocale, t, type MessageKey } from '../i18n';
 
 export const CATEGORY_ICON: Record<string, typeof Coins> = {
   accounts: UserRound,
@@ -52,7 +52,7 @@ export function DeliveryTag({ offer }: { offer: Pick<Offer, 'delivery_mode'> & {
 }
 
 export function ProtectionTag({ offer }: { offer: Offer }) {
-  if (offer.category_kind !== 'account') return <span className="text-[11px] text-muted-foreground">{t('protect.inspection')}</span>;
+  if (offer.category_kind !== 'account') return null;
   return offer.high_risk_secondary ? (
     <span className="text-[11px] text-disputed">{t('protect.noProof')}</span>
   ) : (
@@ -192,3 +192,69 @@ export function TrustBadge({ level, className }: { level?: string | null; classN
     </span>
   );
 }
+
+/** Seller picture with the online dot on it (green while online). */
+export function SellerAvatar({ name, online, className, size = 'size-10' }: { name: string; online?: boolean; className?: string; size?: string }) {
+  return (
+    <span className={cn('relative inline-flex shrink-0', className)}>
+      <Avatar name={name} className={size} />
+      {online && <span className="sa-dot" role="img" aria-label={t('presence.online')} title={t('presence.online')} />}
+    </span>
+  );
+}
+
+/** The two badges a seller chose to show. */
+export function SellerBadges({ badges }: { badges?: string[] | null }) {
+  if (!badges?.length) return null;
+  return (
+    <>
+      {badges.slice(0, 2).map((b) =>
+        b.startsWith('rank:') ? <RankPill key={b} name={b.slice(5)} /> : b === 'founding' ? <FoundingBadge key={b} /> : b.startsWith('trust:') ? <TrustBadge key={b} level={b.slice(6)} /> : <span key={b} className="rank"><BadgeCheck className="size-3" aria-hidden /> {t('badge.idVerified')}</span>,
+      )}
+    </>
+  );
+}
+
+/** "Online now", or how long the seller has been away. */
+export function PresenceText({ online, lastSeen }: { online?: boolean; lastSeen?: string | null }) {
+  if (online) return <span className="presence on">{t('presence.online')}</span>;
+  const l = lastSeenLabel(lastSeen);
+  return l ? <span className="presence">{l}</span> : null;
+}
+
+/** Currency sold by amount, G2G / Eldorado style: seller first, then stock, minimum, delivery and the price per unit. */
+export function CurrencyTable({ offers, empty, current }: { offers: Offer[]; empty?: React.ReactNode; current?: string }) {
+  const price = usePrice();
+  if (offers.length === 0) return <div className="card text-center text-muted-foreground">{empty ?? t('table.empty')}</div>;
+  return (
+    <ul className="ct" aria-label={t('ct.sellers')}>
+      {offers.map((o) => (
+        <li key={o.id} className={cn('ct-row', o.id === current && 'on')} aria-current={o.id === current || undefined}>
+          {o.id === current && <span className="ct-current">{t('ct.current')}</span>}
+          <div className="ct-seller">
+            <SellerAvatar name={o.seller_name} online={o.seller_online} />
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Link to={`/offers/${o.id}`} className="ct-name after:absolute after:inset-0" aria-label={o.unit_label ? undefined : `${o.title} · ${o.seller_name}`}>{o.seller_name}</Link>
+                <SellerBadges badges={o.seller_badges} />
+              </div>
+              <Rating value={o.seller_rating} count={o.seller_review_count} />
+              {!o.unit_label && <span className="block truncate text-xs text-muted-foreground" dir="auto">{o.title}</span>}
+            </div>
+          </div>
+          <div className="ct-cell"><span className="ct-k">{t('ct.server')}</span><span>{Object.values(o.attributes ?? {}).slice(0, 2).join(' · ') || '—'}</span></div>
+          <div className="ct-cell"><span className="ct-k">{t('table.stock')}</span><span className="num">{fmtUnits(o.stock, o.unit_label)}</span></div>
+          <div className="ct-cell"><span className="ct-k">{t('ct.min')}</span><span className="num">{fmtUnits(o.min_qty ?? 1, o.unit_label)}</span></div>
+          <div className="ct-cell"><span className="ct-k">{t('table.delivery')}</span><DeliveryTag offer={o as any} /></div>
+          <div className="ct-price">
+            <span><b className="num">{price.offer(o as any)}</b>{o.unit_label && <span className="small muted"> / {o.unit_label}</span>}</span>
+            {!!o.price_tiers?.length && <span className="small text-released num">{t('tier.bulkFrom', { price: money(o.price_tiers.at(-1)!.priceCents, o.currency), qty: o.price_tiers.at(-1)!.minQty })}</span>}
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+const fmtQty = (n: number) => n.toLocaleString(intlLocale());
+/** "850 Divine Orb", or "850 × 1M" when the unit is itself a number. */
+export const fmtUnits = (n: number, unit?: string | null) => (!unit ? fmtQty(n) : /^\d/.test(unit) ? `${fmtQty(n)} × ${unit}` : `${fmtQty(n)} ${unit}`);

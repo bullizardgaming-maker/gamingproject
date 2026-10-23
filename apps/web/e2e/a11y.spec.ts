@@ -23,7 +23,7 @@ async function scan(page: Page, path: string) {
   expect(serious, `${path}\n${report}`).toEqual([]);
 }
 
-const PUBLIC = ['/', '/market', '/games', '/games/elden-ring', '/offers/offer-2', '/offers/offer-bundle-1', '/requests', '/help', '/status', '/login', '/cart', '/sellers/u-sell1-0000-4000-8000-000000000002'];
+const PUBLIC = ['/', '/market', '/games', '/games/elden-ring', '/offers/offer-2', '/offers/offer-bundle-1', '/requests', '/help', '/status', '/login', '/sellers/u-sell1-0000-4000-8000-000000000002'];
 
 test.describe('accessibility', () => {
   for (const path of PUBLIC) {
@@ -31,10 +31,11 @@ test.describe('accessibility', () => {
   }
 
   test('buyer pages', async ({ page }) => {
+    test.setTimeout(90_000);
     await signIn(page, 'Buyer');
     await buy(page, '/offers/offer-2');
     const order = new URL(page.url()).pathname;
-    for (const path of [order, '/orders', '/messages', '/watchlist', '/account', '/requests/req-1']) await scan(page, path);
+    for (const path of [order, '/orders', '/messages', '/watchlist', '/account', '/wallet', '/requests/req-1']) await scan(page, path);
   });
 
   test('seller pages', async ({ page }) => {
@@ -44,6 +45,6 @@ test.describe('accessibility', () => {
 
   test('dark theme keeps contrast', async ({ page }) => {
     await page.emulateMedia({ colorScheme: 'dark' });
-    for (const path of ['/', '/games/elden-ring', '/offers/offer-2', '/cart']) await scan(page, path);
+    for (const path of ['/', '/games/elden-ring', '/offers/offer-2', '/games/albion-online/currency']) await scan(page, path);
   });
 });

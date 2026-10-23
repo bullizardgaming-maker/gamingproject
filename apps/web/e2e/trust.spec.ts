@@ -7,8 +7,6 @@ test.describe('seller trust levels', () => {
     await expect(page.getByText('Top seller').first()).toBeVisible();
     await page.goto('/market?sort=trust');
     await expect(page.getByText('Top seller').first()).toBeVisible();
-    await page.goto('/offers/offer-2');
-    await expect(page.getByText('Rising seller').first()).toBeVisible();
   });
 
   test('a seller sees their level and what the next one needs', async ({ page }) => {

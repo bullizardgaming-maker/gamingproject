@@ -20,11 +20,13 @@ export interface CryptoPayment {
   price_usd: string;
   actually_paid: string;
   actually_paid_usd: string | null;
+  /** Network fee the buyer covers on top of the order amount. */
+  fee_usd?: string;
   status: string;
   expires_at: string | null;
   created_at: string;
 }
-interface Coins { owedCents: number; currency: string; coins: Array<{ coin: string; name: string; minUsd: number; available?: boolean }> }
+interface Coins { owedCents: number; currency: string; coins: Array<{ coin: string; name: string; minUsd: number; available?: boolean; network?: string; fee_cents?: number; total_cents?: number }> }
 
 const STATUSES = ['waiting', 'confirming', 'confirmed', 'sending', 'partially_paid', 'finished', 'failed', 'refunded', 'expired'] as const;
 const statusText = (s: string) => ((STATUSES as readonly string[]).includes(s) ? t(`crypto.status.${s as (typeof STATUSES)[number]}`) : s);
@@ -120,6 +122,11 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid }: { base: 
             </div>
             <b className="pg-pay-amount num" data-testid="pay-amount">{trim(open.pay_amount)} {ticker(open.pay_currency)}</b>
             <span className="small muted">{t('crypto.onNetwork', { network: open.pay_currency_name })}</span>
+            {Number(open.fee_usd) > 0 && (
+              <span className="small muted num" data-testid="pay-breakdown">
+                {t('crypto.breakdown', { price: money(Math.round(Number(open.price_usd) * 100), 'USD'), fee: money(Math.round(Number(open.fee_usd) * 100), 'USD'), total: money(Math.round((Number(open.price_usd) + Number(open.fee_usd)) * 100), 'USD') })}
+              </span>
+            )}
             <div className="pg-addr">
               <code className="num" data-testid="pay-address">{open.pay_address}</code>
               <button className="btn ghost sm" type="button" onClick={() => copy(open.pay_address)}>{copied ? t('crypto.copied') : t('crypto.copyAddress')}</button>
@@ -142,12 +149,16 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid }: { base: 
               return (
                 <button key={c.coin} type="button" className={`pg-coin${off ? ' off' : ''}`} disabled={busy || off} aria-disabled={off || undefined} onClick={() => pick(c.coin)} title={off ? t('crypto.tooSmall', { amount: money(Math.round(c.minUsd * 100), 'USD') }) : undefined}>
                   <span className="pg-sym" aria-hidden>{ticker(c.coin).slice(0, 4)}</span>
-                  <span className="min-w-0 flex-1"><b className="block">{c.name}</b><span className="small muted">{network(c.name)} · {off ? t('crypto.tooSmall', { amount: money(Math.round(c.minUsd * 100), 'USD') }) : t('crypto.minimum', { amount: money(Math.round(c.minUsd * 100), 'USD') })}</span></span>
+                  <span className="min-w-0 flex-1">
+                    <b className="block">{c.name}{c.network && !c.name.includes('(') && c.network !== c.name && !c.name.startsWith(c.network) && <span className="pg-net">{c.network}</span>}</b>
+                    <span className="small muted">{off ? t('crypto.tooSmall', { amount: money(Math.round(c.minUsd * 100), 'USD') }) : c.fee_cents != null ? t('crypto.feeLine', { fee: money(c.fee_cents, 'USD') }) : t('crypto.minimum', { amount: money(Math.round(c.minUsd * 100), 'USD') })}</span>
+                  </span>
+                  {!off && c.total_cents != null && <b className="pg-coin-total num">{money(c.total_cents, 'USD')}</b>}
                 </button>
               );
             })}
           </div>
-          <p className="small muted" style={{ margin: 0 }}>{t('crypto.onlyFitting')}</p>
+          <p className="small muted" style={{ margin: 0 }}>{t('crypto.feeNote')}</p>
         </div>
       )}
       {payments.filter((p) => !OPEN.has(p.status)).length > 0 && (

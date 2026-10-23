@@ -21,7 +21,7 @@ const gameAllowed = (game: string) => {
   return list.some((g) => g.toLowerCase() === game.trim().toLowerCase());
 };
 
-const KEY = DEMO_FULL ? 'bz.demo.v26' : 'bz.demo.launch.v1';
+const KEY = DEMO_FULL ? 'bz.demo.v26' : 'bz.demo.launch.v2';
 const day = 86_400_000;
 const now = () => new Date().toISOString();
 const rid = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2) + Date.now().toString(16));
@@ -128,6 +128,13 @@ function presenceOf(id: string) {
   const shown = state.showOnline[id] ?? true;
   return { online: shown && (id === viewer || !!p?.online), last_seen_at: shown ? (id === viewer ? now() : p?.last_seen_at ?? null) : null, response_minutes: p?.response_minutes ?? null };
 }
+/** The (up to) two badges a seller chose to show; until they choose: their rank, then Founding Seller or their trust level. */
+function badgesOf(id: string): string[] {
+  const chosen = (state as any).sellerBadges?.[id] as string[] | undefined;
+  if (chosen) return chosen.slice(0, 2);
+  const u = userById(id);
+  return [`rank:${tierOf(id).rank.name}`, u?.founding ? 'founding' : state.trust[id] && state.trust[id] !== 'new' ? `trust:${state.trust[id]}` : 'verified'].slice(0, 2);
+}
 /** Units buyable now: manual stock, instant inventory, or a bundle's complete sets (0 if a part isn't active). */
 function availableOf(o: any): number {
   if (o.bundle?.length) {
@@ -169,6 +176,8 @@ function offerView(o: any) {
     featured: !!o.featured_until && Date.parse(o.featured_until) > Date.now(),
     sale_ends_at: price < o.price_cents ? o.sale_ends_at : null,
     seller_online: pr.online,
+    seller_last_seen_at: pr.last_seen_at,
+    seller_badges: badgesOf(o.seller_id),
     seller_trust_level: state.trust[o.seller_id] ?? 'new',
     seller_response_minutes: pr.response_minutes,
     inventory: undefined,
@@ -364,7 +373,7 @@ function seedOrdersFor(buyer: DemoUser) {
   if (state.orders.some((o) => o.buyer_id === buyer.id)) return;
   const pick = (title: string) => state.offers.find((f) => f.title.startsWith(title))!;
   const make = (offer: any, ageMs: number) => {
-    const o = createOrderRecord(buyer, offer, 1, 'fiat');
+    const o = createOrderRecord(buyer, offer, offer.min_qty ?? 1, 'fiat');
     o.created_at = new Date(Date.now() - ageMs).toISOString();
     payDemoOrder(o.id);
     return o;
@@ -636,6 +645,9 @@ route('GET', '/offers', ({ query }) => {
   const sort = query.get('sort') ?? (q ? 'relevance' : 'newest');
   const by: Record<string, (a: any, b: any) => number> = {
     newest: (a, b) => b.created_at.localeCompare(a.created_at),
+    recommended: (a, b) => (b.seller_rating ?? 0) * 100 - (a.seller_rating ?? 0) * 100 + (a.price_cents - b.price_cents) / 10,
+    min_qty_asc: (a, b) => (a.min_qty ?? 1) - (b.min_qty ?? 1),
+    delivery: (a, b) => (a.delivery_hours ?? 0) - (b.delivery_hours ?? 0),
     price_asc: (a, b) => a.price_cents - b.price_cents,
     price_desc: (a, b) => b.price_cents - a.price_cents,
     rating: (a, b) => (b.seller_rating ?? 0) - (a.seller_rating ?? 0),
@@ -990,6 +1002,8 @@ route('POST', '/orders', ({ me, body }) => {
     if (level !== 'good') fail(403, 'buyer_reputation_required', level === 'new' ? 'This seller only sells this listing to established buyers: complete three orders first' : 'This seller only sells this listing to buyers in good standing');
   }
   const qty = Number(body.quantity ?? 1);
+  const unit = offer as { min_qty?: number; unit_label?: string };
+  if (unit.min_qty && qty < unit.min_qty) fail(400, 'below_min_qty', `The minimum for this offer is ${unit.min_qty} ${unit.unit_label ?? ''}`.trim());
   const available = availableOf(offer);
   if (available < qty) fail(409, 'out_of_stock', 'Not enough stock for this order');
   const code = body.sellerCode ? sellerCodeQuote(offer, u, qty, body.sellerCode) : null;
@@ -1002,10 +1016,16 @@ route('POST', '/orders', ({ me, body }) => {
 });
 // --- Crypto checkout (demo): coins, a fake address, and a payment that confirms itself ------------
 const DEMO_COINS = [
-  ['usdttrc20', 'Tether (TRC-20)', 1], ['usdterc20', 'Tether (ERC-20)', 8], ['btc', 'Bitcoin', 6], ['eth', 'Ethereum', 10], ['ltc', 'Litecoin', 2],
+  ['usdttrc20', 'Tether (TRC-20)', 1], ['usdtbsc', 'Tether (BEP-20)', 1], ['usdterc20', 'Tether (ERC-20)', 8], ['usdcmatic', 'USD Coin (Polygon)', 1],
+  ['btc', 'Bitcoin', 6], ['eth', 'Ethereum', 10], ['ltc', 'Litecoin', 2],
   ['trx', 'TRON', 1], ['sol', 'Solana', 2], ['doge', 'Dogecoin', 3], ['xmr', 'Monero', 15], ['ton', 'Toncoin', 2],
 ] as const;
-const DEMO_RATE: Record<string, number> = { usdttrc20: 1, usdterc20: 1, btc: 97_000, eth: 3_400, ltc: 95, trx: 0.24, sol: 190, doge: 0.33, xmr: 160, ton: 5.4 };
+/** Network each coin travels on, and the network fee the buyer pays on top (estimates, USD cents). */
+const DEMO_NETWORK: Record<string, [string, number]> = {
+  usdttrc20: ['TRC-20', 100], usdtbsc: ['BEP-20', 30], usdterc20: ['ERC-20', 350], usdcmatic: ['Polygon', 10], btc: ['Bitcoin', 150], eth: ['Ethereum', 200],
+  ltc: ['Litecoin', 5], trx: ['TRON', 30], sol: ['Solana', 2], doge: ['Dogecoin', 10], xmr: ['Monero', 5], ton: ['TON', 5],
+};
+const DEMO_RATE: Record<string, number> = { usdttrc20: 1, usdtbsc: 1, usdcmatic: 1, usdterc20: 1, btc: 97_000, eth: 3_400, ltc: 95, trx: 0.24, sol: 190, doge: 0.33, xmr: 160, ton: 5.4 };
 const coinNameOf = (c: string) => DEMO_COINS.find((x) => x[0] === c)?.[1] ?? c.toUpperCase();
 function payableOf(u: DemoUser, kind: 'orders' | 'checkouts', id: string) {
   if (kind === 'orders') {
@@ -1023,7 +1043,7 @@ for (const kind of ['orders', 'checkouts'] as const) {
   route('GET', `/${kind}/:id/crypto/coins`, ({ me, params }) => {
     const p = payableOf(need(me), kind, params[0]!);
     const owed = p.owed - paidSoFar(kind, p.id);
-    const coins = DEMO_COINS.map(([coin, name, minUsd]) => ({ coin, name, minUsd, available: minUsd * 100 <= owed }));
+    const coins = DEMO_COINS.map(([coin, name, minUsd]) => ({ coin, name, minUsd, available: minUsd * 100 <= owed, network: DEMO_NETWORK[coin]![0], fee_cents: DEMO_NETWORK[coin]![1], total_cents: owed + DEMO_NETWORK[coin]![1] }));
     return { owedCents: owed, currency: 'USD', coins: coins.sort((a, b) => Number(b.available) - Number(a.available) || a.coin.localeCompare(b.coin)) };
   });
   route('GET', `/${kind}/:id/crypto/payments`, ({ me, params }) => paymentsOf(kind, payableOf(need(me), kind, params[0]!).id).map(view));
@@ -1034,10 +1054,12 @@ for (const kind of ['orders', 'checkouts'] as const) {
     const owed = p.owed - paidSoFar(kind, p.id);
     const coin = String(body.coin);
     if (!DEMO_COINS.some(([c, , min]) => c === coin && min * 100 <= owed)) fail(400, 'coin_unavailable', `${coinNameOf(coin)} can’t be used for this amount`);
-    const amount = owed / 100 / (DEMO_RATE[coin] ?? 1);
+    // The buyer sends the order amount plus the coin's network fee; only the order amount counts toward the order.
+    const fee = DEMO_NETWORK[coin]?.[1] ?? 0;
+    const amount = (owed + fee) / 100 / (DEMO_RATE[coin] ?? 1);
     const pay = {
       id: rid(), ref_kind: kind, ref_id: p.id, payment_id: String(5_000_000 + state.cryptoPayments.length), pay_currency: coin, pay_address: `${coin === 'btc' ? 'bc1q' : coin === 'eth' || coin.endsWith('erc20') ? '0x' : 'T'}demo${rid().replace(/-/g, '').slice(0, 28)}`,
-      pay_extra_id: null, pay_amount: amount.toFixed(coin.startsWith('usd') ? 2 : 8), price_usd: (owed / 100).toFixed(2), actually_paid: '0', actually_paid_usd: null as string | null, status: 'waiting',
+      pay_extra_id: null, pay_amount: amount.toFixed(coin.startsWith('usd') ? 2 : 8), price_usd: (owed / 100).toFixed(2), fee_usd: (fee / 100).toFixed(2), actually_paid: '0', actually_paid_usd: null as string | null, status: 'waiting',
       expires_at: new Date(Date.now() + 20 * 60_000).toISOString(), created_at: now(), finish_at: Date.now() + 1_500, // the demo "network" confirms after a moment
     };
     state.cryptoPayments.push(pay);
@@ -1057,6 +1079,35 @@ for (const kind of ['orders', 'checkouts'] as const) {
     return paymentsOf(kind, p.id).map(view);
   });
 }
+// Wallet for every account: balance plus one history of orders, refunds and withdrawals.
+route('GET', '/me/wallet', ({ me }) => {
+  const u = need(me);
+  const st = (o: any, seller: boolean) => (o.status === 'completed' ? 'completed' : ['refunded', 'cancelled', 'charged_back'].includes(o.status) ? (seller ? 'cancelled' : 'completed') : o.status === 'awaiting_payment' ? 'pending' : 'held');
+  const entries = [
+    ...state.orders.filter((o) => o.buyer_id === u.id && o.status !== 'awaiting_payment' && o.status !== 'cancelled').flatMap((o) => [
+      { id: `b-${o.id}`, at: o.created_at, kind: 'order', ref: o.ref, order_id: o.id, title: o.offer_title, status: st(o, false), amount_cents: -(o.amount_cents), currency: o.currency },
+      ...(o.status === 'refunded' ? [{ id: `r-${o.id}`, at: o.updated_at ?? o.created_at, kind: 'refund', ref: o.ref, order_id: o.id, title: o.offer_title, status: 'completed', amount_cents: o.amount_cents, currency: o.currency }] : []),
+    ]),
+    ...state.orders.filter((o) => o.seller_id === u.id && o.status !== 'awaiting_payment' && o.status !== 'cancelled').map((o) => ({ id: `s-${o.id}`, at: o.created_at, kind: 'sale', ref: o.ref, order_id: o.id, title: o.offer_title, status: st(o, true), amount_cents: o.seller_net_cents, currency: o.currency })),
+    ...state.withdrawals.filter((w) => w.user_id === u.id).map((w) => ({ id: w.id, at: w.created_at, kind: 'withdrawal', ref: `#${String(w.id).replace(/-/g, '').slice(0, 8).toUpperCase()}`, address: w.destination_address, coin: w.destination_currency, status: w.status === 'paid' ? 'completed' : ['failed', 'rejected'].includes(w.status) ? 'cancelled' : 'pending', amount_cents: -Number(w.amount_cents), currency: w.currency })),
+  ].sort((a, b) => b.at.localeCompare(a.at));
+  const sellerAvail = u.role === 'user' && state.balances[u.id] ? holdOf(u.id).withdrawableCents : 0;
+  return { balances: { USD: (state.credit[u.id] ?? 0) + sellerAvail }, credit_cents: state.credit[u.id] ?? 0, entries };
+});
+route('POST', '/me/withdrawals', ({ me, body }) => {
+  const u = need(me);
+  const credit = state.credit[u.id] ?? 0;
+  const cents = Number(body.amountCents);
+  if (!(cents > 0) || cents > credit) fail(400, 'insufficient_funds', `You can withdraw up to ${(credit / 100).toFixed(2)} USD`);
+  if (!String(body.address ?? '').trim()) fail(400, 'validation_error', 'Add the address to send it to');
+  const fee = feeFor(cents);
+  if (cents - fee <= 0) fail(400, 'amount_too_small', 'The fee would take the whole amount');
+  state.credit[u.id] = credit - cents;
+  const w = { id: rid(), user_id: u.id, amount_cents: cents, fee_cents: fee, net_cents: cents - fee, currency: 'USD', status: 'pending_approval', destination_address: String(body.address).trim(), destination_currency: String(body.coin ?? 'usdttrc20'), provider_ref: null as string | null, payout_id: null as string | null, tx_hash: null as string | null, created_at: now(), updated_at: now() };
+  state.withdrawals.push(w);
+  save();
+  return w;
+});
 // Refunds on crypto orders are sent by hand: the buyer gives an address, the treasury records the transaction.
 function queueCryptoRefund(o: any, reason: string) {
   if (o.payment_provider !== 'nowpayments' || state.cryptoRefunds.some((r) => r.order_id === o.id && r.status !== 'cancelled')) return;
@@ -1519,8 +1570,8 @@ route('POST', '/orders/:id/confirm', ({ me, params, body }) => {
   const u = need(me);
   const o = orderFor(u, params[0]!);
   if (o.buyer_id !== u.id) fail(403, 'not_buyer', 'Only the buyer can confirm');
-  if (o.status !== 'delivered') fail(409, 'invalid_state', `Cannot confirm an order that is ${o.status}`);
-  let reason = 'buyer_confirmed';
+  if (o.status !== 'delivered' && o.status !== 'paid') fail(409, 'invalid_state', `Cannot confirm an order that is ${o.status}`);
+  let reason = o.status === 'paid' ? 'buyer_confirmed_early' : 'buyer_confirmed';
   if (o.checklist && !o.checklist.completed_at) {
     if (!o.checklist.handover_at) fail(409, 'checklist_incomplete', 'Finish the security changeover first');
     if (!body?.handoverConsent) fail(409, 'handover_consent_required', 'The checklist is not finished. Confirm that you want to release the payment now and end the insurance period early');

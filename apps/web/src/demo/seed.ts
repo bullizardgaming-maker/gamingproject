@@ -111,6 +111,22 @@ const LAUNCH_EXTRAS: Seed[] = [
   ['items', 'Path of Exile', 'Mageblood — Mercenaries', 320_00, 'manual', 1, 'seller5', 'none', '', 4],
 ];
 
+/** Launch currency listings sold by amount: title → [unit, buyer price per unit (cents), stock in units, minimum]. */
+const UNIT_OFFERS: Record<string, [string, number, number, number]> = {
+  '10M silver — Europe': ['1M', 17, 850, 20],
+  '10M silver — Americas': ['1M', 19, 300, 10],
+  '30M silver — Europe': ['1M', 18, 1200, 50],
+  '10M silver — Asia': ['1M', 21, 400, 10],
+  '100M kinah — Siel (NA)': ['10M', 99, 500, 5],
+  '500M kinah — Siel (NA)': ['10M', 92, 2000, 20],
+  '50M kinah — Israphel (EU)': ['10M', 280, 300, 3],
+  '100M kinah — Nezakan (NA)': ['10M', 260, 600, 5],
+  '200 Divine Orbs — Mercenaries softcore': ['Divine Orb', 12, 2000, 10],
+  '50 Divine Orbs — Standard': ['Divine Orb', 13, 400, 5],
+  '100 Divine Orbs — Standard league': ['Divine Orb', 17, 900, 10],
+  '50 Exalted Orbs — Dawn of the Hunt': ['Exalted Orb', 18, 3000, 20],
+};
+
 const LISTINGS: Seed[] = [
   ['keys', 'Elden Ring', 'Elden Ring — Steam key (Global)', 32_49, 'auto', 40, 'seller', 'none', 'Global Steam key, activates instantly. Delivered to your order page the second payment clears.'],
   ['keys', 'Baldur’s Gate 3', 'Baldur’s Gate 3 — Steam key (EU)', 41_99, 'auto', 18, 'seller2'],
@@ -344,6 +360,15 @@ export function seed() {
       created_at: ago((list.length - i) * 3_600_000 * 7),
     };
   });
+  // Launch view: currency is sold by amount (price per unit, a minimum, stock in units), like G2G and Eldorado.
+  if (!DEMO_FULL) {
+    for (const o of offers) {
+      const u = UNIT_OFFERS[o.title];
+      if (!u) continue;
+      const seller = Object.entries(sellerId).find(([, id]) => id === o.seller_id)![0];
+      Object.assign(o, { unit_label: u[0], price_cents: net(seller, u[1]), stock: u[2], min_qty: u[3], price_tiers: [] });
+    }
+  }
   // A bundle: two of NorthWind's instant listings at one price, delivered from their stock.
   offers.push({
     ...offers.find((o) => o.title.startsWith('Elden Ring'))!, id: 'offer-bundle-1', title: 'Elden Ring + $50 Steam Wallet bundle',

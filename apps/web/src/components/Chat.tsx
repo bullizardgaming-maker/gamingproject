@@ -4,7 +4,7 @@ import { Check, Image as ImageIcon, ShieldCheck } from '@phosphor-icons/react';
 import { api, realtime, type ChatMessage } from '../api';
 import { detectOffPlatform } from '@/lib/safety';
 import { BrandMark } from './Brand';
-import { t, type MessageKey } from '../i18n';
+import { currentLocale, t, type MessageKey } from '../i18n';
 
 const time = (iso: string) => new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 const isBlockedError = (e: any) => e?.code === 'offplatform_blocked' || /^Not sent\./.test(String(e?.message ?? e ?? ''));
@@ -135,7 +135,6 @@ export function Chat({ roomId, meId, names, accountOrder = false }: { roomId: st
     <div className="card chat chat2" style={{ ['--chat-h' as string]: '640px' }}>
       <div className="chat2-head">
         <h3 style={{ margin: 0 }}>{t('chat.title')}</h3>
-        <span className="chip">{t('chat.recorded')}</span>
       </div>
       <div className="chat-log" ref={logRef} role="log" aria-label={t('a11y.chatLog')}>
         {orderCard && <OrderCard message={orderCard} />}
@@ -206,7 +205,8 @@ const ORDER_CHIP: Record<string, { label: string; cls: string }> = {
 
 /** "Stay safe": the staff-managed safety text as a signed Bullizard message at the top of every order chat; at most 15% of the chat, collapsible. */
 function SafetyPanel() {
-  const [text, setText] = useState<{ body: string; link_label: string; link_href: string } | null>(null);
+  const [text, setText] = useState<{ body: string; link_label: string; link_href: string; lang?: string } | null>(null);
+  const lang = currentLocale();
   const [open, setOpen] = useState(() => {
     try {
       return localStorage.getItem('bz.safety.collapsed') !== '1';
@@ -215,9 +215,11 @@ function SafetyPanel() {
     }
   });
   useEffect(() => {
-    api<{ body: string; link_label: string; link_href: string }>('/texts/chat_safety').then(setText).catch(() => {});
-  }, []);
+    api<{ body: string; link_label: string; link_href: string; lang?: string }>(`/texts/chat_safety?lang=${lang}`).then(setText).catch(() => {});
+  }, [lang]);
   if (!text) return null;
+  // Staff write the text per language; until a translation exists the built-in one is shown.
+  const body = lang === 'en' || text.lang === lang ? text.body : t('chat.safetyBody');
   const toggle = () => {
     setOpen((o) => {
       try {
@@ -235,13 +237,13 @@ function SafetyPanel() {
         <b>Bullizard</b>
         <Check className="size-4" weight="bold" aria-label={t('chat.official')} />
         <button type="button" className="chat-safety-toggle" aria-expanded={open} onClick={toggle}>
-          <ShieldCheck className="size-4" aria-hidden /> {t('chat.staySafe')} <span aria-hidden>{open ? '▾' : '▸'}</span>
+          <ShieldCheck className="size-4" aria-hidden /> {t('chat.staySafe')}{!open && <span className="chat-safety-read">{t('chat.readIt')}</span>} <span aria-hidden>{open ? '▾' : '▸'}</span>
         </button>
       </div>
       {open && (
         <div className="chat-official-body chat-safety-body">
-          {text.body.split('\n').map((line, i) => <p key={i} dir="auto">{line}</p>)}
-          {text.link_href && <Link to={text.link_href}>{text.link_label || t('chat.rules')}</Link>}
+          {body.split('\n').map((line, i) => <p key={i} dir="auto">{line}</p>)}
+          {text.link_href && <Link to={text.link_href}>{text.lang === lang && text.link_label ? text.link_label : t('chat.rules')}</Link>}
         </div>
       )}
     </div>

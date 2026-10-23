@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test';
 import { payCrypto, signIn, watchErrors } from './helpers';
 
-test.describe('cart', () => {
+// The cart was removed by the owner (Oct 2026): one offer, one checkout.
+test.describe.skip('cart', () => {
   test('pays listings from two sellers in one checkout, one escrow order each', async ({ page }) => {
     const done = watchErrors(page);
     await signIn(page, 'Buyer');

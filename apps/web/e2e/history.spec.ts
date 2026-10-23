@@ -2,7 +2,8 @@ import { expect, test } from '@playwright/test';
 import { watchErrors } from './helpers';
 
 test.describe('price history and recommendations', () => {
-  test('a listing shows its price history with a hover readout and a table view', async ({ page }) => {
+  // Price history was removed by the owner (Oct 2026): no price records anywhere on the site.
+  test.skip('a listing shows its price history with a hover readout and a table view', async ({ page }) => {
     const done = watchErrors(page);
     await page.goto('/offers/offer-2');
     const card = page.locator('section', { has: page.getByRole('heading', { name: 'Price history' }) });
@@ -19,7 +20,7 @@ test.describe('price history and recommendations', () => {
     done();
   });
 
-  test('a game market shows lowest and median prices over time', async ({ page }) => {
+  test.skip('a game market shows lowest and median prices over time', async ({ page }) => {
     await page.goto('/games/elden-ring/keys');
     await page.getByText(/^Price trend: Elden Ring/).click();
     await expect(page.getByRole('img', { name: /Daily prices for Elden Ring/ })).toBeVisible();

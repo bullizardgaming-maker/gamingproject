@@ -3,7 +3,7 @@ import { Link, NavLink, useNavigate, useParams, useSearchParams } from 'react-ro
 import { GameArt } from '@/components/GameArt';
 import { SealCheck as BadgeCheck, MagnifyingGlass as Search, ShieldCheck, Lightning as Zap } from '@phosphor-icons/react';
 import { api } from '../api';
-import { CATEGORY_ICON, OfferTable } from '../components/CatalogUi';
+import { CATEGORY_ICON, CurrencyTable, OfferTable } from '../components/CatalogUi';
 import { CATEGORY_META, categoryLabel, slugify, useCategoryOrder, useGames, type GameEntry } from '@/lib/catalog';
 import { cn } from '@/lib/utils';
 import { usePrice } from '@/lib/prefs';
@@ -13,7 +13,6 @@ import { attrLabel, attributesFor } from '@/lib/attributes';
 import { t, type MessageKey } from '../i18n';
 import { WatchButton } from '../components/WatchButton';
 import { SaveSearchButton, paramsFromUrl } from '../components/SaveSearchButton';
-import { MarketPriceHistory } from '../components/PriceHistory';
 import { recordBrowse } from '@/lib/recent';
 
 type AttrFacet = { key: string; value: string; count: number };
@@ -129,7 +128,7 @@ export function GamePage() {
       : undefined,
   });
   const get = (k: string) => params.get(k) ?? '';
-  const sort = get('sort') || 'price_asc';
+  const sort = get('sort') || (category === 'currency' ? 'recommended' : 'price_asc');
 
   const query = useMemo(() => {
     if (!entry || !category) return null;
@@ -179,7 +178,8 @@ export function GamePage() {
   const meta = category ? CATEGORY_META[category] : null;
   const prices = offers?.map((o) => o.price_cents) ?? [];
 
-  const unitWord = category === 'currency' || category === 'items' || category === 'top-ups';
+  const unitWord = category === 'items' || category === 'top-ups';
+  const shownOffers = (offers ?? []).filter((o) => get('online') !== '1' || o.seller_online);
   const amountNum = Math.max(1, Math.floor(Number(amount) || 1));
 
   return (
@@ -229,6 +229,43 @@ export function GamePage() {
             <Link to={`/requests/new?${new URLSearchParams({ game: entry.game })}`}>{t('req.post')}</Link>
           </p>
         </section>
+      ) : category === 'currency' ? (
+        <section className="ct-wrap" aria-labelledby="ct-title">
+          <div className="ct-bar">
+            <AttributeFilters game={entry.game} category={category} facets={facets} params={params} set={set} clear={(keys) => { const next = new URLSearchParams(params); keys.forEach((k) => next.delete(k)); setParams(next, { replace: true }); }} />
+            <label className="ct-toggle">
+              <input type="checkbox" role="switch" checked={get('online') === '1'} onChange={(e) => set('online', e.target.checked ? '1' : '')} />
+              <span>{t('ct.onlineOnly')}</span>
+            </label>
+            <span className="ct-sell row" style={{ gap: 8, height: 'auto' }}>
+              <SaveSearchButton params={paramsFromUrl(params, { game: entry.game, category })} name={`${entry.game} · ${categoryLabel(category)}`} />
+            <Link className="btn ghost sm" to="/sell">{t('ct.sell', { game: entry.game, what: categoryLabel(category).toLowerCase() })}</Link>
+            </span>
+          </div>
+          {error && <div className="alert" role="alert">{error}</div>}
+          {offers === null ? (
+            <p className="muted">{t('game.loadingOffers')}</p>
+          ) : (
+            <>
+              <div className="ct-head">
+                <h2 id="ct-title">{t('ct.count', { n: shownOffers.length })}</h2>
+                <div className="pg-seg" role="group" aria-label={t('sort.label')}>
+                  {([['recommended', 'ct.sort.recommended'], ['price_asc', 'ct.sort.cheapest'], ['min_qty_asc', 'ct.sort.minQty']] as const).map(([k, label]) => (
+                    <button key={k} type="button" aria-pressed={sort === k} onClick={() => set('sort', k)}>{t(label)}</button>
+                  ))}
+                </div>
+              </div>
+              <CurrencyTable
+                offers={shownOffers}
+                empty={<>{t('game.noMatch')} <button className="cursor-pointer border-0 bg-transparent p-0 underline" onClick={() => nav(`/games/${slug}/${category}`)}>{t('game.clear')}</button></>}
+              />
+              {hasMore && <button className="btn ghost" style={{ alignSelf: 'center' }} onClick={more}>{t('game.more')}</button>}
+              <p className="small muted" style={{ margin: 0 }}>
+                {t('req.cta')} <Link to={`/requests/new?${new URLSearchParams({ game: entry.game, category })}`}>{t('req.post')}</Link>
+              </p>
+            </>
+          )}
+        </section>
       ) : (
       <div className="pg-browse">
         <aside className="pg-side">
@@ -266,7 +303,7 @@ export function GamePage() {
           {meta && (
             <p className="pg-protect small muted">
               {meta.protection === '14d' ? <BadgeCheck className="size-4 shrink-0" aria-hidden /> : <ShieldCheck className="size-4 shrink-0" aria-hidden />}
-              <span>{meta.protection === '14d' ? t('game.protect14') : t('game.protect72')}</span>
+              <span>{meta.protection === '14d' ? t('game.protect14') : t('offer.guaranteeText')}</span>
             </p>
           )}
         </aside>
@@ -319,7 +356,6 @@ export function GamePage() {
                   />
                 </span>
               </div>
-              {category && <MarketPriceHistory game={entry.game} category={category} />}
             </>
           )}
         </section>

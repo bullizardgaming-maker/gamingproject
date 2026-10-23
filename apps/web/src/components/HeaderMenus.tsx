@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, Globe, Heart, SquaresFour as LayoutGrid, SignOut as LogOut, Moon, Package, GearSix as Settings, ShoppingCart, Storefront as Store, Sun, Wrench } from '@phosphor-icons/react';
+import { Check, Globe, Heart, SquaresFour as LayoutGrid, SignOut as LogOut, Moon, Package, GearSix as Settings, Storefront as Store, Wallet, Sun, Wrench } from '@phosphor-icons/react';
 import { AnimatePresence, motion } from 'motion/react';
-import { cartCount, useCart } from '@/lib/cart';
 import { useSession } from '../session';
 import { LOCALES, setLocale, t, useLocale, type Locale } from '../i18n';
 import { DISPLAY_CURRENCIES, resolvedTheme, setCurrency, setTheme, useDisplayCurrency, useTheme } from '@/lib/prefs';
@@ -96,7 +95,6 @@ const initials = (n = '?') => n.split(/\s+/).map((w) => w[0]).join('').slice(0, 
 /** The avatar menu: everything that used to crowd the top bar (orders, shop, cart, watchlist…). */
 export function AccountMenu() {
   const { user, signOut } = useSession();
-  const n = cartCount(useCart());
   const p = usePopover();
   if (!user) return null;
   const close = () => p.setOpen(false);
@@ -104,7 +102,6 @@ export function AccountMenu() {
     <div className="relative" ref={p.ref}>
       <button ref={p.button} type="button" className="avatar-btn" aria-haspopup="menu" aria-expanded={p.open} aria-label={t('menu.account')} onClick={() => p.setOpen((o) => !o)}>
         {initials(user.display_name)}
-        {n > 0 && <span className="avatar-badge" aria-hidden>{n > 9 ? '9+' : n}</span>}
       </button>
       <AnimatePresence>
         {p.open && (
@@ -115,10 +112,7 @@ export function AccountMenu() {
             </div>
             <Link role="menuitem" to="/orders" onClick={close}><Package className="size-4" aria-hidden /> {t('nav.orders')}</Link>
             <Link role="menuitem" to="/sell" onClick={close}><Store className="size-4" aria-hidden /> {t('menu.shop')}</Link>
-            <Link role="menuitem" to="/cart" onClick={close} aria-label={t('cart.linkLabel', { count: n })}>
-              <ShoppingCart className="size-4" aria-hidden /> {t('cart.title')}
-              {n > 0 && <span className="menu-count">{n}</span>}
-            </Link>
+            <Link role="menuitem" to="/wallet" onClick={close}><Wallet className="size-4" aria-hidden /> {t('wallet.title')}</Link>
             <Link role="menuitem" to="/watchlist" onClick={close}><Heart className="size-4" aria-hidden /> {t('nav.watchlist')}</Link>
             <Link role="menuitem" to="/market" onClick={close}><LayoutGrid className="size-4" aria-hidden /> {t('menu.browse')}</Link>
             {user.role !== 'user' && <Link role="menuitem" to="/admin" onClick={close}><Wrench className="size-4" aria-hidden /> {t('nav.operations')}</Link>}
