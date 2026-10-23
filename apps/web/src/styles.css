@@ -793,10 +793,12 @@ span.num, b.num, code.num, .pg-price, .pg-big, .pg-pay-amount { unicode-bidi: is
 .home-game > * + * { margin-top: 0; }
 .home-game-name { display: block; padding: 0; font: 700 16px/1.3 var(--display); text-decoration: none; border-bottom: 1px solid var(--rule); }
 /* Our own banner per game: the file when the Designer supplied one, a brand band otherwise; the name is always text. */
-.game-banner { position: relative; overflow: hidden; border-radius: var(--radius) var(--radius) 0 0; background: linear-gradient(135deg, var(--raised), var(--paper) 60%, var(--rune-soft)); }
+.game-banner { position: relative; overflow: hidden; border-radius: var(--radius) var(--radius) 0 0; background: linear-gradient(135deg, #0d131c, #16202e 60%, #1f2b3c); }
 .game-banner img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: top; }
-.game-banner-name { position: absolute; inset-inline-start: 16px; bottom: 12px; font: 800 20px/1.1 var(--display); color: var(--ink); text-shadow: 0 1px 2px rgb(0 0 0 / .45); }
-.pg-game-banner { width: 100%; max-width: 420px; border-radius: var(--radius); margin-bottom: 10px; }
+.game-banner-name { position: absolute; inset-inline-start: 16px; bottom: 12px; font: 800 20px/1.1 var(--display); color: #eef1f5; text-shadow: 0 1px 2px rgb(0 0 0 / .45); }
+.pg-game-banner { flex: 0 1 360px; min-width: 240px; border-radius: 12px; border: 1px solid var(--rule); }
+.pg-game-banner img { inset: 0 0 0 auto; width: 240%; object-position: right center; } /* show the dense right side of the art */
+@media (max-width: 720px) { .pg-game-banner { display: none; } }
 .home-game-name:hover { text-decoration: underline; }
 .home-game-cats { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 20px; }
 .home-game-skel { height: 120px; }
@@ -1044,7 +1046,7 @@ html[lang='ar'] .od-grid dt { text-transform: none; letter-spacing: 0; font-size
 /* Links inside text are always visible (cards, menus, tabs, nav and footer keep their own look) */
 :where(p, label, dd, td, .small, .muted, .notice, .alert, .field, .chat-official-body, .bp, .od-links) a:not(.btn, [role='menuitem'], .ct-name, .of-name, .sp-card-title, .home-bought-title, .home-more, .pg-cat, .search-pill, :where(footer, nav, .crumbs, .wl-table b) a),
 a.small:not(.btn, .home-more, :where(footer, nav) a) {
-  color: var(--released);
+  color: var(--released-ink);
   text-decoration: underline;
   text-underline-offset: 2px;
   font-weight: 600;

@@ -1,7 +1,8 @@
 <!doctype html>
 <!-- Capacitor needs a web directory; the app loads server.url, so this page only shows offline. -->
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Bullizard</title></head>
-<body style="font-family: system-ui; display: grid; place-items: center; min-height: 100vh; margin: 0; background: #eef1f5; color: #16202e">
+<style>body{font-family:system-ui;display:grid;place-items:center;min-height:100vh;margin:0;background:#eef1f5;color:#16202e}@media (prefers-color-scheme:dark){body{background:#0d131c;color:#eef1f5}}</style>
+<body>
 <p>You're offline. Bullizard will reload when you're back online.</p>
 <script>addEventListener('online', () => location.reload());</script>
 </body></html>

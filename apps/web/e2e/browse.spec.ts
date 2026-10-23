@@ -71,8 +71,12 @@ test.describe('browsing', () => {
     await expect(page.getByText(/≈ EGP/).first()).toBeVisible();
     await page.getByLabel('Show prices in', { exact: true }).first().selectOption('EUR');
     await expect(page.getByText(/≈ €/).first()).toBeVisible();
-    // Dark is the default; switching to light sticks across a reload.
+    // The theme follows the device until the viewer picks one; the choice sticks across a reload.
+    await page.emulateMedia({ colorScheme: 'dark' });
     await expect(page.locator('html')).toHaveClass(/dark/);
+    await page.emulateMedia({ colorScheme: 'light' });
+    await expect(page.locator('html')).not.toHaveClass(/dark/);
+    await page.emulateMedia({ colorScheme: 'dark' });
     await page.getByRole('button', { name: 'Language, currency and theme' }).click();
     await page.getByRole('button', { name: 'Use light theme' }).click();
     await page.reload();

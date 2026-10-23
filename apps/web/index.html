@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Bullizard — game currency, items and top-ups, held in escrow</title>
-    <meta name="description" content="Buy and sell game accounts, keys, currency and boosting with escrow: 72-hour inspection for items, 14-day insurance for accounts." />
+    <meta name="description" content="Buy and sell game currency, items and top-ups. Your money reaches the seller only when you confirm your order." />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
@@ -17,6 +17,13 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alexandria:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" />
+    <script>
+      // Paint the right theme before the app loads: the viewer's choice, else the device setting.
+      try {
+        var t = localStorage.getItem('bz.theme');
+        if (t === 'dark' || ((!t || t === 'system') && matchMedia('(prefers-color-scheme: dark)').matches)) document.documentElement.classList.add('dark');
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

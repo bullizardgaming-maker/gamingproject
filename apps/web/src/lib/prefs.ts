@@ -25,8 +25,8 @@ const write = (k: string, v: string) => {
   }
 };
 
-// Night Frost (dark) is the brand default; light stays one tap away in the header.
-let theme: Theme = (read('bz.theme') as Theme) || 'dark';
+// Follows the device (dark or light) until the viewer picks one in the header or footer; the phone app wraps this site, so it follows the device too.
+let theme: Theme = (read('bz.theme') as Theme) || 'system';
 /**
  * First visit: the currency follows where the viewer seems to be (time zone, then language region):
  * Egypt → EGP, the euro area → EUR, everywhere else USD. Their own choice is kept after that.

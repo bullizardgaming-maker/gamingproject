@@ -191,12 +191,12 @@ export function GamePage() {
         </nav>
         <div className="pg-band-head">
           <div className="min-w-0">
-            <GameBanner game={entry.game} height={72} className="pg-game-banner" />
             <h1>{entry.game}{category ? ` · ${categoryLabel(category)}` : ''}</h1>
             <span className="muted">
               {t('offers.count', { count: entry.offers })} · {t('game.sellers', { count: entry.sellers })} · {t('offers.from', { price: price(entry.min_price_cents) })}
             </span>
           </div>
+          <GameBanner game={entry.game} height={120} className="pg-game-banner" />
         </div>
         {category && (
           <nav className="pg-tabs" aria-label={entry.game}>
