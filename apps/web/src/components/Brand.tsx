@@ -1,4 +1,6 @@
 import type React from 'react';
+import { ShieldCheck } from '@phosphor-icons/react';
+import { Link } from 'react-router-dom';
 import { t, useLocale } from '../i18n';
 /**
  * Bullizard brand marks, drawn in currentColor so they follow the theme.
@@ -47,7 +49,7 @@ export function BrandName({ className }: { className?: string }) {
   return ar ? (
     <span lang="ar" className={`wordmark-ar brand-inline ${className ?? ''}`}>بوليزارد</span>
   ) : (
-    <BrandWordmark title="Bullizard" className={`brand-inline ${className ?? ''}`} style={{ height: '1.3em', width: 'auto', verticalAlign: '-0.22em' }} />
+    <BrandWordmark title="Bullizard" className={`brand-inline ${className ?? ''}`} style={{ height: '1.15em', width: 'auto', flex: 'none', alignSelf: 'baseline' }} />
   );
 }
 
@@ -55,8 +57,8 @@ export function BrandName({ className }: { className?: string }) {
 export function BuyerProtection({ text = true }: { text?: boolean }) {
   return (
     <div className="bp">
-      <b className="bp-title"><BrandName /> {t('protect.title')}</b>
-      {text && <span className="small muted">{t('protect.text')}</span>}
+      <b className="bp-title"><ShieldCheck className="bp-icon" weight="bold" aria-hidden /><BrandName /><span>{t('protect.title')}</span></b>
+      {text && <span className="small muted">{t('protect.text')} <Link to="/help/buyer-protection">{t('protect.more')}</Link></span>}
     </div>
   );
 }

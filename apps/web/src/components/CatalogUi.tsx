@@ -208,11 +208,18 @@ export function SellerBadges({ badges }: { badges?: string[] | null }) {
   if (!badges?.length) return null;
   return (
     <>
-      {badges.slice(0, 2).map((b) =>
-        b.startsWith('rank:') ? <RankPill key={b} name={b.slice(5)} /> : b === 'founding' ? <FoundingBadge key={b} /> : b.startsWith('trust:') ? <TrustBadge key={b} level={b.slice(6)} /> : <span key={b} className="rank"><BadgeCheck className="size-3" aria-hidden /> {t('badge.idVerified')}</span>,
-      )}
+      {badges.slice(0, 2).map((b) => <SellerBadge key={b} badge={b} />)}
     </>
   );
+}
+
+/** One badge by its API key: rank:<name>, founding, id_verified, top_seller. */
+export function SellerBadge({ badge: b }: { badge: string }) {
+  if (b.startsWith('rank:')) return <RankPill name={b.slice(5).replace(/^./, (c) => c.toUpperCase())} />;
+  if (b === 'founding') return <FoundingBadge />;
+  if (b === 'top_seller' || b === 'trust:top') return <TrustBadge level="top" />;
+  if (b.startsWith('trust:')) return <TrustBadge level={b.slice(6)} />;
+  return <span className="rank"><BadgeCheck className="size-3" aria-hidden /> {t('badge.idVerified')}</span>;
 }
 
 /** "Online now", or how long the seller has been away. */
@@ -257,4 +264,4 @@ export function CurrencyTable({ offers, empty, current }: { offers: Offer[]; emp
 }
 const fmtQty = (n: number) => n.toLocaleString(intlLocale());
 /** "850 Divine Orb", or "850 × 1M" when the unit is itself a number. */
-export const fmtUnits = (n: number, unit?: string | null) => (!unit ? fmtQty(n) : /^\d/.test(unit) ? `${fmtQty(n)} × ${unit}` : `${fmtQty(n)} ${unit}`);
+export const fmtUnits = (n: number, unit?: string | null) => `\u2066${!unit ? fmtQty(n) : /^\d/.test(unit) ? `${fmtQty(n)} × ${unit}` : `${fmtQty(n)} ${unit}`}\u2069`; // isolated so it reads left to right inside Arabic

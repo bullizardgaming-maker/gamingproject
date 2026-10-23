@@ -8,7 +8,8 @@ import { usePrice } from '@/lib/prefs';
 import type { Offer } from './Market';
 import { usePageMeta } from '@/lib/seo';
 import { lastSeenLabel, replyLabel } from '@/lib/presence';
-import { t } from '../i18n';
+import { intlLocale, t } from '../i18n';
+import { languageName } from '../components/StorefrontEditor';
 
 interface Profile {
   id: string;
@@ -27,14 +28,16 @@ interface Profile {
   shop_paused_until: string | null;
   shop_pause_message: string | null;
   rating: { average: number | string | null; count: number; positive_pct: number | string | null };
-  storefront?: { intro: string; accent: string; banner_url: string | null; pinned: Offer[] };
+  storefront?: { intro: string; accent: string; banner_url: string | null; pinned: Offer[]; languages?: string[] };
+  badges?: string[];
   reviews: Array<{ id: string; rating: number; comment: string; seller_reply: string | null; created_at: string; buyer_name: string; offer_title: string | null }>;
 }
 
 const since = (iso: string) => new Date(iso).toLocaleDateString([], { month: 'long', year: 'numeric' });
 const ago = (iso: string) => {
   const d = Math.floor((Date.now() - Date.parse(iso)) / 86_400_000);
-  return d < 1 ? 'today' : d === 1 ? 'yesterday' : d < 30 ? `${d} days ago` : new Date(iso).toLocaleDateString();
+  if (d >= 30) return new Date(iso).toLocaleDateString(intlLocale());
+  return new Intl.RelativeTimeFormat(intlLocale(), { numeric: 'auto' }).format(-Math.min(d, 29), 'day');
 };
 
 /** A seller's public shop, G2G-style: one plain profile box, offers as cards, reviews as cards. */
@@ -63,7 +66,7 @@ export function SellerPage() {
     return [...m.entries()].sort((a, b) => b[1] - a[1]);
   }, [offers]);
 
-  if (!profile) return <p className="muted">{error || 'Loading seller…'}</p>;
+  if (!profile) return <p className="muted">{error || t('sp.loading')}</p>;
   const r = profile.rating;
   const shown = (offers ?? []).filter((o) => !game || o.game === game);
   const shop = profile.storefront;
@@ -85,6 +88,7 @@ export function SellerPage() {
             <p className="sp-presence small">
               {profile.online ? <span className="presence on">{t('presence.online')}</span> : lastSeenLabel(profile.last_seen_at) && <span className="presence">{lastSeenLabel(profile.last_seen_at)}</span>}
               {reply && <span className="muted">{reply}</span>}
+              {!!shop?.languages?.length && <span className="muted">{t('sp.speaks', { list: shop.languages.map(languageName).join(', ') })}</span>}
             </p>
           </div>
         </div>
@@ -96,22 +100,22 @@ export function SellerPage() {
           <div><dt>{t('sp.since')}</dt><dd>{since(profile.member_since)}</dd></div>
         </dl>
         {shop?.intro && <p className="sp-intro" dir="auto">{shop.intro}</p>}
-        {profile.shop_paused && <div className="notice">{profile.shop_pause_message || 'This shop is taking a short break.'}</div>}
+        {profile.shop_paused && <div className="notice">{profile.shop_pause_message || t('sp.paused')}</div>}
       </section>
 
       {shop && shop.pinned.length > 0 && (
         <section className="stack" aria-labelledby="pinned-title" style={{ gap: 12 }}>
-          <h2 id="pinned-title" className="sp-h2">Featured</h2>
+          <h2 id="pinned-title" className="sp-h2">{t('sp.featured')}</h2>
           <OfferCards offers={shop.pinned} />
         </section>
       )}
 
       <div className="sp-tabs" role="tablist">
         <button type="button" role="tab" aria-selected={tab === 'offers'} onClick={() => setTab('offers')}>
-          Offers <span className="muted">{profile.active_listings}</span>
+          {t('sp.offers')} <span className="muted">{profile.active_listings}</span>
         </button>
         <button type="button" role="tab" aria-selected={tab === 'reviews'} onClick={() => setTab('reviews')}>
-          Reviews <span className="muted">{r.count.toLocaleString()}</span>
+          {t('sp.reviews')} <span className="muted">{r.count.toLocaleString()}</span>
         </button>
       </div>
 
@@ -119,19 +123,19 @@ export function SellerPage() {
         <>
           {games.length > 1 && (
             <div className="pg-seg sp-games" role="group" aria-label="Game">
-              <button type="button" aria-pressed={!game} onClick={() => setGame('')}>All games</button>
+              <button type="button" aria-pressed={!game} onClick={() => setGame('')}>{t('sp.allGames')}</button>
               {games.map(([g, n]) => (
                 <button key={g} type="button" aria-pressed={game === g} onClick={() => setGame(g)}>{g} <span className="muted">{n}</span></button>
               ))}
             </div>
           )}
-          {offers === null ? <p className="muted">Loading offers…</p> : shown.length === 0 ? <div className="card muted">This seller has no live offers right now.</div> : <OfferCards offers={shown} />}
+          {offers === null ? <p className="muted">{t('sp.loading')}</p> : shown.length === 0 ? <div className="card muted">{t('sp.noOffers')}</div> : <OfferCards offers={shown} />}
         </>
       ) : profile.reviews.length === 0 ? (
-        <div className="card muted">No written reviews yet.</div>
+        <div className="card muted">{t('sp.noReviews')}</div>
       ) : (
         <>
-          {r.count > profile.reviews.length && <p className="small muted" style={{ margin: 0 }}>Showing the {profile.reviews.length} most recent written reviews of {r.count.toLocaleString()}.</p>}
+          {r.count > profile.reviews.length && <p className="small muted" style={{ margin: 0 }}>{t('sp.showing', { n: profile.reviews.length, total: r.count.toLocaleString() })}</p>}
           <ul className="sp-reviews">
             {profile.reviews.map((rv) => {
               const good = rv.rating >= 4;
@@ -155,7 +159,7 @@ export function SellerPage() {
           </ul>
         </>
       )}
-      <p className="small muted">Reviews can only be left by buyers who paid for and received an order. Ratings count every review, including ones without a comment.</p>
+      <p className="small muted">{t('sp.reviewNote')}</p>
     </div>
   );
 }

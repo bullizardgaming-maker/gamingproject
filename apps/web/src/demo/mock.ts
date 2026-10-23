@@ -133,7 +133,19 @@ function badgesOf(id: string): string[] {
   const chosen = (state as any).sellerBadges?.[id] as string[] | undefined;
   if (chosen) return chosen.slice(0, 2);
   const u = userById(id);
-  return [`rank:${tierOf(id).rank.name}`, u?.founding ? 'founding' : state.trust[id] && state.trust[id] !== 'new' ? `trust:${state.trust[id]}` : 'verified'].slice(0, 2);
+  const earned = earnedBadgesOf(id).map((b) => b.key);
+  return earned.slice(0, 2);
+}
+/** Same rule as the API: rank always; Founding Seller, ID verified (KYC tier 2) and Top seller when held. */
+function earnedBadgesOf(id: string): Array<{ key: string; label: string }> {
+  const u = userById(id);
+  const rank = tierOf(id).rank.name;
+  return [
+    { key: `rank:${rank.toLowerCase()}`, label: rank },
+    ...(u?.founding ? [{ key: 'founding', label: 'Founding Seller' }] : []),
+    ...((u?.kyc_tier ?? 0) >= 2 ? [{ key: 'id_verified', label: 'ID verified' }] : []),
+    ...(state.trust[id] === 'top' ? [{ key: 'top_seller', label: 'Top seller' }] : []),
+  ];
 }
 /** Units buyable now: manual stock, instant inventory, or a bundle's complete sets (0 if a part isn't active). */
 function availableOf(o: any): number {
@@ -895,7 +907,7 @@ route('GET', '/sellers/:id', ({ params, query }) => {
 function storefrontOf(sellerId: string) {
   const s = state.storefronts[sellerId] ?? { intro: '', accent: 'steel', banner: null, pinned: [] };
   return {
-    intro: s.intro, accent: s.accent, banner_url: s.banner,
+    intro: s.intro, accent: s.accent, banner_url: s.banner, languages: (s as any).languages ?? ['en'],
     pinned: s.pinned.map((id) => state.offers.find((o) => o.id === id && o.seller_id === sellerId && listed(o))).filter(Boolean).map(offerView),
   };
 }
@@ -911,6 +923,11 @@ route('PUT', '/seller/storefront', ({ me, body }) => {
     cur.intro = intro;
   }
   if (body.accent) cur.accent = body.accent;
+  if (body.languages) {
+    const langs = [...new Set((body.languages as string[]).map((l) => String(l).trim()))];
+    if (langs.length > 8 || langs.some((l) => !/^[A-Za-z]{2,3}(-[A-Za-z]{2,4})?$/.test(l))) fail(400, 'validation_error', 'Pick up to 8 languages');
+    (cur as any).languages = langs;
+  }
   if (body.pinned) {
     const ids = [...new Set(body.pinned as string[])];
     if (ids.length > 4) fail(400, 'too_many_pinned', 'Pin up to 4 listings');
@@ -919,6 +936,20 @@ route('PUT', '/seller/storefront', ({ me, body }) => {
   }
   state.storefronts[u.id] = cur;
   return storefrontOf(u.id);
+});
+route('GET', '/seller/badges', ({ me }) => {
+  const u = needSeller(me);
+  return { badges: badgesOf(u.id), earned: earnedBadgesOf(u.id) };
+});
+route('PUT', '/seller/badges', ({ me, body }) => {
+  const u = needSeller(me);
+  const keys = [...new Set((body.badges ?? []) as string[])];
+  if (keys.length > 2) fail(400, 'too_many_badges', 'Show up to 2 badges');
+  const have = new Set(earnedBadgesOf(u.id).map((b) => b.key));
+  if (keys.some((k) => !have.has(k))) fail(400, 'badge_not_earned', 'You can only show badges you have earned');
+  ((state as any).sellerBadges ??= {})[u.id] = keys;
+  save();
+  return { badges: keys, earned: earnedBadgesOf(u.id) };
 });
 route('POST', '/seller/storefront/banner', ({ me, body }) => {
   const u = needSeller(me);
@@ -1902,7 +1933,18 @@ route('POST', '/offers', ({ me, body }) => {
     featured_until: null as string | null,
     linked_account_id: null as string | null,
     min_buyer_reputation: (body.minBuyerReputation ?? null) as 'good' | null,
+    unit_label: null as string | null,
+    min_qty: 1,
   };
+  // Currency sold by amount: a unit, a minimum order and the stock in units (same rules as the API).
+  if (body.unitLabel) {
+    if (cat.kind !== 'currency') fail(400, 'invalid_unit', 'Only currency can be sold by amount');
+    const min = Math.max(1, Math.floor(Number(body.minQty ?? 1)));
+    o.unit_label = String(body.unitLabel).trim().slice(0, 12);
+    o.min_qty = min;
+    o.stock = Math.max(1, Math.floor(Number(body.stock ?? 1)));
+    if (min > o.stock) fail(400, 'invalid_min_qty', 'The minimum order can’t be more than your stock');
+  }
   if (o.min_buyer_reputation && o.price_cents < 100_00) fail(400, 'not_high_value', 'A minimum buyer reputation can only be set on listings of 100 or more');
   if (body.linkedAccountId) {
     checkAttach(u, body.linkedAccountId, body.game, cat.kind);

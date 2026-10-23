@@ -16,7 +16,6 @@ test('a seller customises their shop page and buyers see it', async ({ page }) =
   await expect(editor.getByRole('alert')).toContainText(/Contact details/);
 
   await editor.getByLabel('Intro').fill('Instant Steam keys and gift cards. Replacement promise on every code.');
-  await editor.getByLabel('Violet').check();
   await editor.locator('input[type=file]').setInputFiles({ name: 'banner.png', mimeType: 'image/png', buffer: PNG });
   await expect(editor.getByRole('status')).toContainText('Banner updated');
   await editor.getByRole('button', { name: 'Save shop page' }).click();

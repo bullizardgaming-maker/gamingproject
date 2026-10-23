@@ -550,6 +550,8 @@ function NewOffer({ onCreated, offers, linked }: { onCreated: () => void; offers
   const [category, setCategory] = useState('currency');
   const [game, setGame] = useState('');
   const [price, setPrice] = useState('');
+  const [unit, setUnit] = useState('');
+  const byAmount = category === 'currency' && unit.trim().length > 0;
   useLeagues(game); // league options refresh from the table once it loads
   const fields = attributesFor(game, category);
   // Account listings can show a linked account from the game's own platform, if it isn't on another listing.
@@ -576,12 +578,14 @@ function NewOffer({ onCreated, offers, linked }: { onCreated: () => void; offers
           ...(f.categorySlug === 'accounts' && Number(f.warrantyDays) ? { warrantyDays: Number(f.warrantyDays) } : {}),
           ...(f.linkedAccountId ? { linkedAccountId: f.linkedAccountId } : {}),
           ...(f.minBuyerReputation === 'on' ? { minBuyerReputation: 'good' } : {}),
+          ...(f.categorySlug === 'currency' && unit.trim() ? { unitLabel: unit.trim(), minQty: Number(f.minQty || 1), stock: Number(f.stock || 1) } : {}),
           ...(bundleOn ? { bundle: Object.entries(parts).map(([offerId, quantity]) => ({ offerId, quantity })) } : {}),
         },
       });
       form.reset();
       setGame('');
       setPrice('');
+      setUnit('');
       setBundleOn(false);
       setParts({});
       onCreated();
@@ -606,8 +610,16 @@ function NewOffer({ onCreated, offers, linked }: { onCreated: () => void; offers
         </label>
         <GamePicker label={t('sell.f.game')} name="game" required options={sellableGames(KNOWN_GAMES)} value={game} onChange={setGame} />
         <label className="field">{t('sell.f.title')}<input name="title" required minLength={3} maxLength={140} /></label>
+        {category === 'currency' && (
+          <label className="field">
+            {t('sell.f.unit')}
+            <input name="unitLabel" list="unit-suggestions" maxLength={12} value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="M" aria-describedby="unit-hint" />
+            <datalist id="unit-suggestions"><option value="M" /><option value="k" /><option value="B" /><option value="Divine Orb" /><option value="Exalted Orb" /></datalist>
+            <span id="unit-hint" className="small muted">{t('sell.f.unitHint')}</span>
+          </label>
+        )}
         <label className="field">
-          {t('sell.f.price')}
+          {byAmount ? t('sell.f.pricePerUnit', { unit: unit.trim() }) : t('sell.f.price')}
           <input name="price" className="num" type="number" step="0.01" min="0.01" required value={price} onChange={(e) => setPrice(e.target.value)} aria-describedby="price-preview" />
         </label>
         <label className="field">
@@ -617,7 +629,8 @@ function NewOffer({ onCreated, offers, linked }: { onCreated: () => void; offers
             <option value="manual">{t('sell.f.manual')}</option>
           </select>
         </label>
-        {category !== 'accounts' && <label className="field">{t('sell.f.stock')}<input name="stock" type="number" min="1" defaultValue="1" /></label>}
+        {category !== 'accounts' && <label className="field">{byAmount ? t('sell.f.stockUnits', { unit: unit.trim() }) : t('sell.f.stock')}<input name="stock" type="number" min="1" defaultValue="1" /></label>}
+        {byAmount && <label className="field">{t('sell.f.minQty', { unit: unit.trim() })}<input name="minQty" type="number" min="1" defaultValue="1" /></label>}
         {category === 'accounts' && (
           <label className="field">
             {t('warranty.sellLabel')}

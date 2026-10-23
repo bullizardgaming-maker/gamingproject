@@ -197,7 +197,7 @@ export function OfferPage() {
             </>
           )}
           <ul className="of-trust">
-            <li><ShieldCheck className="size-4" aria-hidden /> <BuyerProtection /></li>
+            <li className="of-bp"><BuyerProtection /></li>
             <li><Headset className="size-4" aria-hidden /> <span><b>{t('offer.support')}</b> <Link to="/support/new">{t('offer.supportText')}</Link></span></li>
           </ul>
         </aside>

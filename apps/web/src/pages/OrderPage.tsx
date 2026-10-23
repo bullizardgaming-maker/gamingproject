@@ -331,7 +331,7 @@ export function OrderPage() {
             <p className="small muted" style={{ margin: 0 }}>
               {t('checkout.rules', { link: '\u0000' }).split('\u0000')[0]}<Link to="/help/how-escrow-works">{t('checkout.rulesLink')}</Link>{t('checkout.rules', { link: '\u0000' }).split('\u0000')[1]}
             </p>
-            <div className="bp-box"><ShieldCheck className="size-5 shrink-0" aria-hidden /><BuyerProtection /></div>
+            <div className="bp-box"><BuyerProtection /></div>
           </aside>
         </div>
       </div>

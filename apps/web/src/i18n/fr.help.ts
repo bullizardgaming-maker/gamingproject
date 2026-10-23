@@ -3,19 +3,19 @@ import type { HelpPack } from './index';
 const help: HelpPack = {
   topics: {
     buying: { title: 'Acheter', blurb: 'Trouver des offres, commander et recevoir vos achats.' },
-    protection: { title: 'Litiges et protection', blurb: 'Séquestre, délai d’inspection, assurance et remboursements.' },
-    payments: { title: 'Paiements', blurb: 'Cartes, crypto, devises et crédit boutique.' },
+    protection: { title: 'Litiges et protection', blurb: 'Protection acheteur, séquestre, assurance et remboursements.' },
+    payments: { title: 'Paiements', blurb: 'Crypto, frais de réseau, votre portefeuille et remboursements.' },
     selling: { title: 'Vendre', blurb: 'Offres, livraison, frais et versements.' },
     account: { title: 'Compte et sécurité', blurb: 'Vérification, double authentification et vos données.' },
   },
   articles: {
     'how-escrow-works': {
-      title: 'Comment le séquestre protège votre commande',
-      summary: 'Votre paiement attend chez nous jusqu’à ce que vous ayez ce que vous avez payé.',
+      title: "Comment le séquestre protège votre commande",
+      summary: "Votre paiement reste chez nous jusqu’à ce que vous confirmiez avoir reçu ce que vous avez payé.",
       body: [
-        'Quand vous payez, l’argent va sous séquestre, pas au vendeur. Le vendeur voit seulement que la commande est payée et peut livrer.',
-        'Après la livraison, vous disposez d’un délai de protection pour tout vérifier : 72 heures pour les clés, monnaies, objets, recharges et boosting, et 14 jours d’assurance pour les comptes de jeu.',
-        'Le vendeur est payé quand vous confirmez la commande ou quand le délai expire sans litige, selon ce qui arrive en premier. En cas de problème, ouvrez un litige depuis la page de la commande avant la fin du délai : l’argent reste gelé jusqu’à la décision.',
+        "Quand vous payez, l’argent va en séquestre, pas au vendeur. Le vendeur voit seulement que la commande est payée et peut livrer.",
+        "Il n’y a pas de minuteur : l’argent reste en séquestre jusqu’à ce que vous confirmiez la réception. Ne confirmez que lorsque vous avez tout.",
+        "En cas de problème, ouvrez un litige depuis la page de la commande au lieu de confirmer. L’argent reste bloqué jusqu’au règlement.",
       ],
     },
     'order-not-delivered': {
@@ -28,12 +28,12 @@ const help: HelpPack = {
       ],
     },
     'open-a-dispute': {
-      title: 'Ouvrir un litige',
-      summary: 'Si quelque chose ne correspond pas à la description, un arbitre tranche à partir du chat et des preuves.',
+      title: "Ouvrir un litige",
+      summary: "Si ce n’est pas conforme, un arbitre décide à partir du chat et des preuves.",
       body: [
-        'Ouvrez un litige depuis la page de la commande pendant le délai de protection. Expliquez le problème et ajoutez des captures d’écran au chat de la commande.',
-        'Le paiement reste gelé pendant qu’un arbitre Bullizard examine le chat, les traces de livraison et les preuves des deux parties.',
-        '- Si l’arbitre vous donne raison, le montant total est remboursé sur votre moyen de paiement d’origine.\n- S’il donne raison au vendeur, le paiement lui est versé.',
+        "Ouvrez un litige depuis la page de la commande avant de la confirmer. Expliquez le problème et ajoutez des captures dans le chat.",
+        "Le paiement reste bloqué pendant qu’un arbitre Bullizard examine le chat, les preuves de livraison et les éléments des deux parties.",
+        "- Si l’arbitre vous donne raison, le montant total est remboursé sur votre solde Bullizard.\n- S’il donne raison au vendeur, le paiement lui est versé.",
       ],
     },
     'account-insurance': {
@@ -62,20 +62,21 @@ const help: HelpPack = {
       ],
     },
     'payment-methods': {
-      title: 'Moyens de paiement',
-      summary: 'Carte via une page de paiement sécurisée, ou USDC/USDT via un contrat de séquestre on-chain.',
+      title: "Moyens de paiement",
+      summary: "Payez en crypto : choisissez une crypto courante ; ses frais de réseau s’ajoutent au total.",
       body: [
-        'Les paiements par carte passent par la page sécurisée de notre partenaire ; nous ne voyons jamais votre numéro de carte. Vous payez le prix affiché, dans la devise de l’offre.',
-        'Les paiements en crypto utilisent un contrat de séquestre on-chain avec le même délai de protection. Envoyez uniquement le montant exact à l’adresse du contrat indiquée pour votre commande.',
-        'Les prix affichés dans une autre devise sont approximatifs ; la page de paiement montre toujours le montant exact débité.',
+        "Le paiement se fait en crypto. Choisissez une crypto dans la liste ; chacune affiche son réseau (par ex. TRC-20) et le total à envoyer.",
+        "Les frais de réseau s’ajoutent : une commande de 11,50 $ avec 1,00 $ de frais signifie que vous envoyez 12,50 $. Seul le montant de la commande va au vendeur.",
+        "Envoyez le montant exact à l’adresse indiquée, sur le même réseau. La commande est payée dès que le réseau confirme. Les cryptos dont le minimum dépasse votre commande sont grisées.",
+        "Votre solde Bullizard est utilisé en premier.",
       ],
     },
     'refund-timing': {
-      title: 'Quand vais-je recevoir mon remboursement ?',
-      summary: 'Les remboursements reviennent sur le moyen de paiement d’origine ; les banques prennent quelques jours.',
+      title: "Quand verrai-je mon remboursement ?",
+      summary: "Les remboursements arrivent tout de suite sur votre solde Bullizard.",
       body: [
-        'Les remboursements reviennent sur la carte ou le portefeuille utilisé. Nous envoyons les remboursements par carte immédiatement ; votre banque les affiche généralement sous 5 à 10 jours ouvrés.',
-        'Le crédit boutique (promotions ou parrainages) est rendu en crédit boutique immédiatement.',
+        "Quand une commande est remboursée, l’argent arrive aussitôt sur votre solde Bullizard. Vous le voyez sur votre page Portefeuille.",
+        "Utilisez-le pour votre prochaine commande ou retirez-le vers votre portefeuille crypto (USDT TRC-20). Des frais de retrait s’appliquent et la trésorerie l’envoie après validation.",
       ],
     },
     'selling-fees': {
@@ -97,9 +98,9 @@ const help: HelpPack = {
     },
     'getting-paid': {
       title: 'Être payé',
-      summary: 'Retirez vers votre portefeuille crypto (USDT) à la fin du délai de protection ; des frais de 6 % s’appliquent.',
+      summary: 'Retirez vers votre portefeuille crypto (USDT) dès que l’acheteur confirme ; des frais de 6 % s’appliquent.',
       body: [
-        'L’argent d’une vente devient disponible quand l’acheteur confirme ou à la fin du délai de protection. Retirez-le depuis l’espace vendeur vers l’adresse de paiement confirmée par e-mail ; la trésorerie l’approuve et l’envoie en USDT.',
+        'L’argent d’une vente devient disponible quand l’acheteur confirme la commande. Retirez-le depuis l’espace vendeur vers l’adresse de paiement confirmée par e-mail ; la trésorerie l’approuve et l’envoie en USDT.',
         'Les nouveaux vendeurs peuvent avoir un court délai de versement le temps d’établir la confiance ; l’espace vendeur indique quand les fonds sont libérés.',
         'Si un remboursement ou une rétrofacturation rend votre solde négatif, les nouvelles ventes le comblent d’abord et les retraits sont suspendus jusqu’au règlement.',
       ],
@@ -134,6 +135,42 @@ const help: HelpPack = {
       body: [
         'Si quelqu’un vous demande de payer en dehors de Bullizard, envoie un lien suspect ou se montre abusif, ne répondez plus. Envoyez-nous une demande dans la catégorie « Signaler un utilisateur » avec son nom et la commande ou le chat concerné.',
         'Notre équipe confiance et sécurité examine chaque signalement. Nous ne pouvons pas toujours vous communiquer l’issue, mais nous agissons.',
+      ],
+    },
+    'buyer-protection': {
+      title: "Protection acheteur Bullizard",
+      summary: "Votre argent n’est versé au vendeur que lorsque vous confirmez avoir reçu la commande.",
+      body: [
+        "Quand vous payez, Bullizard conserve l’argent. Le vendeur voit que la commande est payée et livre.",
+        "Le vendeur n’est payé que lorsque vous confirmez la réception. Vous pouvez confirmer dès que vous l’avez, même avant que le vendeur la marque comme livrée.",
+        "- Non livrée dans le délai promis : la commande est annulée et vous êtes remboursé.\n- Non conforme : ouvrez un litige depuis la page de la commande avant de confirmer. L’argent reste bloqué jusqu’à la décision d’un arbitre Bullizard.\n- Comptes de jeu : 14 jours d’assurance après la livraison.",
+        "Gardez tout l’échange dans le chat de la commande. Les accords hors de Bullizard ne sont pas protégés.",
+      ],
+    },
+    'wallet': {
+      title: "Votre portefeuille",
+      summary: "Votre solde et chaque mouvement d’argent dans une seule liste.",
+      body: [
+        "Ouvrez Portefeuille depuis le menu du compte. En haut, votre solde ; en dessous, chaque commande, remboursement, vente et retrait.",
+        "- Jaune, Bloqué : l’argent est en séquestre jusqu’à la confirmation.\n- Vert, Terminé : c’est réglé.\n- Rouge, Annulé : la commande ou le retrait a été annulé.\n- Gris, En attente : paiement ou validation en attente.",
+        "Les vendeurs voient leurs ventes dans la même liste. Paiements et documents fiscaux sont dans l’espace vendeur, rubrique Argent.",
+      ],
+    },
+    'sell-by-amount': {
+      title: "Vendre de la monnaie à la quantité",
+      summary: "Fixez une unité, un prix par unité, un minimum et votre stock ; l’acheteur choisit la quantité.",
+      body: [
+        "Dans le formulaire de vente, choisissez Monnaie et indiquez l’unité, par ex. M pour millions d’argent. Le prix est alors par unité.",
+        "Indiquez votre stock et la commande minimum, en unités. L’acheteur choisit une quantité entre votre minimum et votre stock, et le total se met à jour.",
+        "Sur la page du jeu, votre offre apparaît dans le tableau des vendeurs avec serveur, stock, minimum, délai de livraison et prix par unité.",
+      ],
+    },
+    'seller-badges': {
+      title: "Vos badges et votre boutique",
+      summary: "Choisissez les 2 badges que les acheteurs voient à côté de votre nom.",
+      body: [
+        "Vous gagnez des badges en vendant : votre rang, Vendeur fondateur, ID vérifiée et Top vendeur. Dans l’espace vendeur, sous votre boutique, choisissez-en 2 au plus à afficher à côté de votre nom.",
+        "Votre boutique affiche aussi vos langues, votre présentation et vos statistiques : avis positifs, note, commandes vendues et livraisons à temps.",
       ],
     },
   },

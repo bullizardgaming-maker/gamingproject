@@ -73,6 +73,7 @@ export function WalletPage() {
                   <td className="small muted num" style={{ whiteSpace: 'nowrap' }}>{new Date(e.at).toLocaleDateString([], { day: 'numeric', month: 'short' })}, {new Date(e.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
                   <td>
                     <b className="block">{e.kind === 'withdrawal' ? t('wallet.withdrawal') : e.order_id ? <Link to={`/orders/${e.order_id}`}>{t(`wallet.kind1.${e.kind}` as MessageKey, { ref: e.ref })}</Link> : e.ref}</b>
+                    <span className="wl-date-m num">{new Date(e.at).toLocaleDateString([], { day: 'numeric', month: 'short' })}</span>
                     <span className="small muted wl-sub" dir="auto">{e.kind === 'withdrawal' ? `${e.coin?.toUpperCase() ?? ''} ${e.address ?? ''}` : e.title}</span>
                   </td>
                   <td><span className={`chip ${STATUS_CLS[e.status]}`}>{t(`wallet.st.${e.status}` as MessageKey)}</span></td>

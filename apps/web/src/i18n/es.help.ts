@@ -3,19 +3,19 @@ import type { HelpPack } from './index';
 const help: HelpPack = {
   topics: {
     buying: { title: 'Comprar', blurb: 'Encontrar ofertas, pedir y recibir lo que compraste.' },
-    protection: { title: 'Disputas y protección', blurb: 'Garantía, plazo de inspección, seguro y reembolsos.' },
-    payments: { title: 'Pagos', blurb: 'Tarjetas, cripto, monedas y saldo de tienda.' },
+    protection: { title: 'Disputas y protección', blurb: 'Protección al comprador, depósito, seguro y reembolsos.' },
+    payments: { title: 'Pagos', blurb: 'Cripto, comisiones de red, tu cartera y reembolsos.' },
     selling: { title: 'Vender', blurb: 'Ofertas, entregas, comisiones y cobros.' },
     account: { title: 'Cuenta y seguridad', blurb: 'Verificación, inicio de sesión en dos pasos y tus datos.' },
   },
   articles: {
     'how-escrow-works': {
-      title: 'Cómo protege la garantía tu pedido',
-      summary: 'Tu pago espera con nosotros hasta que tengas lo que pagaste.',
+      title: "Cómo protege tu pedido el depósito",
+      summary: "Tu pago espera con nosotros hasta que confirmas que tienes lo que pagaste.",
       body: [
-        'Cuando pagas, el dinero va a la garantía, no al vendedor. El vendedor solo ve que el pedido está pagado y puede entregarlo.',
-        'Tras la entrega tienes un plazo de protección para comprobarlo todo: 72 horas para claves, moneda, objetos, recargas y boosting, y 14 días de seguro para cuentas de juego.',
-        'El vendedor cobra cuando confirmas el pedido o cuando termina el plazo sin disputa, lo que ocurra antes. Si algo falla, abre una disputa desde la página del pedido antes de que termine el plazo y el dinero queda congelado hasta resolverla.',
+        "Cuando pagas, el dinero va al depósito, no al vendedor. El vendedor solo ve que el pedido está pagado y puede entregar.",
+        "No hay temporizador: el dinero queda en depósito hasta que confirmas que recibiste el pedido. Confirma solo cuando lo tengas todo.",
+        "Si algo va mal, abre una disputa desde la página del pedido en lugar de confirmar. El dinero queda congelado hasta que se resuelva.",
       ],
     },
     'order-not-delivered': {
@@ -28,12 +28,12 @@ const help: HelpPack = {
       ],
     },
     'open-a-dispute': {
-      title: 'Abrir una disputa',
-      summary: 'Si algo no es como se describía, un árbitro decide con el chat del pedido y las pruebas.',
+      title: "Abrir una disputa",
+      summary: "Si algo no es lo descrito, un árbitro decide con el chat del pedido y las pruebas.",
       body: [
-        'Abre una disputa desde la página del pedido mientras esté dentro del plazo de protección. Explica qué falla y añade capturas al chat del pedido.',
-        'El pago queda congelado mientras un árbitro de Bullizard revisa el chat, los registros de entrega y las pruebas de ambas partes.',
-        '- Si el árbitro te da la razón, se te reembolsa el importe íntegro en tu método de pago original.\n- Si se la da al vendedor, el pago se le libera.',
+        "Abre una disputa desde la página del pedido antes de confirmarlo. Explica qué falla y añade capturas al chat del pedido.",
+        "El pago queda congelado mientras un árbitro de Bullizard revisa el chat, los registros de entrega y las pruebas de ambas partes.",
+        "- Si el árbitro decide a tu favor, se te reembolsa el importe completo a tu saldo de Bullizard.\n- Si decide a favor del vendedor, se le libera el pago.",
       ],
     },
     'account-insurance': {
@@ -62,20 +62,21 @@ const help: HelpPack = {
       ],
     },
     'payment-methods': {
-      title: 'Formas de pago',
-      summary: 'Tarjeta en un pago seguro alojado, o USDC/USDT con un contrato de garantía en cadena.',
+      title: "Formas de pago",
+      summary: "Paga con cripto: elige una moneda popular; su comisión de red se suma al total.",
       body: [
-        'Los pagos con tarjeta pasan por la página segura de nuestro socio de pagos; nunca vemos el número de tu tarjeta. Pagas el precio que aparece al pagar, en la moneda de la oferta.',
-        'Los pagos con cripto usan un contrato de garantía en cadena con el mismo plazo de protección. Envía solo el importe exacto a la dirección del contrato indicada para tu pedido.',
-        'Los precios en otra moneda son conversiones aproximadas; el pago siempre muestra el importe exacto que se te cobrará.',
+        "El pago es con cripto. Elige una moneda de la lista; cada una muestra su red (por ejemplo TRC-20) y el total a enviar.",
+        "La comisión de red de la moneda se suma: un pedido de $11.50 con $1.00 de comisión significa que envías $12.50. Al vendedor solo va el importe del pedido.",
+        "Envía el importe exacto a la dirección indicada, en la misma red. El pedido queda pagado cuando la red lo confirma. Las monedas cuyo mínimo supera tu pedido aparecen en gris.",
+        "Primero se usa el dinero de tu saldo de Bullizard.",
       ],
     },
     'refund-timing': {
-      title: '¿Cuándo veré mi reembolso?',
-      summary: 'Los reembolsos vuelven al método de pago original; los bancos tardan unos días.',
+      title: "¿Cuándo veré mi reembolso?",
+      summary: "Los reembolsos llegan a tu saldo de Bullizard al instante.",
       body: [
-        'Los reembolsos vuelven a la tarjeta o billetera con la que pagaste. Enviamos los reembolsos con tarjeta al momento; tu banco suele mostrarlos en 5–10 días hábiles.',
-        'El saldo de tienda (de promociones o referidos) se devuelve como saldo de tienda al instante.',
+        "Cuando se reembolsa un pedido, el dinero va a tu saldo de Bullizard en el acto. Lo ves en tu página de Cartera.",
+        "Úsalo en tu próximo pedido o retíralo a tu monedero cripto (USDT TRC-20). Se aplica una comisión de retiro y tesorería lo envía tras aprobarlo.",
       ],
     },
     'selling-fees': {
@@ -97,9 +98,9 @@ const help: HelpPack = {
     },
     'getting-paid': {
       title: 'Cobrar',
-      summary: 'Retira a tu billetera cripto (USDT) cuando termine el plazo de protección; se aplica una comisión del 6 %.',
+      summary: 'Retira a tu billetera cripto (USDT) cuando el comprador confirme; se aplica una comisión del 6 %.',
       body: [
-        'El dinero de una venta queda disponible cuando el comprador confirma o termina el plazo de protección. Retíralo desde el panel de vendedor a la dirección de cobro que confirmaste por correo; tesorería lo aprueba y lo envía en USDT.',
+        'El dinero de una venta queda disponible cuando el comprador confirma el pedido. Retíralo desde el panel de vendedor a la dirección de cobro que confirmaste por correo; tesorería lo aprueba y lo envía en USDT.',
         'Los vendedores nuevos pueden tener una breve retención de cobros mientras generamos confianza; el panel muestra cuándo se libera.',
         'Si un reembolso o contracargo deja tu saldo en negativo, las nuevas ventas lo cubren primero y los retiros se pausan hasta saldarlo.',
       ],
@@ -134,6 +135,42 @@ const help: HelpPack = {
       body: [
         'Si alguien te pide pagar fuera de Bullizard, te envía un enlace sospechoso o te acosa, no sigas respondiendo. Envíanos una solicitud en la categoría «Denunciar a un usuario» con su nombre y el pedido o chat donde ocurrió.',
         'Nuestro equipo de confianza y seguridad revisa cada denuncia. No siempre podemos contarte el resultado, pero actuamos.',
+      ],
+    },
+    'buyer-protection': {
+      title: "Protección al comprador de Bullizard",
+      summary: "Tu dinero llega al vendedor solo cuando confirmas que recibiste el pedido.",
+      body: [
+        "Cuando pagas, Bullizard guarda el dinero. El vendedor ve que el pedido está pagado y entrega.",
+        "El vendedor cobra solo cuando confirmas que recibiste el pedido. Puedes confirmar en cuanto lo tengas, incluso antes de que el vendedor lo marque como entregado.",
+        "- No entregado en el plazo prometido: el pedido se cancela y se te reembolsa.\n- No es lo descrito: abre una disputa desde la página del pedido antes de confirmar. El dinero queda congelado hasta que decida un árbitro de Bullizard.\n- Cuentas de juego: 14 días de seguro tras la entrega.",
+        "Haz todo el trato en el chat del pedido. Los tratos fuera de Bullizard no están protegidos.",
+      ],
+    },
+    'wallet': {
+      title: "Tu cartera",
+      summary: "Tu saldo y cada movimiento de dinero en una sola lista.",
+      body: [
+        "Abre Cartera desde el menú de la cuenta. Arriba ves tu saldo; debajo, cada pedido, reembolso, venta y retiro.",
+        "- Amarillo, Retenido: el dinero está en depósito hasta que se confirme el pedido.\n- Verde, Completado: listo.\n- Rojo, Cancelado: se canceló el pedido o el retiro.\n- Gris, Pendiente: esperando el pago o la aprobación.",
+        "Los vendedores ven sus ventas en la misma lista. Los pagos y documentos fiscales están en el panel de vendedor, en Dinero.",
+      ],
+    },
+    'sell-by-amount': {
+      title: "Vender moneda por cantidad",
+      summary: "Define una unidad, un precio por unidad, un mínimo y tu stock; el comprador elige cuánto.",
+      body: [
+        "En el formulario de venta elige Moneda y escribe la unidad, por ejemplo M para millones de plata. El precio pasa a ser por unidad.",
+        "Define tu stock y el pedido mínimo, ambos en unidades. El comprador elige cualquier cantidad entre tu mínimo y tu stock, y el total se actualiza.",
+        "En la página del juego tu oferta aparece en la tabla de vendedores con servidor, stock, mínimo, tiempo de entrega y precio por unidad.",
+      ],
+    },
+    'seller-badges': {
+      title: "Tus insignias y tu tienda",
+      summary: "Elige las 2 insignias que ven los compradores junto a tu nombre.",
+      body: [
+        "Ganas insignias al vender: tu rango, Vendedor fundador, ID verificado y Top vendedor. En el panel de vendedor, bajo tu tienda, elige hasta 2 para mostrar junto a tu nombre en las ofertas.",
+        "Tu tienda también muestra los idiomas que hablas, tu presentación y tus estadísticas: reseñas positivas, valoración, pedidos vendidos y entregas a tiempo.",
       ],
     },
   },

@@ -36,7 +36,7 @@ export function Home() {
   return (
     <>
       <section className="home-hero2 bleed">
-        <div className="shell shell-wide home-hero2-inner">
+        <div className="shell home-hero2-inner">
           <h1>{t('home.hero.title')}</h1>
           <p className="lede">{t('home.hero.lede')}</p>
           <div className="home-search"><GameSearch big /></div>
@@ -52,7 +52,7 @@ export function Home() {
       </section>
 
       <section className="trust-band bleed">
-        <div className="shell shell-wide"><TrustStrip /></div>
+        <div className="shell"><TrustStrip /></div>
       </section>
 
       {bought.length > 0 && (

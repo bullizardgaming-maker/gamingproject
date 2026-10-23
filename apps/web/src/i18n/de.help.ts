@@ -3,19 +3,19 @@ import type { HelpPack } from './index';
 const help: HelpPack = {
   topics: {
     buying: { title: 'Kaufen', blurb: 'Angebote finden, bestellen und Gekauftes erhalten.' },
-    protection: { title: 'Streitfälle & Schutz', blurb: 'Treuhand, Prüffrist, Versicherung und Erstattungen.' },
-    payments: { title: 'Zahlungen', blurb: 'Karten, Krypto, Währungen und Guthaben.' },
+    protection: { title: 'Streitfälle & Schutz', blurb: 'Käuferschutz, Treuhand, Versicherung und Erstattungen.' },
+    payments: { title: 'Zahlungen', blurb: 'Krypto, Netzwerkgebühren, deine Wallet und Erstattungen.' },
     selling: { title: 'Verkaufen', blurb: 'Angebote, Lieferung, Gebühren und Auszahlungen.' },
     account: { title: 'Konto & Sicherheit', blurb: 'Verifizierung, Zwei-Faktor-Anmeldung und deine Daten.' },
   },
   articles: {
     'how-escrow-works': {
-      title: 'So schützt die Treuhand deine Bestellung',
-      summary: 'Deine Zahlung wartet bei uns, bis du hast, wofür du bezahlt hast.',
+      title: "Wie Treuhand deine Bestellung schützt",
+      summary: "Deine Zahlung bleibt bei uns, bis du bestätigst, dass du hast, wofür du bezahlt hast.",
       body: [
-        'Wenn du bezahlst, geht das Geld in die Treuhand, nicht an den Verkäufer. Der Verkäufer sieht nur, dass bezahlt ist, und kann liefern.',
-        'Nach der Lieferung hast du eine Schutzfrist, um alles zu prüfen: 72 Stunden für Keys, Währung, Items, Aufladungen und Boosting, 14 Tage Versicherung für Spiel-Accounts.',
-        'Der Verkäufer wird bezahlt, wenn du die Bestellung bestätigst oder die Frist ohne Streitfall endet – je nachdem, was zuerst eintritt. Stimmt etwas nicht, eröffne vor Ablauf einen Streitfall auf der Bestellseite; das Geld bleibt bis zur Klärung eingefroren.',
+        "Wenn du bezahlst, geht das Geld in die Treuhand, nicht an den Verkäufer. Der Verkäufer sieht nur, dass die Bestellung bezahlt ist, und kann liefern.",
+        "Es gibt keinen Timer: Das Geld bleibt in der Treuhand, bis du den Erhalt bestätigst. Bestätige erst, wenn du alles hast.",
+        "Wenn etwas nicht stimmt, eröffne statt zu bestätigen einen Streitfall auf der Bestellseite. Das Geld bleibt gesperrt, bis er geklärt ist.",
       ],
     },
     'order-not-delivered': {
@@ -28,12 +28,12 @@ const help: HelpPack = {
       ],
     },
     'open-a-dispute': {
-      title: 'Einen Streitfall eröffnen',
-      summary: 'Entspricht etwas nicht der Beschreibung, entscheidet ein Schlichter anhand des Bestell-Chats und der Nachweise.',
+      title: "Einen Streitfall eröffnen",
+      summary: "Wenn etwas nicht wie beschrieben ist, entscheidet ein Schiedsrichter anhand von Chat und Belegen.",
       body: [
-        'Eröffne einen Streitfall auf der Bestellseite, solange die Bestellung in ihrer Schutzfrist ist. Erkläre, was nicht stimmt, und füge Screenshots in den Bestell-Chat ein.',
-        'Die Zahlung bleibt eingefroren, während ein Bullizard-Schlichter den Chat, die Lieferprotokolle und die Nachweise beider Seiten prüft.',
-        '- Entscheidet der Schlichter für dich, wird der volle Betrag auf dein ursprüngliches Zahlungsmittel erstattet.\n- Entscheidet er für den Verkäufer, wird die Zahlung an ihn freigegeben.',
+        "Eröffne den Streitfall auf der Bestellseite, bevor du die Bestellung bestätigst. Erkläre das Problem und füge Screenshots im Bestell-Chat hinzu.",
+        "Die Zahlung bleibt gesperrt, während ein Bullizard-Schiedsrichter Chat, Lieferbelege und Beweise beider Seiten prüft.",
+        "- Entscheidet er für dich, wird der volle Betrag deinem Bullizard-Guthaben gutgeschrieben.\n- Entscheidet er für den Verkäufer, wird die Zahlung an ihn freigegeben.",
       ],
     },
     'account-insurance': {
@@ -62,20 +62,21 @@ const help: HelpPack = {
       ],
     },
     'payment-methods': {
-      title: 'Zahlungsarten',
-      summary: 'Karte über eine sichere gehostete Kasse oder USDC/USDT über einen On-Chain-Treuhandvertrag.',
+      title: "Zahlungswege",
+      summary: "Zahle in Krypto: Wähle einen gängigen Coin; seine Netzwerkgebühr kommt zum Gesamtbetrag dazu.",
       body: [
-        'Kartenzahlungen laufen über die sichere Seite unseres Zahlungspartners; wir sehen deine Kartennummer nie. Du zahlst den an der Kasse angezeigten Preis in der Währung des Angebots.',
-        'Kryptozahlungen nutzen einen On-Chain-Treuhandvertrag mit derselben Schutzfrist. Sende nur den exakten Betrag an die für deine Bestellung angezeigte Vertragsadresse.',
-        'Preise in einer anderen Währung sind ungefähre Umrechnungen; die Kasse zeigt immer den exakten Betrag, der abgebucht wird.',
+        "Bezahlt wird in Krypto. Wähle einen Coin aus der Liste; jeder zeigt sein Netzwerk (z. B. TRC-20) und den Gesamtbetrag.",
+        "Die Netzwerkgebühr kommt obendrauf: Eine Bestellung über 11,50 $ mit 1,00 $ Gebühr heißt, du sendest 12,50 $. Nur der Bestellbetrag geht an den Verkäufer.",
+        "Sende genau den Betrag an die angezeigte Adresse im selben Netzwerk. Die Bestellung ist bezahlt, sobald das Netzwerk bestätigt. Coins mit einem Minimum über deiner Bestellung sind ausgegraut.",
+        "Dein Bullizard-Guthaben wird zuerst verwendet.",
       ],
     },
     'refund-timing': {
-      title: 'Wann sehe ich meine Erstattung?',
-      summary: 'Erstattungen gehen auf das ursprüngliche Zahlungsmittel zurück; Banken brauchen ein paar Tage.',
+      title: "Wann sehe ich meine Erstattung?",
+      summary: "Erstattungen landen sofort in deinem Bullizard-Guthaben.",
       body: [
-        'Erstattungen gehen auf die Karte oder Wallet zurück, mit der du bezahlt hast. Kartenerstattungen senden wir sofort; deine Bank zeigt sie meist innerhalb von 5–10 Werktagen an.',
-        'Guthaben (aus Aktionen oder Empfehlungen) wird sofort als Guthaben zurückgebucht.',
+        "Wird eine Bestellung erstattet, geht das Geld sofort auf dein Bullizard-Guthaben. Du siehst es auf deiner Wallet-Seite.",
+        "Nutze es für die nächste Bestellung oder zahle es auf deine Krypto-Wallet aus (USDT TRC-20). Es fällt eine Auszahlungsgebühr an; die Treasury sendet nach Freigabe.",
       ],
     },
     'selling-fees': {
@@ -97,9 +98,9 @@ const help: HelpPack = {
     },
     'getting-paid': {
       title: 'Auszahlungen erhalten',
-      summary: 'Zahle nach Ende der Schutzfrist auf dein Krypto-Wallet (USDT) aus; es gilt eine Gebühr von 6 %.',
+      summary: 'Zahle nach der Bestätigung des Käufers auf dein Krypto-Wallet (USDT) aus; es gilt eine Gebühr von 6 %.',
       body: [
-        'Geld aus einem Verkauf wird verfügbar, wenn der Käufer bestätigt oder die Schutzfrist endet. Zahle es im Verkäuferbereich an die per E-Mail bestätigte Auszahlungsadresse aus; die Treasury gibt es frei und sendet es in USDT.',
+        'Geld aus einem Verkauf wird verfügbar, wenn der Käufer die Bestellung bestätigt. Zahle es im Verkäuferbereich an die per E-Mail bestätigte Auszahlungsadresse aus; die Treasury gibt es frei und sendet es in USDT.',
         'Neue Verkäufer können eine kurze Auszahlungssperre haben, bis Vertrauen aufgebaut ist; der Verkäuferbereich zeigt, wann gesperrtes Geld frei wird.',
         'Bringt eine Erstattung oder Rückbuchung dein Guthaben unter null, gleichen neue Verkäufe es zuerst aus und Auszahlungen pausieren bis dahin.',
       ],
@@ -134,6 +135,42 @@ const help: HelpPack = {
       body: [
         'Fordert dich jemand auf, außerhalb von Bullizard zu zahlen, schickt einen verdächtigen Link oder wird ausfallend, antworte nicht weiter. Schick uns eine Anfrage in der Kategorie „Nutzer melden“ mit dem Namen und der Bestellung oder dem Chat, in dem es passiert ist.',
         'Unser Trust-&-Safety-Team prüft jede Meldung. Das Ergebnis können wir dir nicht immer mitteilen, aber wir handeln.',
+      ],
+    },
+    'buyer-protection': {
+      title: "Bullizard Käuferschutz",
+      summary: "Dein Geld geht erst an den Verkäufer, wenn du den Erhalt bestätigst.",
+      body: [
+        "Wenn du bezahlst, hält Bullizard das Geld. Der Verkäufer sieht, dass die Bestellung bezahlt ist, und liefert.",
+        "Der Verkäufer wird erst bezahlt, wenn du den Erhalt bestätigst. Du kannst bestätigen, sobald du die Ware hast, auch bevor der Verkäufer sie als geliefert markiert.",
+        "- Nicht in der versprochenen Zeit geliefert: Die Bestellung wird storniert und du bekommst dein Geld zurück.\n- Nicht wie beschrieben: Eröffne vor dem Bestätigen einen Streitfall auf der Bestellseite. Das Geld bleibt gesperrt, bis ein Bullizard-Schiedsrichter entscheidet.\n- Spielkonten: 14 Tage Versicherung nach der Lieferung.",
+        "Wickle den ganzen Handel im Bestell-Chat ab. Deals außerhalb von Bullizard sind nicht geschützt.",
+      ],
+    },
+    'wallet': {
+      title: "Deine Wallet",
+      summary: "Dein Guthaben und jede Geldbewegung in einer Liste.",
+      body: [
+        "Öffne die Wallet über das Kontomenü. Oben steht dein Guthaben, darunter jede Bestellung, Erstattung, jeder Verkauf und jede Auszahlung.",
+        "- Gelb, Gehalten: Das Geld ist in der Treuhand, bis die Bestellung bestätigt ist.\n- Grün, Abgeschlossen: erledigt.\n- Rot, Storniert: Bestellung oder Auszahlung wurde storniert.\n- Grau, Ausstehend: wartet auf Zahlung oder Freigabe.",
+        "Verkäufer sehen ihre Verkäufe in derselben Liste. Auszahlungen und Steuerdokumente findest du im Verkäuferbereich unter Geld.",
+      ],
+    },
+    'sell-by-amount': {
+      title: "Währung nach Menge verkaufen",
+      summary: "Lege Einheit, Preis pro Einheit, Minimum und Bestand fest; Käufer wählen die Menge.",
+      body: [
+        "Wähle im Verkaufsformular Währung und gib die Einheit an, z. B. M für Millionen Silber. Der Preis gilt dann pro Einheit.",
+        "Lege Bestand und Mindestbestellung fest, beides in Einheiten. Käufer wählen eine Menge zwischen deinem Minimum und deinem Bestand; der Gesamtbetrag passt sich an.",
+        "Auf der Spielseite erscheint dein Angebot in der Verkäufertabelle mit Server, Bestand, Minimum, Lieferzeit und Preis pro Einheit.",
+      ],
+    },
+    'seller-badges': {
+      title: "Deine Abzeichen und dein Shop",
+      summary: "Wähle die 2 Abzeichen, die Käufer neben deinem Namen sehen.",
+      body: [
+        "Du verdienst Abzeichen beim Verkaufen: deinen Rang, Gründungsverkäufer, ID verifiziert und Top-Verkäufer. Wähle im Verkäuferbereich unter deinem Shop bis zu 2, die neben deinem Namen bei Angeboten erscheinen.",
+        "Dein Shop zeigt außerdem deine Sprachen, deine Vorstellung und deine Zahlen: positive Bewertungen, Bewertung, verkaufte Bestellungen und pünktliche Lieferung.",
       ],
     },
   },

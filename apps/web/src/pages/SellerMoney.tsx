@@ -109,21 +109,14 @@ export function SellerMoney() {
         <DebtCard key={d.id} debt={d} onError={(text) => setMsg({ kind: 'alert', text })} />
       ))}
 
-      <div className="pg-wallet-cards">
-        <div className="card pg-bal">
-          <span className="small muted">{t('wallet.available')}</span>
-          <span className="pg-big">{money(hold.withdrawableCents, currency)}</span>
-          {hold.heldCents > 0 && <span className="chip held" style={{ alignSelf: 'flex-start' }}><Lock className="size-3" aria-hidden /> {t('wallet.unlocking', { amount: money(hold.heldCents, currency) })}</span>}
-        </div>
-        <div className="card pg-bal">
-          <span className="small muted">{t('money.inEscrow')}</span>
-          <span className="pg-big muted">{money(dash.balances.pendingEscrowCents, 'USD')}</span>
-        </div>
-        <div className="card pg-bal">
-          <span className="small muted">{t('wallet.withdrawn')}</span>
-          <span className="pg-big muted">{money(withdrawn, currency)}</span>
-        </div>
+      <div className="wl-head">
+        <h2 className="pg-h1" style={{ fontSize: 32 }}>{t('wallet.balance')} <span className="num wl-amount">{money(hold.withdrawableCents, currency)}</span></h2>
       </div>
+      <p className="wl-sub-line small muted">
+        <span>{t('money.inEscrow')} <b className="num">{money(dash.balances.pendingEscrowCents, 'USD')}</b></span>
+        <span>{t('wallet.withdrawn')} <b className="num">{money(withdrawn, currency)}</b></span>
+        {hold.heldCents > 0 && <span className="chip held"><Lock className="size-3" aria-hidden /> {t('wallet.unlocking', { amount: money(hold.heldCents, currency) })}</span>}
+      </p>
 
       <div className="pg-split">
         <section className="pg-history" aria-labelledby="wallet-history">
@@ -180,13 +173,12 @@ export function SellerMoney() {
         </aside>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        {/* Payout address */}
-        <PayoutAddressCard onChanged={load} onMessage={setMsg} />
+      <PayoutAddressCard onChanged={load} onMessage={setMsg} />
 
-        {/* Tax profile */}
+      <details className="card wl-more">
+        <summary><b>{t('money.taxAndInvoices')}</b></summary>
+        <div className="stack" style={{ marginTop: 16 }}>
         <TaxForm tax={tax} onSaved={(next) => (setTax(next), setMsg({ kind: 'ok', text: t('money.taxSaved') }))} onError={(text) => setMsg({ kind: 'alert', text })} />
-      </div>
 
       {/* Invoices & credit notes */}
       <div className="card stack">
@@ -237,6 +229,8 @@ export function SellerMoney() {
       </div>
 
       <Exports />
+        </div>
+      </details>
     </div>
   );
 }

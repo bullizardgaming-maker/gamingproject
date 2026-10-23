@@ -66,7 +66,7 @@ export function HelpCentre() {
           <div className="card muted">{t('help.noMatch', { q })}</div>
         )
       ) : (
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-4 md:grid-cols-2 help-topics">
           {(Object.keys(HELP_TOPICS) as HelpTopic[]).map((t) => (
             <section key={t} className="overflow-hidden rounded-xl border border-border bg-card">
               <div className="border-b border-border px-4 py-3">
@@ -100,14 +100,14 @@ export function HelpArticlePage() {
   return (
     <div className="stack" style={{ maxWidth: 760, margin: '0 auto', width: '100%' }}>
       <nav className="crumbs" aria-label="Breadcrumb"><Link to="/help">{t('help.eyebrow')}</Link><span>/</span><span>{HELP_TOPICS[a.topic].title}</span></nav>
-      <article className="stack" style={{ gap: 12 }}>
-        <h1 style={{ fontSize: 36, margin: 0 }}>{a.title}</h1>
-        <p className="lede" style={{ margin: 0 }}>{a.summary}</p>
+      <article className="help-article">
+        <h1>{a.title}</h1>
+        <p className="lede">{a.summary}</p>
         {a.body.map((p, i) =>
           p.startsWith('- ') ? (
-            <ul key={i} className="m-0 ps-5">{p.split('\n').map((li, k) => <li key={k}>{li.replace(/^- /, '')}</li>)}</ul>
+            <ul key={i}>{p.split('\n').map((li, k) => <li key={k}>{li.replace(/^- /, '')}</li>)}</ul>
           ) : (
-            <p key={i} style={{ margin: 0 }}>{p}</p>
+            <p key={i}>{p}</p>
           ),
         )}
       </article>

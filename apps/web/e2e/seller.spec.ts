@@ -59,6 +59,7 @@ test.describe('seller', () => {
   test('money page: invoice PDF and withdrawal', async ({ page }) => {
     await signIn(page, 'Seller');
     await page.goto('/sell/money');
+    await page.getByText('Tax, invoices and exports').click();
     await expect(page.getByRole('heading', { name: 'Commission invoices' })).toBeVisible();
     const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'PDF' }).first().click()]);
     expect(download.suggestedFilename()).toMatch(/\.pdf$/);
