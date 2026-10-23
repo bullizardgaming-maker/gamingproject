@@ -58,7 +58,7 @@ def pattern(motif, w, h, tint, seed=7):
 BASE_CSS=f"""*{{margin:0;padding:0;box-sizing:border-box}} body{{background:{NIGHT};}}
 .c{{position:relative;overflow:hidden;background:radial-gradient(120% 140% at 85% 30%, var(--glow) 0%, transparent 55%), linear-gradient(135deg,{NIGHT} 0%,{PAPER} 100%);color:{FROST};font-family:Inter,sans-serif}}
 .pat{{position:absolute;inset:0}} div > .pat{{position:static;display:block}} .shade{{position:absolute;inset:0;background:linear-gradient(90deg,{NIGHT} 0%, rgba(13,19,28,.85) 30%, rgba(13,19,28,0) 65%)}}
-h1,.d{{font-family:Alexandria,sans-serif;font-weight:800;letter-spacing:-0.01em;line-height:1.02}}
+h1,.d{{font-family:Alexandria,sans-serif;font-weight:800;letter-spacing:-0.01em;line-height:1.02;text-wrap:balance}} p{{text-wrap:balance}}
 .mark svg{{display:block;width:100%;height:auto}} .word svg{{display:block;width:100%;height:auto}}
 """
 def page(w,h,body,extra=''):
@@ -105,9 +105,9 @@ def lockup(width):
     return f'<div style="display:flex;align-items:center;gap:{width*0.08:.0f}px"><div class="mark" style="width:{mw:.0f}px">{MARK}</div><div class="word" style="width:{width:.0f}px">{WORD}</div></div>'
 
 GAMELIST='Aion · Aion 2 · Albion Online · Path of Exile 1 &amp; 2'
-TXT={
- 'en':dict(dir='ltr',head='A marketplace for every game and gamer',sub='Currency, items and top-ups. Your money reaches the seller only when you confirm.',community='Updates, features and offers. Trading happens on the site only.',launch='Now open',games=GAMELIST),
- 'ar':dict(dir='rtl',head='سوق لكل لعبة ولكل لاعب',sub='عملات وعناصر وشحن رصيد. لا يصل مالك إلى البائع إلا عندما تؤكد الاستلام.',community='تحديثات ومزايا وعروض. التداول على الموقع فقط.',launch='افتتحنا الآن',games=GAMELIST),
+TXT={  # Copywriter's final lines (claude/bullizard-copy-deck.md §1 and §7.1)
+ 'en':dict(dir='ltr',head='The grind is optional now.',sub='Buy gold, items and top-ups from players who already farmed them. Every order human-checked.',community='Skip the grind. Every order human-checked.',launch='Opens today',games=GAMELIST),
+ 'ar':dict(dir='rtl',head='الفارم صار اختياريًا.',sub='اشترِ الذهب والآيتمز والشحن من لاعبين فرموها قبلك. وكل طلب يراجعه إنسان.',community='تخطَّ الفارم. وكل طلب يراجعه إنسان.',launch='يفتح اليوم',games=GAMELIST),
 }
 # Discord banner 960x540, invite splash 1920x1080, Telegram header 1280x720 (bilingual)
 for key,w,h in [('social/discord-banner',960,540),('social/discord-invite-splash',1920,1080),('social/telegram-header',1280,720)]:
@@ -116,8 +116,9 @@ for key,w,h in [('social/discord-banner',960,540),('social/discord-invite-splash
 <div style="position:absolute;inset:0;background:radial-gradient(70% 70% at 50% 50%, rgba(13,19,28,.94) 0%, rgba(13,19,28,.8) 55%, rgba(13,19,28,.35) 100%)"></div>
 <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:{26*k:.0f}px;text-align:center;color:{FROST}">
 {lockup(340*k)}
-<p style="font:500 {20*k:.0f}px/1.4 Inter;color:{STEEL}">{TXT['en']['community']}</p>
-<p dir="rtl" style="font:500 {21*k:.0f}px/1.4 Alexandria;color:{STEEL}">{TXT['ar']['community']}</p></div></div>'''
+<p style="font:600 {24*k:.0f}px/1.4 Inter;color:{FROST}">{TXT['en']['community']}</p>
+<p dir="rtl" style="font:600 {25*k:.0f}px/1.4 Alexandria;color:{FROST}">{TXT['ar']['community']}</p>
+<p style="font:500 {16*k:.0f}px/1.4 Inter;color:{STEEL}">News, new games and offers · No trading here</p></div></div>'''
     files[key]=(page(w,h,body),w,h,1)
 
 # Launch posts: square, portrait, story, landscape; EN + AR

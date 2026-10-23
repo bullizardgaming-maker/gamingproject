@@ -23,7 +23,7 @@ Each game has its own pattern and tint: Aion arcs (blue), Aion 2 double arcs (vi
 
 ## Launch posts → `launch/` (EN + AR)
 square 1080×1080 · portrait 1080×1350 · story 1080×1920 · landscape 1200×675.
-Copy is the site's current wording; swap in the Copywriter's final lines in `src/gen.py` (TXT) and rebuild.
+Copy is the Copywriter's final lines (copy deck §1 tagline, §7.1 launch). Domain left off until it's confirmed. Edit `TXT` in `src/gen.py` and rebuild to change them.
 
 ## Rebuild
 ```
