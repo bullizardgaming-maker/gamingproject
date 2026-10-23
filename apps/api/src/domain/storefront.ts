@@ -26,9 +26,9 @@ const LIVE = `f.status = 'active' AND f.reserved_for IS NULL`;
 
 /** What the shop page shows: intro, accent, banner URL (versioned for caching) and live pinned listings. */
 export async function storefront(q: Queryable, sellerId: string) {
-  const u = await maybeOne<{ shop_intro: string; shop_accent: Accent; shop_pinned: string[]; banner_sha: string | null }>(
+  const u = await maybeOne<{ shop_intro: string; shop_accent: Accent; shop_pinned: string[]; languages: string[]; banner_sha: string | null }>(
     q,
-    `SELECT u.shop_intro, u.shop_accent, u.shop_pinned, b.sha256 AS banner_sha
+    `SELECT u.shop_intro, u.shop_accent, u.shop_pinned, u.languages, b.sha256 AS banner_sha
        FROM users u LEFT JOIN shop_banners b ON b.seller_id = u.id WHERE u.id = $1`,
     [sellerId],
   );
@@ -38,6 +38,7 @@ export async function storefront(q: Queryable, sellerId: string) {
     : [];
   return {
     intro: u.shop_intro,
+    languages: u.languages,
     accent: u.shop_accent,
     banner_url: u.banner_sha ? `/v1/sellers/${sellerId}/banner?v=${u.banner_sha.slice(0, 12)}` : null,
     // In the seller's chosen order; listings sold out or paused drop out on their own.
@@ -45,7 +46,7 @@ export async function storefront(q: Queryable, sellerId: string) {
   };
 }
 
-export async function updateStorefront(ctx: Ctx, sellerId: string, input: { intro?: string; accent?: Accent; pinned?: string[] }) {
+export async function updateStorefront(ctx: Ctx, sellerId: string, input: { intro?: string; accent?: Accent; pinned?: string[]; languages?: string[] }) {
   if (input.intro != null) {
     const intro = input.intro.trim();
     if (intro.length > MAX_INTRO) throw badRequest('intro_too_long', `Keep the intro under ${MAX_INTRO} characters`);
@@ -62,8 +63,8 @@ export async function updateStorefront(ctx: Ctx, sellerId: string, input: { intr
     input.pinned = ids;
   }
   await ctx.db.query(
-    `UPDATE users SET shop_intro = COALESCE($2, shop_intro), shop_accent = COALESCE($3, shop_accent), shop_pinned = COALESCE($4::uuid[], shop_pinned) WHERE id = $1`,
-    [sellerId, input.intro ?? null, input.accent ?? null, input.pinned ?? null],
+    `UPDATE users SET shop_intro = COALESCE($2, shop_intro), shop_accent = COALESCE($3, shop_accent), shop_pinned = COALESCE($4::uuid[], shop_pinned), languages = COALESCE($5::text[], languages) WHERE id = $1`,
+    [sellerId, input.intro ?? null, input.accent ?? null, input.pinned ?? null, input.languages ? [...new Set(input.languages.map((l) => l.toLowerCase()))] : null],
   );
   return storefront(ctx.db, sellerId);
 }

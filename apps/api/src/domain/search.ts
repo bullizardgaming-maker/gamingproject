@@ -3,7 +3,7 @@ import { many } from '../db.js';
 import { OFFER_LIST_SQL } from './offers.js';
 import { GROSS_SQL } from './commission.js';
 
-export const SORTS = ['relevance', 'newest', 'price_asc', 'price_desc', 'rating', 'best_selling', 'trust'] as const;
+export const SORTS = ['relevance', 'newest', 'price_asc', 'price_desc', 'rating', 'best_selling', 'trust', 'recommended', 'min_qty_asc', 'delivery'] as const;
 export type Sort = (typeof SORTS)[number];
 
 export interface SearchParams {
@@ -91,6 +91,10 @@ export async function searchOffers(q: Queryable, p: SearchParams) {
     rating: 'seller_rating DESC NULLS LAST, seller_review_count DESC, created_at DESC',
     trust: "array_position(ARRAY['top','trusted','rising','new'], seller_trust_level), seller_rating DESC NULLS LAST, created_at DESC",
     best_selling: 'seller_completed_orders DESC, created_at DESC',
+    // Game-page default: good ratings and low prices together (rating out of 5 against the cheapest price in the result).
+    recommended: 'featured DESC, (COALESCE(seller_rating, 3.5) / 5.0) / GREATEST(price_settlement_cents, 1) DESC, seller_completed_orders DESC, created_at DESC',
+    min_qty_asc: 'featured DESC, min_qty ASC, price_settlement_cents ASC, created_at DESC',
+    delivery: "featured DESC, (delivery_mode = 'auto') DESC, delivery_hours ASC, seller_online DESC, price_settlement_cents ASC",
   }[sort];
   const pageSize = Math.min(Math.max(p.pageSize ?? 24, 1), 60);
   const page = Math.max(p.page ?? 1, 1);

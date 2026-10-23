@@ -6,6 +6,7 @@ import { many, maybeOne, one } from '../db.js';
 import { createApiKey, listApiKeys, revokeApiKey } from '../domain/apikeys.js';
 import { featureListing, foundingStatus, listRanks, pricePreview, sellerTier, unfeatureListing } from '../domain/commission.js';
 import { relistExpired } from '../domain/leagues.js';
+import { MAX_SHOWN_BADGES, earnedBadges, setShownBadges, shownBadges } from '../domain/badges.js';
 import { onboardingStatus, rulesTestFor, submitRulesTest } from '../domain/onboarding.js';
 import { recordSignals } from '../domain/fraud.js';
 import { sellerAvailable } from '../domain/ledger.js';
@@ -62,6 +63,9 @@ export const OfferBody = z.object({
     .max(5)
     .optional()
     .describe('Cheaper unit prices for larger orders, e.g. [{"minQty":10,"priceCents":450}]. Send [] to remove.'),
+  unitLabel: z.string().trim().max(12).nullable().optional().describe('Currency sold by amount: what one unit of quantity is, e.g. "M", "k", "orbs"'),
+  unitSize: z.number().int().min(1).max(1_000_000_000_000).nullable().optional().describe('Game currency per unit, e.g. 1000000 for "M"'),
+  minQty: z.number().int().min(1).max(1_000_000).optional().describe('Smallest order, in units (default 1)'),
 });
 
 export const InventoryBody = z.object({
@@ -144,13 +148,29 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     return importListings(ctx, user, body.csv, { dryRun: body.dryRun });
   });
 
-  // --- Storefront: banner, intro, accent, pinned listings ----------------------------------
+  // --- Badges: up to two of the earned ones, shown next to the seller's name --------------------
+  app.get('/seller/badges', async (req) => {
+    const user = me(req);
+    return { badges: await shownBadges(ctx.db, user.id), earned: await earnedBadges(ctx.db, user.id) };
+  });
+  app.put('/seller/badges', async (req) => {
+    const user = me(req);
+    const { badges } = z.object({ badges: z.array(z.string().trim().min(1).max(40)).max(MAX_SHOWN_BADGES) }).parse(req.body);
+    return setShownBadges(ctx.db, user.id, badges);
+  });
+
+  // --- Storefront: banner, intro (about), accent, pinned (featured) listings, languages ----------
   app.get('/seller/storefront', async (req) => storefront(ctx.db, me(req).id));
   app.put('/seller/storefront', async (req) => {
     const user = me(req);
     requireSeller(user);
     const body = z
-      .object({ intro: z.string().max(MAX_INTRO + 100).optional(), accent: z.enum(ACCENTS).optional(), pinned: z.array(z.string().uuid()).max(MAX_PINNED).optional() })
+      .object({
+        intro: z.string().max(MAX_INTRO + 100).optional(),
+        accent: z.enum(ACCENTS).optional(),
+        pinned: z.array(z.string().uuid()).max(MAX_PINNED).optional(),
+        languages: z.array(z.string().trim().regex(/^[A-Za-z]{2,3}(-[A-Za-z]{2,4})?$/, 'BCP-47 language codes such as en, ar, pt-BR')).max(8).optional(),
+      })
       .parse(req.body);
     return updateStorefront(ctx, user.id, body);
   });
@@ -195,7 +215,7 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     return getOffer(ctx.db, Id.parse(req.params).id);
   });
   app.patch('/offers/:id', async (req) => {
-    const body = OfferBody.pick({ title: true, description: true, priceCents: true, stock: true, lowStockThreshold: true, deliveryHours: true, attributes: true, priceTiers: true, warrantyDays: true, linkedAccountId: true, minBuyerReputation: true })
+    const body = OfferBody.pick({ title: true, description: true, priceCents: true, stock: true, lowStockThreshold: true, deliveryHours: true, attributes: true, priceTiers: true, warrantyDays: true, linkedAccountId: true, minBuyerReputation: true, unitLabel: true, unitSize: true, minQty: true })
       .partial()
       .extend({ version: z.number().int().min(0), status: z.enum(['active', 'paused', 'removed']).optional() })
       .parse(req.body);

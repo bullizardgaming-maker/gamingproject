@@ -120,7 +120,12 @@ export async function sellerTier(q: Queryable, sellerId: string) {
 /** Stores the seller's current rate and rank on the user row (listings read it in SQL). */
 export async function refreshSellerRate(q: Queryable, sellerId: string) {
   const t = await sellerTier(q, sellerId);
-  await q.query('UPDATE users SET commission_rate_bps = $2, seller_rank = $3, commission_computed_at = now() WHERE id = $1', [sellerId, t.rateBps, t.rank.name]);
+  await q.query(
+    `UPDATE users SET commission_rate_bps = $2, seller_rank = $3, commission_computed_at = now(),
+            badges = COALESCE((SELECT array_agg(b) FROM unnest(badges) b WHERE b NOT LIKE 'rank:%' OR b = 'rank:' || lower($3)), '{}')
+      WHERE id = $1`,
+    [sellerId, t.rateBps, t.rank.name],
+  );
   return t;
 }
 

@@ -377,6 +377,7 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
     if (offer.shop_paused) throw conflict('shop_paused', offer.shop_pause_message || 'This seller is away and not taking orders right now');
     if (offer.seller_id === buyer.id) throw forbidden('own_offer', 'You cannot buy your own offer');
     if (offer.category_kind === 'account' && input.quantity !== 1) throw badRequest('invalid_quantity', 'Accounts are sold one at a time');
+    if (input.quantity < Number(offer.min_qty ?? 1)) throw badRequest('below_minimum', `This listing sells at least ${offer.min_qty}${offer.unit_label ? ` ${offer.unit_label}` : ''} per order`);
     if (offer.min_buyer_reputation) {
       // The seller asked for an established buyer on this high-value listing.
       const rep = await buyerReputation(s.tx, buyer.id);
@@ -469,9 +470,12 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
     await appendMessage(
       s, room.id, null, 'system',
       `Order created for "${offer.title}" x${input.quantity}. All communication for this order must stay in this chat — ` +
-        `it is the evidence used for arbitration. Funds are held in escrow under the ` +
-        (protection === 'insurance_14d' ? '14-Day Asset Insurance.' : '72-Hour Inspection Window.') +
+        `it is the evidence used for arbitration. ` +
+        (protection === 'insurance_14d' ? 'Funds are held in escrow under the 14-Day Asset Insurance.' : protection === 'until_confirmed' ? 'Funds are held in escrow until the buyer confirms delivery.' : 'Funds are held in escrow under the 72-Hour Inspection Window.') +
         (sellerProtected ? '' : ' Notice: this listing is HIGH RISK - SECONDARY MARKET (no verified Original Owner Proof).'),
+      [],
+      undefined,
+      { code: 'order_created', params: { title: offer.title, quantity: input.quantity, protection, seller_protected: sellerProtected } },
     );
 
     await recordSignals(s.tx, buyer.id, { device: input.device, ip_subnet: subnetOf(input.ip), wallet: input.walletAddress?.toLowerCase() });
@@ -682,7 +686,7 @@ async function onFunded(ctx: Ctx, s: TxScope, order: Order & { delivery_mode: st
     [order.delivery_mode],
   );
   const room = await roomOf(s.tx, order.id);
-  await appendMessage(s, room.id, null, 'system', 'Payment received. It stays in escrow until the buyer confirms delivery.');
+  await appendMessage(s, room.id, null, 'system', 'Payment received. It stays in escrow until the buyer confirms delivery.', [], undefined, { code: 'payment_received' });
   await postOrderCard(s, order, 'paid');
 
   const risk = await assessOrder(ctx, s.tx, order.id);
@@ -696,7 +700,7 @@ async function onFunded(ctx: Ctx, s: TxScope, order: Order & { delivery_mode: st
 
   if (order.delivery_mode === 'auto') {
     if (action !== 'none') {
-      await appendMessage(s, room.id, null, 'system', 'This order is under a routine security review. Delivery will proceed once the review completes.');
+      await appendMessage(s, room.id, null, 'system', 'This order is under a routine security review. Delivery will proceed once the review completes.', [], undefined, { code: 'security_review' });
     } else {
       await deliver(ctx, s, order, null, 'auto_delivery');
     }
@@ -724,6 +728,9 @@ async function deliver(ctx: Ctx, s: TxScope, order: Order & { category_kind: str
         : order.protection === 'until_confirmed'
           ? 'The payment stays in escrow until the buyer confirms. Buyer: check your order and confirm, or open a dispute if anything is wrong.'
           : 'The 72-Hour Inspection Window has started. Confirm receipt or open a dispute if anything is wrong.'),
+    [],
+    undefined,
+    { code: 'delivered', params: { count: count ?? null, protection: order.protection } },
   );
   await postOrderCard(s, order, 'delivered');
   if (order.category_kind === 'account') {
@@ -805,7 +812,7 @@ async function releaseEscrow(ctx: Ctx, s: TxScope, order: Order & { title: strin
   }
   await transition(s.tx, order, 'completed', actorId, reason, ', completed_at = now()');
   const room = await roomOf(s.tx, order.id);
-  await appendMessage(s, room.id, null, 'system', 'Order completed. Funds released to the seller.');
+  await appendMessage(s, room.id, null, 'system', 'Order completed. Funds released to the seller.', [], undefined, { code: reason === 'buyer_confirmed_early' ? 'completed_early' : 'completed', params: { reason } });
   await postOrderCard(s, order, 'completed');
   await enqueueWebhook(s.tx, order.seller_id, 'order.completed', orderSummary(order));
   if (order.rail === 'fiat') {
@@ -827,9 +834,11 @@ export async function confirmOrder(ctx: Ctx, orderId: string, buyerId: string, o
     const order = await lockOrder(s.tx, orderId);
     if (order.buyer_id !== buyerId) throw forbidden('not_buyer', 'Only the buyer can confirm this order');
     if (order.rail === 'crypto') throw conflict('onchain', 'Crypto escrow is released on-chain from your wallet');
-    if (order.status !== 'delivered') throw conflict('invalid_state', `Cannot confirm an order that is ${order.status}`);
+    // The buyer can also confirm before the seller marks the order delivered (they already have the goods).
+    if (order.status !== 'delivered' && order.status !== 'paid') throw conflict('invalid_state', `Cannot confirm an order that is ${order.status}`);
     if (order.escrow_frozen) throw new AppError(423, 'under_review', 'Order is under security review');
-    let reason = 'buyer_confirmed';
+    let reason = order.status === 'paid' ? 'buyer_confirmed_early' : 'buyer_confirmed';
+    if (order.status === 'paid') await s.tx.query('UPDATE orders SET delivered_at = now() WHERE id = $1 AND delivered_at IS NULL', [orderId]);
     if (order.category_kind === 'account') {
       const cl = await maybeOne<{ completed_at: string | null; handover_at: string | null }>(s.tx, 'SELECT completed_at, handover_at FROM security_checklists WHERE order_id = $1', [orderId]);
       if (cl && !cl.completed_at) {
@@ -870,7 +879,7 @@ export async function recordHandover(ctx: Ctx, orderId: string, buyerId: string,
       [orderId, JSON.stringify(cl.items), provider, complete],
     );
     const room = await roomOf(s.tx, orderId);
-    await appendMessage(s, room.id, null, 'system', `Handover confirmed: the buyer signed in to the ${provider === 'steam' ? 'Steam' : 'Riot'} account from Bullizard.${complete ? ' The Security Changeover checklist is complete.' : ''}`);
+    await appendMessage(s, room.id, null, 'system', `Handover confirmed: the buyer signed in to the ${provider === 'steam' ? 'Steam' : 'Riot'} account from Bullizard.${complete ? ' The Security Changeover checklist is complete.' : ''}`, [], undefined, { code: 'handover_confirmed', params: { provider, complete } });
     s.notifyUser(order.seller_id, 'order.handover', { orderId });
     s.notifyUser(order.buyer_id, 'order.handover', { orderId });
     return row;
@@ -900,7 +909,7 @@ export async function releaseByStaff(ctx: Ctx, orderId: string, staffId: string,
     await s.tx.query('UPDATE orders SET released_by = $2, release_note = $3 WHERE id = $1', [orderId, staffId, note]);
     await releaseEscrow(ctx, s, order, staffId, 'staff_released');
     const room = await roomOf(s.tx, orderId);
-    await appendMessage(s, room.id, null, 'system', `Support released the payment to the seller after reviewing the delivery: ${note}`);
+    await appendMessage(s, room.id, null, 'system', `Support released the payment to the seller after reviewing the delivery: ${note}`, [], undefined, { code: 'staff_released', params: { note } });
     return order;
   });
 }
@@ -942,7 +951,7 @@ export async function updateChecklist(ctx: Ctx, orderId: string, buyerId: string
     );
     if (complete) {
       const room = await roomOf(s.tx, orderId);
-      await appendMessage(s, room.id, null, 'system', 'Buyer completed the Security Changeover checklist.');
+      await appendMessage(s, room.id, null, 'system', 'Buyer completed the Security Changeover checklist.', [], undefined, { code: 'checklist_completed' });
     }
     return row;
   });
@@ -1027,7 +1036,7 @@ export async function openDispute(ctx: Ctx, orderId: string, userId: string, rea
     // The opening reason is also the opener's first statement.
     await s.tx.query('INSERT INTO dispute_statements (dispute_id, user_id, role, body) VALUES ($1, $2, $3, $4)', [dispute.id, userId, userId === order.buyer_id ? 'buyer' : 'seller', reason]);
     const room = await roomOf(s.tx, orderId);
-    await appendMessage(s, room.id, null, 'system', `Dispute opened: "${reason}". Escrow is frozen. An arbitration specialist will review this chat log — keep all evidence here.`);
+    await appendMessage(s, room.id, null, 'system', `Dispute opened: "${reason}". Escrow is frozen. An arbitration specialist will review this chat log — keep all evidence here.`, [], undefined, { code: 'dispute_opened', params: { reason } });
     await enqueueWebhook(s.tx, order.seller_id, 'order.disputed', { ...orderSummary(order), reason });
     for (const uid of [order.buyer_id, order.seller_id]) await enqueueEmail(s.tx, uid, 'dispute_opened', emailData(order, { reason }));
     s.notifyUser(order.buyer_id, 'order.disputed', { orderId });
@@ -1077,7 +1086,7 @@ async function refundOrder(ctx: Ctx, s: TxScope, order: Order & { delivery_mode:
   }
   await transition(s.tx, order, 'refunded', actorId, reason);
   const room = await roomOf(s.tx, order.id);
-  await appendMessage(s, room.id, null, 'system', `Order refunded to the buyer (${(order.amount_cents / 100).toFixed(2)} ${order.currency}).`);
+  await appendMessage(s, room.id, null, 'system', `Order refunded to the buyer (${(order.amount_cents / 100).toFixed(2)} ${order.currency}).`, [], undefined, { code: 'refunded', params: { reason } });
   await postOrderCard(s, order, 'refunded');
   await enqueueWebhook(s.tx, order.seller_id, 'order.refunded', orderSummary(order));
   if (order.rail === 'fiat') await enqueueEmail(s.tx, order.buyer_id, 'order_refunded', emailData(order));

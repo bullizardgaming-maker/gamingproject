@@ -31,6 +31,30 @@ const COIN_NAMES: Record<string, string> = {
 };
 export const coinName = (c: string) => COIN_NAMES[c] ?? c.toUpperCase();
 
+/** The network a coin code settles on, as buyers know it. */
+const NETWORKS: Record<string, string> = {
+  usdttrc20: 'TRC-20', usdtbsc: 'BEP-20', usdterc20: 'ERC-20', usdtsol: 'Solana', usdtmatic: 'Polygon', usdtton: 'TON',
+  usdcmatic: 'Polygon', usdcerc20: 'ERC-20', usdc: 'ERC-20', usdcbsc: 'BEP-20', usdcsol: 'Solana', usdcarb: 'Arbitrum',
+  btc: 'Bitcoin', eth: 'Ethereum', ltc: 'Litecoin', trx: 'TRON', sol: 'Solana', bnb: 'BNB Chain', doge: 'Dogecoin', xmr: 'Monero', ton: 'TON', xrp: 'XRP', matic: 'Polygon', bch: 'Bitcoin Cash', dai: 'Ethereum',
+};
+export const coinNetwork = (c: string) => NETWORKS[c] ?? c.toUpperCase();
+/** Checkout order: the popular stablecoins and majors first, then everything else alphabetically. */
+const POPULAR = ['usdttrc20', 'usdtbsc', 'usdterc20', 'usdcmatic', 'usdcerc20', 'usdc', 'btc', 'eth', 'ltc', 'trx', 'sol'];
+/** Typical network fee the buyer pays on top, in USD, unless CRYPTO_NETWORK_FEES_JSON says otherwise. */
+const DEFAULT_FEES_USD: Record<string, number> = {
+  usdttrc20: 1, usdtbsc: 0.1, usdterc20: 3, usdtsol: 0.01, usdtmatic: 0.02, usdcmatic: 0.02, usdcerc20: 3, usdc: 3, usdcbsc: 0.1, usdcsol: 0.01,
+  btc: 1.5, eth: 1, ltc: 0.02, trx: 0.3, sol: 0.01, bnb: 0.05, doge: 0.1, xmr: 0.02, ton: 0.05, xrp: 0.01, matic: 0.02, bch: 0.01, dai: 3,
+};
+export function networkFeeCents(ctx: Ctx, coin: string) {
+  let overrides: Record<string, number> = {};
+  try {
+    overrides = JSON.parse(ctx.cfg.CRYPTO_NETWORK_FEES_JSON);
+  } catch {
+    /* bad JSON: defaults */
+  }
+  return toCents(Number(overrides[coin] ?? DEFAULT_FEES_USD[coin] ?? 0.5));
+}
+
 function provider(ctx: Ctx): NowPaymentsProvider {
   if (!(ctx.payments instanceof NowPaymentsProvider)) throw new AppError(503, 'crypto_unavailable', 'Crypto checkout is not configured');
   return ctx.payments;
@@ -97,7 +121,22 @@ export async function coinsFor(ctx: Ctx, ref: PayableRef, buyerId: string) {
   const p = await payable(ctx.db, ref, buyerId);
   const owed = p.charged_cents - (await paidSoFarCents(ctx.db, p));
   const coins = await np.coinsFor(usd(owed));
-  return { owedCents: owed, currency: p.currency, coins: coins.map((c) => ({ ...c, name: coinName(c.coin) })) };
+  const pos = (c: string) => (POPULAR.includes(c) ? POPULAR.indexOf(c) : POPULAR.length);
+  const list = coins
+    .map((c) => {
+      const fee = networkFeeCents(ctx, c.coin);
+      return {
+        ...c,
+        name: coinName(c.coin),
+        network: coinNetwork(c.coin),
+        fee_cents: fee,
+        total_cents: owed + fee,
+        disabled: !c.available,
+        reason: c.available ? null : `Minimum for this coin is $${c.minUsd.toFixed(2)}`,
+      };
+    })
+    .sort((a, b) => Number(b.available) - Number(a.available) || pos(a.coin) - pos(b.coin) || a.coin.localeCompare(b.coin));
+  return { owedCents: owed, currency: p.currency, coins: list };
 }
 
 export interface CryptoPaymentView {
@@ -286,7 +325,7 @@ export async function creditPartialPayments(ctx: Ctx, s: TxScope, order: { id: s
     order.id,
   );
   const room = await maybeOne<{ id: string }>(s.tx, 'SELECT id FROM chat_rooms WHERE order_id = $1', [order.id]);
-  if (room) await appendMessage(s, room.id, null, 'system', `The payment window closed with ${(total / 100).toFixed(2)} ${order.currency} received. It is kept in the buyer's balance to spend on a later order or withdraw.`);
+  if (room) await appendMessage(s, room.id, null, 'system', `The payment window closed with ${(total / 100).toFixed(2)} ${order.currency} received. It is kept in the buyer's balance to spend on a later order or withdraw.`, [], undefined, { code: 'underpayment_kept', params: { amount_cents: total, currency: order.currency } });
   await enqueueEmail(s.tx, order.buyer_id, 'crypto_kept_in_balance', { order_id: order.id, amount_cents: total, currency: order.currency }, `crypto_kept:${order.id}`);
   return total;
 }
@@ -312,7 +351,7 @@ export async function setRefundAddress(ctx: Ctx, orderId: string, buyerId: strin
     if (r.status === 'sent') throw conflict('already_sent', 'This refund was already sent');
     await s.tx.query(`UPDATE crypto_refunds SET refund_address = $2, refund_currency = $3, status = 'pending', updated_at = now() WHERE id = $1`, [r.id, input.address.trim(), input.currency.toLowerCase()]);
     const room = await maybeOne<{ id: string }>(s.tx, 'SELECT id FROM chat_rooms WHERE order_id = $1', [orderId]);
-    if (room) await appendMessage(s, room.id, null, 'system', `The buyer gave a ${coinName(input.currency.toLowerCase())} address for the refund; the treasury sends it within three working days.`);
+    if (room) await appendMessage(s, room.id, null, 'system', `The buyer gave a ${coinName(input.currency.toLowerCase())} address for the refund; the treasury sends it within three working days.`, [], undefined, { code: 'refund_address_given', params: { coin: input.currency.toLowerCase() } });
     return refundView(s.tx, r.id);
   });
 }

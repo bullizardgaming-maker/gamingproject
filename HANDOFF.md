@@ -165,6 +165,44 @@ Tests: `cart.test.ts` (balance spent first / fully covered cart), `crypto-paymen
 `e2e/crypto.spec.ts` (greyed Monero with reason; balance → "From your balance" → paid-at-once), `e2e/launch.spec.ts`
 (allowed games panel). 70 API files and 119 browser tests green.
 
+## Round 18 (Oct 23, 2026) — the front end's eight requests (`claude/frontend-requests-for-backend.md`)
+
+API only; the Designer's demo mock already speaks these shapes. Migration 065.
+
+1. **Currency sold by amount.** Offers take `unitLabel` ("M", "k", "orbs"), `unitSize` (game currency per unit) and
+   `minQty` (currency category only; `cleanUnit` in offers.ts). Listings return `unit_label`, `unit_size`, `min_qty`,
+   `price_per_unit_cents` (= the grossed-up unit price) and `stock_qty`. `POST /orders { quantity }` is in units; below
+   `min_qty` → 400 `below_minimum`; quantity cap raised to 1,000,000. New sorts on `GET /offers`: `recommended`
+   (rating ÷ price), `min_qty_asc`, `delivery`.
+2. **Badges and presence.** `GET/PUT /seller/badges` (up to 2 of the earned ones: `rank:<name>`, `founding`,
+   `id_verified`, `top_seller`; domain/badges.ts). Offers and `GET /sellers/:id` return `seller_badges`; offers also
+   `seller_last_seen_at` next to `seller_online`. A lost rank badge drops off when the rank is refreshed.
+3. **Seller profile.** `GET /sellers/:id` adds `positive_pct_90d`, `orders_sold`, `delivered_pct`, `about` (= storefront
+   intro), `languages`, `featured_offer_ids` (= pinned listings), `member_since` was already there. Sellers set
+   `languages` (BCP-47 codes, max 8) through `PUT /seller/storefront`.
+4. **Coins with network and fee.** `GET …/crypto/coins` items carry `network`, `fee_cents` (estimate the buyer pays
+   from their wallet; defaults per coin in cryptoPayments.ts, overridable with `CRYPTO_NETWORK_FEES_JSON`),
+   `total_cents` = owed + fee, `disabled` and `reason`. Popular coins first (USDT TRC-20/BEP-20/ERC-20, USDC, BTC,
+   ETH, LTC, TRX, SOL). The payment itself is still created for the owed amount; the fee is informational.
+5. **Confirm from `paid`.** `POST /orders/:id/confirm` works while the order is `paid`; `delivered_at` is stamped and
+   the event reason is `buyer_confirmed_early`.
+6. **Wallet.** `GET /me/wallet?limit&before` → `balances` per currency (buyer credit + released sales), `breakdown`
+   (`credit_cents`, `credit_available_cents`, `sales_cents`), paged `entries` (`order` held/completed/cancelled,
+   `sale`, `refund`, `credit`, `withdrawal` pending/completed/cancelled; `ref` is the order# or withdrawal#) and
+   `next` (pass as `before`). `POST /me/withdrawals` withdraws the buyer balance under the seller rules (6%, min
+   $1.50, confirmed address); `GET /me/withdrawals` lists them. domain/wallet.ts.
+7. Nothing removed server-side (seller codes, cart, price history, 72h/14d) — endpoints stay; the order-created
+   chat line now says "held until the buyer confirms" for `until_confirmed` orders.
+8. **Translations.** `site_texts` has a `locale` column (PK key+locale); `GET /texts/:key?lang=ar` returns the
+   locale's row or English; `PUT /admin/texts/:key { lang }` upserts, `GET /admin/texts/:key` lists locales. System
+   chat messages carry `code` + `params` (`order_created`, `payment_received`, `delivered`, `completed`,
+   `completed_early`, `staff_released`, `dispute_opened`, `dispute_statement`, `refunded`, `security_review`,
+   `handover_confirmed`, `checklist_completed`, `underpayment_kept`, `refund_address_given`,
+   `account_suspended_offplatform`, `account_banned_offplatform`); the English body stays for old clients.
+
+Tests: `frontend-requests.test.ts` (one case per item), coin order/fields in `crypto-payments.test.ts`. 71 API files
+(269 tests) green. Web untouched this round (the Designer's mock carries the same shapes).
+
 ## Suggested next round
 
 1. Handover check for Riot/Steam games without a linked listing: let the buyer link any account of the game's

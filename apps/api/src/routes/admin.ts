@@ -264,12 +264,25 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     requirePermission(req, 'ranks.manage');
     return { ranks: await listRanks(ctx.db), settings: await commissionSettings(ctx.db) };
   });
-  // --- Site texts (the chat safety panel) ---------------------------------------------------------
+  // --- Site texts (the chat safety panel), one row per locale ----------------------------------------
+  app.get('/admin/texts/:key', async (req) => {
+    requirePermission(req, 'support.manage');
+    const { key } = z.object({ key: z.enum(['chat_safety']) }).parse(req.params);
+    return many(ctx.db, 'SELECT key, locale, body, link_label, link_href, updated_at FROM site_texts WHERE key = $1 ORDER BY (locale = $2) DESC, locale', [key, 'en']);
+  });
   app.put('/admin/texts/:key', async (req) => {
     const staff = requirePermission(req, 'support.manage');
     const { key } = z.object({ key: z.enum(['chat_safety']) }).parse(req.params);
-    const body = z.object({ body: z.string().trim().min(10).max(2_000), linkLabel: z.string().trim().max(60).default(''), linkHref: z.string().trim().max(200).regex(/^\/|^$/).default('') }).parse(req.body);
-    const row = await one(ctx.db, 'UPDATE site_texts SET body = $2, link_label = $3, link_href = $4, updated_by = $5, updated_at = now() WHERE key = $1 RETURNING key, body, link_label, link_href, updated_at', [key, body.body, body.linkLabel, body.linkHref, staff.id]);
+    const body = z
+      .object({ body: z.string().trim().min(10).max(2_000), linkLabel: z.string().trim().max(60).default(''), linkHref: z.string().trim().max(200).regex(/^\/|^$/).default(''), lang: z.string().regex(/^[a-z]{2}$/).default('en') })
+      .parse(req.body);
+    const row = await one(
+      ctx.db,
+      `INSERT INTO site_texts (key, locale, body, link_label, link_href, updated_by) VALUES ($1, $6, $2, $3, $4, $5)
+       ON CONFLICT (key, locale) DO UPDATE SET body = EXCLUDED.body, link_label = EXCLUDED.link_label, link_href = EXCLUDED.link_href, updated_by = EXCLUDED.updated_by, updated_at = now()
+       RETURNING key, locale, body, link_label, link_href, updated_at`,
+      [key, body.body, body.linkLabel, body.linkHref, staff.id, body.lang],
+    );
     await audit(ctx.db, req, 'texts.update', { type: 'site_text', id: key }, body);
     return row;
   });

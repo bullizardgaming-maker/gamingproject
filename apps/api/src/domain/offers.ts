@@ -38,9 +38,29 @@ export interface OfferInput {
   priceTiers?: PriceTier[];
   /** A bundle of the seller's own instant-delivery listings sold together at this price. */
   bundle?: Array<{ offerId: string; quantity: number }>;
+  /** Currency sold by amount: what one unit of `quantity` is ("M" of silver, `unitSize` 1,000,000) and the smallest order, in units. */
+  unitLabel?: string | null;
+  unitSize?: number | null;
+  minQty?: number;
 }
 
 export const MAX_BUNDLE_PARTS = 10;
+
+/**
+ * Currency sold by amount (Albion silver, kinah, orbs): the listing says what one unit of
+ * `quantity` is and the smallest order. Other categories sell whole items: one unit, min 1.
+ */
+export function cleanUnit(input: Pick<OfferInput, 'unitLabel' | 'unitSize' | 'minQty'>, categoryKind: string, stock: number) {
+  const label = input.unitLabel?.trim() || null;
+  const size = input.unitSize ?? null;
+  const minQty = input.minQty ?? 1;
+  if ((label || size) && categoryKind !== 'currency') throw badRequest('invalid_unit', 'Only currency listings are sold by amount');
+  if (label && label.length > 12) throw badRequest('invalid_unit', 'Keep the unit label short (e.g. "M", "k", "orbs")');
+  if (size != null && !(Number.isInteger(size) && size >= 1)) throw badRequest('invalid_unit', 'unitSize is a whole number of game currency per unit');
+  if (!Number.isInteger(minQty) || minQty < 1) throw badRequest('invalid_unit', 'minQty is at least 1');
+  if (stock > 0 && minQty > stock) throw badRequest('invalid_unit', 'The minimum order can’t be more than the stock');
+  return { label, size, minQty };
+}
 
 /** Check a bundle's parts: 2–10 of the seller's own active instant listings, none of them a bundle. */
 async function checkBundle(q: Queryable, sellerId: string, parts: Array<{ offerId: string; quantity: number }>) {
@@ -92,6 +112,8 @@ export const OFFER_LIST_SQL = `
          (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now())) AS shop_paused,
          u.shop_paused_until, u.shop_pause_message, ${ONLINE_SQL} AS seller_online, u.response_minutes AS seller_response_minutes, u.trust_level AS seller_trust_level,
          f.available AS stock, f.is_bundle,
+         f.unit_label, f.unit_size, f.min_qty, ${GROSS_SQL(EFFECTIVE_PRICE_SQL)} AS price_per_unit_cents, f.available AS stock_qty,
+         u.badges AS seller_badges, CASE WHEN u.show_online THEN u.last_seen_at END AS seller_last_seen_at,
          (c.kind = 'account' AND f.owner_proof_status <> 'verified') AS high_risk_secondary,
          u.completed_orders AS seller_completed_orders, u.rating_avg AS seller_rating, u.review_count AS seller_review_count
     FROM offers f JOIN categories c ON c.slug = f.category_slug JOIN users u ON u.id = f.seller_id
@@ -134,15 +156,16 @@ export async function createOffer(ctx: Ctx, seller: { id: string; kyc_tier: numb
   if (!attrs.ok) throw badRequest('invalid_attributes', attrs.error);
   const stock = input.deliveryMode === 'manual' ? (cat.kind === 'account' ? 1 : input.stock ?? 1) : 0;
   const tiers = cleanTiers(input.priceCents, input.priceTiers, cat.kind);
+  const unit = cleanUnit(input, cat.kind, stock);
   const screen = await listingStatusFor(ctx.db, input.title, input.description ?? '');
   const offer = await one(
     ctx.db,
     `INSERT INTO offers (seller_id, category_slug, game, title, description, price_cents, currency, delivery_mode, stock, low_stock_threshold, delivery_hours, attributes, price_tiers,
-                         status, review_reasons)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING id`,
+                         status, review_reasons, unit_label, unit_size, min_qty)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING id`,
     [seller.id, input.categorySlug, input.game, input.title, input.description ?? '', input.priceCents, (input.currency ?? ctx.cfg.SETTLEMENT_CURRENCY).toUpperCase(),
      input.deliveryMode, stock, input.lowStockThreshold ?? 5, input.deliveryHours ?? 24, JSON.stringify(attrs.value), JSON.stringify(tiers),
-     screen.review ? 'review' : 'active', screen.reasons],
+     screen.review ? 'review' : 'active', screen.reasons, unit.label, unit.size, unit.minQty],
   );
   if (input.bundle) {
     await ctx.db.query('UPDATE offers SET is_bundle = true WHERE id = $1', [offer.id]);
@@ -175,9 +198,19 @@ export async function updateOffer(
   sellerId: string,
   offerId: string,
   version: number,
-  patch: Partial<Pick<OfferInput, 'title' | 'description' | 'priceCents' | 'stock' | 'lowStockThreshold' | 'deliveryHours' | 'attributes' | 'priceTiers' | 'warrantyDays' | 'linkedAccountId' | 'minBuyerReputation'>> & { status?: 'active' | 'paused' | 'removed' },
+  patch: Partial<Pick<OfferInput, 'title' | 'description' | 'priceCents' | 'stock' | 'lowStockThreshold' | 'deliveryHours' | 'attributes' | 'priceTiers' | 'warrantyDays' | 'linkedAccountId' | 'minBuyerReputation' | 'unitLabel' | 'unitSize' | 'minQty'>> & { status?: 'active' | 'paused' | 'removed' },
 ) {
   let attributes: string | null = null;
+  if (patch.unitLabel !== undefined || patch.unitSize !== undefined || patch.minQty !== undefined) {
+    const cur = await maybeOne(ctx.db, 'SELECT f.seller_id, f.stock, f.unit_label, f.unit_size, f.min_qty, c.kind FROM offers f JOIN categories c ON c.slug = f.category_slug WHERE f.id = $1', [offerId]);
+    if (!cur || cur.seller_id !== sellerId) throw notFound('Offer');
+    const unit = cleanUnit(
+      { unitLabel: patch.unitLabel === undefined ? cur.unit_label : patch.unitLabel, unitSize: patch.unitSize === undefined ? cur.unit_size : patch.unitSize, minQty: patch.minQty ?? cur.min_qty },
+      cur.kind,
+      patch.stock ?? Number(cur.stock),
+    );
+    await ctx.db.query('UPDATE offers SET unit_label = $2, unit_size = $3, min_qty = $4 WHERE id = $1 AND seller_id = $5', [offerId, unit.label, unit.size, unit.minQty, sellerId]);
+  }
   if (patch.priceCents != null || patch.attributes || patch.title || patch.stock != null || patch.priceTiers || patch.warrantyDays != null) {
     // The terms of an accepted buyer request are fixed; the seller can only pause or remove it.
     const cur = await maybeOne(ctx.db, 'SELECT reserved_for FROM offers WHERE id = $1 AND seller_id = $2', [offerId, sellerId]);

@@ -40,7 +40,7 @@ export async function addStatement(ctx: Ctx, orderId: string, userId: string, bo
     if (n >= MAX_STATEMENTS_PER_SIDE) throw conflict('too_many_statements', `Each side can add up to ${MAX_STATEMENTS_PER_SIDE} statements; add anything else in the chat`);
     await s.tx.query('INSERT INTO dispute_statements (dispute_id, user_id, role, body) VALUES ($1, $2, $3, $4)', [d.id, userId, role, body]);
     const room = await one<{ id: string }>(s.tx, 'SELECT id FROM chat_rooms WHERE order_id = $1', [orderId]);
-    await appendMessage(s, room.id, null, 'system', `The ${role} added a statement to the dispute. The arbiter reads both sides' statements with this chat.`);
+    await appendMessage(s, room.id, null, 'system', `The ${role} added a statement to the dispute. The arbiter reads both sides' statements with this chat.`, [], undefined, { code: 'dispute_statement', params: { role } });
     const other = role === 'buyer' ? d.seller_id : d.buyer_id;
     s.notifyUser(other, 'order.updated', { orderId });
     await notify(s.tx, other, 'dispute_statement', { order_id: orderId, role }, `dispute:${d.id}:statement:${n}:${role}`);

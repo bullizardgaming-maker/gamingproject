@@ -98,7 +98,12 @@ export async function sellerProfile(q: Queryable, sellerId: string, limit = 20, 
                 AND o.created_at > now() - interval '90 days' AND o.status NOT IN ('cancelled', 'awaiting_payment')) AS on_time_delivery_pct,
             (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now())) AS shop_paused, u.shop_paused_until, u.shop_pause_message,
             ${ONLINE_SQL} AS online, u.response_minutes, u.trust_level, u.founding,
-            CASE WHEN u.show_online THEN u.last_seen_at END AS last_seen_at
+            CASE WHEN u.show_online THEN u.last_seen_at END AS last_seen_at,
+            u.completed_orders AS orders_sold, u.shop_intro AS about, u.languages, u.shop_pinned AS featured_offer_ids, u.badges AS seller_badges,
+            (SELECT round(100.0 * count(*) FILTER (WHERE r.rating >= 4) / NULLIF(count(*), 0), 0)::int
+               FROM reviews r WHERE r.seller_id = u.id AND NOT r.hidden AND r.created_at > now() - interval '90 days') AS positive_pct_90d,
+            (SELECT round(100.0 * count(*) FILTER (WHERE o.status IN ('delivered', 'completed')) / NULLIF(count(*), 0), 0)::int
+               FROM orders o WHERE o.seller_id = u.id AND o.status NOT IN ('awaiting_payment', 'paid') AND o.created_at > now() - interval '90 days') AS delivered_pct
        FROM users u WHERE u.id = $1 AND u.deleted_at IS NULL AND u.status = 'active'`,
     [sellerId],
   );

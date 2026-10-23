@@ -30,6 +30,9 @@ export interface ChatMessage {
   erased?: boolean;
   flags: string[];
   hash_version: number;
+  /** System messages: a code and parameters the app renders in the reader's language (the body is the English text). */
+  code?: string | null;
+  params?: Record<string, unknown> | null;
   body_mac: string | null;
   prev_hash: string;
   hash: string;
@@ -148,7 +151,7 @@ export async function appendMessage(
   /** Required for messages from a user: their text is sealed with their own chat key. */
   keyring?: Keyring,
   /** A blocked attempt: stored for staff (and the hash chain), never shown to the room or pushed. */
-  opts: { hidden?: boolean } = {},
+  opts: { hidden?: boolean; code?: string; params?: Record<string, unknown> } = {},
 ): Promise<ChatMessage> {
   if (senderId && !keyring) throw new Error('appendMessage: a user message needs the keyring to seal it');
   const createdAt = new Date().toISOString();
@@ -172,9 +175,9 @@ export async function appendMessage(
   const hash = messageHashV2(room.last_hash, seq, senderId, kind, mac, createdAt);
   const { body_sealed: _sealed, ...stored } = await one<StoredMessage>(
     s.tx,
-    `INSERT INTO chat_messages (room_id, seq, sender_id, kind, body, flags, prev_hash, hash, created_at, hash_version, body_mac, body_sealed, hidden)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 2, $10, $11, $12) RETURNING *`,
-    [roomId, seq, senderId, kind, sealed ? '' : body, flags, room.last_hash, hash, createdAt, mac, sealed, !!opts.hidden],
+    `INSERT INTO chat_messages (room_id, seq, sender_id, kind, body, flags, prev_hash, hash, created_at, hash_version, body_mac, body_sealed, hidden, code, params)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 2, $10, $11, $12, $13, $14) RETURNING *`,
+    [roomId, seq, senderId, kind, sealed ? '' : body, flags, room.last_hash, hash, createdAt, mac, sealed, !!opts.hidden, opts.code ?? null, opts.params ? JSON.stringify(opts.params) : null],
   );
   const msg: ChatMessage = { ...stored, body };
   await s.tx.query('UPDATE chat_rooms SET last_hash = $2 WHERE id = $1', [roomId, hash]);
@@ -221,7 +224,8 @@ export async function postUserMessage(ctx: Ctx, roomId: string, user: { id: stri
         await s.tx.query(`UPDATE users SET status = 'suspended', suspension_reason = $2 WHERE id = $1`, [user.id, act === 'ban' ? 'off_platform_ban' : 'off_platform_contact']);
         await appendMessage(s, roomId, null, 'warning', act === 'ban'
           ? 'This account has been banned for trying to move the deal outside Bullizard. Do not continue this trade anywhere else; staff will review the case.'
-          : 'This account has been suspended for trying to move the deal outside Bullizard. Do not continue this trade anywhere else; staff will review the case.');
+          : 'This account has been suspended for trying to move the deal outside Bullizard. Do not continue this trade anywhere else; staff will review the case.',
+        [], undefined, { code: act === 'ban' ? 'account_banned_offplatform' : 'account_suspended_offplatform', params: { user_id: user.id } });
       }
       return act;
     });

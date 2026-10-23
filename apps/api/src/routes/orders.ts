@@ -31,7 +31,7 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
     const body = z
       .object({
         offerId: z.string().uuid(),
-        quantity: z.number().int().positive().max(1000).default(1),
+        quantity: z.number().int().positive().max(1_000_000).default(1),
         rail: z.enum(['fiat', 'crypto']).default('fiat'),
         acceptTos: z.literal(true),
         walletAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional(),
@@ -59,7 +59,7 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/orders/cart', async (req, reply) => {
     const body = z
       .object({
-        items: z.array(z.object({ offerId: z.string().uuid(), quantity: z.number().int().positive().max(1000).default(1), characterName: z.string().trim().min(1).max(60).optional() })).min(1).max(MAX_CART_ITEMS),
+        items: z.array(z.object({ offerId: z.string().uuid(), quantity: z.number().int().positive().max(1_000_000).default(1), characterName: z.string().trim().min(1).max(60).optional() })).min(1).max(MAX_CART_ITEMS),
         acceptTos: z.literal(true),
         currency: z.string().length(3).toUpperCase().optional(),
         useCredit: z.boolean().optional(),
@@ -86,7 +86,7 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
     const body = z
       .object({
         offerId: z.string().uuid(),
-        quantity: z.number().int().positive().max(1000).default(1),
+        quantity: z.number().int().positive().max(1_000_000).default(1),
         rail: z.enum(['fiat', 'crypto']).default('fiat'),
         promoCode: z.string().trim().min(1).max(40).optional(),
         sellerCode: z.string().trim().min(1).max(40).optional(),

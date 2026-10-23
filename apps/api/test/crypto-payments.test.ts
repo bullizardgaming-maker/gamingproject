@@ -101,8 +101,10 @@ describe('crypto checkout (NOWPayments)', () => {
     // $10: BTC (min $8) and USDT fit; ETH (min $12) is listed greyed out with its minimum.
     const coins = (await buyer.api.get(`/v1/orders/${order.id}/crypto/coins`)).body;
     expect(coins.owedCents).toBe(10_53); // the seller's 10.00 plus the 5% launch-promo commission
-    expect(coins.coins.map((c: any) => [c.coin, c.available])).toEqual([['btc', true], ['ltc', true], ['usdttrc20', true], ['eth', false]]);
-    expect(coins.coins.find((c: any) => c.coin === 'eth').minUsd).toBe(12);
+    // Popular coins first (USDT, BTC, …, LTC), unavailable ones last with the reason; each carries its network and a fee estimate.
+    expect(coins.coins.map((c: any) => [c.coin, c.available])).toEqual([['usdttrc20', true], ['btc', true], ['ltc', true], ['eth', false]]);
+    expect(coins.coins.find((c: any) => c.coin === 'eth')).toMatchObject({ minUsd: 12, disabled: true, reason: 'Minimum for this coin is $12.00', network: 'Ethereum' });
+    expect(coins.coins[0]).toMatchObject({ network: 'TRC-20', fee_cents: 1_00, total_cents: 11_53 });
     expect((await buyer.api.post(`/v1/orders/${order.id}/crypto/pay`, { coin: 'eth' })).body.error.code).toBe('coin_unavailable');
 
     const pay = await buyer.api.post(`/v1/orders/${order.id}/crypto/pay`, { coin: 'btc' });
@@ -151,7 +153,7 @@ describe('crypto checkout (NOWPayments)', () => {
     // The coin list is now for the $6.06 shortfall: BTC's $8 minimum no longer fits.
     const coins = (await buyer.api.get(`/v1/orders/${order.id}/crypto/coins`)).body;
     expect(coins.owedCents).toBe(6_06);
-    expect(coins.coins.filter((c: any) => c.available).map((c: any) => c.coin)).toEqual(['ltc', 'usdttrc20']);
+    expect(coins.coins.filter((c: any) => c.available).map((c: any) => c.coin)).toEqual(['usdttrc20', 'ltc']);
     const second = (await buyer.api.post(`/v1/orders/${order.id}/crypto/pay`, { coin: 'usdttrc20' })).body;
     expect(second.price_usd).toBe('6.06');
     const p2 = fake.payments.get(second.payment_id);

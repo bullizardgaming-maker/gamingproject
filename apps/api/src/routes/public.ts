@@ -16,6 +16,7 @@ import { AppError, badRequest, notFound, unauthorized } from '../lib/errors.js';
 import { ATTR_KEY, ATTR_VALUE_MAX, CATEGORY_DEFAULTS, GAME_SETS, attributesFor, handoverFieldFor, LEAGUES } from '../domain/attributeSets.js';
 import { listLeagues } from '../domain/leagues.js';
 import { affiliateSummary, attributeBuyer } from '../domain/affiliates.js';
+import { wallet } from '../domain/wallet.js';
 import { requestCryptoWithdrawal } from '../domain/cryptoPayouts.js';
 import { listSuggestions, suggestGame, vote } from '../domain/gameVotes.js';
 import { deleteAccount, exportData } from '../domain/privacy.js';
@@ -322,6 +323,17 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     const { amountCents } = z.object({ amountCents: z.number().int().positive() }).parse(req.body);
     return reply.status(201).send(await requestCryptoWithdrawal(ctx, me(req).id, amountCents, ctx.cfg.SETTLEMENT_CURRENCY, { source: 'credit' }));
   });
+  /** One wallet for buyers and sellers: balances per currency and the money events behind them. */
+  app.get('/me/wallet', async (req) => {
+    const q = z.object({ limit: z.coerce.number().int().min(1).max(200).default(50), before: z.string().datetime().optional() }).parse(req.query);
+    return wallet(ctx.db, me(req).id, { limit: q.limit, before: q.before ?? null });
+  });
+  /** Withdraw the buyer balance (credit) to the confirmed payout address: same rules as seller withdrawals (6%, min $1.50). */
+  app.post('/me/withdrawals', async (req, reply) => {
+    const { amountCents } = z.object({ amountCents: z.number().int().positive() }).parse(req.body);
+    return reply.status(201).send(await requestCryptoWithdrawal(ctx, me(req).id, amountCents, ctx.cfg.SETTLEMENT_CURRENCY, { source: 'credit' }));
+  });
+  app.get('/me/withdrawals', async (req) => many(ctx.db, 'SELECT * FROM withdrawals WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100', [me(req).id]));
   app.get('/me/credit', async (req) => {
     const user = me(req);
     const cur = ctx.cfg.SETTLEMENT_CURRENCY;
@@ -446,8 +458,15 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   /** Staff-managed texts shown in the product (the "Stay safe" panel in order chats). */
   app.get('/texts/:key', async (req, reply) => {
     const { key } = z.object({ key: z.enum(['chat_safety']) }).parse(req.params);
+    const { lang } = z.object({ lang: z.string().regex(/^[a-z]{2}(-[A-Za-z]{2,4})?$/).default('en') }).parse(req.query);
     reply.header('Cache-Control', 'public, max-age=60');
-    return one(ctx.dbRead, 'SELECT key, body, link_label, link_href, updated_at FROM site_texts WHERE key = $1', [key]);
+    // The reader's language when staff wrote it, English otherwise.
+    return one(
+      ctx.dbRead,
+      `SELECT key, locale, body, link_label, link_href, updated_at FROM site_texts WHERE key = $1 AND locale IN ($2, 'en')
+        ORDER BY (locale = $2) DESC LIMIT 1`,
+      [key, lang.slice(0, 2).toLowerCase()],
+    );
   });
   /** Challenge leagues per game (Path of Exile): what the sell form offers and when each ends. */
   app.get('/leagues', async (req, reply) => {
