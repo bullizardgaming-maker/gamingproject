@@ -1,0 +1,129 @@
+# Production blueprint for Render (https://render.com/docs/blueprint-spec): API (2 GB), a separate worker,
+# Redis, ClamAV. Database: Neon `main` branch. Uploads: S3-compatible bucket, so the API can scale to more
+# than one instance. Costs and what to fill in: docs/HOSTING.md. Deploy with: render blueprint launch
+# --file render.production.yaml (or New → Blueprint and pick this file).
+envVarGroups:
+  - name: bullizard-production
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SANDBOX_MODE
+        value: "false"
+      - key: PAYMENT_PROVIDER
+        value: nowpayments
+      - key: KYC_PROVIDER
+        value: sumsub
+      - key: EMAIL_PROVIDER
+        value: postmark
+      - key: POSTMARK_SERVER_TOKEN
+        sync: false
+      - key: SMS_PROVIDER
+        value: twilio
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_FROM
+        sync: false
+      - key: MALWARE_SCANNER
+        value: clamd
+      - key: CLAMD_PORT
+        value: "3310"
+      - key: STORAGE_PROVIDER
+        value: s3
+      - key: TRUST_PROXY
+        value: "1"
+      - key: FX_PROVIDER
+        value: live
+      - key: MERCHANT_API_ENABLED
+        value: "false" # hidden at launch (CEO, Oct 23)
+      - key: JWT_SECRET
+        generateValue: true
+      - key: FINGERPRINT_KEY
+        generateValue: true
+      - key: CRYPTO_INDEXER_SECRET
+        generateValue: true
+      # Keep a copy of this one in a password manager: data encrypted with it can't be read without it.
+      - key: DATA_ENCRYPTION_KEYS
+        sync: false
+      - key: PUBLIC_WEB_URL
+        sync: false # https://<domain>
+      - key: PUBLIC_API_URL
+        sync: false # https://api.<domain>
+      - key: DATABASE_URL
+        sync: false # Neon `main` branch, pooled, ?sslmode=require
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_REGION
+        sync: false
+      - key: S3_ENDPOINT
+        sync: false # e.g. https://<account>.r2.cloudflarestorage.com, or blank for AWS
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: NOWPAYMENTS_API_KEY
+        sync: false
+      - key: NOWPAYMENTS_IPN_SECRET
+        sync: false
+      - key: NOWPAYMENTS_EMAIL
+        sync: false
+      - key: NOWPAYMENTS_PASSWORD
+        sync: false
+      - key: NOWPAYMENTS_2FA_SECRET
+        sync: false
+      - key: SUMSUB_APP_TOKEN
+        sync: false
+      - key: SUMSUB_SECRET_KEY
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+
+services:
+  - type: web
+    name: bullizard-api
+    runtime: docker
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    plan: standard
+    region: frankfurt
+    numInstances: 1
+    healthCheckPath: /readyz
+    preDeployCommand: node dist/migrate.js
+    envVars:
+      - fromGroup: bullizard-production
+      - key: RUN_WORKER_IN_PROCESS
+        value: "false" # the worker service below runs the jobs
+      - key: REDIS_URL
+        fromService: { type: keyvalue, name: bullizard-redis, property: connectionString }
+      - key: CLAMD_HOST
+        fromService: { type: pserv, name: bullizard-clamav, property: host }
+
+  - type: worker
+    name: bullizard-worker
+    runtime: docker
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    dockerCommand: node dist/worker.js
+    plan: starter
+    region: frankfurt
+    envVars:
+      - fromGroup: bullizard-production
+      - key: REDIS_URL
+        fromService: { type: keyvalue, name: bullizard-redis, property: connectionString }
+      - key: CLAMD_HOST
+        fromService: { type: pserv, name: bullizard-clamav, property: host }
+
+  - type: pserv
+    name: bullizard-clamav
+    runtime: image
+    region: frankfurt
+    image:
+      url: docker.io/clamav/clamav:stable
+    plan: standard
+
+  - type: keyvalue
+    name: bullizard-redis
+    region: frankfurt
+    plan: standard
+    ipAllowList: []

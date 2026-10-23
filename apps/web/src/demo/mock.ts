@@ -194,6 +194,12 @@ function offerView(o: any) {
     seller_response_minutes: pr.response_minutes,
     inventory: undefined,
     stock: availableOf(o),
+    // API names for currency sold by amount (the app reads both).
+    price_per_unit_cents: grossUp(price, rate),
+    stock_qty: availableOf(o),
+    unit_size: o.unit_size ?? null,
+    min_qty: o.min_qty ?? 1,
+    unit_label: o.unit_label ?? null,
     is_bundle: !!o.bundle?.length,
     bundle: o.bundle?.map((b: any) => {
       const f = state.offers.find((x) => x.id === b.offer_id);
@@ -215,10 +221,10 @@ function hash(prev: string, body: string) {
   return h.toString(16).padStart(8, '0').repeat(8);
 }
 
-function appendMessage(roomId: string, senderId: string | null, kind: string, body: string, flags: string[] = []) {
+function appendMessage(roomId: string, senderId: string | null, kind: string, body: string, flags: string[] = [], ev?: { code: string; params?: Record<string, unknown> }) {
   const room = state.rooms.find((r) => r.id === roomId)!;
   const prev = state.messages.filter((m) => m.room_id === roomId).at(-1);
-  const m = { id: rid(), room_id: roomId, seq: (prev?.seq ?? 0) + 1, sender_id: senderId, kind, body, flags, hash: hash(prev?.hash ?? '0', body), created_at: now() };
+  const m = { id: rid(), room_id: roomId, seq: (prev?.seq ?? 0) + 1, sender_id: senderId, kind, body, flags, code: ev?.code ?? null, params: ev?.params ?? null, hash: hash(prev?.hash ?? '0', body), created_at: now() };
   state.messages.push(m);
   room.last_seq = m.seq;
   return m;
@@ -309,7 +315,7 @@ function releaseOrder(o: any, reason: string) {
     }
   }
   notify(o.seller_id, 'selling', 'order.released', 'Payment released', `$${(o.seller_net_cents / 100).toFixed(2)} from “${o.offer_title}” was added to your balance.`, '/sell/money');
-  live(appendMessage(o.room_id, null, 'system', 'Order completed. Funds released to the seller.'));
+  live(appendMessage(o.room_id, null, 'system', 'Order completed. Funds released to the seller.', [], { code: reason === 'buyer_confirmed_early' ? 'completed_early' : 'completed', params: { reason } }));
 }
 
 /** Demo stand-in for the hosted card checkout: pays the order and runs what the PSP webhook triggers. */
@@ -321,7 +327,7 @@ export function payDemoOrder(orderId: string) {
   if (o.credit_cents) state.credit[o.buyer_id] = Math.max(0, (state.credit[o.buyer_id] ?? 0) - o.credit_cents);
   state.platform.escrow += o.amount_cents;
   notify(o.seller_id, 'selling', 'order.paid', 'New order', `${o.offer_title}: the buyer has paid. Deliver from the order page.`, `/orders/${o.id}`);
-  live(appendMessage(o.room_id, null, 'system', 'Payment received. It stays in escrow until the buyer confirms delivery.'));
+  live(appendMessage(o.room_id, null, 'system', 'Payment received. It stays in escrow until the buyer confirms delivery.', [], { code: 'payment_received' }));
   const offer = state.offers.find((f) => f.id === o.offer_id)!;
   if (offer.delivery_mode === 'auto') deliverOrder(o);
   else scheduleReply(o.room_id, o.seller_id);
@@ -459,7 +465,7 @@ function createOrderRecord(buyer: DemoUser, offer: any, quantity: number, rail: 
   state.orders.push(o);
   postOrderCard(o, 'awaiting_payment');
   if (offer.delivery_mode === 'manual') offer.stock -= quantity;
-  appendMessage(room.id, null, 'system', `Order placed for "${offer.title}". Keep every message about this trade here: it's the record an arbiter reads if anything goes wrong.`);
+  appendMessage(room.id, null, 'system', `Order placed for "${offer.title}". Keep every message about this trade here: it's the record an arbiter reads if anything goes wrong.`, [], { code: 'order_created', params: { title: offer.title, quantity } });
   return o;
 }
 
@@ -785,6 +791,21 @@ route('PATCH', '/admin/affiliates/:id', ({ me, params, body }) => {
   Object.assign(a, { rate_bps: body.rateBps ?? a.rate_bps, status: body.status ?? a.status, note: body.note ?? a.note });
   save();
   return affiliateView(a);
+});
+// Feature switches: the Merchant API is hidden at launch (the full test catalogue turns it on so its flows still run).
+route('GET', '/features', () => ({ merchantApi: DEMO_FULL, sandbox: true }));
+// Invite friends: 20% of our commission on every order of a referred user (demo: a sample friend with two paid orders).
+route('GET', '/me/referral', ({ me }) => {
+  const u = need(me);
+  const code = `BZ${u.id.replace(/-/g, '').slice(0, 6).toUpperCase()}`;
+  const rewards = u.role === 'user' && !u.founding
+    ? [
+        { order_id: 'ref-o2', amount_cents: 42, commission_cents: 2_11, rate_bps: 2000, currency: 'USD', status: 'granted', reason: null, created_at: new Date(Date.now() - 2 * day).toISOString(), friend: 'Rami_K' },
+        { order_id: 'ref-o1', amount_cents: 26, commission_cents: 1_32, rate_bps: 2000, currency: 'USD', status: 'granted', reason: null, created_at: new Date(Date.now() - 9 * day).toISOString(), friend: 'Rami_K' },
+      ]
+    : [];
+  const earned = rewards.reduce((s, r) => s + r.amount_cents, 0);
+  return { code, link: `${location.origin}/login?ref=${code}`, rateBps: 2000, activeDays: 365, friendsSignedUp: rewards.length ? 1 : 0, friendsActive: rewards.length ? 1 : 0, earnedCents: earned, earnedMonthCents: earned, ordersPaid: rewards.length, rewards };
 });
 route('GET', '/me/affiliate', ({ me }) => {
   const u = need(me);
@@ -1151,7 +1172,7 @@ route('PUT', '/orders/:id/refund-address', ({ me, params, body }) => {
   const r = refundOf(o.id) ?? fail(404, 'not_found', 'Refund not found');
   if (r.status === 'sent') fail(409, 'already_sent', 'This refund was already sent');
   Object.assign(r, { refund_address: String(body.address).trim(), refund_currency: String(body.currency).toLowerCase(), status: 'pending', updated_at: now() });
-  live(appendMessage(o.room_id, null, 'system', `The buyer gave a ${coinNameOf(r.refund_currency)} address for the refund; the treasury sends it within three working days.`));
+  live(appendMessage(o.room_id, null, 'system', `The buyer gave a ${coinNameOf(r.refund_currency)} address for the refund; the treasury sends it within three working days.`, [], { code: 'refund_address_given', params: { coin: coinNameOf(r.refund_currency) } }));
   save();
   return r;
 });
@@ -1321,7 +1342,7 @@ route('POST', '/admin/orders/:id/release', ({ me, params, body }) => {
   o.released_by = staff.id;
   o.release_note = String(body.note ?? '');
   releaseOrder(o, 'staff_released');
-  live(appendMessage(o.room_id, null, 'system', `Support released the payment to the seller after reviewing the delivery: ${o.release_note}`));
+  live(appendMessage(o.room_id, null, 'system', `Support released the payment to the seller after reviewing the delivery: ${o.release_note}`, [], { code: 'staff_released', params: { note: o.release_note } }));
   save();
   return { id: o.id, status: 'completed' };
 });
@@ -1651,7 +1672,7 @@ route('POST', '/orders/:id/dispute', ({ me, params, body }) => {
   o.dispute = { id: rid(), reason: body.reason, category: body.category ?? 'other', status: 'open', opened_by: u.id, created_at: now(),
     statements: [{ id: rid(), role, body: body.reason, author_name: u.display_name, created_at: now() }] };
   transition(o, 'disputed', 'dispute_opened');
-  live(appendMessage(o.room_id, null, 'system', 'A dispute was opened. Escrow is frozen until an arbiter reviews this chat.'));
+  live(appendMessage(o.room_id, null, 'system', 'A dispute was opened. Escrow is frozen until an arbiter reviews this chat.', [], { code: 'dispute_opened', params: { reason: body.reason ?? '' } }));
   return o.dispute;
 });
 route('POST', '/orders/:id/dispute/statements', ({ me, params, body }) => {
@@ -1664,7 +1685,7 @@ route('POST', '/orders/:id/dispute/statements', ({ me, params, body }) => {
   if (o.dispute.statements.filter((s: any) => s.role === role).length >= 5) fail(409, 'too_many_statements', 'Each side can add up to 5 statements; add anything else in the chat');
   if (String(body.body ?? '').trim().length < 10) fail(400, 'validation_error', 'Write at least 10 characters');
   o.dispute.statements.push({ id: rid(), role, body: String(body.body).trim(), author_name: u.display_name, created_at: now() });
-  live(appendMessage(o.room_id, null, 'system', `The ${role} added a statement to the dispute.`));
+  live(appendMessage(o.room_id, null, 'system', `The ${role} added a statement to the dispute.`, [], { code: 'dispute_statement', params: { role } }));
   // Stand-in for the other side answering, so the demo shows both cases.
   if (role === 'buyer' && !o.dispute.statements.some((s: any) => s.role === 'seller')) {
     setTimeout(() => {

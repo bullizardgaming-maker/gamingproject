@@ -19,7 +19,6 @@ export function CartPage() {
   const [params] = useSearchParams();
   const items = useCart();
   const [offers, setOffers] = useState<Record<string, Offer | null>>({});
-  const [tos, setTos] = useState(false);
   const [names, setNames] = useState<Record<string, { value: string; ok: boolean }>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -140,16 +139,15 @@ export function CartPage() {
           <span className="mono" style={{ fontSize: 28, fontWeight: 600 }}>{currencies.size === 1 ? money(total, [...currencies][0]) : '—'}</span>
         </div>
         <div className="notice small"><ShieldCheck className="inline size-4 text-released" /> {t('cart.escrowNote', { count: groups.length })}</div>
-        <label className="row small">
-          <input type="checkbox" style={{ width: 'auto' }} checked={tos} onChange={(e) => setTos(e.target.checked)} />
-          {t('offer.tos')}
-        </label>
+        <p className="small muted" style={{ margin: 0 }} data-testid="buy-agree">
+          {t('offer.agree', { terms: '\u0000' }).split('\u0000')[0]}<Link to="/terms">{t('offer.agreeTerms')}</Link>{t('offer.agree', { terms: '\u0000' }).split('\u0000')[1]}
+        </p>
         {currencies.size > 1 && <div className="alert small">{t('cart.oneCurrency')}</div>}
         {error && <div className="alert" role="alert">{error}</div>}
         {!user ? (
           <Link className="btn" to="/login?next=/cart">{t('offer.signInToBuy')}</Link>
         ) : (
-          <button className="btn" disabled={!tos || busy || loading || !payable.length || currencies.size > 1 || !namesOk} onClick={checkout}>
+          <button className="btn" disabled={busy || loading || !payable.length || currencies.size > 1 || !namesOk} onClick={checkout}>
             {busy ? t('offer.opening') : t('offer.pay', { amount: currencies.size === 1 ? money(total, [...currencies][0]) : '' })}
           </button>
         )}

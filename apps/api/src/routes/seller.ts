@@ -424,6 +424,10 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   // --- Developer: API keys & webhooks --------------------------------------------------
+  // The Merchant API is hidden at launch (MERCHANT_API_ENABLED); these answer 404 until it opens.
+  app.addHook('onRequest', async (req) => {
+    if (req.url.includes('/developer/') && !ctx.cfg.MERCHANT_API_ENABLED) throw notFound('Route');
+  });
   app.get('/developer/api-keys', async (req) => listApiKeys(ctx, me(req).id));
   app.post('/developer/api-keys', async (req, reply) => {
     const body = z.object({ name: z.string().trim().min(1).max(60), scopes: z.array(z.string()).min(1) }).parse(req.body);

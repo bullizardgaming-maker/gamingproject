@@ -37,8 +37,8 @@ const ar: LocalePack = {
         `التأخير يخفض نسبة التسليم في الوقت المحدد التي يراها المشترون في ملفك.\n\n${link(`/orders/${d.order_id}`)}`,
     },
     referral_reward: {
-      subject: (d, h) => `حصلت على رصيد ${h.money(d.amount_cents, d.currency)} في Bullizard`,
-      body: (d, link, h) => `أكمل صديق دعوته أول طلب له. أصبح لديك رصيد ${h.money(d.amount_cents, d.currency)} يُخصم عند الدفع.\n\n${link('/account')}`,
+      subject: (d, h) => `حصلت على ${h.money(d.amount_cents, d.currency)} من طلب صديقك`,
+      body: (d, link, h) => `أكمل صديق دعوته طلبًا. نصيبك ${d.rate_pct}% من عمولتنا، ${h.money(d.amount_cents, d.currency)}، أُضيف إلى رصيدك ويستمر مع كل طلب يقوم به ما دام نشطًا.\n\n${link('/account')}`,
     },
     protection_ending: {
       subject: (d) => `تبقّت 24 ساعة لفحص ${d.title}`,

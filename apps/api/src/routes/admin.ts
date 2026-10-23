@@ -39,6 +39,7 @@ import { decideTreasuryWithdrawal, listTreasuryWithdrawals, requestTreasuryWithd
 import { listCryptoRefunds, markRefundSent } from '../domain/cryptoPayments.js';
 import { decideWithdrawal, listPendingWithdrawals } from '../domain/cryptoPayouts.js';
 import { commissionSettings, listRanks, updateRanks } from '../domain/commission.js';
+import { referralSettings, updateReferralSettings } from '../domain/referrals.js';
 import { INACTIVE_SELLER_DAYS, LEAGUE_GAMES, createLeague, expireEndedLeagueListings, listLeagues, updateLeague } from '../domain/leagues.js';
 import { enforceIdDeadlines, listQuestions, rulesSettings, updateRulesTest } from '../domain/onboarding.js';
 import { createAffiliate, listAffiliates, updateAffiliate } from '../domain/affiliates.js';
@@ -260,6 +261,18 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // --- Platform earnings (four-eyes) ------------------------------------------------------
   // --- Ranks and the launch promo (commission) ------------------------------------------------
+  // --- Referral share (G2G-style: a cut of our commission on every order of a referred user) -----
+  app.get('/admin/referral', async (req) => {
+    requirePermission(req, 'ranks.manage');
+    return referralSettings(ctx.db);
+  });
+  app.put('/admin/referral', async (req) => {
+    const staff = requirePermission(req, 'ranks.manage');
+    const body = z.object({ rateBps: z.number().int().min(0).max(10_000).optional(), activeDays: z.number().int().min(1).max(3650).optional() }).parse(req.body);
+    const out = await updateReferralSettings(ctx.db, staff.id, body);
+    await audit(ctx.db, req, 'referral.settings', { type: 'referral', id: 'referral' }, body);
+    return out;
+  });
   app.get('/admin/ranks', async (req) => {
     requirePermission(req, 'ranks.manage');
     return { ranks: await listRanks(ctx.db), settings: await commissionSettings(ctx.db) };

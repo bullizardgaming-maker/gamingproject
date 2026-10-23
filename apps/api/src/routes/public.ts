@@ -455,6 +455,11 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     if (game && category) return { game, category, fields: attributesFor(game, category), handover: handoverFieldFor(game, category) };
     return { defaults: CATEGORY_DEFAULTS, games: GAME_SETS, leagues: LEAGUES };
   });
+  /** Feature switches the app reads at boot. */
+  app.get('/features', async (_req, reply) => {
+    reply.header('Cache-Control', 'public, max-age=60');
+    return { merchantApi: ctx.cfg.MERCHANT_API_ENABLED, sandbox: ctx.cfg.SANDBOX_MODE };
+  });
   /** Staff-managed texts shown in the product (the "Stay safe" panel in order chats). */
   app.get('/texts/:key', async (req, reply) => {
     const { key } = z.object({ key: z.enum(['chat_safety']) }).parse(req.params);

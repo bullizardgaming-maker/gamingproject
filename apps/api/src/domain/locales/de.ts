@@ -37,8 +37,8 @@ const de: LocalePack = {
         `Verspätungen senken deine Pünktlichkeitsquote, die Käufer in deinem Profil sehen.\n\n${link(`/orders/${d.order_id}`)}`,
     },
     referral_reward: {
-      subject: (d, h) => `Du hast ${h.money(d.amount_cents, d.currency)} Bullizard-Guthaben verdient`,
-      body: (d, link, h) => `Ein Freund, den du eingeladen hast, hat seine erste Bestellung abgeschlossen. ${h.money(d.amount_cents, d.currency)} Guthaben sind auf deinem Konto und werden beim Bezahlen angerechnet.\n\n${link('/account')}`,
+      subject: (d, h) => `Du hast ${h.money(d.amount_cents, d.currency)} mit der Bestellung eines Freundes verdient`,
+      body: (d, link, h) => `Ein von dir eingeladener Freund hat eine Bestellung abgeschlossen. Dein Anteil von ${d.rate_pct}% unserer Provision, ${h.money(d.amount_cents, d.currency)}, liegt auf deinem Guthaben und kommt bei jeder weiteren Bestellung, solange er aktiv bleibt.\n\n${link('/account')}`,
     },
     protection_ending: {
       subject: (d) => `Noch 24 Stunden, um ${d.title} zu prüfen`,

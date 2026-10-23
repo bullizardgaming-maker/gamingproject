@@ -147,6 +147,16 @@ const help: HelpPack = {
         "Mantenha toda a negociação no chat do pedido. Acordos fora da Bullizard não são protegidos.",
       ],
     },
+    'invite-friends': {
+      title: "Convida amigos e ganha",
+      summary: "20% da comissão do Bullizard em cada pedido dos teus amigos, enquanto se mantiverem ativos.",
+      body: [
+        "O teu link de convite está na página da conta. Quem se registar com ele é teu amigo no Bullizard para sempre.",
+        "Em cada pedido que concluam ganhas uma parte da comissão do Bullizard nesse pedido (20% no lançamento; o Bullizard pode alterar a taxa). Começa com o primeiro pedido concluído e continua enquanto se mantiverem ativos — sem mais de um ano entre pedidos.",
+        "- Os ganhos vão para o teu saldo e levantam-se com as regras normais (6%, mínimo 1,50 $).\n- A parte é da nossa comissão, não do total: num pedido de 100 $ com 13,99% de comissão, ganhas 20% de 13,99 $.\n- Nada é pago entre contas que partilham dispositivo, cartão ou carteira.",
+        "Criadores com código ganham à parte; os dois programas não se somam no mesmo pedido para a mesma pessoa.",
+      ],
+    },
     'wallet': {
       title: "Sua carteira",
       summary: "Seu saldo e cada movimentação em uma só lista.",

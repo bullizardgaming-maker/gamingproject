@@ -44,7 +44,6 @@ export async function payCrypto(page: Page) {
 export async function buy(page: Page, offerPath: string) {
   await page.goto(offerPath);
   await fillCharacter(page);
-  await page.getByLabel(/I accept the Terms of Service/).check();
   await page.getByRole('button', { name: /Buy now/ }).click();
   await page.waitForURL(/\/orders\/.*pay=crypto/);
   await payCrypto(page);

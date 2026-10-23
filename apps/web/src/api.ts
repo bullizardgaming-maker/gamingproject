@@ -173,6 +173,9 @@ export interface ChatMessage {
   body: string | null;
   erased?: boolean;
   flags: string[];
+  /** System messages: a code and parameters rendered in the reader's language (the body is the English text). */
+  code?: string | null;
+  params?: Record<string, unknown> | null;
   hash: string;
   created_at: string;
 }

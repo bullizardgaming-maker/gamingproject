@@ -31,7 +31,6 @@ test.describe('buyer requests', () => {
     await page.goto('/games/valorant/accounts');
     await expect(page.getByText(/EU account with Reaver Vandal/)).toHaveCount(0);
     await page.goto(url);
-    await page.getByLabel(/I accept the Terms of Service/).check();
     await page.getByRole('button', { name: /Buy now/ }).click();
     await page.waitForURL(/\/orders\/.*pay=crypto/);
     await payCrypto(page);

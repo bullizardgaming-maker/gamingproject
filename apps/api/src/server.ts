@@ -212,11 +212,13 @@ export async function buildApp(ctx: Ctx, opts: { logger?: PinoLogger } = {}): Pr
     return { ok: true };
   });
 
-  // Seller API docs: JSON at /v1/openapi.json, browsable at /v1/docs.
-  const openapi = buildOpenApi({ serverUrl: ctx.apiBaseUrl, sandbox: ctx.cfg.SANDBOX_MODE });
-  await app.register(swagger, { mode: 'static', specification: { document: openapi as any } });
-  await app.register(swaggerUi, { routePrefix: '/v1/docs', uiConfig: { docExpansion: 'list', defaultModelsExpandDepth: 0 } });
-  app.get('/v1/openapi.json', async () => openapi);
+  // Seller API docs: JSON at /v1/openapi.json, browsable at /v1/docs. Hidden until MERCHANT_API_ENABLED.
+  if (ctx.cfg.MERCHANT_API_ENABLED) {
+    const openapi = buildOpenApi({ serverUrl: ctx.apiBaseUrl, sandbox: ctx.cfg.SANDBOX_MODE });
+    await app.register(swagger, { mode: 'static', specification: { document: openapi as any } });
+    await app.register(swaggerUi, { routePrefix: '/v1/docs', uiConfig: { docExpansion: 'list', defaultModelsExpandDepth: 0 } });
+    app.get('/v1/openapi.json', async () => openapi);
+  }
 
   await app.register(async (v1) => {
     await publicRoutes(v1, ctx);

@@ -1,24 +1,20 @@
 import { useState } from 'react';
 import { slugify } from '@/lib/catalog';
 
-const EXT = ['webp', 'png', 'svg'];
+const EXT = ['webp', 'png', 'jpg'];
 
 /**
- * A game's official logo from /games/<slug>.(webp|png|svg) (the owner drops the files in
- * public/games/). Renders nothing while no file exists, so tiles never show a broken image.
+ * Our own banner for a game from /games/<slug>.(webp|png|jpg) (the Designer's files go in
+ * public/games/). No publisher logos or artwork: the game name is always text next to or over
+ * it. While no file exists the band is a brand-coloured gradient, never a broken image.
  */
-export function GameArt({ game, size = 40, className }: { game: string; size?: number; className?: string }) {
+export function GameBanner({ game, height = 120, className, children }: { game: string; height?: number; className?: string; children?: React.ReactNode }) {
   const [i, setI] = useState(0);
-  if (i >= EXT.length) return null;
+  const src = i < EXT.length ? `/games/${slugify(game)}.${EXT[i]}` : null;
   return (
-    <img
-      src={`/games/${slugify(game)}.${EXT[i]}`}
-      alt=""
-      width={size}
-      height={size}
-      className={className}
-      style={{ width: size, height: size, objectFit: 'contain', borderRadius: 8, flex: 'none' }}
-      onError={() => setI((n) => n + 1)}
-    />
+    <div className={`game-banner${className ? ` ${className}` : ''}`} style={{ height }} data-game={slugify(game)}>
+      {src && <img src={src} alt="" loading="lazy" onError={() => setI((n) => n + 1)} />}
+      {children}
+    </div>
   );
 }

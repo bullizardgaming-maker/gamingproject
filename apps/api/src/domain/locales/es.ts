@@ -37,8 +37,8 @@ const es: LocalePack = {
         `Las entregas tardías bajan tu tasa de puntualidad, que los compradores ven en tu perfil.\n\n${link(`/orders/${d.order_id}`)}`,
     },
     referral_reward: {
-      subject: (d, h) => `Has ganado ${h.money(d.amount_cents, d.currency)} de saldo en Bullizard`,
-      body: (d, link, h) => `Un amigo al que invitaste completó su primer pedido. Tienes ${h.money(d.amount_cents, d.currency)} de saldo que se aplica al pagar.\n\n${link('/account')}`,
+      subject: (d, h) => `Ganaste ${h.money(d.amount_cents, d.currency)} con el pedido de un amigo`,
+      body: (d, link, h) => `Un amigo que invitaste completó un pedido. Tu ${d.rate_pct}% de nuestra comisión, ${h.money(d.amount_cents, d.currency)}, ya está en tu saldo y seguirá llegando con cada pedido suyo mientras siga activo.\n\n${link('/account')}`,
     },
     protection_ending: {
       subject: (d) => `Quedan 24 horas para comprobar ${d.title}`,

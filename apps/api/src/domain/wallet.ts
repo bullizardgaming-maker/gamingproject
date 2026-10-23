@@ -12,7 +12,7 @@ import { availableCredit } from './referrals.js';
 export interface WalletEntry {
   id: string;
   at: string;
-  kind: 'order' | 'refund' | 'credit' | 'withdrawal' | 'sale';
+  kind: 'order' | 'refund' | 'credit' | 'withdrawal' | 'sale' | 'referral' | 'affiliate';
   ref: string;
   order_id?: string;
   address?: string | null;
@@ -63,6 +63,13 @@ export async function walletEntries(q: Queryable, userId: string, opts: { limit?
        SELECT e.id::text, e.created_at, 'credit', COALESCE(o.ref, e.memo), e.order_id, NULL, NULL, 'completed', e.amount_cents, a.currency
          FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id LEFT JOIN orders o ON o.id = e.order_id
         WHERE a.owner_id = $1 AND a.kind = 'user_credit' AND e.amount_cents > 0 AND e.memo NOT IN ('refund')
+       UNION ALL
+       -- Referral share of our commission on a friend's order, and creator-code earnings: both land in the withdrawable balance.
+       SELECT r.id::text, r.created_at, 'referral', COALESCE(o.ref, 'order#' || upper(left(o.id::text, 7))), r.order_id, NULL, NULL, 'completed', r.amount_cents, r.currency
+         FROM referral_rewards r JOIN orders o ON o.id = r.order_id WHERE r.referrer_id = $1 AND r.status = 'granted'
+       UNION ALL
+       SELECT e.id::text, e.created_at, 'affiliate', COALESCE(o.ref, 'order#' || upper(left(o.id::text, 7))), e.order_id, NULL, NULL, 'completed', e.earned_cents, e.currency
+         FROM affiliate_earnings e JOIN affiliates a ON a.id = e.affiliate_id JOIN orders o ON o.id = e.order_id WHERE a.user_id = $1
        UNION ALL
        -- Withdrawals (buyer credit or seller sales).
        SELECT w.id::text, w.created_at, 'withdrawal', 'withdrawal#' || upper(left(w.id::text, 7)), NULL, w.destination_address, w.destination_currency,

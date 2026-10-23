@@ -154,6 +154,19 @@ const BASE_ARTICLES: HelpArticle[] = [
     ticket: 'payment',
   },
   {
+    slug: 'invite-friends',
+    topic: 'account',
+    title: "Invite friends and earn",
+    summary: "20% of Bullizard’s commission on every order your friends make, for as long as they stay active.",
+    body: [
+      "Your invite link is on your account page. Anyone who signs up through it is your friend on Bullizard for good.",
+      "On every order they complete, you earn a share of Bullizard’s commission on that order (20% at launch; Bullizard can change the rate). It starts with their first completed order and keeps coming while they stay active — no gap of more than a year between their orders.",
+      "- Earnings land in your balance and can be withdrawn under the normal withdrawal rules (6%, minimum $1.50).\n- The share is of our commission, not of the order total: on a $100 order with a 13.99% commission, you earn 20% of $13.99.\n- Nothing is paid between accounts that share a device, card or wallet.",
+      "Creators with a creator code earn separately; the two programs don’t stack on the same order for the same person.",
+    ],
+    ticket: 'account',
+  },
+  {
     slug: 'selling-fees',
     topic: 'selling',
     title: 'Seller commission and ranks',

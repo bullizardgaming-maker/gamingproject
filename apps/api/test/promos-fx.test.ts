@@ -108,10 +108,11 @@ describe('promo codes', () => {
 });
 
 describe('referrals and store credit', () => {
-  it('pays the referrer credit after the friend’s first qualifying order, which they can spend at checkout', async () => {
+  it('pays the referrer a share of our commission on every order of the friend, into their balance', async () => {
     const referrer = await makeUser(h, { tier: 1, device: 'referrer-phone' });
-    const { code, link } = (await referrer.api.get('/v1/me/referral')).body;
+    const { code, link, rateBps } = (await referrer.api.get('/v1/me/referral')).body;
     expect(link).toContain(code);
+    expect(rateBps).toBe(2000);
 
     const reg = await client(h.app, undefined, { 'x-device-fingerprint': 'friend-laptop' }).post('/v1/auth/register', {
       email: `friend_${Date.now()}@example.com`, password: 'correct horse battery', displayName: 'Friend', referralCode: code,
@@ -121,20 +122,31 @@ describe('referrals and store credit', () => {
     const seller = await makeUser(h, { tier: 2 });
     const offer = await stockedOffer(seller, { priceCents: 25_00 });
 
+    // 25.00 → buyer pays 26.32, commission 1.32; the referrer gets 20% of it = 0.26 on every completed order.
     const o1 = (await order(friend, offer.id)).body.order;
     await friend.api.post(`/v1/orders/${o1.id}/confirm`);
-    expect(await userCredit(h.ctx.db, referrer.id)).toBe(5_00);
+    expect(await sellerAvailable(h.ctx.db, referrer.id)).toBe(26);
     const o2 = (await order(friend, offer.id)).body.order;
     await friend.api.post(`/v1/orders/${o2.id}/confirm`);
-    expect(await userCredit(h.ctx.db, referrer.id)).toBe(5_00); // first order only
+    expect(await sellerAvailable(h.ctx.db, referrer.id)).toBe(52);
+    const summary = (await referrer.api.get('/v1/me/referral')).body;
+    expect(summary).toMatchObject({ friendsSignedUp: 1, friendsActive: 1, earnedCents: 52, ordersPaid: 2 });
+    expect(summary.rewards[0]).toMatchObject({ status: 'granted', amount_cents: 26, commission_cents: 1_32, rate_bps: 2000 });
+    expect((await referrer.api.get('/v1/me/wallet')).body.entries.filter((e: any) => e.kind === 'referral')).toHaveLength(2);
 
-    // Referrer spends the credit.
-    const quote = (await referrer.api.post('/v1/orders/quote', { offerId: offer.id, useCredit: true })).body;
-    expect(quote).toMatchObject({ amountCents: 26_32, creditCents: 5_00, chargedCents: 21_32 });
-    const o3 = (await order(referrer, offer.id, { useCredit: true })).body.order;
-    expect(o3.credit_cents).toBe(5_00);
-    expect(await userCredit(h.ctx.db, referrer.id)).toBe(0);
-    expect((await referrer.api.get('/v1/me/credit')).body).toMatchObject({ balanceCents: 0, availableCents: 0 });
+    // Staff change the share; a friend who went quiet longer than the activity window earns nothing.
+    const admin = await makeUser(h, { role: 'admin' });
+    expect((await admin.api.put('/v1/admin/referral', { rateBps: 1000, activeDays: 30 })).body).toEqual({ rateBps: 1000, activeDays: 30 });
+    await h.ctx.db.query(`UPDATE orders SET completed_at = now() - interval '40 days' WHERE buyer_id = $1`, [friend.id]);
+    const o3 = (await order(friend, offer.id)).body.order;
+    await friend.api.post(`/v1/orders/${o3.id}/confirm`);
+    expect(await sellerAvailable(h.ctx.db, referrer.id)).toBe(52);
+    expect((await referrer.api.get('/v1/me/referral')).body.rewards[0]).toMatchObject({ status: 'blocked', reason: 'inactive' });
+    // Active again (the previous order was recent): 10% of 1.32 = 0.13.
+    const o4 = (await order(friend, offer.id)).body.order;
+    await friend.api.post(`/v1/orders/${o4.id}/confirm`);
+    expect(await sellerAvailable(h.ctx.db, referrer.id)).toBe(65);
+    await admin.api.put('/v1/admin/referral', { rateBps: 2000, activeDays: 365 });
     await expectBooksBalanced();
   });
 
@@ -151,7 +163,7 @@ describe('referrals and store credit', () => {
     const o = (await order(sock, offer.id)).body.order;
     await h.ctx.db.query('UPDATE orders SET escrow_frozen = false WHERE id = $1', [o.id]);
     await sock.api.post(`/v1/orders/${o.id}/confirm`);
-    expect(await userCredit(h.ctx.db, referrer.id)).toBe(0);
+    expect(await sellerAvailable(h.ctx.db, referrer.id)).toBe(0);
     const r = (await referrer.api.get('/v1/me/referral')).body.rewards[0];
     expect(r).toMatchObject({ status: 'blocked', reason: 'linked_accounts' });
   });

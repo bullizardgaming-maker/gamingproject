@@ -10,7 +10,7 @@ CREATE TABLE seller_ranks (
   perks                  text[] NOT NULL DEFAULT '{}',
   updated_at             timestamptz NOT NULL DEFAULT now()
 );
--- Placeholder values until the CEO sets them (PUT /v1/admin/ranks).
+-- Launch values (CEO, Oct 23 2026); editable later with PUT /v1/admin/ranks.
 INSERT INTO seller_ranks (position, name, min_monthly_sales_cents, rate_bps, perks) VALUES
   (1, 'Hatchling', 0,          1399, '{}'),
   (2, 'Scale',     50000,      1299, '{}'),

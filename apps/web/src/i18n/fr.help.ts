@@ -147,6 +147,16 @@ const help: HelpPack = {
         "Gardez tout l’échange dans le chat de la commande. Les accords hors de Bullizard ne sont pas protégés.",
       ],
     },
+    'invite-friends': {
+      title: "Invitez des amis et gagnez",
+      summary: "20 % de la commission de Bullizard sur chaque commande de vos amis, tant qu’ils restent actifs.",
+      body: [
+        "Votre lien d’invitation est sur votre page de compte. Quiconque s’inscrit avec devient votre ami sur Bullizard pour de bon.",
+        "À chaque commande qu’ils terminent, vous gagnez une part de la commission de Bullizard sur cette commande (20 % au lancement ; Bullizard peut changer le taux). Cela commence à leur première commande terminée et continue tant qu’ils restent actifs — pas plus d’un an entre deux commandes.",
+        "- Les gains arrivent sur votre solde et se retirent selon les règles habituelles (6 %, minimum 1,50 $).\n- La part porte sur notre commission, pas sur le total : sur une commande de 100 $ à 13,99 % de commission, vous gagnez 20 % de 13,99 $.\n- Rien n’est versé entre des comptes partageant un appareil, une carte ou un portefeuille.",
+        "Les créateurs avec un code créateur gagnent séparément ; les deux programmes ne se cumulent pas sur la même commande pour la même personne.",
+      ],
+    },
     'wallet': {
       title: "Votre portefeuille",
       summary: "Votre solde et chaque mouvement d’argent dans une seule liste.",

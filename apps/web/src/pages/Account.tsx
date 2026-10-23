@@ -275,6 +275,7 @@ export function Account() {
       <EmailPreferences />
       <PushSettings />
       <CreditCard />
+      <InviteFriends />
       <CreatorCode />
       <PrivacyControls />
     </div>
@@ -486,6 +487,61 @@ interface AffiliateSummary {
  * Creator codes: a buyer enters a streamer's code once (their orders then earn the creator a share
  * of the commission); a creator sees their own code and earnings here.
  */
+interface ReferralSummary {
+  code: string;
+  link: string;
+  rateBps: number;
+  activeDays: number;
+  friendsSignedUp: number;
+  friendsActive: number;
+  earnedCents: number;
+  earnedMonthCents: number;
+  ordersPaid: number;
+  rewards: Array<{ order_id: string; amount_cents: number; currency: string; status: 'granted' | 'blocked'; reason: string | null; created_at: string; friend: string }>;
+}
+
+/** Invite friends: a share of Bullizard's commission on every order they make, for as long as they stay active. */
+function InviteFriends() {
+  const [ref, setRef] = useState<ReferralSummary | null>(null);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    api<ReferralSummary>('/me/referral').then(setRef).catch(() => setRef(null));
+  }, []);
+  if (!ref) return null;
+  const pct = (ref.rateBps / 100).toFixed(0);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(ref.link);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* the link is selectable */
+    }
+  };
+  return (
+    <div className="card stack" id="invite" data-testid="invite-friends">
+      <h3 style={{ margin: 0 }}>{t('invite.title')}</h3>
+      <p className="small muted" style={{ margin: 0 }}>{t('invite.text', { pct })}</p>
+      <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <code className="num" style={{ userSelect: 'all' }} data-testid="invite-link">{ref.link}</code>
+        <button type="button" className="btn ghost sm" onClick={copy}>{copied ? t('invite.copied') : t('invite.copy')}</button>
+      </div>
+      <div className="grid three">
+        <div><div className="eyebrow">{t('invite.friends')}</div><b className="num">{ref.friendsSignedUp}</b> <span className="small muted">{t('invite.active', { n: ref.friendsActive })}</span></div>
+        <div><div className="eyebrow">{t('invite.earned')}</div><b className="num">{money(ref.earnedCents)}</b> <span className="small muted">{t('invite.month', { amount: money(ref.earnedMonthCents) })}</span></div>
+        <div><div className="eyebrow">{t('invite.orders')}</div><b className="num">{ref.ordersPaid}</b></div>
+      </div>
+      {ref.rewards.length > 0 && (
+        <ul className="small" style={{ margin: 0, paddingInlineStart: 18 }}>
+          {ref.rewards.slice(0, 5).map((r) => (
+            <li key={r.order_id}>{r.friend} · {money(r.amount_cents, r.currency)} · {r.status === 'granted' ? t('invite.granted') : t('invite.blocked')}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function CreatorCode() {
   const [mine, setMine] = useState<AffiliateSummary | null | undefined>(undefined);
   const [code, setCode] = useState('');

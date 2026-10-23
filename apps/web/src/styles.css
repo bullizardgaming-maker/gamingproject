@@ -791,7 +791,12 @@ span.num, b.num, code.num, .pg-price, .pg-big, .pg-pay-amount { unicode-bidi: is
 .home-games { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
 .home-game { display: flex; flex-direction: column; gap: 0; padding: 0; }
 .home-game > * + * { margin-top: 0; }
-.home-game-name { display: flex; align-items: center; gap: 10px; padding: 16px 20px; font: 700 16px/1.3 var(--display); text-decoration: none; border-bottom: 1px solid var(--rule); }
+.home-game-name { display: block; padding: 0; font: 700 16px/1.3 var(--display); text-decoration: none; border-bottom: 1px solid var(--rule); }
+/* Our own banner per game: the file when the Designer supplied one, a brand band otherwise; the name is always text. */
+.game-banner { position: relative; overflow: hidden; border-radius: var(--radius) var(--radius) 0 0; background: linear-gradient(135deg, var(--raised), var(--paper) 60%, var(--rune-soft)); }
+.game-banner img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: top; }
+.game-banner-name { position: absolute; inset-inline-start: 16px; bottom: 12px; font: 800 20px/1.1 var(--display); color: var(--ink); text-shadow: 0 1px 2px rgb(0 0 0 / .45); }
+.pg-game-banner { width: 100%; max-width: 420px; border-radius: var(--radius); margin-bottom: 10px; }
 .home-game-name:hover { text-decoration: underline; }
 .home-game-cats { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 20px; }
 .home-game-skel { height: 120px; }

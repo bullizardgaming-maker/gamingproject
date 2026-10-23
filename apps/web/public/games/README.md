@@ -1,7 +1,7 @@
-# Game logos
+# Game banners
 
-Drop each launch game's official logo here, named by the game's slug, as `.webp`, `.png` or `.svg`
-(the app tries `.webp` first, then `.png`, then `.svg`):
+Our own banner per launch game (Designer supplies the files — no official logos or game artwork;
+the game name is always rendered as text by the app). Name each file by the game's slug:
 
 - aion.webp
 - aion-2.webp
@@ -9,6 +9,6 @@ Drop each launch game's official logo here, named by the game's slug, as `.webp`
 - path-of-exile.webp
 - path-of-exile-2.webp
 
-Square or near-square, at least 160×160 px, transparent background where the publisher's brand kit
-allows it. Until a file exists the tile shows the game name only. Use logos only under the
-publisher's fan-kit / press terms.
+Landscape, 1200×400 px (3:1), under 150 KB, dark-friendly. The home tile shows the top 120 px band;
+the game page header shows the full banner behind the title. Until a file exists the tile shows a
+brand-coloured band with the game name.

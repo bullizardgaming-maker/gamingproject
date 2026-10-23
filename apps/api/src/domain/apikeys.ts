@@ -1,7 +1,7 @@
 import type { Ctx } from '../context.js';
 import { many, maybeOne } from '../db.js';
 import { hmacSha256, randomToken, safeEqual } from '../lib/crypto.js';
-import { badRequest, unauthorized } from '../lib/errors.js';
+import { badRequest, forbidden, unauthorized } from '../lib/errors.js';
 import { PUBLIC_USER_COLUMNS, type User } from './users.js';
 
 export const API_SCOPES = ['orders:read', 'orders:write', 'inventory:write', 'offers:write', 'chat:write', 'webhooks:manage', 'reports:read'] as const;
@@ -30,6 +30,7 @@ export async function revokeApiKey(ctx: Ctx, userId: string, id: string) {
 }
 
 export async function authenticateApiKey(ctx: Ctx, key: string): Promise<{ user: User; scopes: string[] }> {
+  if (!ctx.cfg.MERCHANT_API_ENABLED) throw forbidden('merchant_api_disabled', 'The seller API is not open yet');
   const m = /^mk_([A-Za-z0-9]{8})_[A-Za-z0-9_-]{20,}$/.exec(key);
   if (!m) throw unauthorized('Malformed API key');
   const row = await maybeOne(ctx.db, 'SELECT * FROM api_keys WHERE prefix = $1 AND revoked_at IS NULL', [m[1]]);

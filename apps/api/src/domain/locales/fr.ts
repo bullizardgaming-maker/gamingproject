@@ -37,8 +37,8 @@ const fr: LocalePack = {
         `Les retards font baisser votre taux de ponctualité, visible sur votre profil.\n\n${link(`/orders/${d.order_id}`)}`,
     },
     referral_reward: {
-      subject: (d, h) => `Vous avez gagné ${h.money(d.amount_cents, d.currency)} de crédit Bullizard`,
-      body: (d, link, h) => `Un ami que vous avez invité a terminé sa première commande. ${h.money(d.amount_cents, d.currency)} de crédit sont sur votre compte et s’appliquent au paiement.\n\n${link('/account')}`,
+      subject: (d, h) => `Vous avez gagné ${h.money(d.amount_cents, d.currency)} grâce à la commande d'un ami`,
+      body: (d, link, h) => `Un ami que vous avez invité a terminé une commande. Votre part de ${d.rate_pct}% de notre commission, ${h.money(d.amount_cents, d.currency)}, est sur votre solde et continuera à chaque commande tant qu'il reste actif.\n\n${link('/account')}`,
     },
     protection_ending: {
       subject: (d) => `Plus que 24 heures pour vérifier ${d.title}`,

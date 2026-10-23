@@ -21,7 +21,6 @@ test.describe.skip('cart', () => {
     await expect(page.getByText(/split into 2 escrow orders/)).toBeVisible();
     // $32.50 + 2 × $41.99 (seller prices plus NorthWind's commission)
     await expect(page.getByText('$116.48').first()).toBeVisible();
-    await page.getByLabel(/I accept the Terms of Service/).check();
     await page.getByRole('button', { name: 'Buy now · $116.48' }).click();
     await page.waitForURL(/checkouts\/cart-.*\/pay/);
     await payCrypto(page);

@@ -27,9 +27,12 @@ export interface Offer {
   /** Up to two badges the seller chose to show: `rank:<name>`, `founding`, `trust:<level>`, `verified`. */
   seller_badges?: string[];
   seller_last_seen_at?: string | null;
-  /** Currency sold by amount: price_cents is per one `unit_label` ("1M"), bought from `min_qty` up to `stock`. */
+  /** Currency sold by amount: price_cents (= price_per_unit_cents) is per one `unit_label` ("1M"), bought from `min_qty` up to `stock` (= stock_qty). */
   unit_label?: string | null;
+  unit_size?: number | null;
   min_qty?: number | null;
+  price_per_unit_cents?: number;
+  stock_qty?: number;
   featured?: boolean;
   is_bundle?: boolean;
   /** Account listings: warranty after escrow releases, in days (0 = none). */

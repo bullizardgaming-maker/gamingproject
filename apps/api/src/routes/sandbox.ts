@@ -88,6 +88,14 @@ export async function sandboxRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   /** Skip ahead to the end of the protection window, releasing escrow as the worker would. */
+  /** Pretend the delivery happened `hours` ago (default 25), so the staff-release rule (24h after delivery) can be exercised. */
+  app.post('/sandbox/orders/:id/age-delivery', async (req) => {
+    const seller = await caller(req);
+    const o = await ownOrder(Id.parse(req.params).id, seller.id);
+    const { hours } = z.object({ hours: z.number().min(0).max(24 * 60).default(25) }).parse(req.body ?? {});
+    await ctx.db.query(`UPDATE orders SET delivered_at = now() - make_interval(hours => $2) WHERE id = $1 AND status = 'delivered'`, [o.id, hours]);
+    return one(ctx.db, 'SELECT id, status, delivered_at FROM orders WHERE id = $1', [o.id]);
+  });
   app.post('/sandbox/orders/:id/expire-protection', async (req) => {
     const seller = await caller(req);
     const o = await ownOrder(Id.parse(req.params).id, seller.id);

@@ -147,6 +147,16 @@ const help: HelpPack = {
         "Wickle den ganzen Handel im Bestell-Chat ab. Deals außerhalb von Bullizard sind nicht geschützt.",
       ],
     },
+    'invite-friends': {
+      title: "Freunde einladen und verdienen",
+      summary: "20 % von Bullizards Provision bei jeder Bestellung deiner Freunde, solange sie aktiv bleiben.",
+      body: [
+        "Dein Einladungslink steht auf deiner Kontoseite. Wer sich darüber registriert, ist dauerhaft dein Freund auf Bullizard.",
+        "Bei jeder Bestellung, die sie abschließen, verdienst du einen Anteil an Bullizards Provision für diese Bestellung (20 % zum Start; Bullizard kann den Satz ändern). Es beginnt mit ihrer ersten abgeschlossenen Bestellung und läuft weiter, solange sie aktiv bleiben – nicht mehr als ein Jahr zwischen zwei Bestellungen.",
+        "- Die Einnahmen landen auf deinem Guthaben und lassen sich nach den üblichen Regeln auszahlen (6 %, mindestens 1,50 $).\n- Der Anteil bezieht sich auf unsere Provision, nicht auf die Bestellsumme: bei 100 $ und 13,99 % Provision verdienst du 20 % von 13,99 $.\n- Zwischen Konten mit gleichem Gerät, gleicher Karte oder Wallet wird nichts gezahlt.",
+        "Creator mit Creator-Code verdienen separat; beide Programme gelten nicht gleichzeitig für dieselbe Bestellung derselben Person.",
+      ],
+    },
     'wallet': {
       title: "Deine Wallet",
       summary: "Dein Guthaben und jede Geldbewegung in einer Liste.",

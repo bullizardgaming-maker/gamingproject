@@ -5,7 +5,6 @@ test.describe('crypto money paths', () => {
   test('buyer pays with a coin that fits the amount, the order funds, and the seller is held until confirmation', async ({ page }) => {
     await signIn(page, 'Buyer');
     await page.goto('/offers/offer-1'); // Elden Ring key, $32.50 to the buyer
-    await page.getByLabel(/I accept the Terms of Service/).check();
     await page.getByRole('button', { name: /Buy now/ }).click();
     await page.waitForURL(/pay=crypto/);
     const checkout = page.locator('.crypto-checkout');
@@ -24,7 +23,6 @@ test.describe('crypto money paths', () => {
     await signIn(page, 'Buyer');
     await page.goto('/offers/offer-15'); // Diablo IV item, $12.50
     await fillCharacter(page);
-    await page.getByLabel(/I accept the Terms of Service/).check();
     await page.getByRole('button', { name: /Buy now/ }).click();
     await page.waitForURL(/pay=crypto/);
     const checkout = page.locator('.crypto-checkout');
@@ -40,7 +38,6 @@ test.describe('crypto money paths', () => {
     await page.evaluate(() => (window as any).__bzDemo.credit(5_00));
     await page.goto('/offers/offer-15'); // $12.51 to the buyer
     await fillCharacter(page);
-    await page.getByLabel(/I accept the Terms of Service/).check();
     await page.getByRole('button', { name: /Buy now/ }).click();
     await page.waitForURL(/pay=crypto/);
     await expect(page.getByTestId('from-balance')).toHaveText('−$5.00');
@@ -53,7 +50,6 @@ test.describe('crypto money paths', () => {
     await page.evaluate(() => (window as any).__bzDemo.credit(20_00));
     await page.goto('/offers/offer-15');
     await fillCharacter(page);
-    await page.getByLabel(/I accept the Terms of Service/).check();
     await page.getByRole('button', { name: /Buy now/ }).click();
     await page.waitForURL(/\/orders\/[^?]+$/);
     await expect(page.getByText(/Paid \$12\.51/)).toBeVisible();

@@ -1,6 +1,7 @@
 # Staging blueprint for Render (https://render.com/docs/blueprint-spec).
 # Runs the real API against mock payments and mock KYC (SANDBOX_MODE), so nothing here moves money.
-# Setup and the web side (Vercel): docs/STAGING.md.
+# The database is a Neon branch (DATABASE_URL is asked for on first deploy). Setup and the web side
+# (Vercel): docs/STAGING.md; host choice and costs: docs/HOSTING.md. Production: render.production.yaml.
 envVarGroups:
   - name: bullizard-staging
     envVars:
@@ -39,6 +40,9 @@ envVarGroups:
       # This API's public URL, e.g. https://api-staging.example.com (payment return links)
       - key: PUBLIC_API_URL
         sync: false
+      # Neon: the pooled connection string of the `staging` branch (with ?sslmode=require)
+      - key: DATABASE_URL
+        sync: false
 
 services:
   - type: web
@@ -61,8 +65,6 @@ services:
         value: "true"
       - key: STORAGE_DIR
         value: /data/uploads
-      - key: DATABASE_URL
-        fromDatabase: { name: bullizard-staging-db, property: connectionString }
       - key: REDIS_URL
         fromService: { type: keyvalue, name: bullizard-staging-redis, property: connectionString }
       - key: CLAMD_HOST
@@ -80,10 +82,3 @@ services:
     name: bullizard-staging-redis
     plan: starter
     ipAllowList: [] # private network only
-
-databases:
-  - name: bullizard-staging-db
-    databaseName: market
-    plan: basic-256mb
-    postgresMajorVersion: "16"
-    ipAllowList: []

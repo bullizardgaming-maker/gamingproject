@@ -25,7 +25,6 @@ export function OfferPage() {
   const [offer, setOffer] = useState<Offer | null>(null);
   const [params] = useSearchParams();
   const [qtyText, setQtyText] = useState(params.get('qty') ?? '');
-  const [tos, setTos] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [others, setOthers] = useState<Offer[]>([]);
@@ -187,13 +186,12 @@ export function OfferPage() {
             <p className="muted small" style={{ margin: 0 }}>{t('offer.yours')}</p>
           ) : (
             <>
-              <label className="check-row small">
-                <input type="checkbox" checked={tos} onChange={(e) => setTos(e.target.checked)} />
-                {t('offer.tos')}
-              </label>
-              <button className="btn go lg block" disabled={!tos || busy || !qtyOk || (needsCharacter && !character.ok)} onClick={buy}>
+              <button className="btn go lg block" disabled={busy || !qtyOk || (needsCharacter && !character.ok)} onClick={buy}>
                 {busy ? t('offer.opening') : t('offer.pay', { amount: money(total, offer.currency) })}
               </button>
+              <p className="small muted of-agree" style={{ margin: 0 }} data-testid="buy-agree">
+                {t('offer.agree', { terms: '\u0000' }).split('\u0000')[0]}<Link to="/terms">{t('offer.agreeTerms')}</Link>{t('offer.agree', { terms: '\u0000' }).split('\u0000')[1]}
+              </p>
             </>
           )}
           <ul className="of-trust">

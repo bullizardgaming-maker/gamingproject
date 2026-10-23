@@ -93,8 +93,8 @@ export const TEMPLATES = {
   },
   referral_reward: {
     category: 'orders',
-    subject: (d) => `You earned ${money(d.amount_cents, d.currency)} in Bullizard credit`,
-    body: (d, link) => `A friend you invited completed their first order. ${money(d.amount_cents, d.currency)} of credit is in your account and applies at checkout.\n\n${link('/account')}`,
+    subject: (d) => `You earned ${money(d.amount_cents, d.currency)} from a friend's order`,
+    body: (d, link) => `A friend you invited completed an order. Your ${d.rate_pct}% share of our commission, ${money(d.amount_cents, d.currency)}, is in your balance and keeps coming on every order they make while they stay active.\n\n${link('/account')}`,
   },
   protection_ending: {
     category: 'reminders',

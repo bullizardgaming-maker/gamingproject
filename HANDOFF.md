@@ -55,11 +55,13 @@ VITE_DEMO=true npm run build -w apps/web && npm run e2e -w apps/web
 ## Waiting on the owner
 
 - Riot production app (for Riot account linking); optional Steam Web API key.
-- Render staging (`docs/STAGING.md`), Chainlink VRF subscription.
+- Render account + Neon staging branch + domain names for staging (`docs/HOSTING.md`, `docs/STAGING.md`), Chainlink VRF subscription.
 - Google Play / Apple developer accounts and a decision on store payment rules (`docs/MOBILE.md`).
-- Translation review, game artwork, outside security test, contract audit, legal review.
-- NOWPayments account + sandbox keys; rank commission rates and thresholds (CEO; placeholders are in migration 055);
-  the rules-test questions (support can edit them in the ops console); whether `PAYOUT_HOLD_DAYS` stays.
+- Translation review, the Designer's game banners (`apps/web/public/games/README.md`), outside security test, contract
+  audit, legal review (the Terms page text in `terms.body` is an interim summary until Legal's version lands).
+- NOWPayments account + sandbox keys (later, per the CEO); the rules-test questions (support can edit them in the ops
+  console); whether `PAYOUT_HOLD_DAYS` stays. Rank rates are final: Hatchling 13.99% → Scale 12.99% → Fang 11.99% →
+  Basilisk 10.99% → Dragon 9.99% (migration 055, editable in Ops → Ranks).
 
 ## Round 14 (Oct 10, 2026)
 
@@ -202,6 +204,45 @@ API only; the Designer's demo mock already speaks these shapes. Migration 065.
 
 Tests: `frontend-requests.test.ts` (one case per item), coin order/fields in `crypto-payments.test.ts`. 71 API files
 (269 tests) green. Web untouched this round (the Designer's mock carries the same shapes).
+
+## Round 19 (Oct 23, 2026) — CEO decisions and launch setup (`claude/next-tasks.md`)
+
+1. **Hosting.** Proposal, costs and what the owner must provide: `docs/HOSTING.md` (Render recommended; Railway/Fly
+   compared). `render.yaml` (staging) now takes a Neon branch as `DATABASE_URL`; `render.production.yaml` adds a
+   separate worker, S3 uploads, Frankfurt region. The live Vercel site stays a demo until `VITE_DEMO=false` and
+   `VITE_API_URL` are set on the Vercel environment.
+2. **Staging money paths.** `apps/api/scripts/money-paths.ts` runs pay, duplicate webhook, confirm, double-click confirm,
+   double-click buy, early confirm, staff release (24h rule, with the new sandbox route
+   `POST /sandbox/orders/:id/age-delivery`), dispute, withdraw (quote + request), chat filter, and reports underpay as
+   skipped until the NOWPayments sandbox keys exist. Run it against staging once the host is up (command in
+   docs/HOSTING.md); it runs green against a local sandbox API.
+3. **Front-end fixes.** Offers carry both the demo names and the API names (`price_per_unit_cents`, `stock_qty`,
+   `unit_size`) — the mock emits both, the app reads either. Chat system messages render from `code` + `params`
+   (`chat.ev.*` keys in all six languages, `systemText()` in Chat.tsx; the mock emits codes too), with a translated
+   buyer/seller role.
+4. **Referral like G2G.** Migration 066: `referral_settings` (`rate_bps` 2000, `active_days` 365, staff-editable via
+   `GET/PUT /admin/referral`, Ops permission `ranks.manage`). On every completed order of a referred user the referrer
+   earns `rate_bps` of Bullizard's commission, from treasury into their withdrawable balance (`seller_available`),
+   starting with the friend's first completed order and continuing while the gap between their completed orders stays
+   under `active_days`; blocked for linked accounts (`referral_rewards.reason`). The one-time credit, the minimum order
+   and the monthly cap are gone (`REFERRAL_*` env vars removed). `GET /me/referral` returns the rate, friends, earnings
+   and rewards; the wallet lists `referral` (and `affiliate`) entries. Web: "Invite friends" card on the account page,
+   Home invite card at 20%, help article `invite-friends` (six languages), referral email in six languages.
+5. **Buy box.** No checkbox. One line under Buy now — "By buying you agree to the Terms" — in six languages, "Terms"
+   linking to the new `/terms` page (`terms.*` keys; Legal's text replaces `terms.body`). The API still receives
+   `acceptTos: true` from the app, so the acceptance timestamp on the order is unchanged.
+6. **Merchant API hidden.** `MERCHANT_API_ENABLED=false` by default: `/v1/developer/*` answer 404, API keys fail with
+   `merchant_api_disabled`, `/v1/docs` and `/v1/openapi.json` are not mounted. `GET /v1/features` tells the app;
+   `/developers` shows "Page not found" until it is on. Tests run with it on (`vitest.config.ts`);
+   `merchant-api-switch.test.ts` covers off.
+7. **Game art.** `GameBanner` replaces the logo slot: our own banner per game from `public/games/<slug>.webp` (Designer
+   supplies; spec in `public/games/README.md`), a brand gradient until then, the game name always as text. Home tiles
+   and the game-page header use it.
+8. **Rank rates** are final as seeded; "placeholder" wording removed here (migration 055's comment is history).
+
+Tests: `promos-fx.test.ts` (recurring referral, rate change, inactivity), `merchant-api-switch.test.ts`,
+`e2e/launch-decisions.spec.ts` (terms line + Terms page, invite card and help article, translated chat notice, hidden
+Developers page). 72 API files and 123 browser tests green.
 
 ## Suggested next round
 

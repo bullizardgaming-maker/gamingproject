@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Check, Image as ImageIcon, ShieldCheck } from '@phosphor-icons/react';
-import { api, realtime, type ChatMessage } from '../api';
+import { api, money, realtime, type ChatMessage } from '../api';
 import { detectOffPlatform } from '@/lib/safety';
 import { BrandMark } from './Brand';
 import { currentLocale, t, type MessageKey } from '../i18n';
@@ -18,13 +18,27 @@ function BlockedNotice() {
 }
 
 /** A server-originated event (paid, delivered, dispute opened…): one compact signed line. Users can only send `text`, so this can't be faked. */
+/** The server's English text, or the same event in the reader's language when it carries a code. */
+export function systemText(m: Pick<ChatMessage, 'body' | 'code' | 'params'>): string {
+  if (!m.code) return m.body ?? '';
+  const key = `chat.ev.${m.code}` as any;
+  const p = (m.params ?? {}) as Record<string, any>;
+  const vars: Record<string, string | number> = {};
+  for (const [k, v] of Object.entries(p)) vars[k] = v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v);
+  if (typeof p.amount_cents === 'number') vars.amount = money(p.amount_cents, String(p.currency ?? 'USD'));
+  if (p.role === 'buyer' || p.role === 'seller') vars.role = t(p.role === 'buyer' ? 'chat.roleBuyer' : 'chat.roleSeller');
+  if (typeof p.rate_pct === 'number') vars.rate = String(p.rate_pct);
+  const text = t(key, vars);
+  return text === key ? (m.body ?? '') : text;
+}
+
 function OfficialNote({ m }: { m: ChatMessage }) {
   return (
     <div className="chat-note" role="article" aria-label={t('chat.fromBullizard')}>
       <BrandMark className="chat-note-mark" />
       <div className="min-w-0 flex-1">
         <span className="chat-note-who">Bullizard <Check className="inline size-3" weight="bold" aria-label={t('chat.verified')} /></span>
-        <span className="chat-note-text" dir="auto">{m.body}</span>
+        <span className="chat-note-text" dir="auto">{systemText(m)}</span>
       </div>
       <span className="chat-note-time">{time(m.created_at)}</span>
     </div>
