@@ -20,21 +20,21 @@ async function sellerWithSale(priceCents = 50_00) {
 }
 
 describe('payout holds', () => {
-  it('holds a new seller’s released money for 7 days, then lets it go', async () => {
+  it('holds a new seller’s released money for 1 day (CEO, Oct 24), then lets it go', async () => {
     const { seller, order } = await sellerWithSale();
     const dash = (await seller.api.get('/v1/seller/dashboard')).body;
-    expect(dash.payoutHold).toMatchObject({ level: 'new', days: 7 });
+    expect(dash.payoutHold).toMatchObject({ level: 'new', days: 1 });
     expect(dash.balances.onHoldCents).toBe(order.seller_net_cents);
     expect(dash.balances.withdrawableCents).toBe(0);
 
     const refused = await seller.api.post('/v1/seller/withdrawals', { amountCents: 100 });
     expect(refused.body.error.code).toBe('insufficient_funds');
-    expect(refused.body.error.message).toMatch(/7-day payout hold/);
+    expect(refused.body.error.message).toMatch(/1-day payout hold/);
     expect(refused.body.error.details.upcoming).toHaveLength(1);
 
-    // Eight days later the release has cleared the hold.
+    // A day and a bit later the release has cleared the hold.
     await h.ctx.db.query(`ALTER TABLE ledger_entries DISABLE TRIGGER USER`);
-    await h.ctx.db.query(`UPDATE ledger_entries SET created_at = created_at - interval '8 days' WHERE order_id = $1`, [order.id]);
+    await h.ctx.db.query(`UPDATE ledger_entries SET created_at = created_at - interval '26 hours' WHERE order_id = $1`, [order.id]);
     await h.ctx.db.query(`ALTER TABLE ledger_entries ENABLE TRIGGER USER`);
     const after = (await seller.api.get('/v1/seller/payout-hold')).body;
     expect(after).toMatchObject({ heldCents: 0, withdrawableCents: order.seller_net_cents });
@@ -52,7 +52,7 @@ describe('payout holds', () => {
       );
     }
     expect((await holdPolicy(h.ctx, h.ctx.db, seller.id)).level).toBe('established');
-    expect((await holdPolicy(h.ctx, h.ctx.db, seller.id)).holdDays).toBe(3);
+    expect((await holdPolicy(h.ctx, h.ctx.db, seller.id)).holdDays).toBe(0); // established sellers: no hold (CEO, Oct 24)
 
     const admin = await makeUser(h, { role: 'admin' });
     const set = await admin.api.put(`/v1/admin/users/${seller.id}/payout-hold`, { days: 30, reason: 'Unusual refund pattern' });

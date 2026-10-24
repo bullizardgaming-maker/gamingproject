@@ -1,5 +1,5 @@
 import type { Ctx } from '../context.js';
-import { many, maybeOne, one, withTx } from '../db.js';
+import { many, maybeOne, one, withTx, type Queryable } from '../db.js';
 import { accountId, balance } from './ledger.js';
 import { enqueueEmail } from './notifications.js';
 
@@ -64,7 +64,7 @@ async function buildReport(ctx: Ctx, currency: string): Promise<ReconReport> {
   if (escrowMismatch.length) issues.push({ check: 'order_escrow_mismatch', detail: escrowMismatch });
 
   const totals: Record<string, number> = {};
-  for (const kind of ['gateway_clearing', 'escrow', 'treasury', 'reserve', 'payouts', 'platform_withdrawals', 'fx_conversion'] as const) {
+  for (const kind of ['gateway_clearing', 'escrow', 'treasury', 'reserve', 'payouts', 'platform_withdrawals', 'fx_conversion', 'user_credit', 'withdrawals_pending', 'refunds_payable', 'tax_payable', 'fx_pnl'] as const) {
     totals[kind] = await balance(ctx.db, await accountId(ctx.db, kind, currency));
   }
   totals.seller_balances = (
@@ -122,7 +122,19 @@ async function buildReport(ctx: Ctx, currency: string): Promise<ReconReport> {
   const failedEmails = await one<{ n: number }>(ctx.db, `SELECT count(*)::int AS n FROM notifications WHERE status = 'failed' AND created_at > now() - interval '24 hours'`);
   if (failedEmails.n) warnings.push({ check: 'failed_emails_24h', detail: failedEmails.n });
 
+  // Daily snapshot (CFO B7): one row per day with the totals, so the finance workbook's "Daily recon" tab has a source.
+  await ctx.db.query(
+    `INSERT INTO reconciliation_snapshots (day, currency, totals, psp_expected_cents, psp_actual_cents, status)
+     VALUES (CURRENT_DATE, $1, $2, $3, $4, $5)
+     ON CONFLICT (day, currency) DO UPDATE SET totals = EXCLUDED.totals, psp_expected_cents = EXCLUDED.psp_expected_cents, psp_actual_cents = EXCLUDED.psp_actual_cents, status = EXCLUDED.status, taken_at = now()`,
+    [currency, JSON.stringify(totals), expected, actual, issues.length ? 'mismatch' : 'ok'],
+  ).catch((err) => ctx.log.warn({ err }, 'reconciliation snapshot not written'));
   return { currency, issues, warnings, totals, psp: { expected, actual, difference } };
+}
+
+/** The last N daily snapshots (Ops → Business, CFO's daily recon). */
+export async function reconciliationSnapshots(q: Queryable, days = 30) {
+  return many(q, `SELECT day, currency, totals, psp_expected_cents::bigint, psp_actual_cents::bigint, status, taken_at FROM reconciliation_snapshots ORDER BY day DESC, currency LIMIT $1`, [days * 3]);
 }
 
 async function alertAdmins(ctx: Ctx, runId: string, status: string, report: Pick<ReconReport, 'issues'>) {

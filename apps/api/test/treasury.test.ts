@@ -5,7 +5,7 @@ import { buyAndPay, makeOffer, makeUser, setup, type Harness } from './helpers.j
 
 let h: Harness;
 beforeAll(async () => {
-  h = await setup();
+  h = await setup({ PLATFORM_TAX_COUNTRY: 'IE' }); // VAT path kept under test (CFO B3: unset in production)
 });
 afterAll(async () => h.close());
 

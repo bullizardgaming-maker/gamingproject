@@ -281,7 +281,7 @@ export async function priceOrder(
   const sellerAmount = Math.round(listingTotal / listingRate);
   const rateBps = (await refreshSellerRate(tx, offer.seller_id)).rateBps;
   const amount = grossUp(sellerAmount, rateBps);
-  if (amount < MIN_CARD_CHARGE_CENTS) throw badRequest('amount_too_small', 'Order total is below the minimum');
+  if (amount < 1) throw badRequest('amount_too_small', 'Order total is below the minimum');
 
   if (input.rail === 'crypto' && (input.promoCode || input.useCredit)) {
     throw badRequest('not_for_crypto', 'Promo codes and credit apply to card payments only');
@@ -299,8 +299,9 @@ export async function priceOrder(
     credit = Math.min(await availableCredit(tx, buyerId, settlement), amount - discount);
   }
   let charged = amount - discount - credit;
-  // A card charge below the PSP minimum isn't possible: use less credit (then less discount) instead.
-  if (charged > 0 && charged < MIN_CARD_CHARGE_CENTS) {
+  // A card charge below the PSP minimum isn't possible: use less credit (then less discount) instead. Crypto has no
+  // such minimum, so a balance-funded order spends the balance to the last cent (CFO B10).
+  if (ctx.cfg.CARD_PAYMENTS_ENABLED && charged > 0 && charged < MIN_CARD_CHARGE_CENTS) {
     const fromCredit = Math.min(credit, MIN_CARD_CHARGE_CENTS - charged);
     credit -= fromCredit;
     charged += fromCredit;
@@ -551,7 +552,11 @@ export async function handlePaymentCaptured(ctx: Ctx, ev: Extract<PaymentEvent, 
       return order; // idempotent replay
     }
 
-    await postCapture(s.tx, order, ev.details.feeCents, settled);
+    await postCapture(s.tx, order, ev.details.feeCents, settled, ev.details.overpaidCents ?? 0);
+    if (ev.details.overpaidCents) {
+      const room = await roomOf(s.tx, order.id);
+      await appendMessage(s, room.id, null, 'system', `The payment arrived ${(ev.details.overpaidCents / 100).toFixed(2)} ${order.currency} above the order total. The extra is in the buyer's balance.`, [], undefined, { code: 'overpaid', params: { amount_cents: ev.details.overpaidCents, currency: order.currency } });
+    }
     await postFunding(s.tx, order);
     await setRedemptionStatus(s.tx, order.id, 'redeemed');
     await s.tx.query(
@@ -586,20 +591,26 @@ async function hasLedgerTxn(q: Queryable, orderId: string, memo: string) {
   return !!(await maybeOne(q, 'SELECT 1 FROM ledger_entries WHERE order_id = $1 AND memo = $2 LIMIT 1', [orderId, memo]));
 }
 
-async function postCapture(tx: Tx, order: Order, feeCents = 0, settledCents = order.charged_cents) {
+async function postCapture(tx: Tx, order: Order, feeCents = 0, settledCents = order.charged_cents, overpaidCents = 0) {
   const cur = order.currency;
   if (order.charged_cents > 0) {
+    // settledCents is gross (before the PSP fee). An overpayment beyond the tolerance is the buyer's credit (CFO B6);
+    // what is left (conversion differences, underpayment within the tolerance) is FX gain/loss.
+    const fx = settledCents - order.charged_cents - overpaidCents;
     await post(
       tx,
       [
         { account: await accountId(tx, 'gateway_clearing', cur), amountCents: -settledCents },
         { account: await accountId(tx, 'escrow', cur), amountCents: order.charged_cents },
-        // Card charged in another currency: the PSP's conversion vs our locked rate is FX gain/loss.
-        { account: await accountId(tx, 'fx_pnl', cur), amountCents: settledCents - order.charged_cents },
+        ...(overpaidCents > 0 ? [{ account: await accountId(tx, 'user_credit', cur, order.buyer_id), amountCents: overpaidCents }] : []),
+        ...(fx !== 0 ? [{ account: await accountId(tx, 'fx_pnl', cur), amountCents: fx }] : []),
       ],
       'payment_captured',
       order.id,
     );
+    if (overpaidCents > 0) {
+      await tx.query(`INSERT INTO order_events (order_id, from_status, to_status, reason) VALUES ($1, 'awaiting_payment', 'awaiting_payment', 'overpayment_credited')`, [order.id]);
+    }
   }
   // The PSP keeps its processing fee; the platform pays it out of revenue, never out of escrow.
   if (feeCents > 0) {

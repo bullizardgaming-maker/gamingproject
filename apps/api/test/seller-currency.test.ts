@@ -7,7 +7,7 @@ import { endWindowAndRelease, buyAndPay, client, makeOffer, makeUser, setup, typ
 let h: Harness;
 beforeAll(async () => {
   // Static rates: 1 USD = 0.92 EUR. Tax out of the way (US seller) to keep the arithmetic readable.
-  h = await setup({ FX_STATIC_RATES: '{"EUR":0.92,"EGP":48.5}', FX_SPREAD_BPS: '100' });
+  h = await setup({ FX_STATIC_RATES: '{"EUR":0.92,"EGP":48.5}', FX_SPREAD_BPS: '100', PAYOUT_CURRENCIES: 'USD,EUR' });
 });
 afterAll(async () => h.close());
 
@@ -20,6 +20,20 @@ async function eurSeller() {
 }
 
 describe('seller balances in their own currency', () => {
+  it('CFO B12: refuses a payout currency outside PAYOUT_CURRENCIES (USD-only at launch)', async () => {
+    const was = h.ctx.cfg.PAYOUT_CURRENCIES;
+    h.ctx.cfg.PAYOUT_CURRENCIES = 'USD';
+    try {
+      const seller = await makeUser(h, { tier: 2 });
+      const r = await seller.api.put('/v1/seller/payout-currency', { currency: 'EUR' });
+      expect(r.status).toBe(400);
+      expect(r.body.error.code).toBe('payout_currency_locked');
+      expect((await seller.api.put('/v1/seller/payout-currency', { currency: 'USD' })).body.payoutCurrency).toBe('USD');
+    } finally {
+      h.ctx.cfg.PAYOUT_CURRENCIES = was;
+    }
+  });
+
   it('credits a EUR seller their EUR price minus commission at the rate locked at order time, and pays out in EUR', async () => {
     const seller = await eurSeller();
     const buyer = await makeUser(h, { tier: 1 });

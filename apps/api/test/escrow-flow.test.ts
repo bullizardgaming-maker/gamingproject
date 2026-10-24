@@ -11,7 +11,7 @@ const PROMO_BPS = 500;
 
 let h: Harness;
 beforeAll(async () => {
-  h = await setup();
+  h = await setup({ PLATFORM_TAX_COUNTRY: 'IE' }); // the VAT path stays tested here; production leaves the country unset until a company exists (CFO B3)
 });
 afterAll(async () => h.close());
 

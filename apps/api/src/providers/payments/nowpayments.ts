@@ -49,6 +49,8 @@ export class NowPaymentsError extends Error {
 
 export interface NowPayout {
   unique_external_id?: string | null;
+  fee?: number | string | null;
+  conversion_fee?: number | string | null;
   id: string | number;
   batch_withdrawal_id?: string | number;
   status: NowPayoutStatus;
@@ -232,6 +234,9 @@ export class NowPaymentsProvider implements PaymentProvider {
         status: String(body.status).toUpperCase() as NowPayoutStatus,
         hash: body.hash ? String(body.hash) : null,
         error: body.error ? String(body.error) : null,
+        networkFee: body.fee != null && body.fee !== '' ? Number(body.fee) : null,
+        conversionFee: body.conversion_fee != null && body.conversion_fee !== '' ? Number(body.conversion_fee) : null,
+        currency: body.currency ? String(body.currency).toLowerCase() : null,
         raw: body,
       };
     }
@@ -308,13 +313,28 @@ export class NowPaymentsProvider implements PaymentProvider {
   }
 
   /** Store balance in the outcome currency, read as USD (USDT/USDC); other wallets are not summed. */
+  /**
+   * Everything in the custody wallet valued in USD (CFO B7): USD stablecoins 1:1, any other coin at the provider's
+   * current rate (`/v1/estimate` from 1 unit of the coin to USD). A coin that can't be valued is logged and left out,
+   * so the reconciliation shows a mismatch rather than a false match.
+   */
   async platformBalance(currency: string) {
     if (currency !== 'USD') return null;
     try {
       const r = await this.call<Record<string, { amount: number; pendingAmount?: number }>>('GET', '/v1/balance');
-      const w = r[this.outcomeCurrency];
-      if (!w) return null;
-      return Math.round((Number(w.amount) + Number(w.pendingAmount ?? 0)) * 100);
+      let cents = 0;
+      for (const [coin, w] of Object.entries(r)) {
+        const units = Number(w.amount) + Number(w.pendingAmount ?? 0);
+        if (!units) continue;
+        if (/^usd[tc]/.test(coin)) {
+          cents += Math.round(units * 100);
+          continue;
+        }
+        const quote = await this.call<{ estimated_amount: number }>('GET', `/v1/estimate?amount=${units}&currency_from=${encodeURIComponent(coin)}&currency_to=usd`).catch(() => null);
+        if (!quote) throw new Error(`cannot value ${units} ${coin} in USD`);
+        cents += Math.round(Number(quote.estimated_amount) * 100);
+      }
+      return cents;
     } catch {
       return null;
     }

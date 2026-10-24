@@ -38,6 +38,8 @@ export type PaymentEvent =
         settledAmountCents?: number;
         /** Processing fee the PSP deducted from this payment, in minor units. */
         feeCents?: number;
+        /** Crypto: what the buyer sent above the order total beyond the tolerance; goes to their balance, never to FX gain (CFO B6). */
+        overpaidCents?: number;
         raw?: unknown;
       };
     }
@@ -69,7 +71,11 @@ export type PaymentEvent =
       raw?: unknown;
     }
   /** A crypto payout (seller withdrawal) progressed. */
-  | { type: 'crypto.payout'; payoutId: string; batchId: string | null; status: 'CREATING' | 'WAITING' | 'PROCESSING' | 'SENDING' | 'FINISHED' | 'FAILED' | 'REJECTED'; hash: string | null; error: string | null; raw?: unknown }
+  | {
+      type: 'crypto.payout'; payoutId: string; batchId: string | null; status: 'CREATING' | 'WAITING' | 'PROCESSING' | 'SENDING' | 'FINISHED' | 'FAILED' | 'REJECTED'; hash: string | null; error: string | null;
+      /** Fees the provider took on top of the amount sent (CFO B2), in the payout currency. */
+      networkFee: number | null; conversionFee: number | null; currency: string | null; raw?: unknown;
+    }
   | { type: 'ignored' };
 
 export interface PaymentProvider {

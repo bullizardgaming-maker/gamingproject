@@ -199,7 +199,7 @@ describe('referrals and store credit', () => {
     await expectBooksBalanced();
   });
 
-  it('keeps a minimum card charge when credit would leave a few cents', async () => {
+  it('a balance-funded order spends the balance to the last cent: no $0.50 minimum charge with crypto (CFO B10)', async () => {
     const buyer = await makeUser(h, { tier: 1 });
     const { post } = await import('../src/domain/ledger.js');
     const { withTx } = await import('../src/db.js');
@@ -212,7 +212,7 @@ describe('referrals and store credit', () => {
     const seller = await makeUser(h, { tier: 2 });
     const offer = await stockedOffer(seller, { priceCents: 20_00 });
     const q = (await buyer.api.post('/v1/orders/quote', { offerId: offer.id, useCredit: true })).body;
-    expect(q).toMatchObject({ amountCents: 21_06, chargedCents: 50, creditCents: 20_56 });
+    expect(q).toMatchObject({ amountCents: 21_06, chargedCents: 20, creditCents: 20_86 });
   });
 });
 
@@ -224,14 +224,14 @@ describe('multiple currencies', () => {
     expect((await client(h.app).get(`/v1/offers/${offer.id}`)).body).toMatchObject({ currency: 'EUR', price_cents: 9_69, seller_price_cents: 9_20, price_settlement_cents: 10_53 });
 
     const q = (await buyer.api.post('/v1/orders/quote', { offerId: offer.id, currency: 'EGP' })).body;
-    // $10.00 grossed up to $10.53 × 48.5 EGP/USD × 1.01 spread = EGP 515.81
-    expect(q).toMatchObject({ amountCents: 10_53, sellerAmountCents: 10_00, presentmentCurrency: 'EGP', presentmentAmountCents: 515_81, listingCurrency: 'EUR' });
+    // $10.00 grossed up to $10.53 × 48.5 EGP/USD, no spread (CFO B12: EUR/EGP are shown as approximate, charged in USD) = EGP 510.71
+    expect(q).toMatchObject({ amountCents: 10_53, sellerAmountCents: 10_00, presentmentCurrency: 'EGP', presentmentAmountCents: 510_71, listingCurrency: 'EUR' });
 
     // Rates move after the order is placed: the order keeps its price.
     const res = await buyer.api.post('/v1/orders', { offerId: offer.id, acceptTos: true, currency: 'EGP' });
     await h.ctx.db.query(`UPDATE fx_rates SET rate = 30 WHERE currency = 'EGP'`);
-    expect((await buyer.api.get(`/v1/orders/${res.body.order.id}`)).body).toMatchObject({ presentment_amount_cents: 515_81, presentment_currency: 'EGP' });
-    // PSP converts the EGP 515.81 to $10.60 (our spread): the $0.07 is FX gain.
+    expect((await buyer.api.get(`/v1/orders/${res.body.order.id}`)).body).toMatchObject({ presentment_amount_cents: 510_71, presentment_currency: 'EGP' });
+    // PSP converts the EGP 510.71 to $10.60: the $0.07 is FX gain.
     await client(h.app).post(`/v1/payments/mock/checkout/${res.body.order.payment_ref}/pay`, { settledCents: '1060' }, { accept: 'application/json' });
     expect(await balance(h.ctx.db, await accountId(h.ctx.db, 'fx_pnl', 'USD'))).toBe(7);
     await buyer.api.post(`/v1/orders/${res.body.order.id}/confirm`);

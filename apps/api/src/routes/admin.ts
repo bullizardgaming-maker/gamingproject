@@ -9,7 +9,7 @@ import { reviewOwnerProof } from '../domain/offers.js';
 import { LEAD_REVIEW_ABOVE_CENTS, releaseByStaff, resolveDispute, unconfirmedDeliveries } from '../domain/orders.js';
 import { controls, updateControls } from '../domain/controls.js';
 import { setReviewHidden } from '../domain/reviews.js';
-import { runReconciliation } from '../domain/reconciliation.js';
+import { reconciliationSnapshots, runReconciliation } from '../domain/reconciliation.js';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { ROLE_PERMISSIONS, STAFF_ROLES, permissionsOf, rolesOf } from '../domain/permissions.js';
 import { notify } from '../domain/notifications.js';
@@ -88,6 +88,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
         max_withdrawal_day_cents: z.number().int().min(100).max(100_000_00).optional(), max_order_cents: z.number().int().min(100).max(100_000_00).optional(),
         new_account_days: z.number().int().min(0).max(90).optional(), new_account_max_order_cents: z.number().int().min(100).max(100_000_00).optional(), new_account_max_open_orders: z.number().int().min(1).max(100).optional(),
         alert_dispute_hour: z.number().int().min(1).max(1000).optional(), alert_bans_hour: z.number().int().min(1).max(1000).optional(), alert_withdrawal_cents: z.number().int().min(100).max(100_000_00).optional(),
+        four_eyes_withdrawal_cents: z.number().int().min(100).max(100_000_00).optional(), four_eyes_user_day_cents: z.number().int().min(100).max(100_000_00).optional(), max_platform_payout_day_cents: z.number().int().min(100).max(10_000_000_00).optional(),
       })
       .parse(req.body);
     const res = await updateControls(ctx, staff.id, body);
@@ -309,6 +310,10 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return row;
   });
 
+  app.get('/admin/reconciliation/snapshots', async (req) => {
+    requirePermission(req, 'reconciliation.run');
+    return reconciliationSnapshots(ctx.db);
+  });
   app.get('/admin/reconciliation', async (req) => {
     requirePermission(req, 'reconciliation.run');
     return many(ctx.db, 'SELECT id, started_at, finished_at, status, report FROM reconciliation_runs ORDER BY started_at DESC LIMIT 30');
@@ -533,8 +538,8 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const staff = requirePermission(req, 'treasury.approve');
     const { id } = Id.parse(req.params);
     const body = z.object({ approve: z.boolean(), note: z.string().max(500).optional() }).parse(req.body);
-    const w = await decideWithdrawal(ctx, id, staff.id, body.approve, body.note);
-    await audit(ctx.db, req, body.approve ? 'withdrawal.approve' : 'withdrawal.reject', { type: 'withdrawal', id }, body);
+    const w = await decideWithdrawal(ctx, id, staff, body.approve, body.note);
+    await audit(ctx.db, req, body.approve ? (w.status === 'pending_approval' ? 'withdrawal.first_approve' : 'withdrawal.approve') : 'withdrawal.reject', { type: 'withdrawal', id }, body);
     return w;
   });
   /** A payout whose provider call timed out: ask NOWPayments whether it exists before anything is reversed. */

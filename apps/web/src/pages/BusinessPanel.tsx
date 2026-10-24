@@ -22,11 +22,16 @@ interface Totals {
   newBuyers: number;
   newSellers: number;
 }
+interface Money {
+  promoCents: number; referralCents: number; creatorCents: number; pspFeeCents: number; payoutFeeCents: number;
+  buyerCreditOutstandingCents: number; withdrawalsPendingCents: number; withdrawalsPending: number; medianReleaseHours: number | null;
+}
 interface Metrics {
   days: number;
   bucket: 'day' | 'week';
   totals: Totals;
   previous: Totals;
+  money?: Money;
   series: Array<{ date: string; orders: number; gmv_cents: number; take_cents: number; take_rate_pct: number | null; dispute_rate_pct: number | null; chargeback_rate_pct: number | null }>;
   categories: Array<{ category_slug: string; orders: number; gmv_cents: number; take_cents: number; take_rate_pct: number | null; dispute_rate_pct: number | null }>;
   games: Array<{ game: string; orders: number; gmv_cents: number }>;
@@ -75,6 +80,20 @@ export function BusinessPanel() {
             <Kpi label="Refund rate" value={pctText(t.refundRatePct)} now={t.refundRatePct} before={p.refundRatePct} unit="pts" invert />
             <Kpi label="New buyers · sellers" value={`${t.newBuyers} · ${t.newSellers}`} now={t.newBuyers + t.newSellers} before={p.newBuyers + p.newSellers} />
           </div>
+          {data.money && (
+            <section className="card stack" style={{ gap: 10 }} data-testid="money-costs">
+              <b>What the period cost us, and what we owe right now</b>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <Kpi label="Promo cost" value={money(data.money.promoCents)} />
+                <Kpi label="Referral + creator cost" value={`${money(data.money.referralCents + data.money.creatorCents)}`} />
+                <Kpi label="NOWPayments + network fees" value={money(data.money.pspFeeCents + data.money.payoutFeeCents)} />
+                <Kpi label="Median time to release" value={data.money.medianReleaseHours == null ? '—' : `${data.money.medianReleaseHours} h`} />
+                <Kpi label="Buyer credit outstanding" value={money(data.money.buyerCreditOutstandingCents)} />
+                <Kpi label="Withdrawals pending" value={`${money(data.money.withdrawalsPendingCents)} · ${data.money.withdrawalsPending}`} />
+              </div>
+              <p className="small muted" style={{ margin: 0 }}>Costs are treasury debits in the period (promo funding, referral rewards, creator commissions, PSP and payout network fees). Credit and withdrawals are balances today.</p>
+            </section>
+          )}
           <div className="grid gap-4 lg:grid-cols-2">
             <section className="card stack" style={{ gap: 10 }}>
               <div className="row spread">

@@ -25,6 +25,8 @@ export interface SellerTaxProfile {
  */
 export function taxTreatment(ctx: Ctx, p: SellerTaxProfile): { country: string; treatment: TaxTreatment } {
   const home = ctx.cfg.PLATFORM_TAX_COUNTRY;
+  // No registered company yet (CFO B3): nothing is VAT, whoever the seller is.
+  if (!home) return { country: p.tax_country ?? 'XX', treatment: 'outside_scope' };
   const country = p.tax_country ?? home;
   const verifiedBusiness = p.is_business && !!p.tax_id && !!p.tax_id_verified_at;
   if (country === home) return { country, treatment: 'standard' };

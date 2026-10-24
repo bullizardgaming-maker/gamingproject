@@ -1253,7 +1253,7 @@ route('POST', '/admin/crypto/refunds/:id/sent', ({ me, params, body }) => {
 });
 
 // --- Crypto payouts (demo): the address confirms at once, withdrawals wait for the CFO -----------
-const PAYOUT_COINS = ['usdttrc20', 'usdterc20', 'usdtbsc', 'usdcerc20', 'usdcbsc', 'usdcsol', 'btc', 'eth', 'ltc', 'trx', 'bnb', 'sol'];
+const PAYOUT_COINS = ['usdttrc20', 'usdtbsc']; // USDT only at launch (CEO, Oct 24): TRC-20 and BEP-20
 const payoutAddressView = (u: DemoUser) => ({
   address: u.payout_address ?? null, currency: u.payout_address_currency ?? null, currencyName: u.payout_address_currency ? coinNameOf(u.payout_address_currency) : null, setAt: u.payout_address_set_at ?? null, pending: null,
   coins: PAYOUT_COINS.map((coin) => ({ coin, name: coinNameOf(coin) })),
@@ -3121,6 +3121,11 @@ route('GET', '/admin/analytics', ({ me, query }) => {
   const gw = games.reduce((s, x) => s + x.w, 0);
   return {
     days, bucket: days > 90 ? 'week' : 'day', totals: t, previous: totals(rows.slice(0, days)), series,
+    money: {
+      promoCents: Math.round(t.gmvCents * 0.004), referralCents: Math.round(t.takeCents * 0.06), creatorCents: Math.round(t.takeCents * 0.02),
+      pspFeeCents: Math.round(t.gmvCents * 0.005), payoutFeeCents: Math.round(t.gmvCents * 0.0008),
+      buyerCreditOutstandingCents: 1_842_00, withdrawalsPendingCents: 12_460_00, withdrawalsPending: 9, medianReleaseHours: 7.5,
+    },
     categories: Object.entries(share).map(([slug, [w, tr, dr]]) => ({
       category_slug: slug, orders: Math.round(t.orders * w), gmv_cents: Math.round(t.gmvCents * w), take_cents: Math.round(t.gmvCents * w * tr), take_rate_pct: tr * 100, dispute_rate_pct: dr * 100,
     })),
@@ -3139,7 +3144,7 @@ const ALL_PERMS = [
 const ROLE_PERMS: Record<string, string[]> = {
   arbiter: ['orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'orders.refund_after_release', 'orders.release', 'moderation.manage'],
   support: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage', 'support.manage', 'moderation.manage', 'orders.release', 'leagues.manage', 'rules.manage'],
-  lead: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage', 'support.manage', 'moderation.manage', 'orders.release', 'leagues.manage', 'rules.manage', 'disputes.manage', 'owner_proofs.review', 'orders.refund_after_release', 'orders.lead', 'users.suspend', 'audit.view'],
+  lead: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage', 'support.manage', 'moderation.manage', 'orders.release', 'leagues.manage', 'rules.manage', 'disputes.manage', 'owner_proofs.review', 'orders.refund_after_release', 'orders.lead', 'users.suspend', 'audit.view', 'treasury.approve'],
   finance: ['controls.manage', 'chargebacks.manage', 'orders.refund_after_release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view', 'ledger.adjust', 'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'analytics.view'],
   compliance: ['orders.view_any', 'risk.review', 'users.suspend', 'aml.review', 'aml.sar', 'payout_holds.set', 'ledger.view', 'audit.view', 'retention.manage', 'analytics.view'],
   admin: ALL_PERMS,

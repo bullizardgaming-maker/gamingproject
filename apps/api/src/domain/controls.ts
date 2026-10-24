@@ -23,9 +23,12 @@ export interface Controls {
   alert_dispute_hour: number;
   alert_bans_hour: number;
   alert_withdrawal_cents: number;
+  four_eyes_withdrawal_cents: number;
+  four_eyes_user_day_cents: number;
+  max_platform_payout_day_cents: number;
   updated_at: string;
 }
-const COLS = 'pause_withdrawals, pause_orders, pause_chat, pause_signups, pause_message, max_withdrawal_day_cents::bigint, max_order_cents::bigint, new_account_days, new_account_max_order_cents::bigint, new_account_max_open_orders, alert_dispute_hour, alert_bans_hour, alert_withdrawal_cents::bigint, updated_at';
+const COLS = 'pause_withdrawals, pause_orders, pause_chat, pause_signups, pause_message, max_withdrawal_day_cents::bigint, max_order_cents::bigint, new_account_days, new_account_max_order_cents::bigint, new_account_max_open_orders, alert_dispute_hour, alert_bans_hour, alert_withdrawal_cents::bigint, four_eyes_withdrawal_cents::bigint, four_eyes_user_day_cents::bigint, max_platform_payout_day_cents::bigint, updated_at';
 const CACHE_MS = 5_000;
 let cached: { at: number; value: Controls } | null = null;
 
@@ -35,6 +38,9 @@ const normalise = (r: any): Controls => ({
   max_order_cents: Number(r.max_order_cents),
   new_account_max_order_cents: Number(r.new_account_max_order_cents),
   alert_withdrawal_cents: Number(r.alert_withdrawal_cents),
+  four_eyes_withdrawal_cents: Number(r.four_eyes_withdrawal_cents),
+  four_eyes_user_day_cents: Number(r.four_eyes_user_day_cents),
+  max_platform_payout_day_cents: Number(r.max_platform_payout_day_cents),
 });
 
 export async function controls(q: Queryable, fresh = false): Promise<Controls> {
@@ -65,6 +71,7 @@ export async function updateControls(ctx: Ctx, staffId: string, patch: Partial<O
   const allowed: Array<keyof Omit<Controls, 'updated_at'>> = [
     'pause_withdrawals', 'pause_orders', 'pause_chat', 'pause_signups', 'pause_message', 'max_withdrawal_day_cents', 'max_order_cents',
     'new_account_days', 'new_account_max_order_cents', 'new_account_max_open_orders', 'alert_dispute_hour', 'alert_bans_hour', 'alert_withdrawal_cents',
+    'four_eyes_withdrawal_cents', 'four_eyes_user_day_cents', 'max_platform_payout_day_cents',
   ];
   const sets: string[] = [];
   const vals: unknown[] = [];

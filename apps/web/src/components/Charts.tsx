@@ -134,7 +134,7 @@ export function LineChart({ data, series, format = String, label, className, xLa
 }
 
 /** A headline number with its change against the previous period. */
-export function Kpi({ label, value, now, before, unit = 'abs', invert = false }: { label: string; value: string; now: number | null; before: number | null; unit?: 'abs' | 'pts'; invert?: boolean }) {
+export function Kpi({ label, value, now = null, before = null, unit = 'abs', invert = false }: { label: string; value: string; now?: number | null; before?: number | null; unit?: 'abs' | 'pts'; invert?: boolean }) {
   let delta: React.ReactNode = null;
   if (now != null && before != null) {
     const diff = unit === 'pts' ? now - before : before === 0 ? null : ((now - before) / before) * 100;

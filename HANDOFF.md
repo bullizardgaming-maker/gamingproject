@@ -419,6 +419,38 @@ Semgrep 0 findings, gitleaks 0 real findings.
 steps in order, `make-staff` script for staff roles. `render.yaml` / `render.production.yaml` carry the Round 19–20
 switches (`AUTO_REFUND_LATE_ORDERS`, `CARD_REFUNDS_ENABLED`, `MERCHANT_API_ENABLED`, `RECON_INTERVAL_HOURS`).
 
+## Round 21 (Oct 24, 2026) — CFO money review B1–B14 (`claude/cfo-money-review.md`)
+
+CEO answers applied: payout hold new 1 day / established 0 / watch 14; 0.5% underpayment tolerance kept; 10% reserve kept;
+Support Lead is the second approver above $500; referral pays on friends' purchases only (already the rule, `referrals.test.ts`);
+USDT-only payouts (TRC-20 + BEP-20) at launch.
+
+**Already done in Round 20, not redone:** B4 (kill switches), B5 per-user/order limits (`platform_controls`), and the
+four-eyes rule on ledger adjustments (`requested_by <> decided_by`, since Round 7). Everything below is new, one test each.
+
+| # | What changed | Test |
+|---|---|---|
+| B1 | NOWPayments fee booked once: gateway is debited the gross received (`settledAmountCents`), escrow gets the order amount, `psp_fee` moves the difference treasury → gateway. No more double count. | `crypto-payments.test.ts` "books the fee once" |
+| B2 | Payout network/conversion fees from the payout IPN (`fee`, `conversion_fee`) are stored on the withdrawal (`network_fee_cents`, `conversion_fee_cents`) and posted treasury → gateway_clearing under `payout_network_fee:<id>` / `payout_conversion_fee:<id>`. `PAYOUT_COINS = usdttrc20, usdtbsc`; any other payout address → 400 `unsupported_coin`. | `crypto-payments.test.ts` payout IPN fee + `btc` refusal |
+| B3 | No VAT until a company exists: `PLATFORM_TAX_COUNTRY` is optional and unset by default; with no home country every order is `outside_scope`, 0 tax, no `tax_payable` leg. Set the country the day the company is registered. | `round20.test.ts` "no VAT until a company exists" |
+| B5 | Platform-wide payout cap: `max_platform_payout_day_cents` (default $20,000, Ops → Controls) — approvals past it in a rolling 24h → 409 `platform_payout_cap`. | `crypto-payments.test.ts` four-eyes/cap |
+| B6 | Overpayment above the 0.5% tolerance → buyer's store credit (`user_credit`), order event `overpayment_credited`, chat system message `overpaid`; carts split it per order. | `crypto-payments.test.ts` "overpayment" |
+| B7 | Reconciliation: `RECON_TOLERANCE_CENTS=100`; NOWPayments balance values **every** coin in USD (stables 1:1, others via `/v1/estimate`; a coin that can't be valued fails the run instead of being ignored); totals include `user_credit`, `withdrawals_pending`, `refunds_payable`, `tax_payable`, `fx_pnl`; a daily row in `reconciliation_snapshots`; `GET /admin/reconciliation/snapshots`. | `crypto-payments.test.ts` reconciliation |
+| B8 | `PAYOUT_HOLD_DAYS_NEW=1`, `PAYOUT_HOLD_DAYS_ESTABLISHED=0`, watch-listed 14. | `payout-holds.test.ts` |
+| B9 | Four-eyes on withdrawals: amount > `four_eyes_withdrawal_cents` ($500) or the user's day > `four_eyes_user_day_cents` ($1,000) needs a second approver with the Lead role (`lead` now holds `treasury.approve`). First approval records `first_approved_by/at` and returns `needs_second_approval: true`; same person again → 403 `four_eyes`; non-Lead second → 403 `lead_required`. Audited as `withdrawal.first_approve` / `withdrawal.approve`. | `crypto-payments.test.ts` four-eyes/cap |
+| B10 | The $0.50 minimum charge only applies when `CARD_PAYMENTS_ENABLED=true` (default false): a balance-funded order charges exactly what is owed, down to $0.01. | `promos-fx.test.ts` |
+| B11 | Ops → Crypto refunds tab hidden (refunds go to balance only); the panel and API stay for later. | browser suite |
+| B12 | `FX_SPREAD_BPS=0`; `PAYOUT_CURRENCIES=USD` — `PUT /seller/payout-currency` refuses anything else with 400 `payout_currency_locked` (widen the list later); the currency picker shows `≈ EUR` / `≈ EGP` with "EUR and EGP are approximate; you pay and get paid in USD." | `seller-currency.test.ts`, `promos-fx.test.ts` (EGP, no spread) |
+| B13 | `GET /admin/analytics` has a `money` section: promo cost, referral + creator cost, NOWPayments + payout network fees (treasury debits by memo in the period), buyer credit outstanding, withdrawals pending (count + amount), median hours from paid to released. Ops → Business shows it as a KPI row. | `analytics.test.ts` "CFO B13" |
+| B14 | Coin list copy: "≈ $X network fee, paid by your wallet" and the note that fees come out of the wallet, not the order — all six languages. | browser suite |
+
+New config (all in `.env.example`, `render*.yaml`): `PAYOUT_HOLD_DAYS_NEW=1`, `PAYOUT_HOLD_DAYS_ESTABLISHED=0`,
+`PLATFORM_TAX_COUNTRY` (unset), `RECON_TOLERANCE_CENTS=100`, `FX_SPREAD_BPS=0`, `CARD_PAYMENTS_ENABLED=false`,
+`PAYOUT_CURRENCIES=USD`. Migration `068_round20.sql` gained the withdrawal fee/first-approver columns, the three
+controls and `reconciliation_snapshots` (re-run `node dist/migrate.js` on staging; it is idempotent).
+
+Ops → Controls gained: platform payouts per day, four-eyes single withdrawal and user-day thresholds.
+
 ## Suggested next round
 
 1. Handover check for Riot/Steam games without a linked listing: let the buyer link any account of the game's

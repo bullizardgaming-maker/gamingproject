@@ -6,7 +6,7 @@ import { buyAndPay, makeOffer, makeUser, setup, type Harness } from './helpers.j
 
 let h: Harness;
 beforeAll(async () => {
-  h = await setup({ FX_STATIC_RATES: '{"EUR":0.92,"EGP":48.5}', FX_EXCHANGE_PROVIDER: 'mock', FX_TOPUP_MIN_CENTS: '100' });
+  h = await setup({ FX_STATIC_RATES: '{"EUR":0.92,"EGP":48.5}', FX_EXCHANGE_PROVIDER: 'mock', FX_TOPUP_MIN_CENTS: '100', PAYOUT_CURRENCIES: 'USD,EUR' });
 });
 afterAll(async () => h.close());
 

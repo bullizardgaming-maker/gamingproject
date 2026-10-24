@@ -21,7 +21,7 @@ describe('commission gross-up and seller ranks', () => {
     expect(p.promo.rateBps).toBe(500);
     expect(new Date(p.promo.endsAt).getTime()).toBeGreaterThan(Date.now() + 59 * 86_400_000);
     // Buyers in EUR/EGP see the grossed-up price at the checkout rate (mid-market plus the 1% spread).
-    expect(p.buyerIn).toEqual({ USD: 105_27, EUR: Math.round(105_27 * 0.92 * 1.01), EGP: Math.round(105_27 * 48.5 * 1.01) });
+    expect(p.buyerIn).toEqual({ USD: 105_27, EUR: Math.round(105_27 * 0.92), EGP: Math.round(105_27 * 48.5) });
     // A EUR-priced listing is previewed from its settlement value.
     const eur = (await seller.api.get('/v1/seller/price-preview?priceCents=9200&currency=EUR')).body;
     expect(eur).toMatchObject({ listingCurrency: 'EUR', settlementCents: 100_00, buyerCents: 105_27 });

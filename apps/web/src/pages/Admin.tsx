@@ -35,7 +35,7 @@ const TABS: Array<{ id: Tab; label: string; perm: string }> = [
   { id: 'chargebacks', label: 'Chargebacks', perm: 'chargebacks.manage' },
   { id: 'treasury', label: 'Treasury', perm: 'treasury.request' },
   { id: 'payouts', label: 'Payouts', perm: 'treasury.request' },
-  { id: 'refunds', label: 'Crypto refunds', perm: 'treasury.request' },
+  // CFO B11: crypto refunds hidden at launch — refunds go to balance only. Panel kept for later.
   { id: 'affiliates', label: 'Creator codes', perm: 'promos.manage' },
   { id: 'currency', label: 'Currency', perm: 'fx.manage' },
   { id: 'debts', label: 'Seller debts', perm: 'ledger.view' },

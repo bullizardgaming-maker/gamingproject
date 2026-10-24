@@ -145,18 +145,20 @@ describe('split disputes (Round 20)', () => {
     // Buyer credit excludes the promo's share of the refund; that share went back to the treasury.
     const promoShare = Math.round((order.discount_cents * refund) / order.amount_cents);
     expect((await buyer.api.get('/v1/me/credit')).body.balanceCents).toBe(refund - promoShare);
-    const row = (await h.ctx.db.query('SELECT commission_cents, commission_tax_cents, tax_rate_bps, seller_received_cents FROM orders WHERE id = $1', [order.id])).rows[0];
+    const row = (await h.ctx.db.query('SELECT commission_cents, commission_tax_cents, tax_rate_bps, tax_treatment, seller_received_cents FROM orders WHERE id = $1', [order.id])).rows[0];
     const released = order.amount_cents - refund;
     const commission = Math.round((Number(row.commission_cents) * released) / order.amount_cents);
-    expect(Number(row.tax_rate_bps)).toBe(1900);
-    expect(Number(row.commission_tax_cents)).toBe(Math.round((commission * 1900) / 11_900)); // VAT inside the commission, like a full release
+    // No company yet (CFO B3): every commission is outside the scope of VAT, recorded on the split exactly like a full release.
+    expect(row.tax_treatment).toBe('outside_scope');
+    expect(Number(row.tax_rate_bps)).toBe(0);
+    expect(Number(row.commission_tax_cents)).toBe(0);
     expect(Number(row.seller_received_cents)).toBe(released - commission);
     const wallet = (await seller.api.get('/v1/me/wallet')).body.entries.find((e: any) => e.kind === 'sale' && e.order_id === order.id);
     expect(wallet.amount_cents).toBe(released - commission);
     // Books balance: escrow emptied, every cent accounted for.
     const sums = (await h.ctx.db.query(`SELECT a.kind, SUM(e.amount_cents)::bigint AS s FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id WHERE e.order_id = $1 AND e.memo = 'dispute_split' GROUP BY a.kind`, [order.id])).rows;
     expect(sums.reduce((t, r) => t + Number(r.s), 0)).toBe(0);
-    expect(Number(sums.find((r) => r.kind === 'tax_payable')!.s)).toBe(Number(row.commission_tax_cents));
+    expect(sums.find((r) => r.kind === 'tax_payable')).toBeUndefined(); // nothing booked as VAT
   });
 });
 
@@ -249,5 +251,22 @@ describe('damage limits (launch gate §4)', () => {
     await sendOpsAlerts(h.ctx); // same hour: nothing new
     expect(await mine()).toBe(n1);
     await h.ctx.db.query(`DELETE FROM withdrawals WHERE user_id = $1`, [u.id]);
+  });
+});
+
+describe('no VAT until a company exists (CFO B3)', () => {
+  it('books no tax on any commission when PLATFORM_TAX_COUNTRY is unset, whatever the seller’s country', async () => {
+    for (const country of ['DE', 'EG', 'FR']) {
+      const seller = await makeUser(h, { tier: 2 });
+      await seller.api.put('/v1/seller/tax-profile', { country, isBusiness: false });
+      const buyer = await makeUser(h, { tier: 1 });
+      const offer = await makeOffer(seller, { deliveryMode: 'manual', stock: 2, priceCents: 40_00 });
+      const o = await buyAndPay(h, buyer, offer.id);
+      await seller.api.post(`/v1/orders/${o.id}/deliver`, { payload: 'x' });
+      await buyer.api.post(`/v1/orders/${o.id}/confirm`);
+      const row = (await h.ctx.db.query('SELECT tax_treatment, tax_rate_bps, commission_tax_cents FROM orders WHERE id = $1', [o.id])).rows[0];
+      expect({ ...row, commission_tax_cents: Number(row.commission_tax_cents), tax_rate_bps: Number(row.tax_rate_bps) }, country).toMatchObject({ tax_treatment: 'outside_scope', tax_rate_bps: 0, commission_tax_cents: 0 });
+    }
+    expect(Number((await h.ctx.db.query(`SELECT COALESCE(SUM(e.amount_cents), 0) AS s FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id WHERE a.kind = 'tax_payable'`)).rows[0].s)).toBe(0);
   });
 });

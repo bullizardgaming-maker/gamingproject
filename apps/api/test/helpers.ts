@@ -25,7 +25,7 @@ export async function setup(overrides: Record<string, string> = {}, ctxOverrides
   await migrate(db);
   await db.query('UPDATE launch_settings SET phase = 3, allowed_games = NULL'); // tests cover every category and game; launch-phase.test.ts checks the gating
   // Beta limits off for the suite (round20.test.ts turns them on to check them); the controls cache is per process.
-  await db.query('UPDATE platform_controls SET max_order_cents = 100000000, max_withdrawal_day_cents = 100000000, new_account_days = 0');
+  await db.query('UPDATE platform_controls SET max_order_cents = 100000000, max_withdrawal_day_cents = 100000000, new_account_days = 0, four_eyes_withdrawal_cents = 100000000, four_eyes_user_day_cents = 100000000, max_platform_payout_day_cents = 100000000');
   forgetControlsCache();
   const messenger = new ConsoleMessenger(() => {});
   const ctx = createContext(cfg, silent, { db, pubsub: new MemoryPubSub(), messenger, ...ctxOverrides });

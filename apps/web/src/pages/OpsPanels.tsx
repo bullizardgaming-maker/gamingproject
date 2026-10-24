@@ -449,7 +449,8 @@ export function ListingBanPanel() {
 type Controls = {
   pause_withdrawals: boolean; pause_orders: boolean; pause_chat: boolean; pause_signups: boolean; pause_message: string | null;
   max_withdrawal_day_cents: number; max_order_cents: number; new_account_days: number; new_account_max_order_cents: number; new_account_max_open_orders: number;
-  alert_dispute_hour: number; alert_bans_hour: number; alert_withdrawal_cents: number; updated_at: string;
+  alert_dispute_hour: number; alert_bans_hour: number; alert_withdrawal_cents: number;
+  four_eyes_withdrawal_cents: number; four_eyes_user_day_cents: number; max_platform_payout_day_cents: number; updated_at: string;
 };
 export function ControlsPanel() {
   const { data, error, reload, setError } = useLoad(() => api<Controls>('/admin/controls'));
@@ -501,6 +502,12 @@ export function ControlsPanel() {
           <Num k="new_account_days" label="New account: first N days" cents={false} />
           <Num k="new_account_max_order_cents" label="New account: max order (USD)" />
           <Num k="new_account_max_open_orders" label="New account: max open orders" cents={false} />
+          <Num k="max_platform_payout_day_cents" label="Platform payouts per day, all users (USD)" />
+        </div>
+        <h3 style={{ margin: 0 }}>Four-eyes on payouts (second approver must be a Lead)</h3>
+        <div className="grid three">
+          <Num k="four_eyes_withdrawal_cents" label="Single withdrawal above (USD)" />
+          <Num k="four_eyes_user_day_cents" label="User's withdrawals in a day above (USD)" />
         </div>
         <h3 style={{ margin: 0 }}>Alert thresholds (email to admins + finance, checked every 15 minutes)</h3>
         <div className="grid three">

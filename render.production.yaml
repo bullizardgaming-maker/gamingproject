@@ -41,6 +41,18 @@ envVarGroups:
         value: "false" # no automatic cancel/refund: staff decide disputes (CEO, Oct 24)
       - key: CARD_REFUNDS_ENABLED
         value: "false" # crypto only at launch: refunds go to the buyer's balance, never to a card
+      - key: CARD_PAYMENTS_ENABLED
+        value: "false" # CFO B10: no $0.50 minimum charge while card payments are off
+      - key: PAYOUT_CURRENCIES
+        value: "USD" # CFO B12: payouts locked to USD (USDT TRC-20 / BEP-20)
+      - key: FX_SPREAD_BPS
+        value: "0" # CFO B12: EUR/EGP are display-only approximations
+      - key: PAYOUT_HOLD_DAYS_NEW
+        value: "1" # CFO B8
+      - key: PAYOUT_HOLD_DAYS_ESTABLISHED
+        value: "0" # CFO B8
+      - key: RECON_TOLERANCE_CENTS
+        value: "100" # CFO B7
       - key: RECON_INTERVAL_HOURS
         value: "24" # daily ledger reconciliation; mismatches email admins + finance
       - key: JWT_SECRET

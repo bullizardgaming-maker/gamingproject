@@ -17,6 +17,8 @@ class FakeNow {
   nextId = 5000;
   /** Next payout call: 'timeout' throws after creating the payout (the provider acted, we never heard), 'down' fails with a 503 before acting. */
   payoutMode: 'ok' | 'timeout' | 'down' | 'reject' = 'ok';
+  /** Extra coins in the custody wallet for the reconciliation valuation test (CFO B7). */
+  extraBalance: Record<string, { amount: number; pendingAmount?: number }> | null = null;
   fetch = async (url: string, init?: RequestInit): Promise<Response> => {
     const u = new URL(url);
     const body = init?.body ? JSON.parse(String(init.body)) : null;
@@ -58,7 +60,8 @@ class FakeNow {
       expect(body.verification_code).toMatch(/^\d{6}$/);
       return json('OK');
     }
-    if (u.pathname === '/v1/balance') return json({ usdttrc20: { amount: 1000, pendingAmount: 0 } });
+    if (u.pathname === '/v1/balance') return json({ usdttrc20: { amount: 1000, pendingAmount: 0 }, ...(this.extraBalance ?? {}) });
+    if (u.pathname === '/v1/estimate' && u.searchParams.get('currency_to') === 'usd') return json({ estimated_amount: Number(u.searchParams.get('amount')) * (u.searchParams.get('currency_from') === 'btc' ? 60000 : 1) });
     return json({ message: `unexpected ${init?.method ?? 'GET'} ${u.pathname}` }, 404);
   };
 }
@@ -138,13 +141,16 @@ describe('crypto checkout (NOWPayments)', () => {
     expect(paid.status).toBe('paid');
     expect(paid.crypto_payments[0]).toMatchObject({ status: 'finished', actually_paid_usd: '10.53' });
     const legs = (await h.ctx.db.query(`SELECT a.kind, e.amount_cents FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id WHERE e.order_id = $1 AND e.memo = 'payment_captured' ORDER BY a.kind`, [order.id])).rows;
+    // CFO B1: the provider's fee is booked once. The buyer sent 10.53 (gross), 10.48 reached the wallet: gateway shows
+    // −10.53 + 5 (psp_fee) = −10.48, the fee is paid from the treasury, nothing in FX gain/loss.
     expect(legs).toEqual([
       { kind: 'escrow', amount_cents: 1053 },
-      { kind: 'fx_pnl', amount_cents: -5 },
-      { kind: 'gateway_clearing', amount_cents: -1048 },
+      { kind: 'gateway_clearing', amount_cents: -1053 },
     ]);
-    const fee = (await h.ctx.db.query(`SELECT count(*)::int AS n FROM ledger_entries WHERE order_id = $1 AND memo = 'psp_fee'`, [order.id])).rows[0].n;
-    expect(fee).toBeGreaterThan(0);
+    const feeLegs = (await h.ctx.db.query(`SELECT a.kind, e.amount_cents FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id WHERE e.order_id = $1 AND e.memo = 'psp_fee' ORDER BY a.kind`, [order.id])).rows;
+    expect(feeLegs).toEqual([{ kind: 'gateway_clearing', amount_cents: 5 }, { kind: 'treasury', amount_cents: -5 }]);
+    const gateway = Number((await h.ctx.db.query(`SELECT COALESCE(SUM(e.amount_cents), 0) AS s FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id WHERE a.kind = 'gateway_clearing' AND e.order_id = $1`, [order.id])).rows[0].s);
+    expect(gateway).toBe(-1048); // exactly what is in the wallet for this order
   });
 
   it('handles an underpayment with a top-up that shares the purchase id', async () => {
@@ -172,9 +178,11 @@ describe('crypto checkout (NOWPayments)', () => {
     const paid = (await buyer.api.get(`/v1/orders/${order.id}`)).body;
     expect(paid.status).toBe('paid');
     expect(paid.crypto_payments).toHaveLength(2);
-    // Settled at what reached the wallet across both payments: 14.90 + 6.03.
+    // Gross 15.00 + 6.06 = 21.06 captured; 14.90 + 6.03 = 20.93 reached the wallet; the 0.13 fee is booked once (psp_fee).
     const gw = (await h.ctx.db.query(`SELECT e.amount_cents FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id WHERE e.order_id = $1 AND e.memo = 'payment_captured' AND a.kind = 'gateway_clearing'`, [order.id])).rows[0];
-    expect(Number(gw.amount_cents)).toBe(-2093);
+    expect(Number(gw.amount_cents)).toBe(-2106);
+    const gwTotal = Number((await h.ctx.db.query(`SELECT COALESCE(SUM(e.amount_cents), 0) AS s FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id WHERE e.order_id = $1 AND a.kind = 'gateway_clearing'`, [order.id])).rows[0].s);
+    expect(gwTotal).toBe(-2093);
   });
 
   it('refunds land in the buyer’s balance; withdrawing it costs 6% with a $1.50 floor', async () => {
@@ -284,10 +292,16 @@ describe('crypto checkout (NOWPayments)', () => {
     expect(await bal('treasury')).toBe(150);
 
     // NOWPayments reports it sent.
-    const done = await ipn({ id: approved.body.payout_id, batch_withdrawal_id: approved.body.provider_ref, status: 'FINISHED', error: null, currency: 'usdttrc20', amount: '18.5', address: 'TSellerAddress1234567890', hash: '0xhash1', ipn_callback_url: 'x', created_at: 'x', requested_at: 'x', updated_at: 'x' });
+    const done = await ipn({ id: approved.body.payout_id, batch_withdrawal_id: approved.body.provider_ref, status: 'FINISHED', error: null, currency: 'usdttrc20', amount: '18.5', fee: '1.2', address: 'TSellerAddress1234567890', hash: '0xhash1', ipn_callback_url: 'x', created_at: 'x', requested_at: 'x', updated_at: 'x' });
     expect(done.statusCode).toBe(200);
     const mine = (await seller.api.get('/v1/seller/withdrawals')).body;
-    expect(mine.find((x: any) => x.id === w.body.id)).toMatchObject({ status: 'paid', tx_hash: '0xhash1' });
+    expect(mine.find((x: any) => x.id === w.body.id)).toMatchObject({ status: 'paid', tx_hash: '0xhash1', network_fee_cents: 120 });
+    // CFO B2: the network fee the provider took leaves the wallet and is paid by the treasury (treasury → gateway_clearing).
+    const netFee = (await h.ctx.db.query(`SELECT a.kind, e.amount_cents FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id WHERE e.memo = $1 ORDER BY a.kind`, [`payout_network_fee:${w.body.id}`])).rows;
+    expect(netFee).toEqual([{ kind: 'gateway_clearing', amount_cents: 120 }, { kind: 'treasury', amount_cents: -120 }]);
+    expect((await h.ctx.db.query(`SELECT sum(amount_cents)::int AS s FROM ledger_entries WHERE memo = $1`, [`payout_network_fee:${w.body.id}`])).rows[0].s).toBe(0);
+    // USDT only at launch: other coins are refused as payout addresses.
+    expect((await seller.api.post('/v1/seller/payout-address', { address: 'bc1qnotallowedatlaunch0000000', currency: 'btc' })).body.error.code).toBe('unsupported_coin');
 
     // A second one, rejected: balance restored.
     const w2 = (await seller.api.post('/v1/seller/withdrawals', { amountCents: 1000 })).body;
@@ -328,6 +342,53 @@ describe('crypto checkout (NOWPayments)', () => {
     const sms = sent.slice(before).find((m: any) => m.channel === 'sms' && m.to === '+201012345678') as any;
     expect(sms, JSON.stringify(sent.slice(before).map((m: any) => [m.channel, m.to, m.subject]))).toBeTruthy();
     expect(sms.body).toMatch(/\d{6}/);
+  });
+
+  it('four-eyes above $500 (second approval by the Lead), and a platform daily payout cap (CFO B9, B5)', async () => {
+    const { forgetControlsCache } = await import('../src/domain/controls.js');
+    const admin = await makeUser(h, { tier: 2, role: 'admin' });
+    await admin.api.put('/v1/admin/controls', { four_eyes_withdrawal_cents: 500_00, four_eyes_user_day_cents: 1000_00, max_platform_payout_day_cents: 1500_00, max_withdrawal_day_cents: 100000_00 });
+    forgetControlsCache();
+    const seller = await makeUser(h, { tier: 2 });
+    const buyer = await makeUser(h, { tier: 1 });
+    const offer = await makeOffer(seller, { deliveryMode: 'manual', stock: 10, categorySlug: 'currency', title: 'Gold 5M', priceCents: 700_00 });
+    for (let i = 0; i < 3; i++) {
+      const order = (await buyer.api.post('/v1/orders', { offerId: offer.id, quantity: 1, acceptTos: true })).body.order;
+      const pay = (await buyer.api.post(`/v1/orders/${order.id}/crypto/pay`, { coin: 'usdttrc20' })).body;
+      await ipn(paidIpn(fake.payments.get(pay.payment_id)));
+      await seller.api.post(`/v1/orders/${order.id}/deliver`, { payload: 'sent' });
+      await buyer.api.post(`/v1/orders/${order.id}/confirm`, {});
+    }
+    await h.ctx.db.query(`UPDATE users SET payout_hold_days = 0, payout_address = 'TFourEyes1234567890abcd', payout_address_currency = 'usdttrc20', payout_address_set_at = now() WHERE id = $1`, [seller.id]);
+    const finance = await makeUser(h, { tier: 2, role: 'finance' });
+    const finance2 = await makeUser(h, { tier: 2, role: 'finance' });
+    const lead = await makeUser(h, { tier: 2, role: 'lead' });
+
+    // $300: one approval is enough.
+    const small = (await seller.api.post('/v1/seller/withdrawals', { amountCents: 300_00 })).body;
+    expect((await finance.api.post(`/v1/admin/withdrawals/${small.id}/decide`, { approve: true })).body.status).toBe('processing');
+    // $800: the first approval only records; the same person cannot give the second; a second finance member is not the Lead.
+    const big = (await seller.api.post('/v1/seller/withdrawals', { amountCents: 800_00 })).body;
+    const first = await finance.api.post(`/v1/admin/withdrawals/${big.id}/decide`, { approve: true, note: 'Sales check out' });
+    expect(first.status, JSON.stringify(first.body)).toBe(200);
+    expect(first.body).toMatchObject({ status: 'pending_approval', needs_second_approval: true });
+    expect(fake.payouts.filter((p) => p.unique_external_id === big.id)).toHaveLength(0);
+    expect((await finance.api.post(`/v1/admin/withdrawals/${big.id}/decide`, { approve: true })).body.error.code).toBe('four_eyes');
+    expect((await finance2.api.post(`/v1/admin/withdrawals/${big.id}/decide`, { approve: true })).body.error.code).toBe('lead_required');
+    const second = await lead.api.post(`/v1/admin/withdrawals/${big.id}/decide`, { approve: true });
+    expect(second.status, JSON.stringify(second.body)).toBe(200);
+    expect(second.body.status).toBe('processing');
+    expect(fake.payouts.filter((p) => p.unique_external_id === big.id)).toHaveLength(1);
+    const audit = (await h.ctx.db.query(`SELECT action FROM admin_audit_log WHERE target_id = $1 ORDER BY created_at`, [big.id])).rows.map((r) => r.action);
+    expect(audit).toEqual(['withdrawal.first_approve', 'withdrawal.approve']);
+
+    // Platform cap: $1,500 net per day; 282 + 752 already out, another $600 would cross it.
+    const third = (await seller.api.post('/v1/seller/withdrawals', { amountCents: 600_00 })).body;
+    await finance.api.post(`/v1/admin/withdrawals/${third.id}/decide`, { approve: true });
+    const capped = await lead.api.post(`/v1/admin/withdrawals/${third.id}/decide`, { approve: true });
+    expect(capped.body.error.code).toBe('platform_payout_cap');
+    await admin.api.put('/v1/admin/controls', { four_eyes_withdrawal_cents: 100000_00, four_eyes_user_day_cents: 100000_00, max_platform_payout_day_cents: 100000_00 });
+    forgetControlsCache();
   });
 
   it('a payout call that times out never pays twice: the withdrawal waits as unknown until the provider confirms', async () => {
@@ -423,13 +484,53 @@ describe('crypto checkout (NOWPayments)', () => {
     expect(res.body.error.code).toBe('rail_unavailable');
   });
 
-  it('reconciles the store wallet balance against the ledger', async () => {
-    // The fake wallet holds $1000; the ledger expects what was captured minus what was refunded. Match the fake to the books.
+  it('reconciles the store wallet balance against the ledger, valuing every coin in USD, within $1, with a daily snapshot (CFO B7)', async () => {
+    // The fake wallet holds $1000 of USDT plus 0.01 BTC (valued at the provider's rate); the ledger expects what was
+    // captured minus what was refunded. Match the fake to the books.
+    fake.extraBalance = { btc: { amount: 0.01 } };
     const r = await runReconciliation(h.ctx);
     const mismatch = r.report.issues.find((i: any) => i.check === 'psp_balance_mismatch') as any;
     expect(mismatch, 'balance check ran').toBeTruthy();
-    expect(mismatch.detail.actual).toBe(100_000);
-    expect(mismatch.detail.expected).toBeGreaterThan(0);
+    expect(mismatch.detail.actual).toBe(100_000 + 600_00);
+    expect(mismatch.detail.expected).toBeGreaterThanOrEqual(0);
+    for (const k of ['user_credit', 'withdrawals_pending', 'refunds_payable', 'reserve', 'tax_payable']) expect(r.report.totals).toHaveProperty(k);
+    // Within the tolerance ($1.00): the same books with the wallet a few cents off is not a mismatch.
+    fake.extraBalance = { usdttrc20: { amount: (mismatch.detail.expected + 60) / 100 } };
+    const close = await runReconciliation(h.ctx);
+    expect(close.report.issues.find((i: any) => i.check === 'psp_balance_mismatch')).toBeUndefined();
+    fake.extraBalance = null;
+    const snap = (await h.ctx.db.query(`SELECT status, psp_actual_cents FROM reconciliation_snapshots WHERE day = CURRENT_DATE AND currency = 'USD'`)).rows[0];
+    expect(snap.status).toBe('ok');
+    const admin = await makeUser(h, { role: 'admin' });
+    expect((await admin.api.get('/v1/admin/reconciliation/snapshots')).body[0]).toMatchObject({ currency: 'USD', status: 'ok' });
+  });
+
+  it('an overpayment above the 0.5% tolerance is the buyer’s credit; within it, Bullizard keeps the difference (CFO B6)', async () => {
+    const seller = await makeUser(h, { tier: 2 });
+    const buyer = await makeUser(h, { tier: 1 });
+    const offer = await makeOffer(seller, { deliveryMode: 'manual', stock: 5, categorySlug: 'currency', title: 'Gold 900k', priceCents: 100_00 });
+    const order = (await buyer.api.post('/v1/orders', { offerId: offer.id, quantity: 1, acceptTos: true })).body.order; // 105.27
+    const pay = (await buyer.api.post(`/v1/orders/${order.id}/crypto/pay`, { coin: 'usdttrc20' })).body;
+    const p = fake.payments.get(pay.payment_id);
+    // The buyer sends 110.00 instead of 105.27: 4.73 over, beyond the tolerance (0.53).
+    await ipn(paidIpn(p, { actually_paid: 110, actually_paid_at_fiat: 110, outcome_amount: 110 * 0.995 }));
+    expect((await buyer.api.get(`/v1/orders/${order.id}`)).body.status).toBe('paid');
+    expect((await buyer.api.get('/v1/me/credit')).body.balanceCents).toBe(11000 - order.amount_cents);
+    const legs = (await h.ctx.db.query(`SELECT a.kind, SUM(e.amount_cents)::int AS s FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id WHERE e.order_id = $1 GROUP BY a.kind ORDER BY a.kind`, [order.id])).rows;
+    const by = Object.fromEntries(legs.map((l) => [l.kind, l.s]));
+    expect(by.escrow).toBe(order.amount_cents);
+    expect(by.user_credit).toBe(11000 - order.amount_cents);
+    expect(by.fx_pnl ?? 0).toBe(0);
+    expect(by.gateway_clearing).toBe(-Math.round(110 * 0.995 * 100)); // what is in the wallet
+    expect((await buyer.api.get(`/v1/orders/${order.id}`)).body.events.some((e: any) => e.reason === 'overpayment_credited')).toBe(true);
+
+    // Within the tolerance (0.30 over on 105.27): nothing to the buyer, the difference is FX gain.
+    const o2 = (await buyer.api.post('/v1/orders', { offerId: offer.id, quantity: 1, acceptTos: true })).body.order;
+    const pay2 = (await buyer.api.post(`/v1/orders/${o2.id}/crypto/pay`, { coin: 'usdttrc20' })).body;
+    await ipn(paidIpn(fake.payments.get(pay2.payment_id), { actually_paid: 105.57, actually_paid_at_fiat: 105.57, outcome_amount: 105.57 * 0.995 }));
+    expect((await buyer.api.get('/v1/me/credit')).body.balanceCents).toBe(11000 - order.amount_cents);
+    const fx2 = (await h.ctx.db.query(`SELECT COALESCE(SUM(e.amount_cents), 0)::int AS s FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id WHERE e.order_id = $1 AND a.kind = 'fx_pnl'`, [o2.id])).rows[0].s;
+    expect(fx2).toBe(30);
   });
 
   it('a deposit that lands after the order was cancelled is credited to the buyer once, with later IPNs adding only the difference', async () => {

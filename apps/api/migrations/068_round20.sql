@@ -56,3 +56,27 @@ CREATE TABLE IF NOT EXISTS platform_controls (
   updated_at                 timestamptz NOT NULL DEFAULT now()
 );
 INSERT INTO platform_controls DEFAULT VALUES ON CONFLICT DO NOTHING;
+
+-- CFO B2: payout network / conversion fees from the provider's payout record, booked treasury → gateway_clearing.
+ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS network_fee_cents bigint;
+ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS conversion_fee_cents bigint;
+
+-- CFO B7: daily reconciliation snapshot (totals per account kind, provider balance vs expected).
+CREATE TABLE IF NOT EXISTS reconciliation_snapshots (
+  day                 date NOT NULL,
+  currency            text NOT NULL,
+  totals              jsonb NOT NULL DEFAULT '{}',
+  psp_expected_cents  bigint,
+  psp_actual_cents    bigint,
+  status              text NOT NULL,
+  taken_at            timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (day, currency)
+);
+
+-- CFO B9: four-eyes on withdrawals above the threshold (or a user above the daily total): the first approval is recorded,
+-- the Support Lead (or an admin) gives the second. B5: a platform-wide daily payout cap.
+ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS first_approved_by uuid REFERENCES users(id);
+ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS first_approved_at timestamptz;
+ALTER TABLE platform_controls ADD COLUMN IF NOT EXISTS four_eyes_withdrawal_cents bigint NOT NULL DEFAULT 50000;    -- $500
+ALTER TABLE platform_controls ADD COLUMN IF NOT EXISTS four_eyes_user_day_cents bigint NOT NULL DEFAULT 100000;     -- $1,000
+ALTER TABLE platform_controls ADD COLUMN IF NOT EXISTS max_platform_payout_day_cents bigint NOT NULL DEFAULT 2000000; -- $20,000

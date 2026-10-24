@@ -94,8 +94,9 @@ const Env = z.object({
   SANDBOX_MODE: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
   // Undelivered manual orders are refunded automatically this long after the promised delivery time.
   // Days released money waits before it can be withdrawn, by seller track record (see domain/payoutholds.ts).
-  PAYOUT_HOLD_DAYS_NEW: z.coerce.number().int().min(0).max(90).default(7),
-  PAYOUT_HOLD_DAYS_ESTABLISHED: z.coerce.number().int().min(0).max(90).default(3),
+  // CEO (Oct 24, CFO Q1): new sellers wait 1 day, established 0, watch list 14.
+  PAYOUT_HOLD_DAYS_NEW: z.coerce.number().int().min(0).max(90).default(1),
+  PAYOUT_HOLD_DAYS_ESTABLISHED: z.coerce.number().int().min(0).max(90).default(0),
   PAYOUT_HOLD_DAYS_TRUSTED: z.coerce.number().int().min(0).max(90).default(0),
   PAYOUT_HOLD_DAYS_WATCH: z.coerce.number().int().min(0).max(90).default(14),
   LATE_AUTO_REFUND_HOURS: z.coerce.number().int().min(1).default(48),
@@ -103,6 +104,8 @@ const Env = z.object({
   AUTO_REFUND_LATE_ORDERS: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
   /** Card payments are off at launch: refunds never go back to a card, always to the buyer's balance (Round 20). */
   CARD_REFUNDS_ENABLED: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
+  /** Card payments (PSP minimum charge rules) are off at launch; crypto and balance-funded orders have no minimum (CFO B10). */
+  CARD_PAYMENTS_ENABLED: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
   // Seller debt collection: reminder days after a balance goes negative, then pause the shop.
   DEBT_REMINDER_DAYS: z.string().default('0,3,7').transform((v) => v.split(',').map(Number).filter((n) => Number.isFinite(n) && n >= 0).sort((a, b) => a - b)),
   DEBT_PAUSE_AFTER_DAYS: z.coerce.number().min(0).default(14),
@@ -114,7 +117,8 @@ const Env = z.object({
   // ecb covers EUR; EGP is not an ECB currency, so 'live' merges ECB with the open exchange-rate API.
   FX_PROVIDER: z.enum(['static', 'ecb', 'live']).default('static'),
   FX_STATIC_RATES: z.string().default('{"EUR":0.92,"EGP":48.5}'),
-  FX_SPREAD_BPS: z.coerce.number().int().min(0).max(1000).default(100),
+  PAYOUT_CURRENCIES: z.string().default('USD'), // CFO B12: payout currency locked to USD at launch (comma list to widen later)
+  FX_SPREAD_BPS: z.coerce.number().int().min(0).max(1000).default(0), // CFO B12: no spread while everything is charged in USD; EUR/EGP are shown as approximate
   FX_MAX_AGE_HOURS: z.coerce.number().default(48),
   // Buying EUR/EGP ahead of seller payouts (domain/fxtopups.ts). none = planning only, record conversions by hand.
   FX_EXCHANGE_PROVIDER: z.enum(['none', 'mock', 'wise']).default('none'),
@@ -125,9 +129,10 @@ const Env = z.object({
   FX_TOPUP_MIN_CENTS: z.coerce.number().int().min(1).default(10_000),
   // Proposals costing up to this much (settlement currency) execute without a person approving. 0 = always ask.
   FX_TOPUP_AUTO_APPROVE_CENTS: z.coerce.number().int().min(0).default(0),
-  // Tax on commission and invoices. The platform's legal entity:
-  PLATFORM_LEGAL_NAME: z.string().default('Bullizard Ltd'),
-  PLATFORM_TAX_COUNTRY: z.string().length(2).toUpperCase().default('IE'),
+  // Tax on commission and invoices. The platform's legal entity. No VAT is charged on the commission until a company
+  // exists (CFO B3): leave PLATFORM_TAX_COUNTRY unset and every commission is outside the scope of VAT.
+  PLATFORM_LEGAL_NAME: z.string().default('Bullizard'),
+  PLATFORM_TAX_COUNTRY: z.string().length(2).toUpperCase().optional(),
   PLATFORM_VAT_ID: z.string().optional(),
   PLATFORM_ADDRESS: z.string().default(''),
   // Non-EU countries where the platform is registered for VAT/GST on digital services (e.g. "GB,NO").
@@ -176,7 +181,7 @@ const Env = z.object({
   COHORT_ALERT_REPEAT_PCT: z.coerce.number().min(0).max(100).default(25),       // alert when the 90-day repeat rate is below this
   RETENTION_SECURITY_LOGS_DAYS: z.coerce.number().int().min(1).default(90),  // CSP reports, one-time codes, reset links
   RECON_INTERVAL_HOURS: z.coerce.number().default(24),
-  RECON_TOLERANCE_CENTS: z.coerce.number().default(0),
+  RECON_TOLERANCE_CENTS: z.coerce.number().default(100), // CFO B7: $1.00 of coin valuation noise is not a mismatch
   FRAUD_GNN_URL: z.string().optional(),
   // shadow: record the graph model's score next to the heuristic but act on the heuristic only.
   // enforce: act on the higher of the two. Switch to enforce once the model report backs it.

@@ -177,6 +177,44 @@ async function businessTotals(q: Queryable, from: string, to: string) {
   };
 }
 
+/**
+ * CFO B13: what the period cost us and what we owe right now, straight from the ledger.
+ * Costs are treasury debits by memo inside the period; the "outstanding" figures are balances today.
+ */
+export async function moneyCosts(q: Queryable, from: string, to: string) {
+  const c = await one<any>(
+    q,
+    `WITH t AS (
+       SELECT e.memo, e.amount_cents FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id
+        WHERE a.kind = 'treasury' AND a.owner_id IS NULL AND e.created_at >= $1 AND e.created_at < $2 AND e.amount_cents < 0
+     )
+     SELECT COALESCE(-sum(amount_cents) FILTER (WHERE memo = 'promo_funding'), 0)::bigint AS promo_cents,
+            COALESCE(-sum(amount_cents) FILTER (WHERE memo = 'referral_reward'), 0)::bigint AS referral_cents,
+            COALESCE(-sum(amount_cents) FILTER (WHERE memo = 'affiliate_commission'), 0)::bigint AS creator_cents,
+            COALESCE(-sum(amount_cents) FILTER (WHERE memo = 'psp_fee'), 0)::bigint AS psp_fee_cents,
+            COALESCE(-sum(amount_cents) FILTER (WHERE memo LIKE 'payout_network_fee:%' OR memo LIKE 'payout_conversion_fee:%'), 0)::bigint AS payout_fee_cents,
+            (SELECT COALESCE(sum(e.amount_cents), 0)::bigint FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id WHERE a.kind = 'user_credit') AS buyer_credit_cents,
+            (SELECT COALESCE(sum(COALESCE(net_cents, amount_cents)), 0)::bigint FROM withdrawals WHERE status IN ('pending', 'pending_approval', 'processing')) AS withdrawals_pending_cents,
+            (SELECT count(*)::int FROM withdrawals WHERE status IN ('pending', 'pending_approval', 'processing')) AS withdrawals_pending,
+            (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (completed_at - paid_at)))
+               FROM orders WHERE completed_at IS NOT NULL AND paid_at IS NOT NULL AND completed_at >= $1 AND completed_at < $2) AS median_release_seconds
+       FROM t`,
+    [from, to],
+  );
+  const n = (v: unknown) => Number(v ?? 0);
+  return {
+    promoCents: n(c.promo_cents),
+    referralCents: n(c.referral_cents),
+    creatorCents: n(c.creator_cents),
+    pspFeeCents: n(c.psp_fee_cents),
+    payoutFeeCents: n(c.payout_fee_cents),
+    buyerCreditOutstandingCents: n(c.buyer_credit_cents),
+    withdrawalsPendingCents: n(c.withdrawals_pending_cents),
+    withdrawalsPending: c.withdrawals_pending,
+    medianReleaseHours: c.median_release_seconds == null ? null : Math.round((Number(c.median_release_seconds) / 3600) * 10) / 10,
+  };
+}
+
 export async function businessMetrics(q: Queryable, days: Period, now = new Date()) {
   const bucket = bucketOf(days);
   const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
@@ -221,7 +259,7 @@ export async function businessMetrics(q: Queryable, days: Period, now = new Date
       WHERE o.paid_at >= $1 AND o.paid_at < $2 GROUP BY f.game ORDER BY gmv_cents DESC LIMIT 10`,
     [from, to],
   );
-  const [current, previous] = await Promise.all([businessTotals(q, from, to), businessTotals(q, prevFrom, from)]);
+  const [current, previous, money] = await Promise.all([businessTotals(q, from, to), businessTotals(q, prevFrom, from), moneyCosts(q, from, to)]);
   return {
     days,
     bucket,
@@ -229,6 +267,7 @@ export async function businessMetrics(q: Queryable, days: Period, now = new Date
     to,
     totals: current,
     previous,
+    money,
     series: series.map((s) => ({
       date: s.date,
       orders: s.orders,

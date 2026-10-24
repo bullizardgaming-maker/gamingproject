@@ -289,15 +289,19 @@ export async function applyCryptoPayment(ctx: Ctx, ev: Extract<PaymentEvent, { t
     }
     return target;
   }
-  // Enough has arrived. What reached the store wallet in USDT/USDC is the settled amount; the gap is the provider's fee.
-  const settled = await settledCents(ctx.db, target, target.charged_cents);
+  // Enough has arrived. `paid` is what the buyer sent, valued in USD (gross); what reached the store wallet in USDT/USDC
+  // is the net; the gap is NOWPayments' fee — booked once, as psp_fee (CFO B1). Anything above the order total beyond the
+  // tolerance is the buyer's money: it goes to their balance (CFO B6), not to FX gain.
+  const settled = await settledCents(ctx.db, target, paid);
+  const fee = Math.max(0, paid - settled);
+  const overpaid = paid - target.charged_cents > tolerance ? paid - target.charged_cents : 0;
   const captured: Extract<PaymentEvent, { type: 'payment.captured' }> = {
     type: 'payment.captured',
     ref: target.payment_ref!,
     orderId: target.id,
     amountCents: target.presentment_amount_cents,
     currency: target.presentment_currency,
-    details: { settledAmountCents: settled, feeCents: Math.max(0, target.charged_cents - settled), raw: { payments: await paymentsFor(ctx.db, ref) } },
+    details: { settledAmountCents: paid, feeCents: fee, overpaidCents: overpaid, raw: { payments: await paymentsFor(ctx.db, ref) } },
   };
   // The deposits that fund this order are marked, so anything arriving later is treated as extra.
   await ctx.db.query(`UPDATE crypto_payments SET applied_at = now() WHERE ${whereRef(target)} AND applied_at IS NULL AND status IN ('finished', 'confirmed', 'sending', 'partially_paid')`, [target.id]);

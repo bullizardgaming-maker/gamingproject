@@ -128,6 +128,7 @@ export async function handleCheckoutCaptured(ctx: Ctx, ev: Extract<PaymentEvent,
   const weights = orders.map((o) => Number(o.presentment_amount_cents));
   const settled = ev.details.settledAmountCents != null ? splitProportional(ev.details.settledAmountCents, weights) : null;
   const fees = ev.details.feeCents != null ? splitProportional(ev.details.feeCents, weights) : null;
+  const over = ev.details.overpaidCents ? splitProportional(ev.details.overpaidCents, weights) : null;
   // Each order is captured in its own transaction and is idempotent, so a replayed webhook (or one
   // that failed halfway) completes the rest without double-capturing.
   for (const [i, o] of orders.entries()) {
@@ -135,7 +136,7 @@ export async function handleCheckoutCaptured(ctx: Ctx, ev: Extract<PaymentEvent,
       ...ev,
       orderId: o.id,
       amountCents: Number(o.presentment_amount_cents),
-      details: { ...ev.details, settledAmountCents: settled?.[i], feeCents: fees?.[i] },
+      details: { ...ev.details, settledAmountCents: settled?.[i], feeCents: fees?.[i], overpaidCents: over?.[i] },
     });
   }
   await ctx.db.query(`UPDATE checkouts SET status = 'paid', paid_at = COALESCE(paid_at, now()) WHERE id = $1`, [checkout.id]);

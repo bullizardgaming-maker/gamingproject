@@ -4,7 +4,8 @@ import { many, maybeOne, one, withTx } from '../db.js';
 import { hmacSha256, randomDigits, randomToken, safeEqual } from '../lib/crypto.js';
 import { idDeadlinePassed } from './offers.js';
 import { recordSignals } from './fraud.js';
-import { assertNotPaused, assertWithdrawalWithinLimits } from './controls.js';
+import { assertNotPaused, assertWithdrawalWithinLimits, controls } from './controls.js';
+import { hasPermission } from './permissions.js';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import type { PaymentEvent } from '../providers/payments/types.js';
 import { NowPaymentsError, NowPaymentsProvider } from '../providers/payments/nowpayments.js';
@@ -29,7 +30,10 @@ import { coinName } from './cryptoPayments.js';
  *     NOWPayments; the IPN marks it paid (hash) or failed (money back to the seller).
  */
 const CONFIRM_TTL_MINUTES = 60;
-export const PAYOUT_COINS = ['usdttrc20', 'usdterc20', 'usdtbsc', 'usdcerc20', 'usdcbsc', 'usdcsol', 'btc', 'eth', 'ltc', 'trx', 'bnb', 'sol'] as const;
+/** USDT only at launch (CEO, Oct 24): TRC-20 and BEP-20. More coins need B2's fee booking per coin first. */
+export const PAYOUT_COINS = ['usdttrc20', 'usdtbsc'] as const;
+/** Coins whose amounts are USD 1:1 for fee booking. */
+const USD_STABLE = /^usd[tc]/;
 
 export function withdrawalFee(ctx: Ctx, amountCents: number) {
   return Math.min(amountCents, Math.max(ctx.cfg.WITHDRAWAL_FEE_MIN_CENTS, Math.ceil((amountCents * ctx.cfg.WITHDRAWAL_FEE_BPS) / 10_000)));
@@ -192,9 +196,10 @@ export async function listPendingWithdrawals(q: Queryable) {
 }
 
 /** CFO decision. Approve: fee to treasury, net sent through NOWPayments. Reject: everything back to the seller. */
-export async function decideWithdrawal(ctx: Ctx, id: string, staffId: string, approve: boolean, note?: string) {
+export async function decideWithdrawal(ctx: Ctx, id: string, staff: { id: string; role: string; staff_roles?: string[] | null }, approve: boolean, note?: string) {
   if (!(ctx.payments instanceof NowPaymentsProvider)) throw new AppError(503, 'payouts_unavailable', 'Crypto payouts are not configured');
   const np = ctx.payments;
+  const staffId = staff.id;
   const w = await withScope(ctx, async (s) => {
     const w = await maybeOne<any>(s.tx, 'SELECT * FROM withdrawals WHERE id = $1 FOR UPDATE', [id]);
     if (!w) throw notFound('Withdrawal');
@@ -203,6 +208,26 @@ export async function decideWithdrawal(ctx: Ctx, id: string, staffId: string, ap
     const amount = Number(w.amount_cents);
     const fee = Number(w.fee_cents);
     const net = Number(w.net_cents);
+    if (approve) {
+      const c = await controls(s.tx);
+      // CFO B9: above the threshold, or a user above the daily total, two people approve — the second is the Support Lead
+      // (or an admin), never the same person twice.
+      const userDay = Number((await one<{ s: string }>(s.tx, `SELECT COALESCE(SUM(amount_cents), 0)::bigint AS s FROM withdrawals WHERE user_id = $1 AND status NOT IN ('rejected', 'failed') AND created_at > now() - interval '24 hours'`, [w.user_id])).s);
+      const needsFourEyes = amount > c.four_eyes_withdrawal_cents || userDay > c.four_eyes_user_day_cents;
+      if (needsFourEyes) {
+        if (!w.first_approved_by) {
+          await s.tx.query(`UPDATE withdrawals SET first_approved_by = $2, first_approved_at = now(), decision_note = COALESCE($3, decision_note), updated_at = now() WHERE id = $1`, [id, staffId, note ?? null]);
+          return { ...w, first_approved_by: staffId, status: 'pending_approval', needs_second_approval: true };
+        }
+        if (w.first_approved_by === staffId) throw forbidden('four_eyes', 'A second person must give the second approval');
+        if (!hasPermission(staff, 'orders.lead')) throw forbidden('lead_required', 'Withdrawals above the four-eyes threshold are approved second by the Support Lead or an admin');
+      }
+      // B5: the platform pays out at most this much per day, whoever approves.
+      const platformDay = Number((await one<{ s: string }>(s.tx, `SELECT COALESCE(SUM(net_cents), 0)::bigint AS s FROM withdrawals WHERE status IN ('processing', 'unknown', 'paid') AND decided_at > now() - interval '24 hours'`)).s);
+      if (platformDay + net > c.max_platform_payout_day_cents) {
+        throw conflict('platform_payout_cap', `Today's payouts would exceed the platform cap of ${(c.max_platform_payout_day_cents / 100).toFixed(2)} USD; ${((c.max_platform_payout_day_cents - platformDay) / 100).toFixed(2)} USD is left today`);
+      }
+    }
     if (!approve) {
       await s.tx.query(`UPDATE withdrawals SET status = 'rejected', decided_by = $2, decided_at = now(), decision_note = $3, updated_at = now() WHERE id = $1`, [id, staffId, note ?? null]);
       await post(
@@ -338,7 +363,19 @@ export async function applyCryptoPayout(ctx: Ctx, ev: Extract<PaymentEvent, { ty
     return withScope(ctx, async (s) => {
       const cur = await one<any>(s.tx, 'SELECT * FROM withdrawals WHERE id = $1 FOR UPDATE', [w.id]);
       if (cur.status !== 'processing') return cur;
-      const paid = await one<any>(s.tx, `UPDATE withdrawals SET status = 'paid', tx_hash = $2, updated_at = now() WHERE id = $1 RETURNING *`, [w.id, ev.hash]);
+      // CFO B2: what the provider took on top (network fee, custody conversion) leaves the wallet too; the treasury pays it.
+      const feeCents = (v: number | null) => (v && v > 0 && ev.currency && USD_STABLE.test(ev.currency) ? Math.round(v * 100) : 0);
+      const networkFee = feeCents(ev.networkFee);
+      const conversionFee = feeCents(ev.conversionFee);
+      if (ev.networkFee && !(ev.currency && USD_STABLE.test(ev.currency))) ctx.log.warn({ withdrawalId: w.id, currency: ev.currency, fee: ev.networkFee }, 'payout fee in a non-USD coin not booked');
+      for (const [memo, cents] of [['payout_network_fee', networkFee], ['payout_conversion_fee', conversionFee]] as const) {
+        if (!cents) continue;
+        await post(s.tx, [
+          { account: await accountId(s.tx, 'gateway_clearing', w.currency), amountCents: cents },
+          { account: await accountId(s.tx, 'treasury', w.currency), amountCents: -cents },
+        ], `${memo}:${w.id}`);
+      }
+      const paid = await one<any>(s.tx, `UPDATE withdrawals SET status = 'paid', tx_hash = $2, network_fee_cents = $3, conversion_fee_cents = $4, updated_at = now() WHERE id = $1 RETURNING *`, [w.id, ev.hash, networkFee, conversionFee]);
       await enqueueEmail(s.tx, w.user_id, 'withdrawal_paid', { amount_cents: Number(w.net_cents), currency: w.currency, provider_ref: ev.hash ?? w.provider_ref });
       await enqueueWebhook(s.tx, w.user_id, 'payout.paid', { withdrawal_id: w.id, amount_cents: Number(w.net_cents), currency: w.currency, status: 'paid', provider_ref: ev.hash ?? w.provider_ref });
       s.notifyUser(w.user_id, 'withdrawal.paid', { withdrawalId: w.id });

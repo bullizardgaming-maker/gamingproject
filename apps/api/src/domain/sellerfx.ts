@@ -69,6 +69,9 @@ export async function sellerRateFor(ctx: Ctx, q: Queryable, sellerId: string, ra
 export async function setPayoutCurrency(ctx: Ctx, sellerId: string, currency: string) {
   const cur = currency.toUpperCase();
   assertSupported(ctx, cur);
+  // CFO B12: payouts are locked to USD at launch; widen with PAYOUT_CURRENCIES later.
+  const allowed = ctx.cfg.PAYOUT_CURRENCIES.split(',').map((c) => c.trim().toUpperCase()).filter(Boolean);
+  if (!allowed.includes(cur)) throw badRequest('payout_currency_locked', `Payouts are in ${allowed.join(', ')} for now`);
   await ctx.db.query('UPDATE users SET payout_currency = $2 WHERE id = $1', [sellerId, cur === ctx.cfg.SETTLEMENT_CURRENCY ? null : cur]);
   return { payoutCurrency: cur, note: 'Applies to new orders. Money already in your balance stays in its currency and can still be withdrawn.' };
 }
