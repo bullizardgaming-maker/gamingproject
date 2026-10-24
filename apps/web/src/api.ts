@@ -17,7 +17,7 @@ export interface User {
   id: string;
   email: string;
   display_name: string;
-  role: 'user' | 'arbiter' | 'support' | 'finance' | 'compliance' | 'admin';
+  role: 'user' | 'arbiter' | 'support' | 'lead' | 'finance' | 'compliance' | 'admin';
   kyc_tier: number;
   status: string;
   email_verified_at: string | null;

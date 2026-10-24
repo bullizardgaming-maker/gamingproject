@@ -49,7 +49,7 @@ export async function walletEntries(q: Queryable, userId: string, opts: { limit?
          FROM orders o WHERE o.buyer_id = $1 AND o.status <> 'awaiting_payment'
        UNION ALL
        -- Sales released to a seller.
-       SELECT o.id::text || ':sale', o.completed_at, 'sale', COALESCE(o.ref, 'order#' || upper(left(o.id::text, 7))), o.id, NULL, NULL, 'completed', o.seller_net_cents, o.currency
+       SELECT o.id::text || ':sale', o.completed_at, 'sale', COALESCE(o.ref, 'order#' || upper(left(o.id::text, 7))), o.id, NULL, NULL, 'completed', COALESCE(o.seller_received_cents, o.seller_net_cents), o.currency
          FROM orders o WHERE o.seller_id = $1 AND o.status = 'completed' AND o.completed_at IS NOT NULL
        UNION ALL
        -- Refunds back to the buyer (card refunds and crypto refunds the treasury sent).

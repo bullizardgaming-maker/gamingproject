@@ -4,7 +4,7 @@ import { accountId, balance, sellerAvailable } from '../src/domain/ledger.js';
 import { dispatchDueWebhooks } from '../src/domain/webhooks.js';
 import { runJobsOnce } from '../src/worker.js';
 import { grossUp } from '../src/domain/commission.js';
-import { buyAndPay, client, makeOffer, makeUser, mockKyc, setup, type Harness } from './helpers.js';
+import { endWindowAndRelease, buyAndPay, client, makeOffer, makeUser, mockKyc, setup, type Harness } from './helpers.js';
 
 /** Fresh sellers are in the launch promo: 5% commission, grossed up on top of their price. */
 const PROMO_BPS = 500;
@@ -120,8 +120,7 @@ describe('auto-delivery with escrow held until confirmation', () => {
     await runJobsOnce(h.ctx);
     expect((await buyer.api.get(`/v1/orders/${order.id}`)).body.status).toBe('delivered');
 
-    await h.ctx.db.query(`UPDATE orders SET protection_ends_at = now() - interval '1 second' WHERE id = $1`, [order.id]);
-    await runJobsOnce(h.ctx);
+    await endWindowAndRelease(h, order.id); // no auto-release (Round 20): staff release once the window is over
     const done = (await buyer.api.get(`/v1/orders/${order.id}`)).body;
     expect(done.status).toBe('completed');
     expect(done.commission_bps).toBe(PROMO_BPS);

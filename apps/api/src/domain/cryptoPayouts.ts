@@ -1,10 +1,13 @@
 import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { many, maybeOne, one, withTx } from '../db.js';
-import { hmacSha256, randomToken } from '../lib/crypto.js';
+import { hmacSha256, randomDigits, randomToken, safeEqual } from '../lib/crypto.js';
+import { idDeadlinePassed } from './offers.js';
+import { recordSignals } from './fraud.js';
+import { assertNotPaused, assertWithdrawalWithinLimits } from './controls.js';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import type { PaymentEvent } from '../providers/payments/types.js';
-import { NowPaymentsProvider } from '../providers/payments/nowpayments.js';
+import { NowPaymentsError, NowPaymentsProvider } from '../providers/payments/nowpayments.js';
 import { accountId, post } from './ledger.js';
 import { availableCredit } from './referrals.js';
 import { enqueueEmail } from './notifications.js';
@@ -60,35 +63,53 @@ export async function requestPayoutAddress(ctx: Ctx, user: User, input: { addres
   const recent = await one<{ n: number }>(ctx.db, `SELECT count(*)::int AS n FROM payout_address_changes WHERE user_id = $1 AND created_at > now() - interval '1 hour'`, [user.id]);
   if (recent.n >= 5) throw new AppError(429, 'too_many_requests', 'Too many address changes; try again in an hour');
   const token = randomToken(32);
+  // Second factor (always, Round 20): the authenticator when enabled; otherwise a one-time code by SMS to the
+  // verified phone, or by a separate email when there is no phone.
+  const full = await one<{ totp_enabled_at: string | null; phone: string | null; phone_verified_at: string | null; email: string }>(ctx.db, 'SELECT totp_enabled_at, phone, phone_verified_at, email FROM users WHERE id = $1', [user.id]);
+  const via: 'app' | 'sms' | 'email' = full.totp_enabled_at ? 'app' : full.phone && full.phone_verified_at ? 'sms' : 'email';
+  const code = via === 'app' ? null : randomDigits(6);
   await withScope(ctx, async (s) => {
     await s.tx.query(`UPDATE payout_address_changes SET expires_at = now() WHERE user_id = $1 AND confirmed_at IS NULL`, [user.id]);
     await s.tx.query(
-      `INSERT INTO payout_address_changes (user_id, address, currency, token_hash, expires_at) VALUES ($1, $2, $3, $4, now() + make_interval(mins => $5))`,
-      [user.id, address, currency, tokenHash(ctx, token), CONFIRM_TTL_MINUTES],
+      `INSERT INTO payout_address_changes (user_id, address, currency, token_hash, expires_at, code_hash, code_via) VALUES ($1, $2, $3, $4, now() + make_interval(mins => $5), $6, $7)`,
+      [user.id, address, currency, tokenHash(ctx, token), CONFIRM_TTL_MINUTES, code ? codeHash(ctx, user.id, code) : null, via],
     );
     await enqueueEmail(s.tx, user.id, 'payout_address_confirm', {
       address, coin: coinName(currency), minutes: CONFIRM_TTL_MINUTES,
       url: `${ctx.cfg.PUBLIC_WEB_URL}/sell/money?confirm-payout-address=${token}`,
-      mfa: !!(user as any).totp_enabled_at,
+      mfa: true, via,
     });
+    if (code) {
+      const body = `Your Bullizard code to confirm a new payout address is ${code}. It expires in ${CONFIRM_TTL_MINUTES} minutes. If you did not ask for this, change your password now.`;
+      if (via === 'sms') await ctx.messenger.send({ channel: 'sms', to: full.phone!, body });
+      else await enqueueEmail(s.tx, user.id, 'payout_address_code', { code, minutes: CONFIRM_TTL_MINUTES }, `payout_code:${token.slice(0, 16)}`);
+    }
   });
   return payoutAddressOf(ctx.db, user.id);
 }
+const codeHash = (ctx: Ctx, userId: string, code: string) => hmacSha256(ctx.cfg.FINGERPRINT_KEY, `payout_code:${userId}:${code}`);
 
 /** Step 2: the link from the email, with the 2FA code when the account has one. Takes effect at once. */
 export async function confirmPayoutAddress(ctx: Ctx, user: User, input: { token: string; code?: string }) {
-  const row = await maybeOne<{ id: string; address: string; currency: string }>(
-    ctx.db, `SELECT id, address, currency FROM payout_address_changes WHERE user_id = $1 AND token_hash = $2 AND confirmed_at IS NULL AND expires_at > now()`, [user.id, tokenHash(ctx, input.token)],
+  const row = await maybeOne<{ id: string; address: string; currency: string; code_hash: string | null; code_attempts: number; code_via: string | null }>(
+    ctx.db, `SELECT id, address, currency, code_hash, code_attempts, code_via FROM payout_address_changes WHERE user_id = $1 AND token_hash = $2 AND confirmed_at IS NULL AND expires_at > now()`, [user.id, tokenHash(ctx, input.token)],
   );
   if (!row) throw badRequest('link_expired', 'This confirmation link is no longer valid; request the change again');
+  if (!input.code) throw badRequest('mfa_code_required', row.code_via === 'app' || !row.code_hash ? 'Enter your two-factor code to confirm the new address' : `Enter the code we sent by ${row.code_via === 'sms' ? 'SMS' : 'email'} to confirm the new address`);
   const mfaOn = !!(await maybeOne(ctx.db, 'SELECT 1 FROM users WHERE id = $1 AND totp_enabled_at IS NOT NULL', [user.id]));
-  if (mfaOn) {
-    if (!input.code) throw badRequest('mfa_code_required', 'Enter your two-factor code to confirm the new address');
+  if (mfaOn || !row.code_hash) {
     await checkSecondFactor(ctx, user.id, input.code);
+  } else {
+    if (row.code_attempts >= 5) throw badRequest('link_expired', 'Too many wrong codes; request the change again');
+    if (!safeEqual(codeHash(ctx, user.id, input.code), row.code_hash)) {
+      await ctx.db.query('UPDATE payout_address_changes SET code_attempts = code_attempts + 1 WHERE id = $1', [row.id]);
+      throw new AppError(401, 'invalid_code', 'Incorrect code');
+    }
   }
   await withScope(ctx, async (s) => {
     await s.tx.query('UPDATE payout_address_changes SET confirmed_at = now() WHERE id = $1', [row.id]);
     await s.tx.query('UPDATE users SET payout_address = $2, payout_address_currency = $3, payout_address_set_at = now(), payouts_enabled = true WHERE id = $1', [user.id, row.address, row.currency]);
+    await recordSignals(s.tx, user.id, { wallet: row.address.toLowerCase() }); // a payout wallet shared between accounts links them
     await enqueueEmail(s.tx, user.id, 'payout_address_changed', { address: row.address, coin: coinName(row.currency) });
     s.notifyUser(user.id, 'payout_address.changed', {});
   });
@@ -112,9 +133,11 @@ export async function requestCryptoWithdrawal(ctx: Ctx, userId: string, amountCe
     if (user.withdrawals_frozen || user.status !== 'active') throw new AppError(423, 'withdrawals_frozen', 'Withdrawals are frozen pending a security review');
     const { aml_hold } = await one<{ aml_hold: boolean }>(s.tx, 'SELECT aml_hold FROM users WHERE id = $1', [userId]);
     if (aml_hold) throw new AppError(423, 'withdrawals_frozen', 'Withdrawals are paused while we complete a routine review');
+    await assertNotPaused(s.tx, 'withdrawals'); // kill switch (Ops → Controls)
+    await assertWithdrawalWithinLimits(s.tx, userId, amountCents); // per-user daily cap (beta)
     if (!user.payout_address || !user.payout_address_currency) throw badRequest('no_payout_address', 'Add and confirm a payout address first');
     // Unverified sellers withdraw freely for their first 30 days; after the ID deadline passes, earnings wait for verification (refund credit does not).
-    if (source === 'balance' && user.selling_restricted_at && user.kyc_tier < 2) {
+    if (source === 'balance' && idDeadlinePassed(user)) {
       throw new AppError(403, 'kyc_overdue', 'Verify your identity to withdraw: the 30-day deadline has passed');
     }
     const owing = await maybeOne<{ currency: string }>(
@@ -164,7 +187,7 @@ export async function listPendingWithdrawals(q: Queryable) {
   return many(
     q,
     `SELECT w.*, u.email, u.display_name, u.kyc_tier, u.trust_level FROM withdrawals w JOIN users u ON u.id = w.user_id
-      WHERE w.status IN ('pending_approval', 'processing') ORDER BY w.created_at`,
+      WHERE w.status IN ('pending_approval', 'processing', 'unknown') ORDER BY w.created_at`,
   );
 }
 
@@ -208,20 +231,79 @@ export async function decideWithdrawal(ctx: Ctx, id: string, staffId: string, ap
   });
   if (w.status !== 'processing') return w;
 
+  return sendPayout(ctx, np, w);
+}
+
+/**
+ * Hands the payout to the provider, once. The withdrawal id is the idempotency key (NOWPayments
+ * unique_external_id). A definite rejection (4xx) reverses the withdrawal; a timeout or a 5xx leaves it
+ * `unknown` with the money still booked as paid out — the provider may have sent it — until
+ * recheckUnknownPayout() asks the provider what happened. Money never goes back on a guess.
+ */
+async function sendPayout(ctx: Ctx, np: NowPaymentsProvider, w: any) {
+  const id = w.id as string;
+  await ctx.db.query(`UPDATE withdrawals SET provider_attempted_at = COALESCE(provider_attempted_at, now()), updated_at = now() WHERE id = $1`, [id]);
   try {
     const { batchId, payout } = await np.createPayout({
       address: w.destination_address,
       currency: w.destination_currency,
       amount: Number(w.net_cents) / 100,
       ipnCallbackUrl: `${ctx.apiBaseUrl}/v1/payments/webhook/nowpayments`,
+      externalId: id,
     });
     return await withTx(ctx.db, async (tx) =>
-      one(tx, `UPDATE withdrawals SET provider_ref = $2, payout_id = $3, updated_at = now() WHERE id = $1 RETURNING *`, [id, batchId, String(payout.id)]),
+      one(tx, `UPDATE withdrawals SET status = 'processing', provider_ref = $2, payout_id = $3, failure_reason = NULL, updated_at = now() WHERE id = $1 AND status IN ('processing', 'unknown') RETURNING *`, [id, batchId, String(payout.id)]),
     );
   } catch (err) {
-    await failWithdrawal(ctx, id, (err as Error).message.slice(0, 200));
-    throw new AppError(502, 'payout_failed', 'NOWPayments rejected this payout; the amount is back in the seller’s balance', { reason: (err as Error).message.slice(0, 200) });
+    const reason = (err as Error).message.slice(0, 200);
+    if (err instanceof NowPaymentsError && err.rejected) {
+      await failWithdrawal(ctx, id, reason);
+      throw new AppError(502, 'payout_failed', 'NOWPayments rejected this payout; the amount is back in the seller’s balance', { reason });
+    }
+    await ctx.db.query(`UPDATE withdrawals SET status = 'unknown', failure_reason = $2, updated_at = now() WHERE id = $1 AND status = 'processing'`, [id, reason]);
+    ctx.log.error({ err, withdrawalId: id }, 'payout outcome unknown; will recheck with the provider');
+    throw new AppError(502, 'payout_unknown', 'NOWPayments did not answer; the payout is being checked with the provider before anything is reversed', { reason });
   }
+}
+
+/**
+ * A withdrawal whose payout call timed out: ask the provider whether a payout with our id exists. Found →
+ * back to processing (the IPN or a poll finishes it). Not found after the provider answers → reversed.
+ * Called by the hourly job and from Ops.
+ */
+export async function recheckUnknownPayout(ctx: Ctx, id: string) {
+  if (!(ctx.payments instanceof NowPaymentsProvider)) throw new AppError(503, 'payouts_unavailable', 'Crypto payouts are not configured');
+  const np = ctx.payments;
+  const w = await maybeOne<any>(ctx.db, `SELECT * FROM withdrawals WHERE id = $1 AND status = 'unknown'`, [id]);
+  if (!w) return null;
+  const found = await np.findPayoutByExternalId(id, new Date(new Date(w.provider_attempted_at ?? w.created_at).getTime() - 86_400_000));
+  if (found) {
+    return withTx(ctx.db, async (tx) =>
+      one(tx, `UPDATE withdrawals SET status = 'processing', provider_ref = COALESCE($2, provider_ref), payout_id = $3, failure_reason = NULL, updated_at = now() WHERE id = $1 AND status = 'unknown' RETURNING *`, [
+        id, found.batch_withdrawal_id != null ? String(found.batch_withdrawal_id) : null, String(found.id),
+      ]),
+    );
+  }
+  // The provider answered and has no payout for this id: it never went out.
+  await withTx(ctx.db, (tx) => tx.query(`UPDATE withdrawals SET status = 'processing', updated_at = now() WHERE id = $1 AND status = 'unknown'`, [id]));
+  await failWithdrawal(ctx, id, `not created at the provider (${w.failure_reason ?? 'timeout'})`);
+  return maybeOne<any>(ctx.db, 'SELECT * FROM withdrawals WHERE id = $1', [id]);
+}
+
+/** Hourly: every withdrawal left `unknown` is checked with the provider. */
+export async function recheckUnknownPayouts(ctx: Ctx) {
+  if (!(ctx.payments instanceof NowPaymentsProvider)) return 0;
+  const rows = await many<{ id: string }>(ctx.db, `SELECT id FROM withdrawals WHERE status = 'unknown' AND updated_at < now() - interval '2 minutes' ORDER BY updated_at LIMIT 50`);
+  let n = 0;
+  for (const r of rows) {
+    try {
+      await recheckUnknownPayout(ctx, r.id);
+      n++;
+    } catch (err) {
+      ctx.log.warn({ err, withdrawalId: r.id }, 'payout recheck failed; will try again');
+    }
+  }
+  return n;
 }
 
 /** Reverses an approved withdrawal that the provider could not send: fee and net return to the seller. */

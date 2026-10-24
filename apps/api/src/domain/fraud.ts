@@ -151,7 +151,7 @@ export async function heuristicScore(q: Queryable, orderId: string): Promise<Ris
        JOIN risk_signals other ON other.kind = mine.kind AND other.value = mine.value AND other.user_id <> mine.user_id
        JOIN users u ON u.id = other.user_id
       WHERE mine.user_id = $1
-        AND (u.status = 'suspended'
+        AND (u.status IN ('suspended', 'banned')
              OR EXISTS (SELECT 1 FROM risk_flags f WHERE f.user_id = u.id AND f.status = 'confirmed')
              OR EXISTS (SELECT 1 FROM orders o2 WHERE o2.buyer_id = u.id AND o2.status = 'charged_back'))`,
     [order.buyer_id],

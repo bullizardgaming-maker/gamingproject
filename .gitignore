@@ -27,3 +27,4 @@ apps/web/playwright-report/
 
 # local Redis snapshots
 dump.rdb
+security/zap/reports/

@@ -13,7 +13,13 @@ import { accountId, post } from './ledger.js';
  */
 const CODE = /^[A-Z0-9][A-Z0-9_-]{2,19}$/;
 
+/** A creator's share can never exceed half of the order's commission (Round 20). */
+export const MAX_AFFILIATE_RATE_BPS = 5000;
+const checkRate = (bps: number | undefined) => {
+  if (bps != null && (bps < 0 || bps > MAX_AFFILIATE_RATE_BPS)) throw badRequest('rate_too_high', `A creator's share is at most ${MAX_AFFILIATE_RATE_BPS / 100}% of the commission`);
+};
 export async function createAffiliate(ctx: Ctx, staffId: string, input: { userId: string; code: string; rateBps: number; note?: string }) {
+  checkRate(input.rateBps);
   const code = input.code.trim().toUpperCase();
   if (!CODE.test(code)) throw badRequest('invalid_code', 'Codes are 3 to 20 letters, digits, - or _');
   const user = await maybeOne(ctx.db, `SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL`, [input.userId]);
@@ -24,6 +30,7 @@ export async function createAffiliate(ctx: Ctx, staffId: string, input: { userId
 }
 
 export async function updateAffiliate(ctx: Ctx, id: string, patch: { rateBps?: number; status?: 'active' | 'paused'; note?: string }) {
+  checkRate(patch.rateBps);
   const row = await maybeOne(ctx.db, `UPDATE affiliates SET rate_bps = COALESCE($2, rate_bps), status = COALESCE($3, status), note = COALESCE($4, note), updated_at = now() WHERE id = $1 RETURNING *`, [id, patch.rateBps ?? null, patch.status ?? null, patch.note ?? null]);
   if (!row) throw notFound('Affiliate');
   return row;
@@ -40,24 +47,33 @@ export async function listAffiliates(q: Queryable) {
   );
 }
 
-/** A buyer enters a creator's code (at signup or once afterwards). First code wins; own code is refused. */
+/** A creator's code, entered at sign-up only (CEO, Oct 24): one code per user, never added or changed later. */
 export async function attributeBuyer(q: Queryable, userId: string, code: string) {
   const a = await maybeOne<{ id: string; user_id: string; status: string }>(q, 'SELECT id, user_id, status FROM affiliates WHERE code = $1', [code.trim().toUpperCase()]);
   if (!a || a.status !== 'active') throw badRequest('invalid_affiliate_code', 'That creator code is not valid');
   if (a.user_id === userId) throw badRequest('own_code', 'You cannot use your own code');
+  const already = await maybeOne(q, 'SELECT 1 FROM users WHERE id = $1 AND referred_by IS NOT NULL', [userId]);
+  if (already) throw conflict('one_code_only', 'One code per account: a friend’s invite code is already on it');
   const r = await q.query('INSERT INTO affiliate_attributions (user_id, affiliate_id) VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING', [userId, a.id]);
   if (!r.rowCount) throw conflict('already_attributed', 'A creator code is already on this account');
   return { affiliateId: a.id };
 }
+/** Is a code a creator code (as opposed to a user's invite code)? */
+export async function isAffiliateCode(q: Queryable, code: string) {
+  return !!(await maybeOne(q, 'SELECT 1 FROM affiliates WHERE code = $1', [code.trim().toUpperCase()]));
+}
 
 /** Called when an order completes: pays the creator's share of the commission. */
-export async function maybePayAffiliate(ctx: Ctx, s: TxScope, order: { id: string; buyer_id: string; commission_cents: number; currency: string }) {
+export async function maybePayAffiliate(ctx: Ctx, s: TxScope, order: { id: string; buyer_id: string; seller_id?: string; commission_cents: number; currency: string }) {
+  // One code per user: a buyer who came with a friend's invite code earns for that friend, never for a creator too.
   const a = await maybeOne<{ id: string; user_id: string; rate_bps: number }>(
     s.tx,
-    `SELECT a.id, a.user_id, a.rate_bps FROM affiliate_attributions t JOIN affiliates a ON a.id = t.affiliate_id WHERE t.user_id = $1 AND a.status = 'active'`,
+    `SELECT a.id, a.user_id, a.rate_bps FROM affiliate_attributions t JOIN affiliates a ON a.id = t.affiliate_id JOIN users u ON u.id = t.user_id
+      WHERE t.user_id = $1 AND a.status = 'active' AND u.referred_by IS NULL`,
     [order.buyer_id],
   );
   if (!a) return null;
+  if (order.seller_id && order.seller_id === a.user_id) return null; // the creator never earns on their own sales
   const earned = Math.floor((order.commission_cents * Number(a.rate_bps)) / 10_000);
   if (earned <= 0) return null;
   const ins = await s.tx.query(

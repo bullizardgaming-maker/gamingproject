@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { buy, signIn } from './helpers';
+import { buy, signIn, signOut } from './helpers';
 
 /** CEO decisions of Oct 23: terms line instead of a checkbox, recurring referral, hidden Merchant API, translated chat notices. */
 test.describe('launch decisions', () => {
@@ -26,7 +26,7 @@ test.describe('launch decisions', () => {
     await signIn(page, 'Buyer');
     await page.goto('/account');
     const card = page.getByTestId('invite-friends');
-    await expect(card.getByText(/You earn 20% of Bullizard’s commission on every order your friends make/)).toBeVisible();
+    await expect(card.getByText(/one code per account, at sign-up only/)).toBeVisible();
     await expect(card.getByTestId('invite-link')).toContainText('/login?ref=BZ');
     await expect(card.getByText('$0.68', { exact: true })).toBeVisible(); // two paid orders of one friend
     await page.goto('/help/invite-friends');
@@ -81,5 +81,32 @@ test.describe('launch decisions', () => {
     await expect(footer.getByText('18+ only. Not affiliated with any game publisher.')).toBeVisible();
     await footer.getByRole('link', { name: 'Seller Agreement' }).click();
     await expect(page.getByRole('heading', { name: 'Seller Agreement' })).toBeVisible();
+  });
+});
+
+test.describe('damage limits (launch gate §4)', () => {
+  test('an admin pauses sign-ups from Ops → Controls; the banner shows and sign-up is refused; resume clears it', async ({ page }) => {
+    await signIn(page, 'Admin');
+    await page.goto('/admin');
+    await page.getByRole('tab', { name: 'Controls' }).click();
+    page.once('dialog', (d) => d.accept());
+    await page.getByTestId('switch-pause_signups').click();
+    await expect(page.getByRole('status').filter({ hasText: 'PAUSED' })).toBeVisible();
+    await page.goto('/market');
+    await expect(page.getByTestId('paused-banner')).toContainText('sign-ups');
+    await signOut(page);
+    await page.goto('/login');
+    await page.getByRole('button', { name: 'New here? Create an account' }).click();
+    await page.locator('input[name=displayName]').fill('Late Comer');
+    await page.locator('input[name=email]').fill(`late-${Date.now()}@example.com`);
+    await page.locator('input[name=password]').fill('correct horse battery');
+    await page.getByRole('checkbox', { name: /18 or older/ }).check();
+    await page.getByRole('button', { name: 'Create account' }).click();
+    await expect(page.getByRole('alert')).toContainText('Sign-ups are paused');
+    await signIn(page, 'Admin');
+    await page.goto('/admin');
+    await page.getByRole('tab', { name: 'Controls' }).click();
+    await page.getByTestId('switch-pause_signups').click();
+    await expect(page.getByRole('status').filter({ hasText: 'resumed' })).toBeVisible();
   });
 });

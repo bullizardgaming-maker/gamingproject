@@ -59,16 +59,18 @@ test.describe('launch extras', () => {
     await expect(page.getByRole('alert')).toContainText('already on the market');
   });
 
-  test('a buyer applies a creator code once; finance manages codes', async ({ page }) => {
-    await signIn(page, 'Buyer');
-    await page.goto('/account');
-    const card = page.getByTestId('creator-code');
-    await card.getByPlaceholder('e.g. STREAMER-X').fill('nope-1');
-    await card.getByRole('button', { name: 'Apply code' }).click();
-    await expect(card.getByRole('alert')).toContainText("isn't valid");
-    await card.getByPlaceholder('e.g. STREAMER-X').fill('arcane-tv');
-    await card.getByRole('button', { name: 'Apply code' }).click();
-    await expect(card.getByRole('status')).toContainText('Code ARCANE-TV is on your account');
+  test('a creator code is entered once at sign-up (one code per account); finance manages codes', async ({ page }) => {
+    await page.goto('/login?ref=arcane-tv');
+    await page.getByRole('button', { name: 'New here? Create an account' }).click();
+    const codeField = page.getByLabel('Invite or creator code (optional)');
+    await expect(codeField).toHaveValue('arcane-tv'); // pre-filled from the invite link
+    await page.locator('input[name=displayName]').fill('Code Fan');
+    await page.locator('input[name=email]').fill(`fan-${Date.now()}@example.com`);
+    await page.locator('input[name=password]').fill('correct horse battery');
+    await page.getByRole('checkbox', { name: /18 or older/ }).check();
+    await page.getByRole('button', { name: 'Create account' }).click();
+    await expect(page).toHaveURL(/\/account/);
+    await expect(page.getByTestId('creator-code')).toHaveCount(0); // buyers never see an "apply code" box after sign-up
 
     await signOut(page);
     await signIn(page, 'Admin');

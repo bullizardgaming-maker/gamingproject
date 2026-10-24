@@ -134,12 +134,17 @@ export const TEMPLATES = {
     subject: (d) => `${money(d.seller_net_cents, d.currency)} landed in your balance`,
     body: (d, link) => `${d.order_ref ?? d.title} is complete. ${money(d.seller_net_cents, d.currency)} is yours and ready to withdraw.\n\nOpen wallet: ${link('/sell/money')}`,
   },
+  payout_address_code: {
+    category: 'security',
+    subject: () => 'Your code to confirm the new payout address',
+    body: (d) => `Your code is ${d.code}. It expires in ${d.minutes} minutes and only works with the confirmation link from our other email.\n\nNot you? Change your password now.`,
+  },
   payout_address_confirm: {
     category: 'security',
     subject: () => 'Confirm your new payout address',
     body: (d) =>
       `Someone (hopefully you) asked to send your withdrawals to this ${d.coin} address:\n\n${d.address}\n\n` +
-      `Confirm it within ${d.minutes} minutes${d.mfa ? ' (you will be asked for your two-factor code)' : ''}:\n${d.url}\n\n` +
+      `Confirm it within ${d.minutes} minutes (you will be asked for ${d.via === 'app' ? 'your two-factor code' : d.via === 'sms' ? 'the code we sent by SMS' : 'the code in our other email'}):\n${d.url}\n\n` +
       `If you didn't ask for this, ignore this email and change your password.`,
   },
   payout_address_changed: {
@@ -252,6 +257,11 @@ export const TEMPLATES = {
       `- Returning buyers: ${d.returning_pct == null ? 'n/a' : `${d.returning_pct}%`} of ${d.month_active_buyers} active buyers\n` +
       `- 90-day repeat rate (completed cohorts): ${d.repeat_90d_pct == null ? 'n/a' : `${d.repeat_90d_pct}%`}\n\n` +
       `Cohorts and the full series: ${link('/admin/retention')}`,
+  },
+  ops_alert: {
+    category: 'operations',
+    subject: (d) => `Ops alert: ${d.title}`,
+    body: (d, link) => `${d.detail}\n\nWhat to do: ${d.action}\n\nOps console: ${link('/admin')}`,
   },
   reconciliation_alert: {
     category: 'operations',

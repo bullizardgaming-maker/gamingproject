@@ -36,7 +36,19 @@ export interface NowPayment {
   updated_at?: string;
 }
 
+/** A provider answer with an HTTP status; a 4xx is a definite rejection, anything else leaves the outcome unknown. */
+export class NowPaymentsError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message);
+  }
+  /** The provider definitely did not act (bad request, auth, not found): safe to reverse. */
+  get rejected() {
+    return this.status >= 400 && this.status < 500 && this.status !== 408 && this.status !== 429;
+  }
+}
+
 export interface NowPayout {
+  unique_external_id?: string | null;
   id: string | number;
   batch_withdrawal_id?: string | number;
   status: NowPayoutStatus;
@@ -105,7 +117,7 @@ export class NowPaymentsProvider implements PaymentProvider {
     } catch {
       /* non-JSON error page */
     }
-    if (!res.ok) throw new Error(`NOWPayments ${method} ${path} failed (${res.status}): ${json?.message ?? text.slice(0, 200)}`);
+    if (!res.ok) throw new NowPaymentsError(`NOWPayments ${method} ${path} failed (${res.status}): ${json?.message ?? text.slice(0, 200)}`, res.status);
     return json as T;
   }
 
@@ -246,14 +258,15 @@ export class NowPaymentsProvider implements PaymentProvider {
    * verified at once with a TOTP from the account's 2FA secret, as NOWPayments documents for
    * automated payouts; without the secret the batch waits for the code in the dashboard.
    */
-  async createPayout(input: { address: string; currency: string; amount: number; ipnCallbackUrl: string; extraId?: string | null }): Promise<{ batchId: string; payout: NowPayout }> {
+  async createPayout(input: { address: string; currency: string; amount: number; ipnCallbackUrl: string; extraId?: string | null; externalId?: string }): Promise<{ batchId: string; payout: NowPayout }> {
     const token = await this.bearer();
     const r = await this.call<{ id: string | number; withdrawals: NowPayout[] }>(
       'POST',
       '/v1/payout',
       {
         ipn_callback_url: input.ipnCallbackUrl,
-        withdrawals: [{ address: input.address, currency: input.currency, amount: input.amount, ipn_callback_url: input.ipnCallbackUrl, ...(input.extraId ? { extra_id: input.extraId } : {}) }],
+        // unique_external_id: our withdrawal id, so a retry can never create a second payout for the same money.
+        withdrawals: [{ address: input.address, currency: input.currency, amount: input.amount, ipn_callback_url: input.ipnCallbackUrl, ...(input.externalId ? { unique_external_id: input.externalId } : {}), ...(input.extraId ? { extra_id: input.extraId } : {}) }],
       },
       { Authorization: `Bearer ${token}` },
     );
@@ -266,6 +279,20 @@ export class NowPaymentsProvider implements PaymentProvider {
 
   async getPayout(payoutId: string): Promise<NowPayout> {
     return this.call<NowPayout>('GET', `/v1/payout/${payoutId}`, undefined, { Authorization: `Bearer ${await this.bearer()}` });
+  }
+
+  /** After a timeout: did the provider create a payout for this withdrawal? Looks through recent payouts for our unique_external_id. */
+  async findPayoutByExternalId(externalId: string, since: Date): Promise<NowPayout | null> {
+    const token = await this.bearer();
+    const from = since.toISOString().slice(0, 10);
+    for (let page = 0; page < 10; page++) {
+      const r = await this.call<{ data?: NowPayout[] } | NowPayout[]>('GET', `/v1/payout?limit=100&page=${page}&date_from=${from}&order_by=created_at&order=desc`, undefined, { Authorization: `Bearer ${token}` });
+      const rows = Array.isArray(r) ? r : (r.data ?? []);
+      const hit = rows.find((w) => String(w.unique_external_id ?? '') === externalId);
+      if (hit) return hit;
+      if (rows.length < 100) break;
+    }
+    return null;
   }
 
   /** Legacy interface: used by the old synchronous withdrawal path; the new flow goes through createPayout. */

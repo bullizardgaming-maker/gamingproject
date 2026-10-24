@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { LivePlatformAccounts } from '../src/providers/platformAccounts.js';
-import { runJobsOnce } from '../src/worker.js';
-import { buyAndPay, client, makeUser, setup, type Harness } from './helpers.js';
+import { endWindowAndRelease, buyAndPay, client, makeUser, setup, type Harness } from './helpers.js';
 
 let h: Harness;
 beforeAll(async () => {
@@ -66,8 +65,7 @@ describe('linked game accounts', () => {
     const buyer = await makeUser(h, { tier: 2 });
     const order = await buyAndPay(h, buyer, offer.id);
     await seller.api.post(`/v1/orders/${order.id}/deliver`, { payload: 'login:pass' });
-    await h.ctx.db.query(`UPDATE orders SET protection_ends_at = now() - interval '1 minute' WHERE id = $1`, [order.id]);
-    await runJobsOnce(h.ctx);
+    await endWindowAndRelease(h, order.id);
     expect((await seller.api.get('/v1/seller/linked-accounts')).body).toEqual([]);
     expect((await client(h.app).get(`/v1/offers/${offer.id}`)).body.linked_platform).toBeNull();
     expect((await link(buyer, 'riot', 'puuid-abc-123')).location).toMatch(/linked=riot/);

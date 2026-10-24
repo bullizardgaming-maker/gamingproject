@@ -25,6 +25,12 @@ envVarGroups:
         value: "3310"
       - key: TRUST_PROXY
         value: "1" # Render's load balancer
+      - key: MERCHANT_API_ENABLED
+        value: "true" # on staging only: the OpenAPI document feeds the ZAP scan (security/zap)
+      - key: AUTO_REFUND_LATE_ORDERS
+        value: "false"
+      - key: CARD_REFUNDS_ENABLED
+        value: "false"
       - key: JWT_SECRET
         generateValue: true
       - key: FINGERPRINT_KEY

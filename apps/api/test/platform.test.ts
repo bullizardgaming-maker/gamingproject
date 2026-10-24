@@ -126,7 +126,7 @@ describe('sandbox', () => {
     const o1 = (await bot.post('/v1/sandbox/orders', { offerId: offer.id })).body;
     expect(o1.status).toBe('paid');
     expect((await bot.post(`/v1/merchant/orders/${o1.id}/deliver`, { payload: 'done' })).status).toBe(200);
-    expect((await bot.post(`/v1/sandbox/orders/${o1.id}/expire-protection`)).body.status).toBe('completed');
+    expect((await bot.post(`/v1/sandbox/orders/${o1.id}/expire-protection`)).body.status).toBe('delivered'); // no auto-release: staff release it
 
     const o2 = (await bot.post('/v1/sandbox/orders', { offerId: offer.id })).body;
     expect((await bot.post(`/v1/sandbox/orders/${o2.id}/dispute`, {})).status).toBe(200);

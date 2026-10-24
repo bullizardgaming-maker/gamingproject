@@ -5,6 +5,7 @@ import { createPool, migrate } from '../src/db.js';
 import { MemoryPubSub } from '../src/lib/pubsub.js';
 import { ConsoleMessenger } from '../src/providers/messaging.js';
 import { MockKycProvider } from '../src/providers/kyc/mock.js';
+import { forgetControlsCache } from '../src/domain/controls.js';
 import { buildApp } from '../src/server.js';
 
 export interface Harness {
@@ -23,6 +24,9 @@ export async function setup(overrides: Record<string, string> = {}, ctxOverrides
   await db.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
   await migrate(db);
   await db.query('UPDATE launch_settings SET phase = 3, allowed_games = NULL'); // tests cover every category and game; launch-phase.test.ts checks the gating
+  // Beta limits off for the suite (round20.test.ts turns them on to check them); the controls cache is per process.
+  await db.query('UPDATE platform_controls SET max_order_cents = 100000000, max_withdrawal_day_cents = 100000000, new_account_days = 0');
+  forgetControlsCache();
   const messenger = new ConsoleMessenger(() => {});
   const ctx = createContext(cfg, silent, { db, pubsub: new MemoryPubSub(), messenger, ...ctxOverrides });
   const app = await buildApp(ctx);
@@ -69,7 +73,7 @@ export function client(app: FastifyInstance, token?: string, headers: Record<str
 let seq = 0;
 
 /** Register a user and fast-path them to the requested tier/role. */
-export async function makeUser(h: Harness, opts: { tier?: 0 | 1 | 2; role?: 'user' | 'arbiter' | 'support' | 'finance' | 'compliance' | 'admin'; device?: string; ip?: string; name?: string; /** Tier-1 users who may sell (the rules test passed). */ rulesPassed?: boolean } = {}) {
+export async function makeUser(h: Harness, opts: { tier?: 0 | 1 | 2; role?: 'user' | 'arbiter' | 'support' | 'lead' | 'finance' | 'compliance' | 'admin'; device?: string; ip?: string; name?: string; /** Tier-1 users who may sell (the rules test passed). */ rulesPassed?: boolean } = {}) {
   seq++;
   const email = `user${seq}_${Date.now()}@example.com`;
   const res = await client(h.app, undefined, {
@@ -121,4 +125,19 @@ export async function buyAndPay(h: Harness, buyer: { api: Api }, offerId: string
 
 export function mockKyc(h: Harness) {
   return h.ctx.kyc as MockKycProvider;
+}
+
+/**
+ * Round 20: no order releases on its own. For tests that used to wait out the 14-day window, end the window
+ * and have a support member release the order (the only way an unconfirmed delivery completes).
+ */
+export async function endWindowAndRelease(h: Harness, orderId: string) {
+  const { runJobsOnce } = await import('../src/worker.js');
+  await h.ctx.db.query(`UPDATE orders SET protection_ends_at = now() - interval '1 second', delivered_at = LEAST(delivered_at, now() - interval '2 days') WHERE id = $1`, [orderId]);
+  await runJobsOnce(h.ctx); // marks the window as ended; nothing moves
+  const amount = Number((await h.ctx.db.query('SELECT amount_cents FROM orders WHERE id = $1', [orderId])).rows[0].amount_cents);
+  const staff = await makeUser(h, { role: amount > 200_00 ? 'lead' : 'support' });
+  const res = await staff.api.post(`/v1/admin/orders/${orderId}/release`, { note: 'Window over, delivery checked (test)' });
+  if (res.status !== 200) throw new Error(`staff release failed: ${JSON.stringify(res.body)}`);
+  return res.body;
 }

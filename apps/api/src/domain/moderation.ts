@@ -94,12 +94,12 @@ export async function chatFlagQueue(ctx: Ctx, status: 'open' | 'confirmed' | 'di
 export async function decideChatFlag(ctx: Ctx, flagId: string, staffId: string, confirm: boolean, note?: string) {
   const f = await maybeOne(
     ctx.db,
-    `UPDATE chat_flags SET status = $2, reviewed_by = $3, note = $4, reviewed_at = now() WHERE id = $1 AND status = 'open' RETURNING id, status, user_id`,
+    `UPDATE chat_flags SET status = $2, reviewed_by = $3, note = $4, reviewed_at = now() WHERE id = $1 AND status = 'open' RETURNING id, status, user_id, strike`,
     [flagId, confirm ? 'confirmed' : 'dismissed', staffId, note?.trim() || null],
   );
   if (!f) throw notFound('Open flag');
   // A false alarm shouldn't count towards the automatic suspension.
-  if (!confirm) await ctx.db.query('UPDATE users SET offplatform_strikes = GREATEST(offplatform_strikes - 1, 0) WHERE id = $1', [f.user_id]);
+  if (!confirm && f.strike) await ctx.db.query('UPDATE users SET offplatform_strikes = GREATEST(offplatform_strikes - 1, 0) WHERE id = $1', [f.user_id]);
   return f;
 }
 

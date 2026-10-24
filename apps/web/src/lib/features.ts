@@ -11,14 +11,18 @@ export interface Features {
   sandbox: boolean;
   /** Legal (Oct 24): the Terms version in force and, during the 14-day notice, the change that is coming. */
   legal: { tosVersion: string | null; notice: { version: string; effective_at?: string; effectiveAt?: string } | null };
+  /** Kill switches (Ops → Controls) and beta limits. */
+  paused: { withdrawals: boolean; orders: boolean; chat: boolean; signups: boolean; message: string | null };
+  limits: { maxOrderCents: number; maxWithdrawalDayCents: number; newAccountDays: number; newAccountMaxOrderCents: number } | null;
 }
-let features: Features = { merchantApi: false, sandbox: false, legal: { tosVersion: null, notice: null } };
+const NO_PAUSE = { withdrawals: false, orders: false, chat: false, signups: false, message: null };
+let features: Features = { merchantApi: false, sandbox: false, legal: { tosVersion: null, notice: null }, paused: NO_PAUSE, limits: null };
 let loading: Promise<void> | null = null;
 const listeners = new Set<() => void>();
 export function loadFeatures() {
   loading ??= api<Features>('/features')
     .then((f) => {
-      features = { merchantApi: !!f.merchantApi, sandbox: !!f.sandbox, legal: f.legal ?? { tosVersion: null, notice: null } };
+      features = { merchantApi: !!f.merchantApi, sandbox: !!f.sandbox, legal: f.legal ?? { tosVersion: null, notice: null }, paused: f.paused ?? NO_PAUSE, limits: f.limits ?? null };
       listeners.forEach((l) => l());
     })
     .catch(() => {

@@ -23,6 +23,16 @@ export function PayoutsPanel() {
       setMsg(e.message);
     }
   };
+  const recheck = async (id: string) => {
+    setMsg('');
+    try {
+      const w = await api<any>(`/admin/withdrawals/${id}/recheck`, { body: {} });
+      setMsg(w.status === 'processing' ? 'The provider has this payout; waiting for it to finish.' : 'The provider never created it; the amount is back in the seller’s balance.');
+      reload();
+    } catch (e: any) {
+      setMsg(e.message);
+    }
+  };
   return (
     <div className="stack">
       <p className="small muted" style={{ margin: 0 }}>
@@ -48,8 +58,14 @@ export function PayoutsPanel() {
                   <td className="mono">{money(Number(w.net_cents), w.currency)}</td>
                   <td className="small"><code className="mono" style={{ wordBreak: 'break-all' }}>{w.destination_address}</code><div className="muted">{String(w.destination_currency).toUpperCase()}</div></td>
                   <td className="small">{fmt(w.created_at)}</td>
-                  <td><span className={`chip ${w.status === 'processing' ? 'held' : ''}`}>{w.status === 'processing' ? 'sending' : 'awaiting approval'}</span></td>
+                  <td><span className={`chip ${w.status === 'processing' ? 'held' : w.status === 'unknown' ? 'disputed' : ''}`}>{w.status === 'processing' ? 'sending' : w.status === 'unknown' ? 'provider did not answer' : 'awaiting approval'}</span></td>
                   <td>
+                    {w.status === 'unknown' && (
+                      <div className="stack" style={{ gap: 6, minWidth: 200 }}>
+                        <span className="small muted">The payout call timed out. Nothing is reversed until NOWPayments says whether it exists (checked hourly).</span>
+                        <button className="btn ghost" onClick={() => recheck(w.id)}>Check with provider now</button>
+                      </div>
+                    )}
                     {w.status === 'pending_approval' && (
                       <div className="stack" style={{ gap: 6, minWidth: 200 }}>
                         <input placeholder="Note (optional)" value={note[w.id] ?? ''} onChange={(e) => setNote({ ...note, [w.id]: e.target.value })} aria-label={`Note for withdrawal ${w.id.slice(0, 8)}`} />

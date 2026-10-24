@@ -124,12 +124,18 @@ export const OFFER_LIST_SQL = `
  * (Tier 2) is due within 30 days of the first listing (domain/onboarding.ts), after which selling
  * is restricted until it is done.
  */
-export function requireSeller(user: { kyc_tier: number; status: string; rules_passed_at?: string | null; selling_restricted_at?: string | null; listing_banned_at?: string | null }) {
+/** Days an unverified seller may sell and withdraw after their first listing (rules_settings.id_due_days; 30 at launch). */
+export const ID_DUE_DAYS_DEFAULT = 30;
+/** The 30-day rule, computed inline from seller_since (not only from the worker's flag, Round 20). */
+export const idDeadlinePassed = (user: { kyc_tier: number; seller_since?: string | null; selling_restricted_at?: string | null }, idDueDays = ID_DUE_DAYS_DEFAULT) =>
+  user.kyc_tier < 2 && (!!user.selling_restricted_at || (!!user.seller_since && Date.now() - new Date(user.seller_since).getTime() > idDueDays * 86_400_000));
+
+export function requireSeller(user: { kyc_tier: number; status: string; rules_passed_at?: string | null; selling_restricted_at?: string | null; listing_banned_at?: string | null; seller_since?: string | null }, idDueDays = ID_DUE_DAYS_DEFAULT) {
   if (user.status !== 'active') throw forbidden('suspended', 'Account suspended');
   if (user.listing_banned_at) throw forbidden('listing_banned', 'Your account can’t list offers right now. Open an appeal from the help centre.');
   if (user.kyc_tier < 1) throw forbidden('tier1_required', 'Verify your email and phone before selling');
   if (!user.rules_passed_at) throw forbidden('rules_test_required', 'Pass the seller rules test before your first listing');
-  if (user.selling_restricted_at && user.kyc_tier < 2) throw forbidden('kyc_overdue', 'Verify your identity to keep selling: the 30-day deadline has passed');
+  if (idDeadlinePassed(user, idDueDays)) throw forbidden('kyc_overdue', 'Verify your identity to keep selling: the 30-day deadline has passed');
 }
 
 export async function createOffer(ctx: Ctx, seller: { id: string; kyc_tier: number; status: string }, input: OfferInput) {

@@ -45,7 +45,7 @@ export function seal(key: Buffer, body: string, roomId: string, seq: number) {
 
 export function unseal(key: Buffer, sealed: string, roomId: string, seq: number) {
   const buf = Buffer.from(sealed, 'base64');
-  const d = createDecipheriv('aes-256-gcm', key, buf.subarray(0, 12));
+  const d = createDecipheriv('aes-256-gcm', key, buf.subarray(0, 12), { authTagLength: 16 });
   d.setAAD(positionAad(roomId, seq));
   d.setAuthTag(buf.subarray(12, 28));
   return Buffer.concat([d.update(buf.subarray(28)), d.final()]).toString('utf8');

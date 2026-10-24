@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { many, maybeOne, one } from '../db.js';
-import { badRequest, notFound } from '../lib/errors.js';
+import { AppError, badRequest, conflict, notFound } from '../lib/errors.js';
 import { enqueueEmail } from './notifications.js';
 
 /**
@@ -58,7 +58,9 @@ export async function documentVersion(q: Queryable, doc: LegalDoc, version: stri
 /** The Terms version new sign-ups and orders record. */
 export async function tosVersion(q: Queryable): Promise<string> {
   const row = await maybeOne<{ version: string }>(q, `SELECT version FROM legal_documents WHERE doc = 'terms' AND locale = 'en' AND effective_at <= now() ORDER BY effective_at DESC LIMIT 1`);
-  return row?.version ?? '2026-10-24';
+  // Fail closed: without Terms in force nobody can sign up or order (Round 20).
+  if (!row) throw new AppError(503, 'terms_unavailable', 'The Terms of Service are not published; sign-up and orders are paused');
+  return row.version;
 }
 
 /** A material change announced but not yet in force (shown as a banner for NOTICE_DAYS). */
@@ -106,15 +108,20 @@ export async function publishDocument(ctx: Ctx, staffId: string, input: PublishI
   const locale = lang(input.lang);
   const effective = input.effectiveAt ? new Date(input.effectiveAt) : new Date();
   if (Number.isNaN(effective.getTime())) throw badRequest('invalid_date', 'effectiveAt must be a date');
-  if (input.material && effective.getTime() < Date.now() + (NOTICE_DAYS - 1) * 86_400_000) {
+  // Notice period: a material change takes effect no sooner than exactly NOTICE_DAYS from now.
+  if (input.material && effective.getTime() < Date.now() + NOTICE_DAYS * 86_400_000 - 60_000) {
     throw badRequest('notice_required', `A material change takes effect at least ${NOTICE_DAYS} days after it is published`);
   }
   const sha = createHash('sha256').update(input.contentMd, 'utf8').digest('hex');
+  // A version that is already in force is immutable: the hash users accepted must stay checkable. Changes are a new version.
+  const existing = await maybeOne<{ effective_at: string }>(ctx.db, 'SELECT effective_at FROM legal_documents WHERE doc = $1 AND locale = $2 AND version = $3', [input.doc, locale, input.version]);
+  if (existing && new Date(existing.effective_at) <= new Date()) throw conflict('version_in_force', 'This version is already in force and cannot be edited; publish a new version');
   const row = await one<LegalRow>(
     ctx.db,
     `INSERT INTO legal_documents (doc, locale, version, effective_at, title, content_md, sha256, material, created_by)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      ON CONFLICT (doc, locale, version) DO UPDATE SET effective_at = EXCLUDED.effective_at, title = EXCLUDED.title, content_md = EXCLUDED.content_md, sha256 = EXCLUDED.sha256, material = EXCLUDED.material, created_by = EXCLUDED.created_by
+       WHERE legal_documents.effective_at > now()
      RETURNING ${COLS}`,
     [input.doc, locale, input.version, effective.toISOString(), input.title, input.contentMd, sha, !!input.material, staffId],
   );

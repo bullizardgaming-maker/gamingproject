@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { accountId, balance, sellerAvailable } from '../src/domain/ledger.js';
 import { MockPaymentProvider } from '../src/providers/payments/mock.js';
-import { buyAndPay, client, makeOffer, makeUser, setup, type Harness } from './helpers.js';
+import { endWindowAndRelease, buyAndPay, client, makeOffer, makeUser, setup, type Harness } from './helpers.js';
 
 let h: Harness;
 beforeAll(async () => {
@@ -145,9 +145,7 @@ describe('chargeback shield & automated representment', () => {
     const offer = await makeOffer(seller, { categorySlug: 'accounts', priceCents: 80_00, deliveryMode: 'manual' });
     const order = await buyAndPay(h, buyer, offer.id);
     await seller.api.post(`/v1/orders/${order.id}/deliver`, { payload: 'acc' });
-    await h.ctx.db.query(`UPDATE orders SET protection_ends_at = now() - interval '1 second' WHERE id = $1`, [order.id]);
-    const { runJobsOnce } = await import('../src/worker.js');
-    await runJobsOnce(h.ctx);
+    await endWindowAndRelease(h, order.id);
     const net = await sellerAvailable(h.ctx.db, seller.id);
     expect(net).toBe(80_00); // the seller keeps their price; the buyer paid 84.22
 

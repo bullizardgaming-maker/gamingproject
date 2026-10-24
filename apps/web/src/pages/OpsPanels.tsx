@@ -442,3 +442,75 @@ export function ListingBanPanel() {
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Kill switches and beta limits (launch gate §4)
+// ---------------------------------------------------------------------------
+type Controls = {
+  pause_withdrawals: boolean; pause_orders: boolean; pause_chat: boolean; pause_signups: boolean; pause_message: string | null;
+  max_withdrawal_day_cents: number; max_order_cents: number; new_account_days: number; new_account_max_order_cents: number; new_account_max_open_orders: number;
+  alert_dispute_hour: number; alert_bans_hour: number; alert_withdrawal_cents: number; updated_at: string;
+};
+export function ControlsPanel() {
+  const { data, error, reload, setError } = useLoad(() => api<Controls>('/admin/controls'));
+  const [form, setForm] = useState<Partial<Controls>>({});
+  const [msg, setMsg] = useState('');
+  if (!data) return <p className="muted">{error || 'Loading…'}</p>;
+  const cur = { ...data, ...form };
+  const save = async (patch: Partial<Controls>, ok: string) => {
+    setError(''); setMsg('');
+    try {
+      await api('/admin/controls', { method: 'PUT', body: patch });
+      setMsg(ok); setForm({}); reload();
+    } catch (e: any) { setError(e.message); }
+  };
+  const Switch = ({ k, label, hint }: { k: 'pause_withdrawals' | 'pause_orders' | 'pause_chat' | 'pause_signups'; label: string; hint: string }) => (
+    <div className="row spread" style={{ gap: 12, alignItems: 'center' }}>
+      <div><b>{label}</b><div className="small muted">{hint}</div></div>
+      <button className={`btn ${data[k] ? 'dispute' : 'ghost'}`} data-testid={`switch-${k}`} onClick={() => (data[k] || confirm(`Pause ${label.toLowerCase()} for everyone now?`)) && save({ [k]: !data[k] }, data[k] ? `${label}: resumed.` : `${label}: PAUSED.`)}>
+        {data[k] ? 'PAUSED — resume' : 'Pause'}
+      </button>
+    </div>
+  );
+  const Num = ({ k, label, cents = true }: { k: keyof Controls; label: string; cents?: boolean }) => (
+    <label className="field">{label}
+      <input type="number" min={0} step={cents ? 0.01 : 1} value={cents ? (Number(cur[k]) / 100).toFixed(2) : String(cur[k])} onChange={(e) => setForm({ ...form, [k]: cents ? Math.round(Number(e.target.value) * 100) : Number(e.target.value) })} />
+    </label>
+  );
+  return (
+    <div className="stack">
+      {error && <div className="alert" role="alert">{error}</div>}
+      {msg && <div className="ok" role="status">{msg}</div>}
+      <div className="card stack" data-testid="kill-switches">
+        <h3 style={{ margin: 0 }}>Kill switches</h3>
+        <p className="small muted" style={{ margin: 0 }}>Each switch stops one thing for everyone within seconds; existing orders keep moving and balances stay where they are. Every change is in the audit log.</p>
+        <Switch k="pause_withdrawals" label="Withdrawals" hint="No new withdrawal requests; approved payouts in flight still finish." />
+        <Switch k="pause_orders" label="New orders" hint="Nobody can start an order or a cart; paid orders continue to delivery and release." />
+        <Switch k="pause_chat" label="Chat" hint="Users cannot send messages; staff still can and all records stay." />
+        <Switch k="pause_signups" label="Sign-ups" hint="No new accounts; sign-in keeps working." />
+        <label className="field">Message shown to users while something is paused (optional)
+          <input value={cur.pause_message ?? ''} onChange={(e) => setForm({ ...form, pause_message: e.target.value || null })} placeholder="Back in 10 minutes." />
+        </label>
+        <button className="btn ghost" onClick={() => save({ pause_message: cur.pause_message ?? null }, 'Message saved.')}>Save message</button>
+      </div>
+      <div className="card stack" data-testid="beta-limits">
+        <h3 style={{ margin: 0 }}>Beta limits</h3>
+        <div className="grid three">
+          <Num k="max_order_cents" label="Max order (USD)" />
+          <Num k="max_withdrawal_day_cents" label="Max withdrawals per user per day (USD)" />
+          <Num k="new_account_days" label="New account: first N days" cents={false} />
+          <Num k="new_account_max_order_cents" label="New account: max order (USD)" />
+          <Num k="new_account_max_open_orders" label="New account: max open orders" cents={false} />
+        </div>
+        <h3 style={{ margin: 0 }}>Alert thresholds (email to admins + finance, checked every 15 minutes)</h3>
+        <div className="grid three">
+          <Num k="alert_dispute_hour" label="Disputes opened per hour" cents={false} />
+          <Num k="alert_bans_hour" label="Bans per hour" cents={false} />
+          <Num k="alert_withdrawal_cents" label="Single withdrawal above (USD)" />
+        </div>
+        <button className="btn" disabled={!Object.keys(form).length} onClick={() => save(form, 'Limits saved.')}>Save limits</button>
+        <p className="small muted" style={{ margin: 0 }}>Last change: {new Date(data.updated_at).toLocaleString()}</p>
+      </div>
+    </div>
+  );
+}

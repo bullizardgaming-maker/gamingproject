@@ -33,7 +33,10 @@ describe('legal documents', () => {
     const admin = await makeUser(h, { role: 'admin' });
     const soon = await admin.api.put('/v1/admin/legal/terms', { version: '2026-11-01', title: 'Terms', contentMd: '# Terms v2\n\nLonger body text.', material: true, effectiveAt: new Date(Date.now() + 86_400_000).toISOString() });
     expect(soon.body.error.code).toBe('notice_required');
-    const effectiveAt = new Date(Date.now() + 15 * 86_400_000).toISOString();
+    // 13 days 23 hours is too soon; exactly 14 days is fine (Round 20: the notice period is exactly 14 days).
+    const tooSoon = await admin.api.put('/v1/admin/legal/terms', { version: '2026-11-08', title: 'Terms', contentMd: '# Terms v2\n\nLonger body text.', material: true, effectiveAt: new Date(Date.now() + 14 * 86_400_000 - 3_600_000).toISOString() });
+    expect(tooSoon.body.error.code).toBe('notice_required');
+    const effectiveAt = new Date(Date.now() + 14 * 86_400_000 + 5_000).toISOString();
     const pub = await admin.api.put('/v1/admin/legal/terms', { version: '2026-11-08', title: 'Terms', contentMd: '# Terms v2\n\nLonger body text.', material: true, effectiveAt });
     expect(pub.status, JSON.stringify(pub.body)).toBe(200);
     expect((await client(h.app).get('/v1/features')).body.legal.notice).toMatchObject({ version: '2026-11-08' });
@@ -41,11 +44,21 @@ describe('legal documents', () => {
     const history = (await client(h.app).get('/v1/legal/terms/history')).body;
     expect(history.map((v: any) => v.version)).toEqual(['2026-11-08', '2026-10-24']);
     expect((await client(h.app).get('/v1/legal/terms/versions/2026-11-08')).body.content_md).toBe('# Terms v2\n\nLonger body text.');
+    // Fail closed: with no Terms in force, sign-up answers 503 (checked on a scratch copy of the table).
+    await h.ctx.db.query(`UPDATE legal_documents SET effective_at = effective_at + interval '10 years' WHERE doc = 'terms'`);
+    const closed = await client(h.app).post('/v1/auth/register', { email: `closed_${Date.now()}@example.com`, password: 'correct horse battery', displayName: 'Closed', acceptTerms: true });
+    expect(closed.status).toBe(503);
+    expect(closed.body.error.code).toBe('terms_unavailable');
+    await h.ctx.db.query(`UPDATE legal_documents SET effective_at = effective_at - interval '10 years' WHERE doc = 'terms'`);
     const emails = await h.ctx.db.query(`SELECT count(*)::int AS n FROM notifications WHERE template = 'legal_change' AND user_id = $1`, [u.id]);
     expect(emails.rows[0].n).toBe(1);
 
+    // Before it is in force the draft can still be corrected; once in force it is immutable (a new version is needed).
+    expect((await admin.api.put('/v1/admin/legal/terms', { version: '2026-11-08', title: 'Terms', contentMd: '# Terms v2\n\nLonger body text, corrected.', material: true, effectiveAt })).status).toBe(200);
+    expect((await admin.api.put('/v1/admin/legal/terms', { version: '2026-10-24', title: 'Terms', contentMd: '# Terms v1\n\nRewritten after the fact.', material: false })).body.error.code).toBe('version_in_force');
     // Once in force, users who accepted the old version must accept again; orders carry the version.
     await h.ctx.db.query(`UPDATE legal_documents SET effective_at = now() WHERE version = '2026-11-08'`);
+    expect((await admin.api.put('/v1/admin/legal/terms', { version: '2026-11-08', title: 'Terms', contentMd: '# Terms v2\n\nEdited after taking effect.', material: true, effectiveAt })).body.error.code).toBe('version_in_force');
     expect((await u.api.get('/v1/me/legal')).body).toMatchObject({ currentVersion: '2026-11-08', reacceptanceRequired: true });
     expect((await u.api.post('/v1/me/legal/accept', {})).body.tosVersion).toBe('2026-11-08');
     expect((await u.api.get('/v1/me/legal')).body.reacceptanceRequired).toBe(false);
@@ -99,6 +112,20 @@ describe('dispute decisions', () => {
     expect(row.lead_review).toBe(true);
     expect((await arbiter.api.get(`/v1/orders/${order.id}`)).body.lead_review).toBe(true);
     expect((await buyer.api.get(`/v1/orders/${order.id}`)).body).not.toHaveProperty('lead_review');
+    // Round 20: only the Support Lead (or an admin) decides or releases an order above $200 — enforced on the server.
+    const disputeId = row.id;
+    expect((await arbiter.api.post(`/v1/admin/disputes/${disputeId}/resolve`, { outcome: 'seller', note: 'Looks delivered' })).body.error.code).toBe('insufficient_permission');
+    const support = await makeUser(h, { role: 'support' });
+    expect((await support.api.post(`/v1/admin/orders/${order.id}/release`, { note: 'Release it' })).body.error.code).toBe('insufficient_permission');
+    const lead = await makeUser(h, { role: 'lead' });
+    const decided = await lead.api.post(`/v1/admin/disputes/${disputeId}/resolve`, { outcome: 'seller', note: 'Proof checked by the Lead' });
+    expect(decided.status, JSON.stringify(decided.body)).toBe(200);
+    // A small order: an arbiter decides as before.
+    const small = await makeOffer(seller, { deliveryMode: 'manual', stock: 2, priceCents: 20_00 });
+    const so = await buyAndPay(h, buyer, small.id);
+    await seller.api.post(`/v1/orders/${so.id}/deliver`, { payload: 'done' });
+    const sd = (await buyer.api.post(`/v1/orders/${so.id}/dispute`, { reason: 'Not received', category: 'not_delivered' })).body;
+    expect((await arbiter.api.post(`/v1/admin/disputes/${sd.id}/resolve`, { outcome: 'seller', note: 'Delivered' })).status).toBe(200);
   });
 });
 
@@ -148,11 +175,21 @@ describe('chat filter additions', () => {
     expect(blocked.status).toBe(422);
     expect(blocked.body.error.details.action).toBe('ban');
     const u = await h.ctx.db.query('SELECT status, suspension_reason FROM users WHERE id = $1', [seller.id]);
-    expect(u.rows[0]).toMatchObject({ status: 'suspended', suspension_reason: 'off_platform_ban' });
+    expect(u.rows[0]).toMatchObject({ status: 'banned', suspension_reason: 'off_platform_ban' });
     // A split platform name across two messages is caught on the second one.
     expect((await buyer.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'you on wh' })).status).toBe(201);
     const second = await buyer.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'atsapp later' });
     expect(second.status).toBe(422);
+    // A split hit is low confidence: blocked and queued for staff, no strike, account untouched (Round 20).
+    expect(second.body.error.details.action).toBe('queue');
+    const b = await h.ctx.db.query('SELECT status, offplatform_strikes FROM users WHERE id = $1', [buyer.id]);
+    expect(b.rows[0]).toMatchObject({ status: 'active', offplatform_strikes: 0 });
+    const loose = await buyer.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'pay outside the site and save the fee' });
+    expect(loose.status).toBe(422);
+    expect(loose.body.error.details.action).toBe('queue');
+    expect((await h.ctx.db.query('SELECT strike FROM chat_flags WHERE user_id = $1 ORDER BY id', [buyer.id])).rows.map((r) => r.strike)).toEqual([false, false]);
+    // Normal trade talk is never touched.
+    expect((await buyer.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'I need even more gold, send seven more' })).status).toBe(201);
   });
 });
 

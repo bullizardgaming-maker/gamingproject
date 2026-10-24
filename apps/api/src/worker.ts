@@ -29,6 +29,8 @@ import { expireClaims } from './domain/warranty.js';
 import { maybeRefreshResponseTimes } from './domain/presence.js';
 import { maybeSendRetentionDigest } from './domain/retentionDigest.js';
 import { refreshSellerRates } from './domain/commission.js';
+import { recheckUnknownPayouts } from './domain/cryptoPayouts.js';
+import { sendOpsAlerts } from './domain/opsAlerts.js';
 
 /**
  * Background jobs. Every job is safe to run on several worker processes at
@@ -48,9 +50,19 @@ async function job<T>(ctx: Ctx, name: string, fn: () => Promise<T>, fallback: T)
   }
 }
 
+/** Runs `fn` at most once per `ms` per process (and once across processes through the advisory lock inside the heavier jobs). */
+const lastRunAt = new Map<string, number>();
+async function every<T>(name: string, ms: number, fn: () => Promise<T>): Promise<T | null> {
+  const last = lastRunAt.get(name) ?? 0;
+  if (Date.now() - last < ms) return null;
+  lastRunAt.set(name, Date.now());
+  return fn();
+}
+const HOUR = 60 * 60_000;
+
 export async function runJobsOnce(ctx: Ctx) {
   const [released, expired, webhooks, reminders, late] = await Promise.all([
-    job(ctx, 'auto_release', () => autoCompleteExpired(ctx), 0),
+    job(ctx, 'auto_release', () => autoCompleteExpired(ctx), 0), // no longer releases: marks the window as ended (Round 20)
     job(ctx, 'expire_unpaid', () => cancelUnpaidExpired(ctx), 0),
     job(ctx, 'webhooks', () => dispatchDueWebhooks(ctx), 0),
     job(ctx, 'protection_reminders', () => queueProtectionReminders(ctx), 0),
@@ -77,8 +89,12 @@ export async function runJobsOnce(ctx: Ctx) {
   await job(ctx, 'retention_digest', () => maybeSendRetentionDigest(ctx), null);
   await job(ctx, 'seller_rates', () => refreshSellerRates(ctx), null);
   await job(ctx, 'league_expiry', () => expireEndedLeagueListings(ctx), 0);
-  await job(ctx, 'id_deadlines', () => enforceIdDeadlines(ctx), null);
-  await job(ctx, 'referral_digests', () => sendReferralDigests(ctx), null);
+  // Hourly: ID-deadline reminders, the daily referral digest (dedupe keys keep it to one email per day), payout rechecks.
+  await job(ctx, 'id_deadlines', () => every('id_deadlines', HOUR, () => enforceIdDeadlines(ctx)), null);
+  await job(ctx, 'referral_digests', () => every('referral_digests', HOUR, () => sendReferralDigests(ctx)), null);
+  await job(ctx, 'payouts_unknown', () => every('payouts_unknown', HOUR, () => recheckUnknownPayouts(ctx)), null);
+  await job(ctx, 'ops_alerts', () => every('ops_alerts', 15 * 60_000, () => sendOpsAlerts(ctx)), null);
+  await job(ctx, 'suspensions', () => every('suspensions', HOUR, () => ctx.db.query(`UPDATE users SET status = 'active', suspended_until = NULL, suspension_reason = NULL WHERE status = 'suspended' AND suspended_until <= now()`).then((r) => r.rowCount ?? 0)), null);
   // Send after the jobs above so emails they queued go out in the same tick.
   const emails = await job(ctx, 'emails', () => dispatchEmails(ctx), 0);
   await job(ctx, 'inbox', () => dispatchInbox(ctx), 0);

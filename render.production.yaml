@@ -37,6 +37,12 @@ envVarGroups:
         value: live
       - key: MERCHANT_API_ENABLED
         value: "false" # hidden at launch (CEO, Oct 23)
+      - key: AUTO_REFUND_LATE_ORDERS
+        value: "false" # no automatic cancel/refund: staff decide disputes (CEO, Oct 24)
+      - key: CARD_REFUNDS_ENABLED
+        value: "false" # crypto only at launch: refunds go to the buyer's balance, never to a card
+      - key: RECON_INTERVAL_HOURS
+        value: "24" # daily ledger reconciliation; mismatches email admins + finance
       - key: JWT_SECRET
         generateValue: true
       - key: FINGERPRINT_KEY

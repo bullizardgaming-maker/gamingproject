@@ -52,7 +52,7 @@ describe('release rule: held until the buyer confirms', () => {
     expect((await support.api.post(`/v1/admin/orders/${order.id}/release`, { note: 'again' })).body.error.code).toBe('invalid_state');
   });
 
-  it('the buyer confirming releases at once; accounts keep the 14-day auto-release', async () => {
+  it('the buyer confirming releases at once; accounts never auto-release — after 14 days staff may', async () => {
     const seller = await makeUser(h, { tier: 2 });
     const buyer = await makeUser(h, { tier: 1 });
     const item = await makeOffer(seller, { deliveryMode: 'manual', stock: 5, categorySlug: 'items', title: 'Rare sword', priceCents: 5_00 });
@@ -67,8 +67,20 @@ describe('release rule: held until the buyer confirms', () => {
     const d = (await buyer.api.get(`/v1/orders/${o2.id}`)).body;
     expect(d.protection).toBe('insurance_14d');
     expect(new Date(d.protection_ends_at).getTime()).toBeGreaterThan(Date.now() + 13 * 86_400_000);
+    const support = await makeUser(h, { role: 'support' });
+    await h.ctx.db.query(`UPDATE orders SET delivered_at = now() - interval '2 days' WHERE id = $1`, [o2.id]);
+    // Before the window ends, an unfinished changeover blocks a staff release.
+    expect((await support.api.post(`/v1/admin/orders/${o2.id}/release`, { note: 'Looks delivered' })).body.error.code).toBe('checklist_incomplete');
     await h.ctx.db.query(`UPDATE orders SET protection_ends_at = now() - interval '1 minute' WHERE id = $1`, [o2.id]);
     await runJobsOnce(h.ctx);
+    await runJobsOnce(h.ctx);
+    const after = (await buyer.api.get(`/v1/orders/${o2.id}`)).body;
+    expect(after.status).toBe('delivered'); // nothing moves on its own
+    expect(after.events.filter((e: any) => e.reason === 'protection_window_elapsed')).toHaveLength(1); // told once
+    expect((await buyer.api.get(`/v1/chat/rooms/${after.room_id}/messages`)).body.filter((m: any) => m.code === 'protection_ended')).toHaveLength(1);
+    // Now a person releases it.
+    const rel = await support.api.post(`/v1/admin/orders/${o2.id}/release`, { note: 'Window over, buyer silent, proof checked' });
+    expect(rel.status, JSON.stringify(rel.body)).toBe(200);
     expect((await buyer.api.get(`/v1/orders/${o2.id}`)).body.status).toBe('completed');
   });
 });

@@ -324,6 +324,101 @@ additions incl. split messages and instant ban, Arabic rules test, referral firs
 `launch-decisions` updated. 73 API files green (the four date-window tests — analytics, exports, tax, clawback
 statement — only fail when run between 22:00 and 24:00 UTC because the DB runs in Africa/Cairo); browser suite green.
 
+## Round 20 (Oct 24, 2026) — review fixes (`claude/round-20-fixes.md`) and launch gate §2 + §4 (`claude/launch-gate.md`)
+
+Migration 068. API tests: `chat-filter.test.ts` (109 phrases), `round20.test.ts`, `money-invariants.test.ts`, updates in
+`crypto-payments`, `round19`, `release-rule`, `platform`, `affiliates-votes`, `promos-fx`, `escrow-flow`, `linked-accounts`,
+`risk-and-chargebacks`, `seller-currency`, `warranty`, `chat`, `moderation`. Browser: `launch-decisions`, `launch` updated.
+
+### Launch blockers
+1. **Chat filter false bans.** Disguised-spelling matching now works on whole tokens only (`safety.ts` `disguisedHits`): a
+   token or a run of adjacent tokens must spell the platform name exactly once squashed, so "even more" ⊅ venmo,
+   "gazelle" ⊅ zelle, "scene bad" ⊅ eneba. Arabic "فوري" only counts next to a payment word (ادفع/حول/كود/رقم/محفظة/على …
+   فوري, or فوري … دفع/كود/كاش), "التسليم فوري" passes; bare `we pay` dropped. `classify()` decides the action: instant
+   ban only for a spelled-out hit of an instant-ban category (payment method, wallet address, marketplace,
+   impersonation); loose phrases (`pay_outside`, `recruiting`, `ban_dodging`) and split-message hits are blocked and
+   queued for staff with **no strike and no ban** (`chat_flags.strike`; dismissing one no longer refunds a strike that
+   was never given). 59 normal EN/AR phrases must pass, 27 disguised/explicit ones must hit (`chat-filter.test.ts`).
+2. **Late crypto deposits.** `crypto_payments.applied_at` marks the rows that funded an order. A deposit that arrives
+   after the order was cancelled, or on top of a funded order, goes to the buyer's balance through `creditLateDeposit`
+   (row lock; credits only `settled − credited_cents`; a later IPN never overwrites `credited`); a cart whose orders all
+   lapsed is treated as closed even if the checkout row says otherwise, so one payment is credited once, not per order.
+3. **Payout double-pay.** The withdrawal id is NOWPayments' `unique_external_id`. A 4xx reverses the withdrawal; a
+   timeout/5xx leaves it `unknown` with the money still booked as paid out until `recheckUnknownPayout` asks the
+   provider (hourly job `payouts_unknown`, or Ops → Payouts → "Check with provider now"): found → processing → paid by
+   IPN; not found → reversed. Money never goes back on a guess (`NowPaymentsError.rejected`).
+
+### Rules now enforced
+4. **No auto-release, ever.** `autoCompleteExpired` only marks the end of the 14-day window (`protection_window_elapsed`
+   event + chat note `protection_ended`); staff release account orders after the window (`releaseByStaff` allows it even
+   with an unfinished changeover once the window is over).
+5. **Payout address = email link + a second factor, always.** Authenticator when enabled, otherwise a 6-digit code by
+   SMS (verified phone) or a separate email (`payout_address_code`), 5 attempts (`payout_address_changes.code_hash`).
+6. **Lead-only above $200.** New staff role `lead` (Support Lead) with `orders.lead`; release, dispute decisions and
+   refund-after-release on orders > $200 need it (server-side, `requireLeadForLargeOrder`). Ops role picker + demo updated.
+7. **30-day rule inline.** `idDeadlinePassed()` from `seller_since` blocks listing and earnings withdrawals the moment the
+   deadline passes, not only after the worker flags the account.
+8. **Ban vs suspend.** `users.status` gains `banned` (never lifted automatically, `banned_at`), suspensions get
+   `suspended_until` (lifted on the next request or by the hourly job). `POST /admin/users/:id/suspend {reason, days?}`,
+   `/ban {reason}` (sessions revoked), `/reinstate {note}` (a ban needs `orders.lead`). Off-platform: contact share on the
+   ladder → 7-day suspension; payment details → ban. Fraud confirmation → ban.
+
+### Referral and creator codes (CEO, Oct 24)
+9–13. One code per user, at sign-up only: `POST /auth/register { code }` (invite or creator; `referralCode`/`creatorCode`
+   still accepted, two different codes → 400 `one_code_only`; response carries `codeApplied`). `POST /me/affiliate` → 410.
+   A buyer with an invite code never also earns for a creator. No reward when the code owner is the order's seller.
+   Rates capped at 50% of the commission (`rate_too_high`). Linked-account check adds `ip_subnet` and `wallet` (the
+   paying wallet when the IPN reports it, and every confirmed payout address). Releases lock the buyer row first, so two
+   first orders completing together count once (and can't deadlock). Web: code field on the sign-up form (pre-filled from
+   `?ref=`), the apply-code box is gone, help article + invite copy say "entered at sign-up".
+14. Test: a comeback order after 31+ days earns nothing; the next within 30 days earns again.
+
+### Split disputes, legal, minor
+15. Split: the promo-funded share of the refund goes back to the treasury (never withdrawable credit); the seller part
+   carries reserve cut + commission tax like a full release; `orders.seller_received_cents` is what the wallet "sale" line
+   shows.
+16. Legal: a version in force is immutable (`version_in_force`; drafts not yet in force can be corrected); material
+   changes need exactly 14 days; `tosVersion()` fails closed (503 `terms_unavailable`, `/features.legal.tosVersion` null)
+   when no Terms are in force.
+17. `createOrder` refuses listings in a closed launch-phase category (`category_not_open`). 18. `id_deadlines`,
+   `referral_digests`, `payouts_unknown` run hourly, `ops_alerts` every 15 min (`every()` in worker.ts). 19. Web renders
+   no categories until `GET /categories` answers. 20. `CARD_REFUNDS_ENABLED=false` (default): refunds always land in the
+   balance; the gateway refund only runs when cards are on. 21. Em dash removed from `chat.ev.dispute_opened`.
+
+### Launch gate §2 (automated checks)
+- **Dependency audit: 0 vulnerabilities** in root, `apps/api`, `apps/web` (`npm audit fix`; `contracts/` — the on-chain
+  escrow toolchain, not part of the launch — left the root workspace and keeps its own lockfile; CI runs it on its own).
+  Python fraud service: `requirements.lock` (pinned) + `pip-audit` → no known vulnerabilities.
+- **Secret scan**: gitleaks over all 105 commits → 2 findings, both the public USDC contract address in a test
+  (allow-listed in `.gitleaks.toml`). Nothing to rotate. `.env` was never committed.
+- **Static scan in CI**: `.github/workflows/security.yml` — gitleaks (full history), Semgrep (OWASP + JS/TS + Node +
+  secrets + React + Python; 0 findings after fixes: explicit GCM tag length, mock checkout page isolated), CodeQL
+  (JS/TS + Python, security-extended), npm + pip audits; on every push/PR and weekly.
+- **Money property tests**: `money-invariants.test.ts` — 15,000 random cases of gross-up, split-dispute allocation and
+  withdrawal fee arithmetic, plus randomised end-to-end scenarios (`MONEY_FUZZ_RUNS`, default 12) over confirm / staff
+  release / refund / split / seller decisions with promo codes and double-clicks: books balance, closed orders hold no
+  escrow, exactly one closing posting, conservation per order, nobody paid twice, withdrawals once.
+- **ZAP**: `security/zap/zap-staging.yaml` + README — automation plan (auth, headers, CSP, CORS, cookies, rate limits,
+  uploads via OpenAPI), fails on High; runs once staging is up.
+
+### Launch gate §4 (damage limits)
+- **Kill switches** (Ops → Controls, permission `controls.manage`: admin + finance): pause withdrawals / new orders /
+  chat / sign-ups, each a 503 with its own code (`withdrawals_paused`, `orders_paused`, `chat_paused`,
+  `signups_paused`) and an optional message; `GET /features.paused` drives a site banner; audited; 5-second cache.
+- **Limits** (same panel, `platform_controls`): max order $500 in beta, max withdrawals $5,000 per user per day, new
+  accounts (first 7 days) $100 per order and 3 open orders (`order_too_large`, `new_account_limit`, `withdrawal_limit`).
+- **Alerts** (`opsAlerts.ts`, every 15 min, one email per condition per hour to admins + finance, plus an error log line
+  for Sentry): failed payouts, payouts stuck `unknown`, a single withdrawal above $2,000, 3+ withdrawals by one user in
+  24h, disputes opened per hour ≥ 5, bans per hour ≥ 3 (thresholds editable).
+
+Suites on this commit: API 76 files / 405 tests green (typecheck clean), browser 121 green, `npm audit` 0 in root/api/web,
+Semgrep 0 findings, gitleaks 0 real findings.
+
+### Staging
+`docs/STAGING-CHECKLIST.md`: the accounts to create, the exact values to paste (staging and production), the deploy
+steps in order, `make-staff` script for staff roles. `render.yaml` / `render.production.yaml` carry the Round 19–20
+switches (`AUTO_REFUND_LATE_ORDERS`, `CARD_REFUNDS_ENABLED`, `MERCHANT_API_ENABLED`, `RECON_INTERVAL_HOURS`).
+
 ## Suggested next round
 
 1. Handover check for Riot/Steam games without a linked listing: let the buyer link any account of the game's

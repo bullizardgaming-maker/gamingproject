@@ -15,6 +15,7 @@ export const PERMISSIONS = [
   'chargebacks.manage',
   'orders.refund_after_release',
   'orders.release', // release an unconfirmed delivered order to the seller (24h+ after delivery)
+  'orders.lead', // release or decide orders above the Lead threshold ($200): the Support Lead only
   'ranks.manage', // seller ranks, rates and the launch promo (CEO)
   'leagues.manage', // open and close challenge leagues (Support & Arbitration)
   'rules.manage', // the seller rules test and the ID deadline (Support & Arbitration)
@@ -36,18 +37,21 @@ export const PERMISSIONS = [
   'support.manage', // help-centre ticket queue
   'moderation.manage', // listing review queue, flagged chats, banned terms
   'analytics.view', // business dashboard: GMV, take rate, dispute and chargeback rates
+  'controls.manage', // kill switches and beta limits (Ops → Controls): admin, and finance for the money ones
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
-export const STAFF_ROLES = ['arbiter', 'support', 'finance', 'compliance', 'admin'] as const;
+export const STAFF_ROLES = ['arbiter', 'support', 'lead', 'finance', 'compliance', 'admin'] as const;
 export type StaffRole = (typeof STAFF_ROLES)[number];
 
 export const ROLE_PERMISSIONS: Record<StaffRole, readonly Permission[]> = {
   arbiter: ['orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'orders.refund_after_release', 'orders.release', 'moderation.manage'],
   support: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage', 'support.manage', 'moderation.manage', 'orders.release', 'leagues.manage', 'rules.manage'],
+  // The Support Lead: everything support and arbiters do, plus the orders above $200, bans and appeals.
+  lead: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage', 'support.manage', 'moderation.manage', 'orders.release', 'leagues.manage', 'rules.manage', 'disputes.manage', 'owner_proofs.review', 'orders.refund_after_release', 'orders.lead', 'users.suspend', 'audit.view'],
   finance: [
     'chargebacks.manage', 'orders.refund_after_release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view', 'ledger.adjust',
-    'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'analytics.view',
+    'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'analytics.view', 'controls.manage',
   ],
   compliance: ['orders.view_any', 'risk.review', 'users.suspend', 'aml.review', 'aml.sar', 'payout_holds.set', 'ledger.view', 'audit.view', 'retention.manage', 'analytics.view'],
   admin: PERMISSIONS,

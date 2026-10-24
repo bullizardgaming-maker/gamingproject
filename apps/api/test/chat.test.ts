@@ -117,7 +117,7 @@ describe('chat ledger', () => {
     expect((await mod.api.get('/v1/admin/moderation/offplatform-policy')).body.actions).toEqual(['warn', 'suspend', 'ban']);
     expect((await mod.api.put('/v1/admin/moderation/offplatform-policy', { actions: ['warn', 'ban'] })).body.actions).toEqual(['warn', 'ban']);
     await seller.api.post(`/v1/chat/rooms/${roomId}/messages`, { body: 'telegram: t.me/cheapgold' });
-    expect((await seller.api.get('/v1/me')).body.user.status).toBe('suspended');
+    expect((await seller.api.get('/v1/me')).body.user.status).toBe('banned');
     const banned = await seller.api.post(`/v1/chat/rooms/${roomId}/messages`, { body: 'hello?' });
     expect(banned.status).toBe(403);
     msgs = (await buyer.api.get(`/v1/chat/rooms/${roomId}/messages`)).body;

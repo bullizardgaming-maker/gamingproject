@@ -101,6 +101,8 @@ const Env = z.object({
   LATE_AUTO_REFUND_HOURS: z.coerce.number().int().min(1).default(48),
   /** Off at launch (CEO, Oct 24): no automatic cancel/refund of late orders and no buyer self-cancel; disputes only. */
   AUTO_REFUND_LATE_ORDERS: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
+  /** Card payments are off at launch: refunds never go back to a card, always to the buyer's balance (Round 20). */
+  CARD_REFUNDS_ENABLED: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
   // Seller debt collection: reminder days after a balance goes negative, then pause the shop.
   DEBT_REMINDER_DAYS: z.string().default('0,3,7').transform((v) => v.split(',').map(Number).filter((n) => Number.isFinite(n) && n >= 0).sort((a, b) => a - b)),
   DEBT_PAUSE_AFTER_DAYS: z.coerce.number().min(0).default(14),

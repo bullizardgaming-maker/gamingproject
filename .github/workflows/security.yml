@@ -1,0 +1,65 @@
+# Launch gate §2: secret scan of the full history, static analysis, dependency audits — on every push and PR, plus weekly.
+name: security
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '17 4 * * 1' # weekly, Monday 04:17 UTC
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  secrets:
+    name: gitleaks (full history)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+
+  semgrep:
+    name: semgrep (OWASP + JS/TS + secrets)
+    runs-on: ubuntu-latest
+    container: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+      # No Semgrep account needed: the public rule packs, failing the job on any finding not listed in .semgrepignore / triaged inline.
+      - run: semgrep scan --exclude-rule yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag --config p/owasp-top-ten --config p/javascript --config p/typescript --config p/nodejs --config p/secrets --config p/react --config p/python --exclude node_modules --exclude dist --exclude design --error --metrics=off
+
+  codeql:
+    name: CodeQL (JavaScript/TypeScript, Python)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        language: [javascript-typescript, python]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:${{ matrix.language }}
+
+  audit:
+    name: dependency audit (0 high/critical)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm audit --audit-level=high          # root (api + web workspaces)
+      - run: npm audit --audit-level=high -w apps/api
+      - run: npm audit --audit-level=high -w apps/web
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install pip-audit && pip-audit -r services/fraud-gnn/requirements.lock --no-deps

@@ -49,8 +49,8 @@ test.describe('seller onboarding', () => {
     await page.getByRole('button', { name: 'Add question' }).click();
     await expect(page.getByTestId('rules-question')).toHaveCount(14);
     await page.getByLabel('Question 14', { exact: true }).fill('Can you ask a buyer for their account password?');
-    await page.getByLabel('Question 14 option 1').fill('Yes');
-    await page.getByLabel('Question 14 option 2').fill('No, never');
+    await page.getByLabel('Question 14 option 1', { exact: true }).fill('Yes');
+    await page.getByLabel('Question 14 option 2', { exact: true }).fill('No, never');
     await page.getByLabel('Question 14 correct answer 2').check();
     await page.getByRole('button', { name: 'Save test' }).click();
     await expect(page.getByText('Saved. New sellers get the updated test at once.')).toBeVisible();

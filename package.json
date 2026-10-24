@@ -3,15 +3,16 @@
   "private": true,
   "workspaces": [
     "apps/api",
-    "apps/web",
-    "contracts"
+    "apps/web"
   ],
   "scripts": {
     "dev:api": "npm run dev -w apps/api",
     "dev:web": "npm run dev -w apps/web",
     "migrate": "npm run migrate -w apps/api",
-    "test": "npm test -w apps/api && npm test -w contracts",
-    "build": "npm run build -w apps/api && npm run build -w apps/web"
+    "test": "npm test -w apps/api",
+    "build": "npm run build -w apps/api && npm run build -w apps/web",
+    "test:contracts": "cd contracts && npm ci && npm test",
+    "audit": "npm audit --audit-level=high --omit=dev && npm audit --audit-level=high"
   },
   "engines": {
     "node": ">=20.19"

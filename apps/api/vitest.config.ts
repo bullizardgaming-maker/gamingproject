@@ -13,6 +13,7 @@ export default defineConfig({
       DELIVERY_PROOF_REQUIRED: 'false', // most flows deliver without a proof; games.test.ts turns it on
       MERCHANT_API_ENABLED: 'true', // hidden at launch; merchant-api.test.ts covers the switch
       AUTO_REFUND_LATE_ORDERS: 'true', // off at launch (disputes only); the late-delivery tests exercise the job
+      CARD_REFUNDS_ENABLED: 'true', // off at launch (crypto only); the card-refund tests exercise the gateway path
     },
   },
 });

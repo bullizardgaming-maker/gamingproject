@@ -1,0 +1,10 @@
+# Semgrep: paths left out of the static scan, with the reason.
+# Default ignores (node_modules, dist, …) stay in force.
+node_modules/
+dist/
+design/
+.env
+# The mock PSP's hosted checkout page: HTML built from escaped values, never mounted in production (PAYMENT_PROVIDER=mock).
+apps/api/src/routes/mockCheckoutPage.ts
+# The official postgres image's entrypoint drops privileges itself; a USER line would break initdb.
+deploy/postgres/Dockerfile

@@ -41,7 +41,8 @@ export interface ChatMessage {
 
 // Off-platform contact detection lives in safety.ts (shared with the web app).
 export { detectOffPlatform } from './safety.js';
-import { detectOffPlatform, detectSplit, isInstantBan } from './safety.js';
+import { classify, detectOffPlatform, detectSplit } from './safety.js';
+import { assertNotPaused } from './controls.js';
 
 /** v1 (messages written before per-user keys): the chain covers the text itself. */
 export function messageHash(prevHash: string, seq: number, senderId: string | null, kind: string, body: string, createdAt: string) {
@@ -197,20 +198,26 @@ export async function setOffplatformPolicy(q: Queryable, actions: OffplatformAct
   return offplatformPolicy(q);
 }
 
+/** A suspension for off-platform contact lifts itself after this long; a ban never does. */
+export const SUSPENSION_DAYS = 7;
+
 export async function postUserMessage(ctx: Ctx, roomId: string, user: { id: string; role: string; status: string }, body: string) {
   if (user.status !== 'active') throw forbidden('suspended', 'Account suspended');
+  await assertNotPaused(ctx.db, 'chat'); // kill switch (Ops → Controls); staff can still write
   const room0 = await roomForParticipant(ctx.db, roomId, user);
   // Email addresses are part of an account handover (credentials live in the encrypted box); nowhere else.
   const accountOrder = room0.order_id
     ? !!(await maybeOne(ctx.db, `SELECT 1 FROM orders o JOIN offers f ON f.id = o.offer_id JOIN categories c ON c.slug = f.category_slug WHERE o.id = $1 AND c.kind = 'account'`, [room0.order_id]))
     : false;
   const violations = detectOffPlatform(body, { allowEmail: accountOrder });
+  const split: string[] = [];
   if (!violations.length && user.role === 'user') {
     // Split messages ("dis" … "cord"): the sender's last few lines, joined with this one.
     const recent = await many<{ seq: number }>(ctx.db, 'SELECT seq FROM chat_messages WHERE room_id = $1 AND sender_id = $2 AND NOT hidden AND created_at > now() - interval \'10 minutes\' ORDER BY seq DESC LIMIT 3', [roomId, user.id]);
     if (recent.length) {
       const tail = (await listMessages(ctx.keyring, ctx.db, roomId, Math.min(...recent.map((r) => r.seq)) - 1, 10)).filter((m) => m.sender_id === user.id).map((m) => m.body ?? '');
-      violations.push(...detectSplit(tail, body));
+      split.push(...detectSplit(tail, body));
+      violations.push(...split);
     }
   }
   const flags = violations.map((v) => `offplatform:${v}`);
@@ -220,17 +227,21 @@ export async function postUserMessage(ctx: Ctx, roomId: string, user: { id: stri
     // Recorded in its own transaction, then refused, so the offence stands even though nothing was sent.
     const action = await withScope(ctx, async (s) => {
       const msg = await appendMessage(s, roomId, user.id, 'text', body, ['blocked', ...flags], ctx.keyring, { hidden: true });
-      await s.tx.query(`INSERT INTO chat_flags (room_id, seq, user_id, reasons) VALUES ($1, $2, $3, $4) ON CONFLICT (room_id, seq) DO NOTHING`, [roomId, msg.seq, user.id, violations]);
+      // A loosely phrased or split hit is blocked and queued for staff, nothing more (no strike, no ban).
+      const kind = classify(violations, { split });
+      await s.tx.query(`INSERT INTO chat_flags (room_id, seq, user_id, reasons, strike) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (room_id, seq) DO NOTHING`, [roomId, msg.seq, user.id, violations, kind !== 'queue']);
+      if (kind === 'queue') return 'queue';
       const { offplatform_strikes } = await one<{ offplatform_strikes: number }>(
         s.tx,
         'UPDATE users SET offplatform_strikes = offplatform_strikes + 1 WHERE id = $1 RETURNING offplatform_strikes',
         [user.id],
       );
       const policy = await offplatformPolicy(s.tx);
-      // Payment details, outside deals, recruiting, impersonation and ban dodging are an instant ban.
-      const act = isInstantBan(violations) ? 'ban' : policy[Math.min(offplatform_strikes, policy.length) - 1]!;
+      // Payment details spelled out, wallet addresses, other marketplaces, impersonation: an instant ban.
+      const act = kind === 'ban' ? 'ban' : policy[Math.min(offplatform_strikes, policy.length) - 1]!;
       if (act !== 'warn') {
-        await s.tx.query(`UPDATE users SET status = 'suspended', suspension_reason = $2 WHERE id = $1`, [user.id, act === 'ban' ? 'off_platform_ban' : 'off_platform_contact']);
+        if (act === 'ban') await s.tx.query(`UPDATE users SET status = 'banned', banned_at = now(), suspension_reason = 'off_platform_ban' WHERE id = $1`, [user.id]);
+        else await s.tx.query(`UPDATE users SET status = 'suspended', suspension_reason = 'off_platform_contact', suspended_until = now() + make_interval(days => $2) WHERE id = $1`, [user.id, SUSPENSION_DAYS]);
         await appendMessage(s, roomId, null, 'warning', act === 'ban'
           ? 'This account has been banned for trying to move the deal outside Bullizard. Do not continue this trade anywhere else; staff will review the case.'
           : 'This account has been suspended for trying to move the deal outside Bullizard. Do not continue this trade anywhere else; staff will review the case.',

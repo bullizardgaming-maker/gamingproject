@@ -17,14 +17,18 @@ describe('creator affiliate codes', () => {
     expect(made.body).toMatchObject({ code: 'STREAMER-X', rate_bps: 2000, status: 'active' });
     expect((await finance.api.post('/v1/admin/affiliates', { userId: creator.id, code: 'STREAMER-X', rateBps: 100 })).body.error.code).toBe('code_taken');
 
-    // A buyer signs up with the code; a second code is refused; the creator's own code too.
-    const reg = await client(h.app).post('/v1/auth/register', { email: `fan_${Date.now()}@example.com`, password: 'correct horse battery', displayName: 'Fan', acceptTerms: true, creatorCode: 'streamer-x' });
+    // A buyer signs up with the code (one `code` field: invite or creator). Nothing attaches a code later (CEO, Oct 24).
+    const reg = await client(h.app).post('/v1/auth/register', { email: `fan_${Date.now()}@example.com`, password: 'correct horse battery', displayName: 'Fan', acceptTerms: true, code: 'streamer-x' });
     expect(reg.status).toBe(201);
+    expect(reg.body.codeApplied).toBe('creator');
     const fan = { id: reg.body.user.id, api: client(h.app, reg.body.token) };
     await h.ctx.db.query(`UPDATE users SET kyc_tier = 1 WHERE id = $1`, [fan.id]);
-    expect((await fan.api.post('/v1/me/affiliate', { code: 'STREAMER-X' })).body.error.code).toBe('already_attributed');
-    expect((await creator.api.post('/v1/me/affiliate', { code: 'STREAMER-X' })).body.error.code).toBe('own_code');
-    expect((await (await makeUser(h)).api.post('/v1/me/affiliate', { code: 'NOPE-1' })).body.error.code).toBe('invalid_affiliate_code');
+    expect((await fan.api.post('/v1/me/affiliate', { code: 'STREAMER-X' })).status).toBe(410);
+    expect((await (await makeUser(h)).api.post('/v1/me/affiliate', { code: 'NOPE-1' })).status).toBe(410);
+    // Two different codes at sign-up are refused; the creator's own code is ignored.
+    expect((await client(h.app).post('/v1/auth/register', { email: `two_${Date.now()}@example.com`, password: 'correct horse battery', displayName: 'Two', acceptTerms: true, code: 'streamer-x', referralCode: 'OTHER1' })).body.error.code).toBe('one_code_only');
+    // The share is capped at half the commission.
+    expect((await finance.api.patch(`/v1/admin/affiliates/${made.body.id}`, { rateBps: 6000 })).status).toBe(400);
 
     const seller = await makeUser(h, { tier: 2 });
     const offer = await makeOffer(seller, { priceCents: 100_00 });

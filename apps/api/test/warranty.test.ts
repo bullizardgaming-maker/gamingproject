@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { buyAndPay, makeOffer, makeUser, setup, type Harness } from './helpers.js';
-import { runJobsOnce } from '../src/worker.js';
+import { endWindowAndRelease, buyAndPay, makeOffer, makeUser, setup, type Harness } from './helpers.js';
 import { expireClaims } from '../src/domain/warranty.js';
 import { withdrawable } from '../src/domain/payoutholds.js';
 
@@ -18,8 +17,7 @@ async function soldAccount(warrantyDays = 30) {
   expect(res.status, JSON.stringify(res.body)).toBe(201);
   const order = await buyAndPay(h, buyer, res.body.id);
   await seller.api.post(`/v1/orders/${order.id}/deliver`, { payload: 'login:pass' });
-  await h.ctx.db.query(`UPDATE orders SET protection_ends_at = now() - interval '1 minute' WHERE id = $1`, [order.id]);
-  await runJobsOnce(h.ctx);
+  await endWindowAndRelease(h, order.id); // no auto-release: staff release it once the window is over
   return { seller, buyer, offer: res.body, order: (await buyer.api.get(`/v1/orders/${order.id}`)).body };
 }
 

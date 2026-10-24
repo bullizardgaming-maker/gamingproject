@@ -12,7 +12,8 @@ export const OFFPLATFORM_PATTERNS: Array<[string, RegExp]> = [
   ['facebook', /\bface\s?book\b|\bfb(?:\.com|\.me)?\b|\bmessenger\b|\bm\.me\/|فيسبوك|فيس بوك|ماسنجر|مسنجر/i],
   ['instagram', /\binsta(?:gram)?\b|\big\s*:\s*@?\w+|انستجرام|انستقرام|انستا/i],
   ['other_messenger', /\b(?:skype|viber|wechat|signal\s+app|kik|snapchat|snap\s*:\s*\S|line\s*id)\b/i],
-  ['external_payment', /\b(?:paypal(?:\.me)?|cash\s?app|venmo|zelle|western\s+union|revolut|wise\.com|skrill|vodafone\s+cash|vf\s*cash|instapay|insta\s*pay|fawry|orange\s+cash|etisalat\s+cash|we\s+pay|meeza|bank\s+transfer|iban|friends\s*(?:and|&)\s*family|f\s?&\s?f)\b|فودافون كاش|فودافون كاش|انستاباي|انستا باي|فوري|اورنج كاش|أورنج كاش|اتصالات كاش|تحويل بنكي|محفظة\s*(?:رقم|الكترونية|إلكترونية)/i],
+  // "فوري" is also the ordinary word for "instant" (التسليم فوري), so it only counts next to a payment word.
+  ['external_payment', /\b(?:paypal(?:\.me)?|cash\s?app|venmo|zelle|western\s+union|revolut|wise\.com|skrill|vodafone\s+cash|vf\s*cash|instapay|insta\s*pay|fawry|orange\s+cash|etisalat\s+cash|we\s+pay\s+(?:app|wallet)|meeza|bank\s+transfer|iban|friends\s*(?:and|&)\s*family|f\s?&\s?f)\b|فودافون كاش|فودافون كاش|انستاباي|انستا باي|(?:ادفع|ادفعلي|حول|حوّل|تحويل|كود|رقم|محفظة|على|عبر|بـ?واسطة)(?:\s+\S+){0,2}\s+فوري(?![^\s،.!?])|(?<![^\s،.!?])فوري(?:\s+\S+){0,2}\s+(?:دفع|كود|رقم|محفظة|كاش|باي|بالكود)|اورنج كاش|أورنج كاش|اتصالات كاش|تحويل بنكي|محفظة\s*(?:رقم|الكترونية|إلكترونية)/i],
   // Crypto wallet addresses: paying outside escrow (EVM, BTC legacy/segwit, TRON, LTC, SOL-length base58).
   ['wallet_address', /\b0x[a-fA-F0-9]{40}\b|\bbc1[a-z0-9]{25,62}\b|\b[13][a-km-zA-HJ-NP-Z1-9]{25,34}\b|\bT[a-km-zA-HJ-NP-Z1-9]{33}\b|\b[LM][a-km-zA-HJ-NP-Z1-9]{26,33}\b|\bltc1[a-z0-9]{25,62}\b/],
   // Other marketplaces: moving the deal elsewhere.
@@ -37,24 +38,32 @@ export const OFFPLATFORM_PATTERNS: Array<[string, RegExp]> = [
 export const INSTANT_BAN_CATEGORIES = new Set(['external_payment', 'wallet_address', 'pay_outside', 'other_marketplace', 'recruiting', 'impersonation', 'ban_dodging']);
 export const isInstantBan = (violations: string[]) => violations.some((v) => INSTANT_BAN_CATEGORIES.has(v));
 
-/** Platform names matched again on the text with spaces, dots and digit swaps removed (d1scord, d i s c o r d). */
-const DISGUISED: Array<[string, RegExp]> = [
-  ['discord', /discord/],
-  ['telegram', /telegram/],
-  ['whatsapp', /whatsapp/],
-  ['facebook', /facebook|messenger/],
-  ['instagram', /instagram/],
-  ['other_messenger', /snapchat|viber|skype|wechat/],
-  ['external_payment', /paypal|cashapp|venmo|zelle|skrill|vodafonecash|instapay|fawry|orangecash|etisalatcash/],
-  ['other_marketplace', /funpay|eldorado|playerauctions|igvault|kinguin|eneba/],
-];
+/**
+ * Platform names spelled to dodge the filter: digit swaps (d1scord), look-alike letters (dіscord),
+ * letters spaced or dotted out (d i s c o r d, dis.cord, what sa pp). Matched on WHOLE tokens only —
+ * a token, or a run of adjacent tokens, must spell the name exactly once squashed — so ordinary
+ * words that happen to contain one ("even more" ⊃ venmo, "gazelle" ⊃ zelle, "scene bad" ⊃ eneba)
+ * never match.
+ */
+const DISGUISED_NAMES: Record<string, string> = {
+  discord: 'discord', discordapp: 'discord',
+  telegram: 'telegram',
+  whatsapp: 'whatsapp',
+  facebook: 'facebook', messenger: 'facebook',
+  instagram: 'instagram',
+  snapchat: 'other_messenger', viber: 'other_messenger', skype: 'other_messenger', wechat: 'other_messenger',
+  paypal: 'external_payment', cashapp: 'external_payment', venmo: 'external_payment', zelle: 'external_payment', skrill: 'external_payment',
+  vodafonecash: 'external_payment', instapay: 'external_payment', fawry: 'external_payment', orangecash: 'external_payment', etisalatcash: 'external_payment',
+  funpay: 'other_marketplace', eldorado: 'other_marketplace', playerauctions: 'other_marketplace', igvault: 'other_marketplace', kinguin: 'other_marketplace', eneba: 'other_marketplace',
+};
+const LONGEST_NAME = Math.max(...Object.keys(DISGUISED_NAMES).map((n) => n.length));
 /** Cyrillic/Greek letters that look like Latin ones (dіscord with a Ukrainian і). */
 const HOMOGLYPHS: Record<string, string> = {
   а: 'a', е: 'e', о: 'o', р: 'p', с: 'c', у: 'y', х: 'x', і: 'i', ј: 'j', ԁ: 'd', ѕ: 's', ԛ: 'q', ԝ: 'w', һ: 'h', ո: 'n', ⅼ: 'l', ɡ: 'g',
   α: 'a', ο: 'o', ρ: 'p', τ: 't', ν: 'v', ε: 'e', ι: 'i', κ: 'k', '０': '0', '１': '1', '３': '3', '４': '4', '５': '5', '７': '7',
 };
 const LEET_LETTERS: Record<string, string> = { '0': 'o', '1': 'i', '3': 'e', '4': 'a', '5': 's', '7': 't', '@': 'a', $: 's', '!': 'i', '|': 'l' };
-/** Lower-case, undo digit swaps, drop everything that is not a letter: "d.1.s c0rd" → "discord". */
+/** Lower-case, undo look-alikes and digit swaps, drop everything that is not a letter: "d.1.s c0rd" → "discord". */
 export function squash(text: string) {
   return text
     .toLowerCase()
@@ -62,13 +71,33 @@ export function squash(text: string) {
     .replace(/[013457@$!|]/g, (c) => LEET_LETTERS[c] ?? c)
     .replace(/[^\p{L}]+/gu, '');
 }
+/** Whitespace-separated tokens, squashed; empty ones (pure punctuation) dropped. */
+const squashedTokens = (text: string) => text.split(/\s+/).map(squash).filter(Boolean);
+/**
+ * Categories whose name a token, or a run of adjacent tokens, spells exactly. `from` limits the runs to
+ * those that use at least one token at index >= from (for split messages: the run must reach into the new line).
+ */
+function disguisedHits(tokens: string[], from = 0): string[] {
+  const hits = new Set<string>();
+  for (let i = 0; i < tokens.length; i++) {
+    let run = '';
+    for (let j = i; j < tokens.length && run.length < LONGEST_NAME; j++) {
+      run += tokens[j];
+      if (j < from) continue;
+      const cat = DISGUISED_NAMES[run];
+      if (cat) hits.add(cat);
+    }
+  }
+  return [...hits];
+}
 
-/** Platform names spelled across several short messages ("dis" then "cord"): check the sender's recent lines joined with this one. */
+/** Platform names spelled across several short messages ("dis" then "cord"): the sender's recent lines joined with this one. */
 export function detectSplit(previous: string[], body: string): string[] {
-  const joined = squash([...previous, body].join(''));
-  if (!joined) return [];
-  const own = squash(body);
-  return DISGUISED.filter(([, re]) => re.test(joined) && !re.test(own)).map(([name]) => `${name}`);
+  const before = previous.flatMap(squashedTokens);
+  const now = squashedTokens(body);
+  if (!before.length || !now.length) return [];
+  const own = new Set(disguisedHits(now));
+  return disguisedHits([...before, ...now], before.length).filter((c) => !own.has(c));
 }
 
 /**
@@ -83,9 +112,23 @@ export function detectOffPlatform(body: string, opts: { allowEmail?: boolean } =
   const hits = new Set(
     OFFPLATFORM_PATTERNS.filter(([name, re]) => !(opts.allowEmail && name === 'email') && re.test(name === 'link' ? noEmails : body)).map(([name]) => name),
   );
-  const compact = squash(body);
-  for (const [name, re] of DISGUISED) if (re.test(compact)) hits.add(name);
+  for (const name of disguisedHits(squashedTokens(body))) hits.add(name);
   return [...hits];
+}
+
+/** Categories that can be matched by a loose phrase rather than a spelled-out name: blocked and queued for staff, no strike, no ban. */
+export const LOW_CONFIDENCE_CATEGORIES = new Set(['pay_outside', 'recruiting', 'ban_dodging']);
+/**
+ * What to do with a blocked message: an instant ban only for a high-confidence hit of an instant-ban
+ * category (the name spelled out, a wallet address); a split or loosely phrased hit is blocked and
+ * queued for staff without a strike.
+ */
+export function classify(violations: string[], opts: { split?: string[] } = {}): 'ban' | 'strike' | 'queue' {
+  const split = new Set(opts.split ?? []);
+  const direct = violations.filter((v) => !split.has(v));
+  if (direct.some((v) => INSTANT_BAN_CATEGORIES.has(v) && !LOW_CONFIDENCE_CATEGORIES.has(v))) return 'ban';
+  if (direct.some((v) => !LOW_CONFIDENCE_CATEGORIES.has(v))) return 'strike';
+  return 'queue';
 }
 
 /**

@@ -1,5 +1,5 @@
 import { retentionMetrics } from '../domain/cohorts.js';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { Ctx } from '../context.js';
 import { many, maybeOne, one, withTx } from '../db.js';
@@ -7,6 +7,7 @@ import { receiveChargeback } from '../domain/chargebacks.js';
 import { withScope } from '../domain/events.js';
 import { reviewOwnerProof } from '../domain/offers.js';
 import { LEAD_REVIEW_ABOVE_CENTS, releaseByStaff, resolveDispute, unconfirmedDeliveries } from '../domain/orders.js';
+import { controls, updateControls } from '../domain/controls.js';
 import { setReviewHidden } from '../domain/reviews.js';
 import { runReconciliation } from '../domain/reconciliation.js';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
@@ -37,7 +38,7 @@ import { getInvoice, invoicePdf, issueMonthlyInvoices } from '../domain/invoices
 import { decideAdjustment, listAdjustments, requestAdjustment, userLedger } from '../domain/adjustments.js';
 import { decideTreasuryWithdrawal, listTreasuryWithdrawals, requestTreasuryWithdrawal, treasuryBalance } from '../domain/treasury.js';
 import { listCryptoRefunds, markRefundSent } from '../domain/cryptoPayments.js';
-import { decideWithdrawal, listPendingWithdrawals } from '../domain/cryptoPayouts.js';
+import { recheckUnknownPayout, decideWithdrawal, listPendingWithdrawals } from '../domain/cryptoPayouts.js';
 import { commissionSettings, listRanks, updateRanks } from '../domain/commission.js';
 import { referralSettings, updateReferralSettings } from '../domain/referrals.js';
 import { LEGAL_DOCS, publishDocument } from '../domain/legal.js';
@@ -67,6 +68,33 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return claim;
   });
 
+  /** Orders above the Lead threshold ($200, playbook): only the Support Lead (or an admin) releases or decides them. */
+  async function requireLeadForLargeOrder(req: FastifyRequest, orderId: string) {
+    const o = await maybeOne<{ amount_cents: string }>(ctx.db, 'SELECT amount_cents FROM orders WHERE id = $1', [orderId]);
+    if (o && Number(o.amount_cents) > LEAD_REVIEW_ABOVE_CENTS) requirePermission(req, 'orders.lead');
+  }
+
+  // ---- Kill switches and beta limits (launch gate §4) ----
+  app.get('/admin/controls', async (req) => {
+    requirePermission(req, 'controls.manage');
+    return controls(ctx.db, true);
+  });
+  app.put('/admin/controls', async (req) => {
+    const staff = requirePermission(req, 'controls.manage');
+    const body = z
+      .object({
+        pause_withdrawals: z.boolean().optional(), pause_orders: z.boolean().optional(), pause_chat: z.boolean().optional(), pause_signups: z.boolean().optional(),
+        pause_message: z.string().trim().max(300).nullable().optional(),
+        max_withdrawal_day_cents: z.number().int().min(100).max(100_000_00).optional(), max_order_cents: z.number().int().min(100).max(100_000_00).optional(),
+        new_account_days: z.number().int().min(0).max(90).optional(), new_account_max_order_cents: z.number().int().min(100).max(100_000_00).optional(), new_account_max_open_orders: z.number().int().min(1).max(100).optional(),
+        alert_dispute_hour: z.number().int().min(1).max(1000).optional(), alert_bans_hour: z.number().int().min(1).max(1000).optional(), alert_withdrawal_cents: z.number().int().min(100).max(100_000_00).optional(),
+      })
+      .parse(req.body);
+    const res = await updateControls(ctx, staff.id, body);
+    await audit(ctx.db, req, 'controls.update', { type: 'controls', id: 'platform' }, body);
+    return res;
+  });
+
   app.get('/admin/disputes', async (req) => {
     requirePermission(req, 'disputes.manage');
     return many(
@@ -92,6 +120,8 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const arbiter = requirePermission(req, 'disputes.manage');
     const body = z.object({ outcome: z.enum(['buyer', 'seller', 'split']), refundCents: z.number().int().positive().optional(), note: z.string().min(3).max(2_000) }).parse(req.body);
     const { id } = Id.parse(req.params);
+    const d = await maybeOne<{ order_id: string }>(ctx.db, 'SELECT order_id FROM disputes WHERE id = $1', [id]);
+    if (d) await requireLeadForLargeOrder(req, d.order_id);
     const res = await resolveDispute(ctx, id, arbiter.id, body.outcome, body.note, body.refundCents);
     await audit(ctx.db, req, 'dispute.resolve', { type: 'dispute', id }, body);
     return res;
@@ -127,7 +157,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
           [flag.user_id],
         );
       } else {
-        await s.tx.query(`UPDATE users SET status = 'suspended', suspension_reason = 'fraud_confirmed', withdrawals_frozen = true WHERE id = $1`, [flag.user_id]);
+        await s.tx.query(`UPDATE users SET status = 'banned', banned_at = now(), suspension_reason = 'fraud_confirmed', withdrawals_frozen = true WHERE id = $1`, [flag.user_id]);
       }
       await audit(s.tx, req, `risk_flag.${decision}`, { type: 'user', id: flag.user_id }, { flagId: flag.id, score: flag.score });
       return { userId: flag.user_id, decision };
@@ -205,13 +235,39 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return res;
   });
 
+  /** Suspend for a number of days (lifts itself) or until staff lift it (no days). */
   app.post('/admin/users/:id/suspend', async (req) => {
+    requirePermission(req, 'users.suspend');
+    const { reason, days } = z.object({ reason: z.string().min(3).max(500), days: z.number().int().min(1).max(365).optional() }).parse(req.body);
+    const { id } = Id.parse(req.params);
+    const r = await ctx.db.query(
+      `UPDATE users SET status = 'suspended', suspension_reason = $2, suspended_until = CASE WHEN $3::int IS NULL THEN NULL ELSE now() + make_interval(days => $3::int) END WHERE id = $1 AND status <> 'banned' RETURNING suspended_until`,
+      [id, reason, days ?? null],
+    );
+    if (!r.rowCount) throw conflict('banned', 'This account is banned; a ban is not shortened into a suspension');
+    await audit(ctx.db, req, 'user.suspend', { type: 'user', id }, { reason, days: days ?? null });
+    return { suspended: true, until: r.rows[0].suspended_until };
+  });
+  /** Ban: permanent, never lifted automatically. Lifting it is a Lead/admin decision (reinstate). */
+  app.post('/admin/users/:id/ban', async (req) => {
     requirePermission(req, 'users.suspend');
     const { reason } = z.object({ reason: z.string().min(3).max(500) }).parse(req.body);
     const { id } = Id.parse(req.params);
-    await ctx.db.query(`UPDATE users SET status = 'suspended', suspension_reason = $2 WHERE id = $1`, [id, reason]);
-    await audit(ctx.db, req, 'user.suspend', { type: 'user', id }, { reason });
-    return { suspended: true };
+    await ctx.db.query(`UPDATE users SET status = 'banned', banned_at = now(), suspension_reason = $2, suspended_until = NULL WHERE id = $1`, [id, reason]);
+    await ctx.db.query(`UPDATE sessions SET revoked_at = now(), revoke_reason = 'banned' WHERE user_id = $1 AND revoked_at IS NULL`, [id]);
+    await audit(ctx.db, req, 'user.ban', { type: 'user', id }, { reason });
+    return { banned: true };
+  });
+  app.post('/admin/users/:id/reinstate', async (req) => {
+    requirePermission(req, 'users.suspend');
+    const { id } = Id.parse(req.params);
+    const { note } = z.object({ note: z.string().min(3).max(500) }).parse(req.body);
+    const cur = await maybeOne<{ status: string }>(ctx.db, 'SELECT status FROM users WHERE id = $1', [id]);
+    if (!cur) throw notFound('User');
+    if (cur.status === 'banned') requirePermission(req, 'orders.lead'); // lifting a ban: the Lead or an admin
+    await ctx.db.query(`UPDATE users SET status = 'active', suspended_until = NULL, suspension_reason = NULL WHERE id = $1`, [id]);
+    await audit(ctx.db, req, 'user.reinstate', { type: 'user', id }, { note, from: cur.status });
+    return { active: true };
   });
 
   /** Listing ban (penalty ladder step 2): the account stays, but it can't create or relist offers; live offers pause. */
@@ -310,7 +366,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
   app.put('/admin/referral', async (req) => {
     const staff = requirePermission(req, 'ranks.manage');
-    const body = z.object({ rateBps: z.number().int().min(0).max(10_000).optional(), activeDays: z.number().int().min(1).max(3650).optional() }).parse(req.body);
+    const body = z.object({ rateBps: z.number().int().min(0).max(5000).optional(), activeDays: z.number().int().min(1).max(3650).optional() }).parse(req.body);
     const out = await updateReferralSettings(ctx.db, staff.id, body);
     await audit(ctx.db, req, 'referral.settings', { type: 'referral', id: 'referral' }, body);
     return out;
@@ -462,6 +518,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const staff = requirePermission(req, 'orders.release');
     const { id } = Id.parse(req.params);
     const { note } = z.object({ note: z.string().trim().min(3).max(1_000) }).parse(req.body);
+    await requireLeadForLargeOrder(req, id);
     const o = await releaseByStaff(ctx, id, staff.id, note);
     await audit(ctx.db, req, 'order.release', { type: 'order', id }, { note });
     return { id: o.id, status: 'completed' };
@@ -478,6 +535,15 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const body = z.object({ approve: z.boolean(), note: z.string().max(500).optional() }).parse(req.body);
     const w = await decideWithdrawal(ctx, id, staff.id, body.approve, body.note);
     await audit(ctx.db, req, body.approve ? 'withdrawal.approve' : 'withdrawal.reject', { type: 'withdrawal', id }, body);
+    return w;
+  });
+  /** A payout whose provider call timed out: ask NOWPayments whether it exists before anything is reversed. */
+  app.post('/admin/withdrawals/:id/recheck', async (req) => {
+    requirePermission(req, 'treasury.approve');
+    const { id } = Id.parse(req.params);
+    const w = await recheckUnknownPayout(ctx, id);
+    if (!w) throw notFound('Withdrawal in the unknown state');
+    await audit(ctx.db, req, 'withdrawal.recheck', { type: 'withdrawal', id }, { status: w.status });
     return w;
   });
 
@@ -834,6 +900,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const body = z
       .object({ amountCents: z.number().int().positive().optional(), paidBy: z.enum(['seller', 'platform', 'reserve']), reason: z.string().trim().min(10).max(500) })
       .parse(req.body);
+    await requireLeadForLargeOrder(req, id);
     const res = await refundAfterRelease(ctx, id, staff.id, body);
     await audit(ctx.db, req, 'order.refunded_after_release', { type: 'order', id }, { ...body, refundId: res.refund.id, creditNote: res.creditNote.number });
     return res;

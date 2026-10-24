@@ -5,6 +5,7 @@ import { many, maybeOne, one } from '../db.js';
 import type { TxScope } from './events.js';
 import { accountId, post, userCredit } from './ledger.js';
 import { enqueueEmail } from './notifications.js';
+import { badRequest } from '../lib/errors.js';
 
 /**
  * Referrals, G2G-style: a user shares their code; whoever signs up with it is their referee for
@@ -23,7 +24,10 @@ export async function referralSettings(q: Queryable): Promise<ReferralSettings> 
   const r = await one<{ rate_bps: number; active_days: number }>(q, 'SELECT rate_bps, active_days FROM referral_settings');
   return { rateBps: Number(r.rate_bps), activeDays: Number(r.active_days) };
 }
+/** A code owner's share can never exceed half of the order's commission (Round 20). */
+export const MAX_CODE_SHARE_BPS = 5000;
 export async function updateReferralSettings(q: Queryable, staffId: string, patch: Partial<ReferralSettings>) {
+  if (patch.rateBps != null && (patch.rateBps < 0 || patch.rateBps > MAX_CODE_SHARE_BPS)) throw badRequest('rate_too_high', `The referral share is at most ${MAX_CODE_SHARE_BPS / 100}% of the commission`);
   await q.query(
     'UPDATE referral_settings SET rate_bps = COALESCE($1, rate_bps), active_days = COALESCE($2, active_days), updated_by = $3, updated_at = now()',
     [patch.rateBps ?? null, patch.activeDays ?? null, staffId],
@@ -49,10 +53,13 @@ export async function referrerForCode(q: Queryable, code: string | undefined): P
 }
 
 /** Called in the same transaction that releases an order's escrow: the referrer's share of this order's commission. */
-export async function maybeGrantReferral(ctx: Ctx, s: TxScope, order: { id: string; buyer_id: string; amount_cents: number; commission_cents: number; currency: string }) {
-  const buyer = await maybeOne<{ referred_by: string | null }>(s.tx, 'SELECT referred_by FROM users WHERE id = $1', [order.buyer_id]);
+export async function maybeGrantReferral(ctx: Ctx, s: TxScope, order: { id: string; buyer_id: string; seller_id?: string; amount_cents: number; commission_cents: number; currency: string }) {
+  // Lock the referee's row: two orders completing together can't both count as the "first" (Round 20).
+  const buyer = await maybeOne<{ referred_by: string | null }>(s.tx, 'SELECT referred_by FROM users WHERE id = $1 FOR UPDATE', [order.buyer_id]);
   if (!buyer?.referred_by) return null;
   const referrer = buyer.referred_by;
+  // The code owner never earns on their own sales.
+  if (order.seller_id && order.seller_id === referrer) return null;
   const settings = await referralSettings(s.tx);
   const earned = Math.floor((Number(order.commission_cents) * settings.rateBps) / 10_000);
   if (earned <= 0) return null;
@@ -67,7 +74,7 @@ export async function maybeGrantReferral(ctx: Ctx, s: TxScope, order: { id: stri
   const linked = await maybeOne(
     s.tx,
     `SELECT 1 FROM risk_signals a JOIN risk_signals b ON a.kind = b.kind AND a.value = b.value
-      WHERE a.user_id = $1 AND b.user_id = $2 AND a.kind IN ('device', 'card', 'wallet') LIMIT 1`,
+      WHERE a.user_id = $1 AND b.user_id = $2 AND a.kind IN ('device', 'card', 'wallet', 'ip_subnet') LIMIT 1`,
     [referrer, order.buyer_id],
   );
   if (linked) {

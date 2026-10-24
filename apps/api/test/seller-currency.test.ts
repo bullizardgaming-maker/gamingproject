@@ -2,8 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { sellerAvailable } from '../src/domain/ledger.js';
 import { runReconciliation } from '../src/domain/reconciliation.js';
 import type { MockPaymentProvider } from '../src/providers/payments/mock.js';
-import { runJobsOnce } from '../src/worker.js';
-import { buyAndPay, client, makeOffer, makeUser, setup, type Harness } from './helpers.js';
+import { endWindowAndRelease, buyAndPay, client, makeOffer, makeUser, setup, type Harness } from './helpers.js';
 
 let h: Harness;
 beforeAll(async () => {
@@ -80,8 +79,7 @@ describe('seller balances in their own currency', () => {
     const offer = await makeOffer(seller, { priceCents: 46_00, currency: 'EUR', categorySlug: 'accounts', deliveryMode: 'manual', stock: 1 } as any);
     const order = await buyAndPay(h, buyer, offer.id);
     await seller.api.post(`/v1/orders/${order.id}/deliver`, { payload: 'creds' });
-    await h.ctx.db.query(`UPDATE orders SET protection_ends_at = now() - interval '1 second' WHERE id = $1`, [order.id]);
-    await runJobsOnce(h.ctx);
+    await endWindowAndRelease(h, order.id);
     const row = (await h.ctx.db.query('SELECT * FROM orders WHERE id = $1', [order.id])).rows[0];
     expect(row.status).toBe('completed');
     const credited = await sellerAvailable(h.ctx.db, seller.id, 'EUR');

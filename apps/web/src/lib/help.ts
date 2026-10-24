@@ -159,7 +159,8 @@ const BASE_ARTICLES: HelpArticle[] = [
     title: "Invite friends, earn 20%",
     summary: "Share your invite link and earn 20% of Bullizard's commission on every order your friends complete, for as long as they stay active.",
     body: [
-      "Share your invite link. When a friend signs up with it and completes their first order, you start earning 20% of Bullizard's commission on every order they complete, for as long as they stay active. Earnings land in your balance: spend them or withdraw.",
+      "Share your invite link. When a friend signs up with it and completes their first order, you start earning 20% of Bullizard's commission on every order they complete, for as long as they stay active (a completed order in the last 30 days). Earnings land in your balance: spend them or withdraw.",
+      "One code per account, entered at sign-up only. Your friend types your code (or opens your link) when they create their account; a code can't be added or changed later, and an account carries either a friend's invite code or a creator's code, never both. Nothing is earned on orders you sell to your own invitees.",
     ],
     ticket: 'account',
   },

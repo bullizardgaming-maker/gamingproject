@@ -36,7 +36,8 @@ export const CATEGORY_ORDER = Object.keys(CATEGORY_META);
 
 /**
  * Launch phases: the API says which categories are open (GET /categories `open`); closed ones are
- * hidden everywhere until staff move the phase forward. All are shown until the answer arrives.
+ * hidden everywhere until staff move the phase forward. Nothing is shown until the answer arrives
+ * (no flash of closed categories, Round 20); if the request fails, everything is shown.
  */
 let openSlugs: Set<string> | null = null;
 let categoriesLoading: Promise<void> | null = null;
@@ -49,10 +50,15 @@ export function loadCategories() {
     })
     .catch(() => {
       categoriesLoading = null;
+      categoriesFailed = true;
+      catListeners.forEach((l) => l());
     });
   return categoriesLoading;
 }
-export const isCategoryOpen = (slug: string) => !openSlugs || openSlugs.has(slug);
+let categoriesFailed = false;
+/** True once GET /categories has answered (or failed): until then category lists render empty. */
+export const categoriesKnown = () => openSlugs !== null || categoriesFailed;
+export const isCategoryOpen = (slug: string) => (openSlugs ? openSlugs.has(slug) : categoriesFailed);
 /** CATEGORY_ORDER without the categories closed in the current launch phase; re-renders once known. */
 export function useCategoryOrder(): string[] {
   const [, bump] = useState(0);

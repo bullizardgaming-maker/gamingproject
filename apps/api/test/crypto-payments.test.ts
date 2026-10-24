@@ -15,6 +15,8 @@ class FakeNow {
   payouts: any[] = [];
   minUsd: Record<string, number> = { btc: 8, usdttrc20: 1, eth: 12, ltc: 2 };
   nextId = 5000;
+  /** Next payout call: 'timeout' throws after creating the payout (the provider acted, we never heard), 'down' fails with a 503 before acting. */
+  payoutMode: 'ok' | 'timeout' | 'down' | 'reject' = 'ok';
   fetch = async (url: string, init?: RequestInit): Promise<Response> => {
     const u = new URL(url);
     const body = init?.body ? JSON.parse(String(init.body)) : null;
@@ -39,11 +41,19 @@ class FakeNow {
     if (u.pathname === '/v1/auth') return json({ token: 'jwt-test' });
     if (u.pathname === '/v1/payout' && init?.method === 'POST') {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer jwt-test' });
-      const id = String(this.nextId++);
-      const w = { id, batch_withdrawal_id: `batch_${id}`, status: 'WAITING', ...body.withdrawals[0] };
-      this.payouts.push(w);
+      const mode = this.payoutMode;
+      this.payoutMode = 'ok';
+      if (mode === 'down') return json({ message: 'maintenance' }, 503);
+      if (mode === 'reject') return json({ message: 'Invalid address' }, 400);
+      // Idempotent on unique_external_id, like the real API.
+      const dup = body.withdrawals[0].unique_external_id && this.payouts.find((p) => p.unique_external_id === body.withdrawals[0].unique_external_id);
+      const id = dup ? dup.id : String(this.nextId++);
+      const w = dup ?? { id, batch_withdrawal_id: `batch_${id}`, status: 'WAITING', ...body.withdrawals[0] };
+      if (!dup) this.payouts.push(w);
+      if (mode === 'timeout') throw new Error('socket hang up');
       return json({ id: `batch_${id}`, withdrawals: [w] });
     }
+    if (u.pathname === '/v1/payout' && (init?.method ?? 'GET') === 'GET') return json({ data: [...this.payouts].reverse() });
     if (/^\/v1\/payout\/.*\/verify$/.test(u.pathname)) {
       expect(body.verification_code).toMatch(/^\d{6}$/);
       return json('OK');
@@ -206,9 +216,10 @@ describe('crypto checkout (NOWPayments)', () => {
     await h.ctx.db.query(`UPDATE users SET payout_address = 'TXYZabc1234567890seller', payout_address_currency = 'usdttrc20', payout_hold_days = 0 WHERE id = $1`, [seller.id]);
     // Day 10: allowed (balance permitting).
     expect((await seller.api.post('/v1/seller/withdrawals', { amountCents: 2000 })).body.error.code).toBe('insufficient_funds');
-    // Day 31: restricted until Tier 2.
-    await h.ctx.db.query(`UPDATE users SET seller_since = now() - interval '31 days', selling_restricted_at = now() WHERE id = $1`, [seller.id]);
+    // Day 31: restricted until Tier 2 — computed from seller_since even before the worker has flagged the account (Round 20).
+    await h.ctx.db.query(`UPDATE users SET seller_since = now() - interval '31 days' WHERE id = $1`, [seller.id]);
     expect((await seller.api.post('/v1/seller/withdrawals', { amountCents: 2000 })).body.error.code).toBe('kyc_overdue');
+    expect((await seller.api.post('/v1/offers', { categorySlug: 'keys', game: 'Test Game', title: 'Late key', priceCents: 5_00, deliveryMode: 'auto' })).body.error.code).toBe('kyc_overdue');
   });
 
   it('seller payouts: address confirmed by email link and 2FA, 6% fee with a $1.50 floor, CFO approval, paid by IPN', async () => {
@@ -292,6 +303,92 @@ describe('crypto checkout (NOWPayments)', () => {
     expect((await seller.api.get('/v1/seller/dashboard')).body.balances.availableCents).toBe(dash.balances.availableCents - 2000);
   });
 
+  it('without an authenticator, a payout address needs the emailed link plus a one-time code (SMS when a phone is verified, email otherwise)', async () => {
+    const seller = await makeUser(h, { tier: 2 });
+    const req = await seller.api.post('/v1/seller/payout-address', { address: 'TNoTotpAddress1234567890', currency: 'usdttrc20' });
+    expect(req.status, JSON.stringify(req.body)).toBe(200);
+    await dispatchEmails(h.ctx);
+    const link = sent.filter((m) => m.to === seller.email && m.subject === 'Confirm your new payout address').at(-1)!;
+    expect(link.body).toMatch(/the code in our other email/);
+    const token = link.body.match(/confirm-payout-address=([A-Za-z0-9_-]+)/)![1]!;
+    const codeMail = sent.filter((m) => m.to === seller.email && /code to confirm the new payout address/.test(m.subject ?? '')).at(-1)!;
+    const code = codeMail.body.match(/Your code is (\d{6})/)![1]!;
+    expect((await seller.api.post('/v1/seller/payout-address/confirm', { token })).body.error.code).toBe('mfa_code_required');
+    expect((await seller.api.post('/v1/seller/payout-address/confirm', { token, code: '000000' })).status).toBe(401);
+    const ok = await seller.api.post('/v1/seller/payout-address/confirm', { token, code });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(ok.body.address).toBe('TNoTotpAddress1234567890');
+
+    // With a verified phone the code goes by SMS instead.
+    const smsSeller = await makeUser(h, { tier: 2 });
+    await h.ctx.db.query(`UPDATE users SET phone = '+201012345678', phone_verified_at = now() WHERE id = $1`, [smsSeller.id]);
+    const before = sent.length;
+    await smsSeller.api.post('/v1/seller/payout-address', { address: 'TSmsAddress1234567890xyz', currency: 'usdttrc20' });
+    await dispatchEmails(h.ctx);
+    const sms = sent.slice(before).find((m: any) => m.channel === 'sms' && m.to === '+201012345678') as any;
+    expect(sms, JSON.stringify(sent.slice(before).map((m: any) => [m.channel, m.to, m.subject]))).toBeTruthy();
+    expect(sms.body).toMatch(/\d{6}/);
+  });
+
+  it('a payout call that times out never pays twice: the withdrawal waits as unknown until the provider confirms', async () => {
+    const seller = await makeUser(h, { tier: 2 });
+    const buyer = await makeUser(h, { tier: 1 });
+    const offer = await makeOffer(seller, { deliveryMode: 'manual', stock: 5, categorySlug: 'currency', title: 'Gold 2M', priceCents: 100_00 });
+    for (let i = 0; i < 2; i++) {
+      const order = (await buyer.api.post('/v1/orders', { offerId: offer.id, quantity: 1, acceptTos: true })).body.order;
+      const pay = (await buyer.api.post(`/v1/orders/${order.id}/crypto/pay`, { coin: 'usdttrc20' })).body;
+      await ipn(paidIpn(fake.payments.get(pay.payment_id)));
+      await seller.api.post(`/v1/orders/${order.id}/deliver`, { payload: 'sent' });
+      await buyer.api.post(`/v1/orders/${order.id}/confirm`, {});
+    }
+    await h.ctx.db.query(`UPDATE users SET payout_hold_days = 0, payout_address = 'TSellerTimeout1234567890', payout_address_currency = 'usdttrc20', payout_address_set_at = now() WHERE id = $1`, [seller.id]);
+    const cfo = await makeUser(h, { tier: 2, role: 'finance' });
+    const bal = async (kind: string, id: string) => Number((await h.ctx.db.query(`SELECT COALESCE(SUM(e.amount_cents), 0) AS s FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id WHERE a.kind = $1 AND e.memo LIKE $2`, [kind, `%:${id}`])).rows[0].s);
+    const available = async () => (await seller.api.get('/v1/seller/dashboard')).body.balances.availableCents;
+    const before = await available();
+
+    // 1. The provider created the payout but the answer never came back.
+    const w1 = (await seller.api.post('/v1/seller/withdrawals', { amountCents: 2000 })).body;
+    fake.payoutMode = 'timeout';
+    const r1 = await cfo.api.post(`/v1/admin/withdrawals/${w1.id}/decide`, { approve: true });
+    expect(r1.status).toBe(502);
+    expect(r1.body.error.code).toBe('payout_unknown');
+    let row = (await seller.api.get('/v1/seller/withdrawals')).body.find((x: any) => x.id === w1.id);
+    expect(row.status).toBe('unknown');
+    expect(await bal('payouts', w1.id)).toBe(1850); // money stays booked as paid out: nothing goes back on a guess
+    expect(await available()).toBe(before - 2000);
+    expect(fake.payouts.filter((p) => p.unique_external_id === w1.id)).toHaveLength(1);
+    // Approving again does not create a second payout (idempotency key = withdrawal id) and is refused anyway.
+    expect((await cfo.api.post(`/v1/admin/withdrawals/${w1.id}/decide`, { approve: true })).status).toBe(409);
+    // The hourly recheck finds it at the provider → processing, then the IPN pays it.
+    const rechecked = await cfo.api.post(`/v1/admin/withdrawals/${w1.id}/recheck`, {});
+    expect(rechecked.status, JSON.stringify(rechecked.body)).toBe(200);
+    expect(rechecked.body).toMatchObject({ status: 'processing', payout_id: fake.payouts.find((p) => p.unique_external_id === w1.id)!.id });
+    await ipn({ id: rechecked.body.payout_id, batch_withdrawal_id: rechecked.body.provider_ref, status: 'FINISHED', error: null, currency: 'usdttrc20', amount: '18.5', address: 'TSellerTimeout1234567890', hash: '0xhash-late' });
+    row = (await seller.api.get('/v1/seller/withdrawals')).body.find((x: any) => x.id === w1.id);
+    expect(row).toMatchObject({ status: 'paid', tx_hash: '0xhash-late' });
+    expect(fake.payouts.filter((p) => p.unique_external_id === w1.id)).toHaveLength(1);
+
+    // 2. The provider was down (503, nothing created): unknown, then the recheck finds nothing → reversed.
+    const w2 = (await seller.api.post('/v1/seller/withdrawals', { amountCents: 1000 })).body;
+    fake.payoutMode = 'down';
+    expect((await cfo.api.post(`/v1/admin/withdrawals/${w2.id}/decide`, { approve: true })).body.error.code).toBe('payout_unknown');
+    expect(await available()).toBe(before - 3000);
+    const { recheckUnknownPayouts } = await import('../src/domain/cryptoPayouts.js');
+    await h.ctx.db.query(`UPDATE withdrawals SET updated_at = now() - interval '5 minutes' WHERE id = $1`, [w2.id]);
+    expect(await recheckUnknownPayouts(h.ctx)).toBe(1);
+    row = (await seller.api.get('/v1/seller/withdrawals')).body.find((x: any) => x.id === w2.id);
+    expect(row.status).toBe('failed');
+    expect(await available()).toBe(before - 2000);
+
+    // 3. A definite rejection (400) reverses at once.
+    const w3 = (await seller.api.post('/v1/seller/withdrawals', { amountCents: 1000 })).body;
+    fake.payoutMode = 'reject';
+    expect((await cfo.api.post(`/v1/admin/withdrawals/${w3.id}/decide`, { approve: true })).body.error.code).toBe('payout_failed');
+    expect((await seller.api.get('/v1/seller/withdrawals')).body.find((x: any) => x.id === w3.id).status).toBe('failed');
+    expect(await available()).toBe(before - 2000);
+  });
+
   it('a cart pays several orders with one crypto payment', async () => {
     const s1 = await makeUser(h, { tier: 2 });
     const s2 = await makeUser(h, { tier: 2 });
@@ -333,6 +430,73 @@ describe('crypto checkout (NOWPayments)', () => {
     expect(mismatch, 'balance check ran').toBeTruthy();
     expect(mismatch.detail.actual).toBe(100_000);
     expect(mismatch.detail.expected).toBeGreaterThan(0);
+  });
+
+  it('a deposit that lands after the order was cancelled is credited to the buyer once, with later IPNs adding only the difference', async () => {
+    const seller = await makeUser(h, { tier: 2 });
+    const buyer = await makeUser(h, { tier: 1 });
+    const offer = await makeOffer(seller, { deliveryMode: 'manual', stock: 5, categorySlug: 'currency', title: 'Gold 400k', priceCents: 20_00 });
+    const order = (await buyer.api.post('/v1/orders', { offerId: offer.id, quantity: 1, acceptTos: true })).body.order;
+    const pay = (await buyer.api.post(`/v1/orders/${order.id}/crypto/pay`, { coin: 'usdttrc20' })).body;
+    // Nothing arrives in time: the order lapses with the payment still 'waiting'.
+    await h.ctx.db.query(`UPDATE orders SET payment_expires_at = now() - interval '2 hours' WHERE id = $1`, [order.id]);
+    await runJobsOnce(h.ctx);
+    expect((await buyer.api.get(`/v1/orders/${order.id}`)).body.status).toBe('cancelled');
+    expect((await buyer.api.get('/v1/me/credit')).body.balanceCents).toBe(0);
+    const credit = async () => (await buyer.api.get('/v1/me/credit')).body.balanceCents;
+    const clearing = async () => Number((await h.ctx.db.query(`SELECT COALESCE(SUM(e.amount_cents), 0) AS s FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id WHERE a.kind = 'gateway_clearing' AND e.memo = 'crypto_late_deposit' AND e.order_id = $1`, [order.id])).rows[0].s);
+
+    // The coins show up late, in two steps: 8 then the full 21.06 (what reached the wallet counts).
+    await ipn(paidIpn(fake.payments.get(pay.payment_id), { payment_status: 'partially_paid', actually_paid: 8, actually_paid_at_fiat: 8, outcome_amount: 7.96 }));
+    expect(await credit()).toBe(796);
+    expect((await buyer.api.get(`/v1/orders/${order.id}`)).body.status).toBe('cancelled'); // never un-cancelled
+    await ipn(paidIpn(fake.payments.get(pay.payment_id)));
+    const settled = Math.round(Number(fake.payments.get(pay.payment_id).price_amount) * 0.995 * 100);
+    expect(await credit()).toBe(settled); // only the difference was added
+    expect(await clearing()).toBe(-settled);
+    // The same IPN again, and a 'confirmed' re-send: nothing more, and the row stays 'credited'.
+    await ipn(paidIpn(fake.payments.get(pay.payment_id)));
+    await ipn(paidIpn(fake.payments.get(pay.payment_id), { payment_status: 'confirmed' }));
+    expect(await credit()).toBe(settled);
+    expect((await buyer.api.get(`/v1/orders/${order.id}`)).body.crypto_payments[0]).toMatchObject({ status: 'credited' });
+    expect(Number((await h.ctx.db.query('SELECT credited_cents FROM crypto_payments WHERE payment_id = $1', [String(pay.payment_id)])).rows[0].credited_cents)).toBe(settled);
+    await dispatchEmails(h.ctx);
+    expect(sent.filter((m) => m.to === buyer.email && /kept in your balance/.test(m.subject ?? ''))).toHaveLength(2); // one per new amount
+  });
+
+  it('a second deposit on an order already funded goes to the balance, and a cart credits a late deposit once across its orders', async () => {
+    const s1 = await makeUser(h, { tier: 2 });
+    const buyer = await makeUser(h, { tier: 1 });
+    const offer = await makeOffer(s1, { deliveryMode: 'manual', stock: 5, categorySlug: 'currency', title: 'Gold C', priceCents: 10_00 });
+    const order = (await buyer.api.post('/v1/orders', { offerId: offer.id, quantity: 1, acceptTos: true })).body.order;
+    const first = (await buyer.api.post(`/v1/orders/${order.id}/crypto/pay`, { coin: 'usdttrc20' })).body;
+    // The first payment's window lapses at the provider; the buyer opens a second one, then sends both.
+    await h.ctx.db.query(`UPDATE crypto_payments SET expires_at = now() - interval '1 minute' WHERE payment_id = $1`, [String(first.payment_id)]);
+    const second = (await buyer.api.post(`/v1/orders/${order.id}/crypto/pay`, { coin: 'btc' })).body;
+    expect(second.payment_id, JSON.stringify(second)).toBeTruthy();
+    await ipn(paidIpn(fake.payments.get(first.payment_id)));
+    expect((await buyer.api.get(`/v1/orders/${order.id}`)).body.status).toBe('paid');
+    expect((await buyer.api.get('/v1/me/credit')).body.balanceCents).toBe(0);
+    // ...and then paid the second one too. Not lost: it is balance.
+    await ipn(paidIpn(fake.payments.get(second.payment_id)));
+    const extra = Math.round(Number(fake.payments.get(second.payment_id).price_amount) * 0.995 * 100);
+    expect((await buyer.api.get('/v1/me/credit')).body.balanceCents).toBe(extra);
+    await ipn(paidIpn(fake.payments.get(second.payment_id)));
+    expect((await buyer.api.get('/v1/me/credit')).body.balanceCents).toBe(extra);
+
+    // A cart: both orders lapse, the one payment arrives late → credited once, not once per order.
+    const b = await makeOffer(s1, { deliveryMode: 'manual', stock: 5, categorySlug: 'items', title: 'Item D', priceCents: 9_00 });
+    const cart = await buyer.api.post('/v1/orders/cart', { items: [{ offerId: offer.id, quantity: 1 }, { offerId: b.id, quantity: 1 }], acceptTos: true });
+    const checkoutId = cart.body.checkout.id;
+    const pay = (await buyer.api.post(`/v1/checkouts/${checkoutId}/crypto/pay`, { coin: 'btc' })).body;
+    await h.ctx.db.query(`UPDATE orders SET payment_expires_at = now() - interval '2 hours' WHERE checkout_id = $1`, [checkoutId]);
+    await runJobsOnce(h.ctx);
+    expect((await buyer.api.get(`/v1/checkouts/${checkoutId}`)).body.orders.map((o: any) => o.status)).toEqual(['cancelled', 'cancelled']);
+    await ipn(paidIpn(fake.payments.get(pay.payment_id)));
+    await ipn(paidIpn(fake.payments.get(pay.payment_id)));
+    const cartSettled = Math.round(Number(fake.payments.get(pay.payment_id).price_amount) * 0.995 * 100);
+    const bal = (await buyer.api.get('/v1/me/credit')).body.balanceCents;
+    expect(bal, JSON.stringify({ extra, cartSettled, price: fake.payments.get(pay.payment_id).price_amount, cart: cart.body })).toBe(extra + cartSettled);
   });
 
   it('keeps an underpayment that never got its top-up in the buyer’s balance, spendable or withdrawable, never refunded', async () => {

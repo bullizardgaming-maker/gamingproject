@@ -16,6 +16,7 @@ import { availableCount, markDelivered, releaseReservation, reserveInventory, re
 import { accountId, orderEscrowBalance, post } from './ledger.js';
 import { centsToTokenUnits, orderIdToBytes32 } from './web3.js';
 import { taxForCommission } from './tax.js';
+import { assertNotPaused, assertOrderWithinLimits } from './controls.js';
 import { hasPermission } from './permissions.js';
 import { assertWalletClear } from './aml.js';
 import { sellerLeg, sellerRateFor } from './sellerfx.js';
@@ -203,7 +204,7 @@ export function orderSummary(o: Order) {
 // Create
 // ---------------------------------------------------------------------------
 export interface CreateOrderInput {
-  buyer: { id: string; email: string; kyc_tier: number; status: string };
+  buyer: { id: string; email: string; kyc_tier: number; status: string; created_at?: string };
   offerId: string;
   quantity: number;
   rail: 'fiat' | 'crypto';
@@ -347,6 +348,7 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
   if (buyer.status !== 'active') throw forbidden('suspended', 'Account suspended');
   if (buyer.kyc_tier < 1) throw forbidden('kyc_required', 'Verify your email and phone (Tier 1) before purchasing');
   if (!input.acceptTos) throw badRequest('tos_required', 'You must accept the Terms of Service');
+  await assertNotPaused(ctx.db, 'orders'); // kill switch (Ops → Controls)
   if (input.rail === 'crypto' && !ctx.cfg.ONCHAIN_ESCROW_ENABLED) throw badRequest('rail_unavailable', 'On-chain escrow is not available; pay with crypto at checkout instead');
   if (input.rail === 'crypto' && !input.walletAddress) throw badRequest('wallet_required', 'walletAddress is required for crypto escrow');
   if (input.walletAddress) await assertWalletClear(ctx, buyer.id, input.walletAddress);
@@ -369,13 +371,15 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
   const order = await withScope(ctx, async (s) => {
     const offer = await maybeOne(
       s.tx,
-      `SELECT f.*, c.kind AS category_kind, c.risk_class, c.promo_rate_bps, c.name AS category_name, u.status AS seller_status,
+      `SELECT f.*, c.kind AS category_kind, c.risk_class, c.promo_rate_bps, c.name AS category_name, category_open(c.slug) AS category_open, u.status AS seller_status,
               (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now())) AS shop_paused, u.shop_pause_message
          FROM offers f JOIN categories c ON c.slug = f.category_slug JOIN users u ON u.id = f.seller_id
         WHERE f.id = $1`,
       [input.offerId],
     );
     if (!offer || offer.status !== 'active' || offer.seller_status !== 'active') throw notFound('Offer');
+    // A category closed by the launch phase can't be bought from, even through a direct link to an older listing.
+    if (offer.category_open === false) throw conflict('category_not_open', `${offer.category_name} opens in a later launch phase`);
     // Listings made from an accepted buyer request can only be bought by that buyer.
     if (offer.reserved_for && offer.reserved_for !== buyer.id) throw notFound('Offer');
     if (offer.shop_paused) throw conflict('shop_paused', offer.shop_pause_message || 'This seller is away and not taking orders right now');
@@ -396,6 +400,9 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
     const amount = price.amountCents;
     const rate = price.commissionBps;
     const split = splitGross(amount, price.sellerAmountCents);
+    // Beta limits: order size for everyone, tighter for accounts in their first days (Ops → Controls).
+    const created = buyer.created_at ?? (await one<{ created_at: string }>(s.tx, 'SELECT created_at FROM users WHERE id = $1', [buyer.id])).created_at;
+    await assertOrderWithinLimits(s.tx, { id: buyer.id, created_at: created }, amount);
     const { rank } = await sellerTier(s.tx, offer.seller_id);
     const protection = offer.risk_class === 'high' ? 'insurance_14d' : 'until_confirmed';
     const termsVersion = await tosVersion(s.tx);
@@ -561,7 +568,7 @@ export async function handlePaymentCaptured(ctx: Ctx, ev: Extract<PaymentEvent, 
   if (refundNeeded) {
     const o = refundNeeded as Order;
     // Keyed by order: orders in one cart checkout share the payment reference.
-    const r = o.payment_provider === 'nowpayments' ? { settledAmountCents: undefined } : await ctx.payments.refund(o.payment_ref!, o.presentment_amount_cents, o.presentment_currency, `refund_order_${o.id}`);
+    const r = o.payment_provider === 'nowpayments' || !ctx.cfg.CARD_REFUNDS_ENABLED ? { settledAmountCents: undefined } : await ctx.payments.refund(o.payment_ref!, o.presentment_amount_cents, o.presentment_currency, `refund_order_${o.id}`);
     await withScope(ctx, async (s) => {
       const cur = await lockOrder(s.tx, o.id);
       await postRefund(s.tx, cur, r.settledAmountCents, 'late_payment');
@@ -655,8 +662,8 @@ async function postRefund(tx: Tx, order: Order, refundSettledCents?: number, rea
   // Crypto (NOWPayments) and balance-funded orders are refunded to the buyer's Bullizard balance
   // (CEO, Oct 24: refunds go to balance; withdrawing them costs the normal fee). Only a card
   // gateway refund goes back out through the PSP.
-  const toBalance = order.payment_provider === 'nowpayments' || order.payment_provider === 'none' || !order.payment_provider;
-  const settledBack = toBalance ? card : (refundSettledCents ?? card);
+  const toBalance = refundSettledCents == null; // no gateway refund was made: the money is balance (crypto, credit, or cards off)
+  const settledBack = toBalance ? card : refundSettledCents;
   await post(
     tx,
     [
@@ -798,6 +805,9 @@ async function lockCommissionTax(ctx: Ctx, tx: Tx, order: Order) {
 }
 
 async function releaseEscrow(ctx: Ctx, s: TxScope, order: Order & { title: string }, actorId: string | null, reason: string) {
+  // One release per buyer at a time (lock taken before any ledger row): the referral "first order" rule and the
+  // seller/ledger locks that follow always come in the same order, so two orders completing together can't deadlock.
+  await s.tx.query('SELECT 1 FROM users WHERE id = $1 FOR UPDATE', [order.buyer_id]);
   // Crypto orders pay the commission on-chain; its tax is recorded the same way for invoices and returns.
   if (order.rail !== 'fiat') await lockCommissionTax(ctx, s.tx, order);
   if (order.rail === 'fiat') {
@@ -912,8 +922,10 @@ export async function releaseByStaff(ctx: Ctx, orderId: string, staffId: string,
       throw conflict('too_early', `Staff can release this order from ${new Date(earliest).toISOString()}, ${STAFF_RELEASE_AFTER_HOURS} hours after delivery`);
     }
     if (order.category_kind === 'account') {
+      // Accounts: staff release only once the 14-day window has ended (no auto-release), or when the buyer finished the changeover.
       const cl = await maybeOne<{ completed_at: string | null }>(s.tx, 'SELECT completed_at FROM security_checklists WHERE order_id = $1', [orderId]);
-      if (cl && !cl.completed_at) throw conflict('checklist_incomplete', 'The buyer has not finished the Security Changeover checklist; the 14-day window releases it');
+      const windowOver = !!order.protection_ends_at && new Date(order.protection_ends_at) <= new Date();
+      if (cl && !cl.completed_at && !windowOver) throw conflict('checklist_incomplete', `The buyer has not finished the Security Changeover checklist; staff can release from ${order.protection_ends_at}`);
     }
     await s.tx.query('UPDATE orders SET released_by = $2, release_note = $3 WHERE id = $1', [orderId, staffId, note]);
     await releaseEscrow(ctx, s, order, staffId, 'staff_released');
@@ -970,11 +982,16 @@ export async function updateChecklist(ctx: Ctx, orderId: string, buyerId: string
 }
 
 /** Worker: release escrow for orders whose inspection/insurance window lapsed without a dispute. */
+/**
+ * No order is ever released without a person (Round 20). When an account order's 14-day window ends, it
+ * becomes eligible for staff release (Ops → Releases) and both sides are told once; nothing moves by itself.
+ */
 export async function autoCompleteExpired(ctx: Ctx, limit = 100): Promise<number> {
   const due = await many<{ id: string }>(
     ctx.db,
-    `SELECT id FROM orders WHERE status = 'delivered' AND rail = 'fiat' AND NOT escrow_frozen AND protection_ends_at IS NOT NULL AND protection_ends_at <= now()
-      ORDER BY protection_ends_at LIMIT $1`,
+    `SELECT o.id FROM orders o WHERE o.status = 'delivered' AND o.rail = 'fiat' AND o.protection_ends_at IS NOT NULL AND o.protection_ends_at <= now()
+        AND NOT EXISTS (SELECT 1 FROM order_events e WHERE e.order_id = o.id AND e.reason = 'protection_window_elapsed')
+      ORDER BY o.protection_ends_at LIMIT $1`,
     [limit],
   );
   let done = 0;
@@ -982,12 +999,14 @@ export async function autoCompleteExpired(ctx: Ctx, limit = 100): Promise<number
     try {
       await withScope(ctx, async (s) => {
         const order = await lockOrder(s.tx, id);
-        if (order.status !== 'delivered' || order.escrow_frozen || !order.protection_ends_at || new Date(order.protection_ends_at) > new Date()) return;
-        await releaseEscrow(ctx, s, order, null, 'protection_window_elapsed');
+        if (order.status !== 'delivered' || !order.protection_ends_at || new Date(order.protection_ends_at) > new Date()) return;
+        await s.tx.query(`INSERT INTO order_events (order_id, from_status, to_status, reason) VALUES ($1, 'delivered', 'delivered', 'protection_window_elapsed')`, [id]);
+        const room = await roomOf(s.tx, id);
+        await appendMessage(s, room.id, null, 'system', 'The protection window has ended. Staff can now review the delivery and release the payment; the buyer can still confirm or open a dispute.', [], undefined, { code: 'protection_ended' });
         done++;
       });
     } catch (err) {
-      ctx.log.error({ err, orderId: id }, 'auto-complete failed');
+      ctx.log.error({ err, orderId: id }, 'protection-window check failed');
     }
   }
   return done;
@@ -1105,14 +1124,25 @@ async function splitEscrow(ctx: Ctx, s: TxScope, order: Order & { delivery_mode:
   const held = await orderEscrowBalance(s.tx, order.id, cur);
   if (held !== order.amount_cents) throw new Error(`escrow imbalance for order ${order.id}: ${held}`);
   const released = order.amount_cents - refundCents;
+  // The seller's part carries its share of the commission, with the reserve cut and the commission tax
+  // recorded exactly as a full release does (Round 20).
   const commission = Math.round((order.commission_cents * released) / order.amount_cents);
+  const reserveCut = Math.floor((commission * RESERVE_SHARE_BPS) / 10_000);
+  const taxInfo = await taxForCommission(ctx, s.tx, order.seller_id, commission);
+  await s.tx.query('UPDATE orders SET tax_country = $2, tax_rate_bps = $3, tax_treatment = $4, commission_tax_cents = $5, seller_received_cents = $6 WHERE id = $1', [
+    order.id, taxInfo.country, taxInfo.rateBps, taxInfo.treatment, taxInfo.taxCents, released - commission,
+  ]);
   const sellerPart = released - commission;
+  // The buyer's refund: the promo-funded share goes back to the treasury, never into withdrawable credit.
+  const promoShare = Math.min(refundCents, Math.round((order.discount_cents * refundCents) / order.amount_cents));
   await post(
     s.tx,
     [
       { account: await accountId(s.tx, 'escrow', cur), amountCents: -order.amount_cents },
-      { account: await accountId(s.tx, 'user_credit', cur, order.buyer_id), amountCents: refundCents },
-      { account: await accountId(s.tx, 'treasury', cur), amountCents: commission },
+      { account: await accountId(s.tx, 'user_credit', cur, order.buyer_id), amountCents: refundCents - promoShare },
+      { account: await accountId(s.tx, 'treasury', cur), amountCents: commission - reserveCut - taxInfo.taxCents + promoShare },
+      { account: await accountId(s.tx, 'reserve', cur), amountCents: reserveCut },
+      { account: await accountId(s.tx, 'tax_payable', cur), amountCents: taxInfo.taxCents },
       await sellerLeg(s.tx, order, sellerPart, 'escrow_release'),
     ],
     'dispute_split',
@@ -1132,8 +1162,11 @@ async function refundOrder(ctx: Ctx, s: TxScope, order: Order & { delivery_mode:
   // The PSP refund is idempotent (keyed on the payment ref), so calling it inside the
   // transaction is safe: on rollback a retry re-uses the same refund.
   let settledBack: number | undefined;
-  if (order.rail === 'fiat' && order.payment_ref && order.charged_cents > 0 && order.payment_provider !== 'none' && order.payment_provider !== 'nowpayments') {
-    settledBack = (await ctx.payments.refund(order.payment_ref, order.presentment_amount_cents, order.presentment_currency, `refund_order_${order.id}`)).settledAmountCents;
+  // Card payments are off at launch (crypto only): every refund lands in the buyer's balance. A gateway refund is
+  // only attempted when card payments are switched on (CARD_REFUNDS_ENABLED) and the order was paid by card.
+  const cardPaid = order.rail === 'fiat' && !!order.payment_ref && order.charged_cents > 0 && order.payment_provider !== 'none' && order.payment_provider !== 'nowpayments';
+  if (cardPaid && ctx.cfg.CARD_REFUNDS_ENABLED) {
+    settledBack = (await ctx.payments.refund(order.payment_ref!, order.presentment_amount_cents, order.presentment_currency, `refund_order_${order.id}`)).settledAmountCents;
   }
   await postRefund(s.tx, order, settledBack, reason);
   await setRedemptionStatus(s.tx, order.id, 'released');

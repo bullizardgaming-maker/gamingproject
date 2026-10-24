@@ -89,8 +89,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
+      # The on-chain escrow toolchain (hardhat) is its own install: it is not part of the launch (crypto goes through
+      # NOWPayments) and is kept out of the root workspace so the root/api/web audits stay clean.
       - run: npm ci
-      - run: npm test -w contracts
+        working-directory: contracts
+      - run: npm test
+        working-directory: contracts
 
   fraud-gnn:
     runs-on: ubuntu-latest

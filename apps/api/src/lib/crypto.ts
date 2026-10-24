@@ -73,7 +73,7 @@ export class Keyring {
     const key = this.keys.get(blob.subarray(1, 1 + vlen).toString());
     if (!key) throw new Error('unknown key version');
     const o = 1 + vlen;
-    const decipher = createDecipheriv('aes-256-gcm', key, blob.subarray(o, o + 12));
+    const decipher = createDecipheriv('aes-256-gcm', key, blob.subarray(o, o + 12), { authTagLength: 16 });
     decipher.setAAD(Buffer.from(aad));
     decipher.setAuthTag(blob.subarray(o + 12, o + 28));
     return Buffer.concat([decipher.update(blob.subarray(o + 28)), decipher.final()]);
@@ -83,7 +83,7 @@ export class Keyring {
     const [version, iv, tag, data] = ciphertext.split(':');
     const key = this.keys.get(version ?? '');
     if (!key || !iv || !tag || data === undefined) throw new Error('malformed ciphertext or unknown key version');
-    const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'base64'));
+    const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'base64'), { authTagLength: 16 });
     decipher.setAAD(Buffer.from(aad));
     decipher.setAuthTag(Buffer.from(tag, 'base64'));
     return Buffer.concat([decipher.update(Buffer.from(data, 'base64')), decipher.final()]).toString('utf8');

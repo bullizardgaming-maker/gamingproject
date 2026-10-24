@@ -15,7 +15,8 @@ import { enqueueEmail, getPreferences, setPreferences } from '../domain/notifica
 import { AppError, badRequest, notFound, unauthorized } from '../lib/errors.js';
 import { ATTR_KEY, ATTR_VALUE_MAX, CATEGORY_DEFAULTS, GAME_SETS, attributesFor, handoverFieldFor, LEAGUES } from '../domain/attributeSets.js';
 import { listLeagues } from '../domain/leagues.js';
-import { affiliateSummary, attributeBuyer } from '../domain/affiliates.js';
+import { affiliateSummary } from '../domain/affiliates.js';
+import { controls } from '../domain/controls.js';
 import { wallet } from '../domain/wallet.js';
 import { LEGAL_DOCS, acceptTerms, acceptanceStatus, currentDocument, documentHistory, documentVersion, pendingNotice, tosVersion } from '../domain/legal.js';
 import { requestCryptoWithdrawal } from '../domain/cryptoPayouts.js';
@@ -77,8 +78,9 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/auth/register', strict, async (req, reply) => {
     const body = Credentials.extend({
       displayName: z.string().trim().min(2).max(40),
-      referralCode: z.string().trim().max(20).optional(),
-      creatorCode: z.string().trim().max(20).optional(),
+      code: z.string().trim().max(20).optional(), // one code: a friend's invite code or a creator code
+      referralCode: z.string().trim().max(20).optional(), // older clients
+      creatorCode: z.string().trim().max(20).optional(), // older clients
       locale: z.enum(LOCALES).optional(),
       /** "I'm 18 or older and agree to the Terms and Privacy Policy" — required (Legal, Oct 24). */
       acceptTerms: z.literal(true, { message: 'You must be 18 or older and accept the Terms and Privacy Policy' }),
@@ -361,9 +363,9 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/me/referral', async (req) => referralSummary(ctx, me(req).id));
   /** Creator affiliate: the creator's own stats; a buyer attaches a creator code once. */
   app.get('/me/affiliate', async (req) => affiliateSummary(ctx.db, me(req).id));
-  app.post('/me/affiliate', async (req) => {
-    const { code } = z.object({ code: z.string().trim().min(3).max(20) }).parse(req.body);
-    return attributeBuyer(ctx.db, me(req).id, code);
+  // Codes are entered at sign-up only (CEO, Oct 24): nothing attaches or changes one later.
+  app.post('/me/affiliate', async () => {
+    throw new AppError(410, 'code_at_signup_only', 'A friend’s invite code or a creator code is entered once, at sign-up');
   });
 
   // ---- Game voting: suggest a game, vote for one ----
@@ -466,8 +468,15 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   /** Feature switches the app reads at boot (+ the Terms version and any announced material change). */
   app.get('/features', async (_req, reply) => {
     reply.header('Cache-Control', 'public, max-age=60');
-    const [version, notice] = await Promise.all([tosVersion(ctx.dbRead), pendingNotice(ctx.dbRead)]);
-    return { merchantApi: ctx.cfg.MERCHANT_API_ENABLED, sandbox: ctx.cfg.SANDBOX_MODE, legal: { tosVersion: version, notice: notice ? { doc: notice.doc, version: notice.version, effectiveAt: notice.effective_at } : null } };
+    const [version, notice] = await Promise.all([tosVersion(ctx.dbRead).catch(() => null), pendingNotice(ctx.dbRead)]); // null: no Terms in force (sign-up and orders are closed)
+    const c = await controls(ctx.dbRead);
+    return {
+      merchantApi: ctx.cfg.MERCHANT_API_ENABLED, sandbox: ctx.cfg.SANDBOX_MODE,
+      legal: { tosVersion: version, notice: notice ? { doc: notice.doc, version: notice.version, effectiveAt: notice.effective_at } : null },
+      // Kill switches (Ops → Controls): the app shows a banner and disables the paused action before the API refuses it.
+      paused: { withdrawals: c.pause_withdrawals, orders: c.pause_orders, chat: c.pause_chat, signups: c.pause_signups, message: c.pause_message },
+      limits: { maxOrderCents: c.max_order_cents, maxWithdrawalDayCents: c.max_withdrawal_day_cents, newAccountDays: c.new_account_days, newAccountMaxOrderCents: c.new_account_max_order_cents },
+    };
   });
   // --- Legal documents: Terms, Privacy, Seller Agreement, Refunds, restricted countries --------
   const LegalDocParam = z.object({ doc: z.enum(LEGAL_DOCS) });

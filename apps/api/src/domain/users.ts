@@ -6,7 +6,8 @@ import { maybeOne, one, withTx } from '../db.js';
 import { hashPassword, hmacSha256, randomDigits, randomToken, safeEqual, verifyPassword } from '../lib/crypto.js';
 import { AppError, badRequest, conflict, unauthorized } from '../lib/errors.js';
 import { liftIdRestriction } from './onboarding.js';
-import { attributeBuyer } from './affiliates.js';
+import { attributeBuyer, isAffiliateCode } from './affiliates.js';
+import { assertNotPaused, assertWithdrawalWithinLimits } from './controls.js';
 import { withScope } from './events.js';
 import { recordSignals, subnetOf } from './fraud.js';
 import { accountId, post, sellerAvailable } from './ledger.js';
@@ -26,7 +27,8 @@ export interface User {
   role: 'user' | 'arbiter' | 'support' | 'finance' | 'compliance' | 'admin';
   staff_roles: string[];
   kyc_tier: number;
-  status: 'active' | 'suspended';
+  status: 'active' | 'suspended' | 'banned';
+  suspended_until?: string | null;
   email_verified_at: string | null;
   phone: string | null;
   phone_verified_at: string | null;
@@ -51,7 +53,7 @@ export interface User {
 }
 
 export const PUBLIC_USER_COLUMNS =
-  'id, email, display_name, role, kyc_tier, status, email_verified_at, phone, phone_verified_at, withdrawals_frozen, stripe_account_id, legal_name, created_at, (totp_enabled_at IS NOT NULL) AS totp_enabled, payouts_enabled, staff_roles, locale, handover_names, rules_passed_at, selling_restricted_at, seller_since, listing_banned_at';
+  'id, email, display_name, role, kyc_tier, status, email_verified_at, phone, phone_verified_at, withdrawals_frozen, stripe_account_id, legal_name, created_at, (totp_enabled_at IS NOT NULL) AS totp_enabled, payouts_enabled, staff_roles, locale, handover_names, rules_passed_at, selling_restricted_at, seller_since, listing_banned_at, suspended_until';
 
 // ---------------------------------------------------------------------------
 // Authentication. Sessions live in ./sessions.ts (15-minute access tokens +
@@ -82,6 +84,12 @@ export async function userFromToken(ctx: Ctx, token: string): Promise<User> {
     if (!session || session.user_id !== payload.sub) throw new Error('session revoked');
     const user = await maybeOne<User>(ctx.db, `SELECT ${PUBLIC_USER_COLUMNS} FROM users WHERE id = $1`, [payload.sub]);
     if (!user) throw new Error('unknown user');
+    // A timed suspension lifts itself the moment it is over (the hourly job catches the rest).
+    if (user.status === 'suspended' && user.suspended_until && new Date(user.suspended_until) <= new Date()) {
+      await ctx.db.query(`UPDATE users SET status = 'active', suspended_until = NULL, suspension_reason = NULL WHERE id = $1 AND status = 'suspended' AND suspended_until <= now()`, [user.id]);
+      user.status = 'active';
+      user.suspended_until = null;
+    }
     return { ...user, session_mfa: session.mfa, session_id: session.id, session_family: session.family_id };
   } catch {
     throw unauthorized('Invalid or expired session');
@@ -99,9 +107,15 @@ function sessionResponse(user: User, s: IssuedSession) {
   return { user, token: s.accessToken, refreshToken: s.refreshToken, expiresIn: s.expiresIn };
 }
 
-export async function register(ctx: Ctx, input: { email: string; password: string; displayName: string; referralCode?: string; creatorCode?: string; locale?: string } & AuthMeta) {
+export async function register(ctx: Ctx, input: { email: string; password: string; displayName: string; code?: string; referralCode?: string; creatorCode?: string; locale?: string } & AuthMeta) {
+  await assertNotPaused(ctx.db, 'signups'); // kill switch (Ops → Controls)
   const hash = await hashPassword(input.password);
-  const referrer = await referrerForCode(ctx.db, input.referralCode);
+  // One code per user, entered at sign-up only (CEO, Oct 24): a friend's invite code or a creator code, whichever this is.
+  const codes = [input.code, input.referralCode, input.creatorCode].filter((c): c is string => !!c?.trim());
+  if (new Set(codes.map((c) => c.trim().toUpperCase())).size > 1) throw badRequest('one_code_only', 'Enter one code: a friend’s invite code or a creator code, not both');
+  const code = codes[0]?.trim().toUpperCase();
+  const creator = code ? await isAffiliateCode(ctx.db, code) : false;
+  const referrer = code && !creator ? await referrerForCode(ctx.db, code) : null;
   try {
     const user = await one<User>(
       ctx.db,
@@ -111,8 +125,9 @@ export async function register(ctx: Ctx, input: { email: string; password: strin
     await recordSignals(ctx.db, user.id, { device: input.device, ip_subnet: subnetOf(input.ip) });
     await enqueueEmail(ctx.db, user.id, 'welcome', { name: input.displayName }, `welcome:${user.id}`);
     // A creator's code at signup (a wrong one is ignored rather than failing the signup).
-    if (input.creatorCode) await attributeBuyer(ctx.db, user.id, input.creatorCode).catch(() => null);
-    return sessionResponse(user, await createSession(ctx, user.id, { mfa: false, userAgent: input.userAgent, ip: input.ip }));
+    let applied: 'referral' | 'creator' | null = referrer ? 'referral' : null;
+    if (code && creator) applied = (await attributeBuyer(ctx.db, user.id, code).then(() => 'creator' as const).catch(() => null));
+    return { ...sessionResponse(user, await createSession(ctx, user.id, { mfa: false, userAgent: input.userAgent, ip: input.ip })), codeApplied: applied };
   } catch (err: any) {
     if (err.code === '23505') throw conflict('email_taken', 'An account with this email already exists');
     throw err;
@@ -369,6 +384,8 @@ export async function requestWithdrawal(ctx: Ctx, userId: string, amountCents: n
     // Lock the user row to serialize concurrent withdrawals against the same balance.
     const user = await one<User>(s.tx, `SELECT ${PUBLIC_USER_COLUMNS} FROM users WHERE id = $1 FOR UPDATE`, [userId]);
     if (user.kyc_tier < 2) throw new AppError(403, 'kyc_required', 'Tier 2 identity verification is required to withdraw');
+    await assertNotPaused(s.tx, 'withdrawals');
+    await assertWithdrawalWithinLimits(s.tx, userId, amountCents);
     if (user.withdrawals_frozen || user.status !== 'active') throw new AppError(423, 'withdrawals_frozen', 'Withdrawals are frozen pending a security review');
     // Compliance hold: deliberately the same generic wording, never mentioning AML (no tipping off).
     const { aml_hold } = await one<{ aml_hold: boolean }>(s.tx, 'SELECT aml_hold FROM users WHERE id = $1', [userId]);

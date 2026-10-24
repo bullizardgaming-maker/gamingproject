@@ -31,7 +31,8 @@ let state: DemoState = load();
 function load(): DemoState {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw) return JSON.parse(raw);
+    // Keys added since the state was saved (e.g. controls) come from a fresh seed.
+    if (raw) return { ...seed(), ...JSON.parse(raw) };
   } catch {
     /* storage unavailable or corrupt: start fresh */
   }
@@ -451,6 +452,7 @@ function characterFor(u: DemoUser, offer: any, given: unknown) {
   const field = handoverFieldFor(offer.game, offer.category_slug);
   const name = String(given ?? '').trim().slice(0, 60);
   if (field && !name) fail(400, 'character_name_required', `${field.label} is required for ${offer.game}`);
+  if (state.controls.pause_orders) fail(503, 'orders_paused', state.controls.pause_message || 'New orders are paused for a short while. Try again later.');
   return field ? name : null;
 }
 function rememberCharacter(u: DemoUser, offer: any, o: any, name: string) {
@@ -538,6 +540,12 @@ route('POST', '/auth/register', ({ body }) => {
   if (!/^\S+@\S+\.\S+$/.test(body.email ?? '') || String(body.password ?? '').length < 10) fail(400, 'validation_error', 'Invalid request');
   if (state.users.some((x) => x.email === body.email)) fail(409, 'email_taken', 'An account with this email already exists');
   if (body.acceptTerms !== true) fail(400, 'validation_error', 'You must be 18 or older and accept the Terms and Privacy Policy');
+  if (state.controls.pause_signups) fail(503, 'signups_paused', state.controls.pause_message || 'Sign-ups are paused for a short while. Try again later.');
+  // One code per user, at sign-up only (CEO, Oct 24): a friend's invite code or a creator code.
+  const codes = [body.code, body.referralCode, body.creatorCode].filter((c: unknown) => typeof c === 'string' && c.trim()).map((c: string) => c.trim().toUpperCase());
+  if (new Set(codes).size > 1) fail(400, 'one_code_only', 'Enter one code: a friend’s invite code or a creator code, not both');
+  const code: string | undefined = codes[0];
+  const creator = code ? state.affiliates.find((a) => a.code === code && a.status === 'active') : null;
   const u: DemoUser = {
     id: rid(), email: body.email, password: body.password, display_name: body.displayName ?? 'New user', role: 'user', kyc_tier: 0, status: 'active',
     email_verified_at: null, phone_verified_at: null, withdrawals_frozen: false, totp_enabled: false, payouts_enabled: false, legal_name: null, created_at: now(),
@@ -545,7 +553,10 @@ route('POST', '/auth/register', ({ body }) => {
     tos_version: TOS_VERSION, tos_accepted_at: now(),
   };
   state.users.push(u);
-  return { token: `demo:${u.id}`, user: publicUser(u) };
+  let codeApplied: 'referral' | 'creator' | null = null;
+  if (creator) { state.affiliateOf[u.id] = creator.id; codeApplied = 'creator'; }
+  else if (code && /^BZ[A-Z0-9]{6}$/.test(code)) codeApplied = 'referral';
+  return { token: `demo:${u.id}`, user: publicUser(u), codeApplied };
 });
 route('POST', '/auth/logout', () => undefined);
 route('PUT', '/me/locale', ({ me, body }) => {
@@ -813,7 +824,20 @@ route('PATCH', '/admin/affiliates/:id', ({ me, params, body }) => {
   return affiliateView(a);
 });
 // Feature switches: the Merchant API is hidden at launch (the full test catalogue turns it on so its flows still run).
-route('GET', '/features', () => ({ merchantApi: DEMO_FULL, sandbox: true, legal: { tosVersion: TOS_VERSION, notice: null } }));
+route('GET', '/features', () => ({
+  merchantApi: DEMO_FULL, sandbox: true, legal: { tosVersion: TOS_VERSION, notice: null },
+  paused: { withdrawals: state.controls.pause_withdrawals, orders: state.controls.pause_orders, chat: state.controls.pause_chat, signups: state.controls.pause_signups, message: state.controls.pause_message },
+  limits: { maxOrderCents: state.controls.max_order_cents, maxWithdrawalDayCents: state.controls.max_withdrawal_day_cents, newAccountDays: state.controls.new_account_days, newAccountMaxOrderCents: state.controls.new_account_max_order_cents },
+}));
+route('GET', '/admin/controls', ({ me }) => (needPerm(me, 'controls.manage'), { ...state.controls }));
+route('PUT', '/admin/controls', ({ me, body }) => {
+  const staff = needPerm(me, 'controls.manage');
+  for (const k of Object.keys(state.controls)) if (k in body && k !== 'updated_at') (state.controls as any)[k] = body[k];
+  state.controls.updated_at = now();
+  save();
+  state.audit.unshift({ id: rid(), created_at: now(), actor_name: staff.display_name, actor_role: staff.role, ip: '203.0.113.7', action: 'controls.update', target_type: 'controls', target_id: 'platform', details: body });
+  return { ...state.controls };
+});
 
 // --- Legal documents (versioned; Legal's approved text replaces the interim copy through Ops) ----
 route('GET', '/legal/:doc', ({ params }) => legalDoc(params[0]!));
@@ -857,15 +881,7 @@ route('GET', '/me/affiliate', ({ me }) => {
   month.setUTCHours(0, 0, 0, 0);
   return { ...affiliateView(a), earned_month_cents: earned.filter((e) => Date.parse(e.created_at) >= month.getTime()).reduce((s, e) => s + e.earned_cents, 0), recent: earned.slice(-50).reverse() };
 });
-route('POST', '/me/affiliate', ({ me, body }) => {
-  const u = need(me);
-  const a = state.affiliates.find((x) => x.code === String(body.code ?? '').trim().toUpperCase() && x.status === 'active') ?? fail(400, 'invalid_affiliate_code', 'That creator code is not valid');
-  if (a.user_id === u.id) fail(400, 'own_code', 'You cannot use your own code');
-  if (state.affiliateOf[u.id]) fail(409, 'already_attributed', 'A creator code is already on this account');
-  state.affiliateOf[u.id] = a.id;
-  save();
-  return { affiliateId: a.id };
-});
+route('POST', '/me/affiliate', () => fail(410, 'code_at_signup_only', 'A friend’s invite code or a creator code is entered once, at sign-up'));
 route('GET', '/admin/leagues', ({ me }) => (needPerm(me, 'leagues.manage'), { leagues: state.leagues, games: ['path of exile', 'path of exile 2'], inactiveSellerDays: 14 }));
 route('POST', '/admin/leagues', ({ me, body }) => {
   needPerm(me, 'leagues.manage');
@@ -1331,7 +1347,7 @@ route('GET', '/seller/withdrawals/quote', ({ query }) => {
 route('GET', '/seller/withdrawals', ({ me }) => state.withdrawals.filter((w) => w.user_id === need(me).id).sort((a, b) => b.created_at.localeCompare(a.created_at)));
 route('GET', '/admin/withdrawals', ({ me }) => {
   needPerm(me, 'treasury.request');
-  return state.withdrawals.filter((w) => ['pending_approval', 'processing'].includes(w.status)).map((w) => {
+  return state.withdrawals.filter((w) => ['pending_approval', 'processing', 'unknown'].includes(w.status)).map((w) => {
     const u = userById(w.user_id);
     return { ...w, email: u?.email, display_name: u?.display_name, kyc_tier: u?.kyc_tier, trust_level: state.trust[w.user_id] ?? 'new' };
   });
@@ -1375,6 +1391,7 @@ route('GET', '/admin/orders/unconfirmed', ({ me }) => {
 route('POST', '/admin/orders/:id/release', ({ me, params, body }) => {
   const staff = needPerm(me, 'orders.release');
   const o = state.orders.find((x) => x.id === params[0]) ?? fail(404, 'not_found', 'Order not found');
+  if (o.amount_cents > 200_00) needPerm(me, 'orders.lead'); // above $200: the Support Lead releases
   if (o.status !== 'delivered') fail(409, 'invalid_state', `Cannot release an order that is ${o.status}`);
   if (o.escrow_frozen) fail(423, 'under_review', 'Order is under security review');
   if (Date.now() - new Date(o.delivered_at).getTime() < RELEASE_AFTER_H * 3_600_000) fail(409, 'too_early', `Staff can release this order ${RELEASE_AFTER_H} hours after delivery`);
@@ -1814,6 +1831,7 @@ route('POST', '/chat/rooms/:id/messages', ({ me, params, body }) => {
   const r = roomFor(u, params[0]!);
   const text = String(body.body ?? '').trim();
   if (!text) fail(400, 'validation_error', 'Write a message');
+  if (state.controls.pause_chat && u.role === 'user') fail(503, 'chat_paused', state.controls.pause_message || 'Chat is paused for a short while. Your order and its record are safe.');
   const accountOrder = !!r.order_id && state.orders.find((o) => o.id === r.order_id)?.category_kind === 'account';
   const reasons = detectOffPlatform(text, { allowEmail: accountOrder });
   const flagged = reasons.length > 0;
@@ -2637,6 +2655,7 @@ route('GET', '/admin/disputes/:id/case', ({ me, params }) => {
 route('POST', '/admin/disputes/:id/resolve', ({ me, params, body }) => {
   const staff = needStaff(me);
   const o = state.orders.find((x) => x.dispute?.id === params[0]) ?? fail(404, 'not_found', 'Dispute not found');
+  if (o.amount_cents > 200_00) needPerm(me, 'orders.lead'); // above $200: the Support Lead decides
   if (body.outcome === 'split' && !(body.refundCents > 0 && body.refundCents < o.amount_cents)) fail(400, 'validation_error', 'refundCents must be between 1 and the order amount');
   o.dispute.status = body.outcome === 'buyer' ? 'resolved_buyer' : body.outcome === 'split' ? 'resolved_split' : 'resolved_seller';
   if (body.outcome === 'buyer') {
@@ -3111,6 +3130,7 @@ route('GET', '/admin/analytics', ({ me, query }) => {
 
 // --- Staff permissions, compliance, treasury, tax, staff ------------------------------------
 const ALL_PERMS = [
+  'orders.lead', 'controls.manage',
   'orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'risk.review', 'users.suspend', 'aml.review', 'aml.sar',
   'chargebacks.manage', 'orders.refund_after_release', 'orders.release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view',
   'ledger.adjust', 'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'keys.manage', 'retention.manage', 'audit.view', 'staff.manage', 'status.manage',
@@ -3119,7 +3139,8 @@ const ALL_PERMS = [
 const ROLE_PERMS: Record<string, string[]> = {
   arbiter: ['orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'orders.refund_after_release', 'orders.release', 'moderation.manage'],
   support: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage', 'support.manage', 'moderation.manage', 'orders.release', 'leagues.manage', 'rules.manage'],
-  finance: ['chargebacks.manage', 'orders.refund_after_release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view', 'ledger.adjust', 'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'analytics.view'],
+  lead: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage', 'support.manage', 'moderation.manage', 'orders.release', 'leagues.manage', 'rules.manage', 'disputes.manage', 'owner_proofs.review', 'orders.refund_after_release', 'orders.lead', 'users.suspend', 'audit.view'],
+  finance: ['controls.manage', 'chargebacks.manage', 'orders.refund_after_release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view', 'ledger.adjust', 'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'analytics.view'],
   compliance: ['orders.view_any', 'risk.review', 'users.suspend', 'aml.review', 'aml.sar', 'payout_holds.set', 'ledger.view', 'audit.view', 'retention.manage', 'analytics.view'],
   admin: ALL_PERMS,
 };

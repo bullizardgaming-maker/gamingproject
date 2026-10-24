@@ -35,7 +35,7 @@ export function LegalNotice() {
     );
   }
   const notice = legal?.notice;
-  if (!notice) return null;
+  if (!notice) return <PausedBanner />;
   const at = notice.effective_at ?? notice.effectiveAt;
   const date = at ? new Date(at).toLocaleDateString(currentLocale() === 'ar' ? 'ar-EG' : undefined, { year: 'numeric', month: 'long', day: 'numeric' }) : '';
   return (
@@ -43,6 +43,18 @@ export function LegalNotice() {
       <div className="notice" data-testid="legal-notice">
         {t('legal.notice', { date })} <Link to={`/terms/versions/${encodeURIComponent(notice.version)}`} target="_blank" rel="noopener">{t('legal.title.terms')} {notice.version}</Link>
       </div>
+    </div>
+  );
+}
+
+/** Kill switches (Ops → Controls): one line telling users what is paused; the API refuses the action anyway. */
+export function PausedBanner() {
+  const { paused } = useFeatures();
+  const what = [paused.orders && t('paused.orders'), paused.withdrawals && t('paused.withdrawals'), paused.chat && t('paused.chat'), paused.signups && t('paused.signups')].filter(Boolean) as string[];
+  if (!what.length) return null;
+  return (
+    <div className="shell" style={{ paddingTop: 12 }}>
+      <div className="notice" role="status" data-testid="paused-banner">{t('paused.lead', { what: what.join(', ') })} {paused.message ?? t('paused.soon')}</div>
     </div>
   );
 }

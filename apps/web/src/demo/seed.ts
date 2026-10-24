@@ -38,7 +38,7 @@ export interface DemoUser {
   listing_banned_at?: string | null;
   listing_ban_reason?: string | null;
   display_name: string;
-  role: 'user' | 'arbiter' | 'support' | 'finance' | 'compliance' | 'admin';
+  role: 'user' | 'arbiter' | 'support' | 'lead' | 'finance' | 'compliance' | 'admin';
   staff_roles?: string[];
   kyc_tier: number;
   status: string;
@@ -465,6 +465,8 @@ export function seed() {
     ] as Array<{ id: string; game: string; name: string; starts_at: string | null; ends_at: string | null; created_at: string; updated_at: string }>,
     handoverNames: {} as Record<string, Record<string, string>>,
     rulesSettings: { passMarkPct: 90, idDueDays: 30 },
+    /** Kill switches and beta limits (Ops → Controls). */
+    controls: { pause_withdrawals: false, pause_orders: false, pause_chat: false, pause_signups: false, pause_message: null as string | null, max_withdrawal_day_cents: 500000, max_order_cents: 50000, new_account_days: 7, new_account_max_order_cents: 10000, new_account_max_open_orders: 3, alert_dispute_hour: 5, alert_bans_hour: 3, alert_withdrawal_cents: 200000, updated_at: new Date().toISOString() },
     launchPhase: 3,
     offplatformActions: ['warn', 'warn', 'ban'] as string[],
     credit: {} as Record<string, number>,

@@ -27,7 +27,7 @@ export function Login() {
     const f = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>;
     setError('');
     try {
-      const res = await api<{ token?: string; mfaRequired?: boolean; mfaToken?: string }>(mode === 'login' ? '/auth/login' : '/auth/register', { body: mode === 'login' ? f : { ...f, acceptTerms: f.acceptTerms === 'true', locale: currentLocale() } });
+      const res = await api<{ token?: string; mfaRequired?: boolean; mfaToken?: string }>(mode === 'login' ? '/auth/login' : '/auth/register', { body: mode === 'login' ? f : { ...f, code: f.code?.trim() || undefined, acceptTerms: f.acceptTerms === 'true', locale: currentLocale() } });
       if (res.mfaRequired && res.mfaToken) setMfaToken(res.mfaToken);
       else finish(res.token!, mode === 'register');
     } catch (err: any) {
@@ -68,6 +68,13 @@ export function Login() {
       <form className="stack" onSubmit={submit}>
         {mode === 'register' && (
           <label className="field">Display name<input name="displayName" required minLength={2} maxLength={40} /></label>
+        )}
+        {mode === 'register' && (
+          <label className="field">
+            {t('auth.code')}
+            <input name="code" maxLength={20} defaultValue={params.get('ref') ?? params.get('code') ?? ''} placeholder={t('auth.codePlaceholder')} autoCapitalize="characters" />
+            <span className="small muted">{params.get('ref') ? t('auth.codeFromLink', { code: params.get('ref')!.toUpperCase() }) + ' ' : ''}{t('auth.codeHint')}</span>
+          </label>
         )}
         <label className="field">Email<input name="email" type="email" required autoComplete="email" /></label>
         <label className="field">
@@ -552,47 +559,21 @@ function InviteFriends() {
 
 function CreatorCode() {
   const [mine, setMine] = useState<AffiliateSummary | null | undefined>(undefined);
-  const [code, setCode] = useState('');
-  const [msg, setMsg] = useState('');
-  const [error, setError] = useState('');
   useEffect(() => {
     api<AffiliateSummary | null>('/me/affiliate').then(setMine).catch(() => setMine(null));
   }, []);
-  const attach = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setMsg('');
-    try {
-      await api('/me/affiliate', { body: { code: code.trim() } });
-      setMsg(t('creator.applied', { code: code.trim().toUpperCase() }));
-      setCode('');
-    } catch (err: any) {
-      setError(err.message);
-    }
-  };
+  // Codes are entered once, at sign-up (CEO, Oct 24): this card only shows a creator their own code.
+  if (!mine) return null;
   return (
     <div className="card stack" id="creator-code" data-testid="creator-code">
       <h3 style={{ margin: 0 }}>{t('creator.title')}</h3>
-      {mine ? (
-        <>
-          <p className="small muted" style={{ margin: 0 }}>{t('creator.yours', { pct: (mine.rate_bps / 100).toFixed(0) })}</p>
-          <div className="grid three">
-            <div><div className="eyebrow">{t('creator.code')}</div><b className="mono">{mine.code}</b>{mine.status === 'paused' && <span className="chip held" style={{ marginInlineStart: 6 }}>{t('creator.paused')}</span>}</div>
-            <div><div className="eyebrow">{t('creator.buyers')}</div><b className="mono">{mine.buyers}</b></div>
-            <div><div className="eyebrow">{t('creator.earned')}</div><b className="mono">{money(mine.earned_cents)}</b> <span className="small muted">{t('creator.month', { amount: money(mine.earned_month_cents), count: mine.orders })}</span></div>
-          </div>
-        </>
-      ) : (
-        <form className="row" style={{ gap: 8, alignItems: 'end', flexWrap: 'wrap' }} onSubmit={attach}>
-          <label className="field" style={{ margin: 0, flex: '1 1 220px' }}>
-            {t('creator.have')}
-            <input value={code} onChange={(e) => setCode(e.target.value)} maxLength={20} placeholder={t('creator.placeholder')} />
-          </label>
-          <button className="btn ghost" disabled={code.trim().length < 3}>{t('creator.apply')}</button>
-        </form>
-      )}
-      {msg && <div className="ok" role="status">{msg}</div>}
-      {error && <div className="alert" role="alert">{error}</div>}
+      <p className="small muted" style={{ margin: 0 }}>{t('creator.yours', { pct: (mine.rate_bps / 100).toFixed(0) })}</p>
+      <div className="grid three">
+        <div><div className="eyebrow">{t('creator.code')}</div><b className="mono">{mine.code}</b>{mine.status === 'paused' && <span className="chip held" style={{ marginInlineStart: 6 }}>{t('creator.paused')}</span>}</div>
+        <div><div className="eyebrow">{t('creator.buyers')}</div><b className="mono">{mine.buyers}</b></div>
+        <div><div className="eyebrow">{t('creator.earned')}</div><b className="mono">{money(mine.earned_cents)}</b> <span className="small muted">{t('creator.month', { amount: money(mine.earned_month_cents), count: mine.orders })}</span></div>
+      </div>
+      <p className="small muted" style={{ margin: 0 }}>{t('creator.signupOnly')}</p>
     </div>
   );
 }

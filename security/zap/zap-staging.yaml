@@ -1,0 +1,146 @@
+# OWASP ZAP automation plan for staging (launch gate §2: dynamic scan — auth, headers, CSP, CORS, rate limits, uploads).
+# Run from the repo root once staging is up:
+#   STAGING_WEB=https://staging.bullizard.com STAGING_API=https://api-staging.bullizard.com \
+#   ZAP_USER=zap-buyer@bullizard.test ZAP_PASS='...' \
+#   docker run --rm -v "$PWD/security/zap:/zap/wrk:rw" -e STAGING_WEB -e STAGING_API -e ZAP_USER -e ZAP_PASS \
+#     ghcr.io/zaproxy/zaproxy:stable zap.sh -cmd -autorun /zap/wrk/zap-staging.yaml
+# Reports land in security/zap/reports/. The job fails (exit 1) on any High alert; Medium alerts are listed for triage.
+env:
+  contexts:
+    - name: bullizard-staging
+      urls:
+        - ${STAGING_WEB}
+        - ${STAGING_API}/v1
+      includePaths:
+        - ${STAGING_WEB}.*
+        - ${STAGING_API}/v1.*
+      excludePaths:
+        # Never touch money-moving or destructive endpoints from a scanner.
+        - ${STAGING_API}/v1/payments/.*
+        - ${STAGING_API}/v1/admin/.*
+        - ${STAGING_API}/v1/me/data/delete.*
+        - ${STAGING_API}/v1/auth/logout
+      authentication:
+        method: json
+        parameters:
+          loginPageUrl: ${STAGING_WEB}/login
+          loginRequestUrl: ${STAGING_API}/v1/auth/login
+          loginRequestBody: '{"email":"{%username%}","password":"{%password%}"}'
+        verification:
+          method: response
+          loggedInRegex: '"token"'
+          loggedOutRegex: '"unauthorized"'
+      sessionManagement:
+        method: headers
+        parameters:
+          Authorization: "Bearer {%json:token%}"
+      users:
+        - name: buyer
+          credentials:
+            username: ${ZAP_USER}
+            password: ${ZAP_PASS}
+      technology:
+        include: [Db.PostgreSQL, Language.JavaScript, OS.Linux, WS.Nginx]
+  parameters:
+    failOnError: true
+    failOnWarning: false
+    progressToStdout: true
+
+jobs:
+  - type: openapi
+    parameters:
+      # The API's OpenAPI document (only mounted when MERCHANT_API_ENABLED=true; on staging set it on for the scan).
+      apiUrl: ${STAGING_API}/v1/openapi.json
+      targetUrl: ${STAGING_API}
+      context: bullizard-staging
+      user: buyer
+
+  - type: spider
+    parameters:
+      context: bullizard-staging
+      user: buyer
+      maxDuration: 10
+      maxDepth: 6
+
+  - type: spiderAjax
+    parameters:
+      context: bullizard-staging
+      user: buyer
+      maxDuration: 10
+      browserId: firefox-headless
+
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 5
+
+  - type: activeScan
+    parameters:
+      context: bullizard-staging
+      user: buyer
+      policy: bullizard
+      maxRuleDurationInMins: 5
+      maxScanDurationInMins: 60
+      threadPerHost: 4
+      delayInMs: 50          # stays under the API's rate limits; 429s are expected and checked by the alerts below
+    policyDefinition:
+      defaultStrength: medium
+      defaultThreshold: medium
+      rules:
+        - id: 40012   # Cross Site Scripting (Reflected)
+          strength: high
+        - id: 40014   # Cross Site Scripting (Persistent)
+          strength: high
+        - id: 40018   # SQL Injection
+          strength: high
+        - id: 90019   # Server Side Code Injection
+          strength: high
+        - id: 6       # Path Traversal
+          strength: high
+        - id: 40009   # Server Side Include
+          threshold: high
+        - id: 10104   # User Agent Fuzzer (noisy)
+          threshold: off
+
+  # What we specifically want checked (headers, CSP, CORS, cookies, rate limits, uploads):
+  - type: alertFilter
+    alertFilters:
+      - ruleId: 10038   # Content Security Policy header not set — the web app sets CSP; the API answers JSON. Keep as Medium.
+        newRisk: Info
+        url: ${STAGING_API}/v1/.*
+        urlRegex: true
+      - ruleId: 10021   # X-Content-Type-Options
+        newRisk: High
+      - ruleId: 10020   # Missing anti-clickjacking header (web only)
+        newRisk: High
+        url: ${STAGING_WEB}.*
+        urlRegex: true
+      - ruleId: 10035   # Strict-Transport-Security
+        newRisk: High
+      - ruleId: 10098   # Cross-Domain Misconfiguration (CORS)
+        newRisk: High
+      - ruleId: 10054   # Cookie without SameSite
+        newRisk: High
+      - ruleId: 10010   # Cookie without HttpOnly
+        newRisk: High
+      - ruleId: 10112   # Session management response identified (expected: bearer tokens)
+        newRisk: Info
+
+  - type: report
+    parameters:
+      template: traditional-html
+      reportDir: /zap/wrk/reports
+      reportFile: zap-staging-{{yyyy-MM-dd}}.html
+      reportTitle: Bullizard staging — ZAP
+    risks: [info, low, medium, high]
+
+  - type: report
+    parameters:
+      template: sarif-json
+      reportDir: /zap/wrk/reports
+      reportFile: zap-staging-{{yyyy-MM-dd}}.sarif
+    risks: [medium, high]
+
+  - type: exitStatus
+    parameters:
+      errorLevel: high      # exit code 1 on any High alert
+      warnLevel: medium
