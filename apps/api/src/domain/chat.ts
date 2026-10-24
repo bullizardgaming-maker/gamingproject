@@ -43,6 +43,7 @@ export interface ChatMessage {
 export { detectOffPlatform } from './safety.js';
 import { classify, detectOffPlatform, detectSplit } from './safety.js';
 import { assertNotPaused } from './controls.js';
+import { handoverFieldFor } from './attributeSets.js';
 
 /** v1 (messages written before per-user keys): the chain covers the text itself. */
 export function messageHash(prevHash: string, seq: number, senderId: string | null, kind: string, body: string, createdAt: string) {
@@ -201,6 +202,21 @@ export async function setOffplatformPolicy(q: Queryable, actions: OffplatformAct
 /** A suspension for off-platform contact lifts itself after this long; a ban never does. */
 export const SUSPENSION_DAYS = 7;
 
+/** Suspend or ban for off-platform contact: a ban (like the admin ban) also signs the account out everywhere. */
+export async function applyOffplatformAction(s: TxScope, userId: string, roomId: string, act: OffplatformAction) {
+  if (act === 'warn') return;
+  if (act === 'ban') {
+    await s.tx.query(`UPDATE users SET status = 'banned', banned_at = now(), suspension_reason = 'off_platform_ban', suspended_until = NULL WHERE id = $1`, [userId]);
+    await s.tx.query(`UPDATE sessions SET revoked_at = now(), revoke_reason = 'banned' WHERE user_id = $1 AND revoked_at IS NULL`, [userId]);
+  } else {
+    await s.tx.query(`UPDATE users SET status = 'suspended', suspension_reason = 'off_platform_contact', suspended_until = now() + make_interval(days => $2) WHERE id = $1 AND status <> 'banned'`, [userId, SUSPENSION_DAYS]);
+  }
+  await appendMessage(s, roomId, null, 'warning', act === 'ban'
+    ? 'This account has been banned for trying to move the deal outside Bullizard. Do not continue this trade anywhere else; staff will review the case.'
+    : 'This account has been suspended for trying to move the deal outside Bullizard. Do not continue this trade anywhere else; staff will review the case.',
+  [], undefined, { code: act === 'ban' ? 'account_banned_offplatform' : 'account_suspended_offplatform', params: { user_id: userId } });
+}
+
 export async function postUserMessage(ctx: Ctx, roomId: string, user: { id: string; role: string; status: string }, body: string) {
   if (user.status !== 'active') throw forbidden('suspended', 'Account suspended');
   await assertNotPaused(ctx.db, 'chat'); // kill switch (Ops → Controls); staff can still write
@@ -209,7 +225,10 @@ export async function postUserMessage(ctx: Ctx, roomId: string, user: { id: stri
   const accountOrder = room0.order_id
     ? !!(await maybeOne(ctx.db, `SELECT 1 FROM orders o JOIN offers f ON f.id = o.offer_id JOIN categories c ON c.slug = f.category_slug WHERE o.id = $1 AND c.kind = 'account'`, [room0.order_id]))
     : false;
-  const violations = detectOffPlatform(body, { allowEmail: accountOrder });
+  // Top-ups and in-game deliveries need the buyer's player ID / UID: a labelled ID is never read as a phone number.
+  const offer = room0.offer_id ? await maybeOne<{ game: string; category_slug: string }>(ctx.db, 'SELECT game, category_slug FROM offers WHERE id = $1', [room0.offer_id]) : null;
+  const allowIds = !!offer && (offer.category_slug === 'top-ups' || !!handoverFieldFor(offer.game, offer.category_slug));
+  const violations = detectOffPlatform(body, { allowEmail: accountOrder, allowIds });
   const split: string[] = [];
   if (!violations.length && user.role === 'user') {
     // Split messages ("dis" … "cord"): the sender's last few lines, joined with this one.
@@ -227,27 +246,14 @@ export async function postUserMessage(ctx: Ctx, roomId: string, user: { id: stri
     // Recorded in its own transaction, then refused, so the offence stands even though nothing was sent.
     const action = await withScope(ctx, async (s) => {
       const msg = await appendMessage(s, roomId, user.id, 'text', body, ['blocked', ...flags], ctx.keyring, { hidden: true });
-      // A loosely phrased or split hit is blocked and queued for staff, nothing more (no strike, no ban).
-      const kind = classify(violations, { split });
-      await s.tx.query(`INSERT INTO chat_flags (room_id, seq, user_id, reasons, strike) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (room_id, seq) DO NOTHING`, [roomId, msg.seq, user.id, violations, kind !== 'queue']);
+      // Round 22 decision: everything is blocked and queued for staff, who confirm before any strike or ban (decideChatFlag);
+      // only an unambiguous contact (classify) bans at once.
+      const kind = classify(violations, { split, body });
+      await s.tx.query(`INSERT INTO chat_flags (room_id, seq, user_id, reasons, strike) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (room_id, seq) DO NOTHING`, [roomId, msg.seq, user.id, violations, kind === 'ban']);
       if (kind === 'queue') return 'queue';
-      const { offplatform_strikes } = await one<{ offplatform_strikes: number }>(
-        s.tx,
-        'UPDATE users SET offplatform_strikes = offplatform_strikes + 1 WHERE id = $1 RETURNING offplatform_strikes',
-        [user.id],
-      );
-      const policy = await offplatformPolicy(s.tx);
-      // Payment details spelled out, wallet addresses, other marketplaces, impersonation: an instant ban.
-      const act = kind === 'ban' ? 'ban' : policy[Math.min(offplatform_strikes, policy.length) - 1]!;
-      if (act !== 'warn') {
-        if (act === 'ban') await s.tx.query(`UPDATE users SET status = 'banned', banned_at = now(), suspension_reason = 'off_platform_ban' WHERE id = $1`, [user.id]);
-        else await s.tx.query(`UPDATE users SET status = 'suspended', suspension_reason = 'off_platform_contact', suspended_until = now() + make_interval(days => $2) WHERE id = $1`, [user.id, SUSPENSION_DAYS]);
-        await appendMessage(s, roomId, null, 'warning', act === 'ban'
-          ? 'This account has been banned for trying to move the deal outside Bullizard. Do not continue this trade anywhere else; staff will review the case.'
-          : 'This account has been suspended for trying to move the deal outside Bullizard. Do not continue this trade anywhere else; staff will review the case.',
-        [], undefined, { code: act === 'ban' ? 'account_banned_offplatform' : 'account_suspended_offplatform', params: { user_id: user.id } });
-      }
-      return act;
+      await s.tx.query('UPDATE users SET offplatform_strikes = offplatform_strikes + 1 WHERE id = $1', [user.id]);
+      await applyOffplatformAction(s, user.id, roomId, 'ban');
+      return 'ban';
     });
     throw new AppError(422, 'offplatform_blocked', OFFPLATFORM_BLOCKED_TEXT, { action });
   }

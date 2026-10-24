@@ -114,7 +114,8 @@ describe('misc domain helpers', () => {
     expect(detectOffPlatform('check my shop at cheapgold.net')).toEqual(['link']);
     expect(detectOffPlatform('see https://bullizard.com/orders/1')).toEqual([]); // our own links are fine
     expect(detectOffPlatform('msg @cheapgold on tele')).toEqual(expect.arrayContaining(['telegram', 'handle']));
-    expect(detectOffPlatform('hmu')).toEqual(['add_me']);
+    expect(detectOffPlatform('hmu')).toEqual([]); // Round 22: "hmu" alone is chat; "hit me up on dc" is not
+    expect(detectOffPlatform('hit me up on dc')).toEqual(expect.arrayContaining(['discord', 'add_me']));
     expect(detectOffPlatform('ضيفني على واتس')).toEqual(expect.arrayContaining(['whatsapp', 'add_me']));
     // Account handovers may carry the account's email; nothing else may.
     expect(detectOffPlatform('Login: knight@proton.me Password: hunter2')).toEqual(['email']);

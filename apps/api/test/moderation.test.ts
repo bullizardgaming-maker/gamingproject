@@ -86,7 +86,7 @@ describe('listing review queue', () => {
 });
 
 describe('flagged chats', () => {
-  it('queues off-platform attempts for staff and refunds a strike on dismissal', async () => {
+  it('queues off-platform attempts for staff; a strike only on staff confirmation (or an unambiguous ban), refunded on dismissal', async () => {
     const seller = await makeUser(h, { tier: 2 });
     const buyer = await makeUser(h);
     const mod = await makeUser(h, { tier: 2, role: 'support' });
@@ -95,11 +95,12 @@ describe('flagged chats', () => {
     const { room_id } = (await buyer.api.get(`/v1/orders/${order.id}`)).body;
 
     await buyer.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'Is it the EU version?' });
-    // Payment details are an instant ban (playbook, Oct 24); sharing a contact walks the warn → suspend → ban ladder.
-    const banned = await seller.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'Yes. Pay me with friends and family next time, cheaper' });
-    expect(banned.status).toBe(422);
+    // Round 22: a payment name alone is blocked and queued (staff decide); a messenger name with a full number bans at once.
+    const queued = await seller.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'Yes. Pay me with friends and family next time, cheaper' });
+    expect(queued.status).toBe(422);
+    expect(queued.body.error.details.action).toBe('queue');
+    const banned = await buyer.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'my whatsapp is +44 7700 900123' });
     expect(banned.body.error.details.action).toBe('ban');
-    await buyer.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'my whatsapp is +44 7700 900123' });
 
     const queue = (await mod.api.get('/v1/admin/moderation/chats')).body.filter((f: any) => f.room_id === room_id);
     expect(queue.map((f: any) => [f.role, f.reasons])).toEqual([
@@ -113,7 +114,9 @@ describe('flagged chats', () => {
     expect(await strikes(buyer.id)).toBe(1);
     expect((await mod.api.post(`/v1/admin/moderation/chats/${queue[1].id}`, { confirm: false, note: 'Shared for delivery coordination' })).body.status).toBe('dismissed');
     expect(await strikes(buyer.id)).toBe(0);
-    expect((await mod.api.post(`/v1/admin/moderation/chats/${queue[0].id}`, { confirm: true })).body.status).toBe('confirmed');
+    expect(await strikes(seller.id)).toBe(0);
+    expect((await mod.api.post(`/v1/admin/moderation/chats/${queue[0].id}`, { confirm: true })).body).toMatchObject({ status: 'confirmed', strike: true, action: 'warn' });
+    expect(await strikes(seller.id)).toBe(1);
     expect((await mod.api.post(`/v1/admin/moderation/chats/${queue[0].id}`, { confirm: true })).status).toBe(404);
     const confirmed = (await mod.api.get('/v1/admin/moderation/chats?status=confirmed')).body.find((f: any) => f.id === queue[0].id);
     expect(confirmed).toBeTruthy();

@@ -74,7 +74,9 @@ export type PaymentEvent =
   | {
       type: 'crypto.payout'; payoutId: string; batchId: string | null; status: 'CREATING' | 'WAITING' | 'PROCESSING' | 'SENDING' | 'FINISHED' | 'FAILED' | 'REJECTED'; hash: string | null; error: string | null;
       /** Fees the provider took on top of the amount sent (CFO B2), in the payout currency. */
-      networkFee: number | null; conversionFee: number | null; currency: string | null; raw?: unknown;
+      networkFee: number | null; conversionFee: number | null; currency: string | null;
+      /** Our withdrawal id (NOWPayments unique_external_id): matches the IPN even before the provider's ids are stored. */
+      externalId?: string | null; raw?: unknown;
     }
   | { type: 'ignored' };
 

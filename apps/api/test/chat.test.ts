@@ -111,15 +111,20 @@ describe('chat ledger', () => {
     const flag = queue.find((f: any) => f.room_id === roomId);
     expect(flag.reasons).toContain('discord');
     expect(flag.context.at(-1)).toMatchObject({ body: 'add me on discord for a discount' });
-    expect((await seller.api.get('/v1/me')).body.user.status).toBe('active'); // 1st offence: warn
+    expect(blocked.body.error.details.action).toBe('queue'); // Round 22: blocked and queued, no strike until staff confirm
+    expect((await seller.api.get('/v1/me')).body.user.status).toBe('active');
 
-    // Launch policy (CEO, Oct 24): warn → suspend → ban. Staff can shorten it: first offence warns, the second bans.
+    // Launch policy (CEO, Oct 24): warn → suspend → ban, applied when staff confirm a flag. Staff can shorten it.
     expect((await mod.api.get('/v1/admin/moderation/offplatform-policy')).body.actions).toEqual(['warn', 'suspend', 'ban']);
     expect((await mod.api.put('/v1/admin/moderation/offplatform-policy', { actions: ['warn', 'ban'] })).body.actions).toEqual(['warn', 'ban']);
+    expect((await mod.api.post(`/v1/admin/moderation/chats/${flag.id}`, { confirm: true })).body).toMatchObject({ status: 'confirmed', action: 'warn' });
+    expect((await seller.api.get('/v1/me')).body.user.status).toBe('active'); // 1st confirmed offence: warn
+    // An unambiguous contact link bans at once, without waiting for staff.
     await seller.api.post(`/v1/chat/rooms/${roomId}/messages`, { body: 'telegram: t.me/cheapgold' });
-    expect((await seller.api.get('/v1/me')).body.user.status).toBe('banned');
+    expect((await h.ctx.db.query('SELECT status FROM users WHERE id = $1', [seller.id])).rows[0].status).toBe('banned');
+    // Like the admin ban, the filter ban signs the account out everywhere (Round 22).
     const banned = await seller.api.post(`/v1/chat/rooms/${roomId}/messages`, { body: 'hello?' });
-    expect(banned.status).toBe(403);
+    expect(banned.status).toBe(401);
     msgs = (await buyer.api.get(`/v1/chat/rooms/${roomId}/messages`)).body;
     expect(msgs.at(-1).kind).toBe('warning');
     expect(msgs.at(-1).body).toContain('banned');

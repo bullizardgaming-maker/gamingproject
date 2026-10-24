@@ -180,30 +180,44 @@ async function businessTotals(q: Queryable, from: string, to: string) {
 /**
  * CFO B13: what the period cost us and what we owe right now, straight from the ledger.
  * Costs are treasury debits by memo inside the period; the "outstanding" figures are balances today.
+ * Round 22 (23): per currency (never summed across currencies; the top level is the settlement currency, the others are
+ * in `byCurrency`); promo cost is net of the promo money that came back on refunds (full, split, after release);
+ * withdrawals in `unknown` count as pending.
  */
-export async function moneyCosts(q: Queryable, from: string, to: string) {
+async function moneyCostsIn(q: Queryable, from: string, to: string, currency: string) {
   const c = await one<any>(
     q,
     `WITH t AS (
        SELECT e.memo, e.amount_cents FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id
-        WHERE a.kind = 'treasury' AND a.owner_id IS NULL AND e.created_at >= $1 AND e.created_at < $2 AND e.amount_cents < 0
+        WHERE a.kind = 'treasury' AND a.owner_id IS NULL AND a.currency = $3 AND e.created_at >= $1 AND e.created_at < $2 AND e.amount_cents < 0
      )
      SELECT COALESCE(-sum(amount_cents) FILTER (WHERE memo = 'promo_funding'), 0)::bigint AS promo_cents,
+            -- promo money returned to the treasury: the 'refund' posting's treasury leg is exactly the promo part
+            (SELECT COALESCE(sum(e.amount_cents), 0)::bigint FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id
+              WHERE a.kind = 'treasury' AND a.owner_id IS NULL AND a.currency = $3 AND e.memo = 'refund' AND e.amount_cents > 0 AND e.created_at >= $1 AND e.created_at < $2)
+            + (SELECT COALESCE(sum(LEAST(d.refund_cents, round(o.discount_cents::numeric * d.refund_cents / NULLIF(o.amount_cents, 0)))), 0)::bigint
+                 FROM disputes d JOIN orders o ON o.id = d.order_id
+                WHERE d.status = 'resolved_split' AND o.currency = $3 AND o.discount_cents > 0 AND COALESCE(d.resolved_at, d.created_at) >= $1 AND COALESCE(d.resolved_at, d.created_at) < $2)
+            + (SELECT COALESCE(sum(round(o.discount_cents::numeric * r.amount_cents / NULLIF(o.amount_cents, 0))), 0)::bigint
+                 FROM post_release_refunds r JOIN orders o ON o.id = r.order_id
+                WHERE o.currency = $3 AND o.discount_cents > 0 AND r.created_at >= $1 AND r.created_at < $2) AS promo_returned_cents,
             COALESCE(-sum(amount_cents) FILTER (WHERE memo = 'referral_reward'), 0)::bigint AS referral_cents,
             COALESCE(-sum(amount_cents) FILTER (WHERE memo = 'affiliate_commission'), 0)::bigint AS creator_cents,
             COALESCE(-sum(amount_cents) FILTER (WHERE memo = 'psp_fee'), 0)::bigint AS psp_fee_cents,
             COALESCE(-sum(amount_cents) FILTER (WHERE memo LIKE 'payout_network_fee:%' OR memo LIKE 'payout_conversion_fee:%'), 0)::bigint AS payout_fee_cents,
-            (SELECT COALESCE(sum(e.amount_cents), 0)::bigint FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id WHERE a.kind = 'user_credit') AS buyer_credit_cents,
-            (SELECT COALESCE(sum(COALESCE(net_cents, amount_cents)), 0)::bigint FROM withdrawals WHERE status IN ('pending', 'pending_approval', 'processing')) AS withdrawals_pending_cents,
-            (SELECT count(*)::int FROM withdrawals WHERE status IN ('pending', 'pending_approval', 'processing')) AS withdrawals_pending,
+            (SELECT COALESCE(sum(e.amount_cents), 0)::bigint FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id WHERE a.kind = 'user_credit' AND a.currency = $3) AS buyer_credit_cents,
+            (SELECT COALESCE(sum(COALESCE(net_cents, amount_cents)), 0)::bigint FROM withdrawals WHERE currency = $3 AND status IN ('pending', 'pending_approval', 'processing', 'unknown')) AS withdrawals_pending_cents,
+            (SELECT count(*)::int FROM withdrawals WHERE currency = $3 AND status IN ('pending', 'pending_approval', 'processing', 'unknown')) AS withdrawals_pending,
             (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (completed_at - paid_at)))
-               FROM orders WHERE completed_at IS NOT NULL AND paid_at IS NOT NULL AND completed_at >= $1 AND completed_at < $2) AS median_release_seconds
+               FROM orders WHERE currency = $3 AND completed_at IS NOT NULL AND paid_at IS NOT NULL AND completed_at >= $1 AND completed_at < $2) AS median_release_seconds
        FROM t`,
-    [from, to],
+    [from, to, currency],
   );
   const n = (v: unknown) => Number(v ?? 0);
   return {
-    promoCents: n(c.promo_cents),
+    currency,
+    promoCents: Math.max(0, n(c.promo_cents) - n(c.promo_returned_cents)),
+    promoGrossCents: n(c.promo_cents),
     referralCents: n(c.referral_cents),
     creatorCents: n(c.creator_cents),
     pspFeeCents: n(c.psp_fee_cents),
@@ -213,6 +227,14 @@ export async function moneyCosts(q: Queryable, from: string, to: string) {
     withdrawalsPending: c.withdrawals_pending,
     medianReleaseHours: c.median_release_seconds == null ? null : Math.round((Number(c.median_release_seconds) / 3600) * 10) / 10,
   };
+}
+
+export async function moneyCosts(q: Queryable, from: string, to: string, settlement = 'USD') {
+  const main = await moneyCostsIn(q, from, to, settlement);
+  const others = await many<{ currency: string }>(q, `SELECT DISTINCT currency FROM ledger_accounts WHERE currency <> $1 ORDER BY currency`, [settlement]);
+  const byCurrency: Record<string, Awaited<ReturnType<typeof moneyCostsIn>>> = {};
+  for (const { currency } of others) byCurrency[currency] = await moneyCostsIn(q, from, to, currency);
+  return { ...main, byCurrency };
 }
 
 export async function businessMetrics(q: Queryable, days: Period, now = new Date()) {

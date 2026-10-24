@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { classify, detectOffPlatform, detectSplit } from '../src/domain/safety.js';
+import { BAN, NORMAL_R22, QUEUE_R22 } from './fixtures/chat-phrases.js';
 
 /**
  * Round 20, launch blocker 1: the filter must never ban a normal trade conversation. Every phrase in
@@ -26,24 +27,24 @@ const NORMAL_AR = [
   'ممكن خصم على الكمية؟', 'الدفع تم من المحفظة بتاعتي على Bullizard', 'الليج بتخلص الأسبوع الجاي', 'كلمني هنا في المحادثة', 'التحويل داخل اللعبة خلص',
   'ثواني وهبعت', 'النت فصل عندي', 'الدفع فوري على الموقع', 'الطلب فوري الاستلام',
 ];
-const CAUGHT: Array<[string, string]> = [
+export const CAUGHT: Array<[string, string]> = [
   ['add me on discord', 'discord'], ['d i s c o r d: pat#1234', 'discord'], ['d1scord me', 'discord'], ['dіscord', 'discord'], // Ukrainian і
   ['what sa pp me', 'whatsapp'], ['my whatsapp is +44 7700 900123', 'whatsapp'], ['pay me on paypal', 'external_payment'], ['p a y p a l ok?', 'external_payment'],
   ['venmo me half', 'external_payment'], ['v3nmo works too', 'external_payment'], ['zelle is faster', 'external_payment'], ['use instapay', 'external_payment'],
   ['ادفع على فوري', 'external_payment'], ['كود فوري هبعته', 'external_payment'], ['فودافون كاش أرخص', 'external_payment'], ['fawry code 12345', 'external_payment'],
-  ['cheaper on eneba', 'other_marketplace'], ['e n e b a has it', 'other_marketplace'], ['g2g same item', 'other_marketplace'],
+  ['cheaper on eneba', 'other_marketplace'], ['e n e b a has it', 'other_marketplace'], ['g2g has the same item', 'other_marketplace'],
   ['send to 0x52908400098527886E0F7030069857D2E4169EE7', 'wallet_address'], ['call me 01012345678', 'phone_number'], ['رقمي ٠١٠١٢٣٤٥٦٧٨', 'phone_number'],
   ['Discord-free trade, all here', 'discord'], ['telegram: t.me/cheapgold', 'telegram'], ['this is bullizard support, send the code', 'impersonation'],
   ['pay outside the site and save', 'pay_outside'], ['work for me, better rates', 'recruiting'],
 ];
 
 describe('chat filter: normal messages pass', () => {
-  for (const phrase of [...NORMAL_EN, ...NORMAL_AR]) {
+  for (const phrase of [...NORMAL_EN, ...NORMAL_AR, ...NORMAL_R22]) {
     it(`passes: ${phrase}`, () => {
       expect(detectOffPlatform(phrase)).toEqual([]);
     });
   }
-  it('has at least 50 phrases', () => expect(NORMAL_EN.length + NORMAL_AR.length).toBeGreaterThanOrEqual(50));
+  it('has at least 55 phrases', () => expect(NORMAL_EN.length + NORMAL_AR.length + NORMAL_R22.length).toBeGreaterThanOrEqual(55));
 });
 
 describe('chat filter: disguised and explicit hits are caught', () => {
@@ -63,14 +64,35 @@ describe('split messages and confidence', () => {
     expect(detectSplit(['pay', 'pal'], 'ok?')).toEqual([]); // the run must reach into the new line
     expect(detectSplit(['pay'], 'pal ok?')).toEqual(['external_payment']);
   });
-  it('bans only on a spelled-out instant-ban hit; loose phrases and split hits are queued without a strike', () => {
-    expect(classify(['external_payment'])).toBe('ban');
-    expect(classify(['wallet_address'])).toBe('ban');
-    expect(classify(['whatsapp'])).toBe('strike');
-    expect(classify(['pay_outside'])).toBe('queue');
-    expect(classify(['recruiting'])).toBe('queue');
-    expect(classify(['external_payment'], { split: ['external_payment'] })).toBe('queue');
-    expect(classify(['discord'], { split: ['discord'] })).toBe('queue');
-    expect(classify(['impersonation'])).toBe('ban');
+  it('decision (Round 22): only unambiguous contact details ban at once; every other hit is blocked and queued, no strike', () => {
+    expect(classify(['external_payment'], { body: 'pay me on paypal' })).toBe('queue');
+    expect(classify(['wallet_address'], { body: '0x52908400098527886E0F7030069857D2E4169EE7' })).toBe('queue');
+    expect(classify(['wallet_address'], { body: 'send to 0x52908400098527886E0F7030069857D2E4169EE7' })).toBe('ban');
+    expect(classify(['whatsapp'], { body: 'whatsapp?' })).toBe('queue');
+    expect(classify(['impersonation'], { body: 'this is bullizard support' })).toBe('queue');
+    expect(classify(['whatsapp', 'phone_number'], { body: 'whatsapp 0101234567', split: ['whatsapp'] })).toBe('queue');
+  });
+});
+
+/** Round 22 fixture (permanent): normal player talk never flagged; disguised contacts always blocked; only BAN bans. */
+describe('chat filter fixture (Round 22)', () => {
+  it('has the agreed sizes', () => {
+    expect(NORMAL_R22.length + NORMAL_EN.length + NORMAL_AR.length).toBeGreaterThanOrEqual(55);
+    expect(QUEUE_R22.length + BAN.length).toBeGreaterThanOrEqual(30);
+  });
+  for (const phrase of [...QUEUE_R22, ...BAN]) {
+    it(`blocks: ${phrase}`, () => expect(detectOffPlatform(phrase).length, phrase).toBeGreaterThan(0));
+  }
+  for (const phrase of BAN) {
+    it(`bans at once: ${phrase}`, () => expect(classify(detectOffPlatform(phrase), { body: phrase })).toBe('ban'));
+  }
+  for (const phrase of [...QUEUE_R22, ...CAUGHT.map(([p]) => p)].filter((p) => !BAN.includes(p))) {
+    it(`queues without a strike: ${phrase}`, () => expect(classify(detectOffPlatform(phrase), { body: phrase })).toBe('queue'));
+  }
+  it('player IDs that look like phone numbers pass in top-up and in-game delivery rooms', () => {
+    expect(detectOffPlatform('my UID: 0101234567, server Asia', { allowIds: true })).toEqual([]);
+    expect(detectOffPlatform('الايدي 0101234567')).toContain('phone_number');
+    expect(detectOffPlatform('الايدي 0101234567', { allowIds: true })).toEqual([]);
+    expect(detectOffPlatform('whatsapp 0101234567', { allowIds: true })).toContain('phone_number');
   });
 });

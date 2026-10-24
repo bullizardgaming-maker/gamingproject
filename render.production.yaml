@@ -53,6 +53,8 @@ envVarGroups:
         value: "0" # CFO B8
       - key: RECON_TOLERANCE_CENTS
         value: "100" # CFO B7
+      - key: PAYOUT_UNKNOWN_REVERSE_HOURS
+        value: "6"
       - key: RECON_INTERVAL_HOURS
         value: "24" # daily ledger reconciliation; mismatches email admins + finance
       - key: JWT_SECRET

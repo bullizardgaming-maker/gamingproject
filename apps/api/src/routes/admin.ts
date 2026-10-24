@@ -11,7 +11,7 @@ import { controls, updateControls } from '../domain/controls.js';
 import { setReviewHidden } from '../domain/reviews.js';
 import { reconciliationSnapshots, runReconciliation } from '../domain/reconciliation.js';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
-import { ROLE_PERMISSIONS, STAFF_ROLES, permissionsOf, rolesOf } from '../domain/permissions.js';
+import { ROLE_PERMISSIONS, STAFF_ROLES, hasPermission, permissionsOf, rolesOf } from '../domain/permissions.js';
 import { notify } from '../domain/notifications.js';
 import { refundAfterRelease } from '../domain/clawback.js';
 import { addNote, decideCase, getCase, listCases, openCase, refreshLists, rescreenSellers, runMonitoring, screenUser } from '../domain/aml.js';
@@ -24,7 +24,7 @@ import { businessMetrics } from '../domain/analytics.js';
 import { getTicket, staffReply, ticketQueue, updateTicket } from '../domain/support.js';
 import { caseFile } from '../domain/disputes.js';
 import { addTerm, chatFlagQueue, decideChatFlag, decideListing, listTerms, moderationCounts, removeTerm, reviewQueue } from '../domain/moderation.js';
-import { requirePermission } from '../server.js';
+import { me, requirePermission } from '../server.js';
 import { audit, listAudit } from '../domain/audit.js';
 import { decideClaim, escalatedClaims } from '../domain/warranty.js';
 import { clearStorefront } from '../domain/storefront.js';
@@ -63,6 +63,11 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
       .parse(req.body);
     const staff = requirePermission(req, body.outcome === 'refund' ? 'orders.refund_after_release' : 'disputes.manage');
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    // Round 22 (14): a warranty refund on an order above the Lead threshold needs the Support Lead, like any other refund.
+    if (body.outcome === 'refund') {
+      const c = await maybeOne<{ order_id: string }>(ctx.db, 'SELECT order_id FROM warranty_claims WHERE id = $1', [id]);
+      if (c) await requireLeadForLargeOrder(req, c.order_id);
+    }
     const claim = await decideClaim(ctx, staff.id, id, body);
     await audit(ctx.db, req, 'warranty_claim.decide', { type: 'warranty_claim', id }, body);
     return claim;
@@ -302,11 +307,12 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
         effectiveAt: z.string().datetime().optional(),
         title: z.string().trim().min(2).max(120),
         contentMd: z.string().min(20).max(400_000),
-        material: z.boolean().default(false),
+        // Round 22: materiality is always stated by staff, never defaulted.
+        material: z.boolean({ error: 'Say whether this is a material change (true or false)' }),
       })
       .parse(req.body);
     const row = await publishDocument(ctx, staff.id, { doc, ...body });
-    await audit(ctx.db, req, 'legal.publish', { type: 'legal_document', id: `${doc}:${body.lang}:${body.version}` }, { material: body.material, effectiveAt: body.effectiveAt });
+    await audit(ctx.db, req, 'legal.publish', { type: 'legal_document', id: `${doc}:${body.lang}:${body.version}` }, { material: body.material, previousMaterial: row.previous_material, effectiveAt: body.effectiveAt, sha256: row.sha256 });
     return row;
   });
 
@@ -530,23 +536,34 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   // --- Seller withdrawals (crypto): CFO approval -------------------------------------------
+  /** Finance (treasury) or the Support Lead (who only co-signs the large ones, Round 22). */
+  const withdrawalStaff = (req: FastifyRequest) => (hasPermission(me(req), 'withdrawals.second_approve') && !hasPermission(me(req), 'treasury.approve') ? requirePermission(req, 'withdrawals.second_approve') : requirePermission(req, 'treasury.approve'));
   app.get('/admin/withdrawals', async (req) => {
-    requirePermission(req, 'treasury.request');
+    if (!hasPermission(me(req), 'withdrawals.second_approve')) requirePermission(req, 'treasury.request');
+    else requirePermission(req, 'withdrawals.second_approve');
     return listPendingWithdrawals(ctx.db);
   });
   app.post('/admin/withdrawals/:id/decide', async (req) => {
-    const staff = requirePermission(req, 'treasury.approve');
+    const staff = withdrawalStaff(req);
     const { id } = Id.parse(req.params);
     const body = z.object({ approve: z.boolean(), note: z.string().max(500).optional() }).parse(req.body);
-    const w = await decideWithdrawal(ctx, id, staff, body.approve, body.note);
-    await audit(ctx.db, req, body.approve ? (w.status === 'pending_approval' ? 'withdrawal.first_approve' : 'withdrawal.approve') : 'withdrawal.reject', { type: 'withdrawal', id }, body);
-    return w;
+    try {
+      const w = await decideWithdrawal(ctx, id, staff, body.approve, body.note);
+      await audit(ctx.db, req, body.approve ? (w.status === 'pending_approval' ? 'withdrawal.first_approve' : 'withdrawal.approve') : 'withdrawal.reject', { type: 'withdrawal', id }, body);
+      return w;
+    } catch (err) {
+      // Round 22 (12): the approval stands even when the provider call fails afterwards, so it is audited either way.
+      if (err instanceof AppError && ['payout_failed', 'payout_unknown'].includes(err.code)) {
+        await audit(ctx.db, req, 'withdrawal.approve', { type: 'withdrawal', id }, { ...body, payout: err.code, reason: (err.details as any)?.reason ?? null });
+      }
+      throw err;
+    }
   });
   /** A payout whose provider call timed out: ask NOWPayments whether it exists before anything is reversed. */
   app.post('/admin/withdrawals/:id/recheck', async (req) => {
     requirePermission(req, 'treasury.approve');
     const { id } = Id.parse(req.params);
-    const w = await recheckUnknownPayout(ctx, id);
+    const w = await recheckUnknownPayout(ctx, id, { manual: true });
     if (!w) throw notFound('Withdrawal in the unknown state');
     await audit(ctx.db, req, 'withdrawal.recheck', { type: 'withdrawal', id }, { status: w.status });
     return w;

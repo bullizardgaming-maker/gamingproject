@@ -4,8 +4,8 @@ import { many, maybeOne, one, withTx } from '../db.js';
 import { badRequest, conflict, notFound, AppError } from '../lib/errors.js';
 import type { PaymentEvent } from '../providers/payments/types.js';
 import { NowPaymentsProvider } from '../providers/payments/nowpayments.js';
-import { handlePaymentCaptured, lockOrder, type Order } from './orders.js';
-import { checkoutByRef, handleCheckoutCaptured } from './cart.js';
+import { handlePaymentCapturedIn, lockOrder, type Order } from './orders.js';
+import { checkoutByRef, handleCheckoutCapturedIn } from './cart.js';
 import { accountId, post } from './ledger.js';
 import { enqueueEmail } from './notifications.js';
 import { recordSignals } from './fraud.js';
@@ -246,67 +246,77 @@ const PAID_STATUSES = new Set(['finished', 'confirmed', 'sending', 'partially_pa
 
 /** IPN (or a poll): store the payment's state and fund the order once enough has arrived. */
 export async function applyCryptoPayment(ctx: Ctx, ev: Extract<PaymentEvent, { type: 'crypto.payment' }>) {
-  const row = await maybeOne<{ id: string; order_id: string | null; checkout_id: string | null; status: string; applied_at: string | null }>(ctx.db, 'SELECT id, order_id, checkout_id, status, applied_at FROM crypto_payments WHERE payment_id = $1', [ev.paymentId]);
-  if (!row) {
+  const row0 = await maybeOne<{ id: string; order_id: string | null; checkout_id: string | null }>(ctx.db, 'SELECT id, order_id, checkout_id FROM crypto_payments WHERE payment_id = $1', [ev.paymentId]);
+  if (!row0) {
     ctx.log.warn({ paymentId: ev.paymentId, orderId: ev.orderId }, 'IPN for an unknown crypto payment');
     return null;
   }
-  // A deposit's USD value: NOWPayments reports it when it has one; otherwise value the coins at the payment's own rate.
-  const paidUsd = ev.actuallyPaidUsd ?? (ev.payAmount > 0 ? (ev.actuallyPaid / ev.payAmount) * ev.priceUsd : 0);
-  // A row already credited to the buyer's balance keeps that status; the deposit figures still update.
-  await ctx.db.query(
-    `UPDATE crypto_payments SET status = CASE WHEN status = 'credited' THEN 'credited' ELSE $2 END, actually_paid = $3, actually_paid_usd = $4, outcome_amount = $5, outcome_currency = $6, raw = $7, updated_at = now() WHERE id = $1`,
-    [row.id, ev.status, ev.actuallyPaid, PAID_STATUSES.has(ev.status) ? paidUsd : null, ev.outcomeAmount, ev.outcomeCurrency, JSON.stringify(ev.raw ?? {})],
-  );
-
-  const ref: PayableRef = row.order_id ? { orderId: row.order_id } : { checkoutId: row.checkout_id! };
-  const buyerId = (await one<{ buyer_id: string }>(ctx.db, row.order_id ? 'SELECT buyer_id FROM orders WHERE id = $1' : 'SELECT buyer_id FROM checkouts WHERE id = $1', [row.order_id ?? row.checkout_id])).buyer_id;
+  const ref: PayableRef = row0.order_id ? { orderId: row0.order_id } : { checkoutId: row0.checkout_id! };
+  const buyerId = (await one<{ buyer_id: string }>(ctx.db, row0.order_id ? 'SELECT buyer_id FROM orders WHERE id = $1' : 'SELECT buyer_id FROM checkouts WHERE id = $1', [row0.order_id ?? row0.checkout_id])).buyer_id;
   // The paying wallet, when the provider reports it: a shared wallet links accounts (self-referral check, fraud clusters).
   const raw = (ev.raw ?? {}) as Record<string, unknown>;
   const payer = [raw.payer_address, raw.from_address, raw.payin_address_from].find((v) => typeof v === 'string' && v.length >= 10) as string | undefined;
   if (payer) await recordSignals(ctx.db, buyerId, { wallet: payer.toLowerCase() });
-  const target = await payable(ctx.db, ref, buyerId, false);
-  if (!PAID_STATUSES.has(ev.status)) return target;
-  if (target.status !== 'awaiting_payment' || row.status === 'credited') {
-    // Money arriving after the order was cancelled, or on top of an order already funded by other
-    // deposits: never lost, never counted twice — the new part goes to the buyer's balance.
-    if (!row.applied_at) await creditLateDeposit(ctx, row.id, target);
-    return target;
-  }
+  // A deposit's USD value: NOWPayments reports it when it has one; otherwise value the coins at the payment's own rate.
+  const paidUsd = ev.actuallyPaidUsd ?? (ev.payAmount > 0 ? (ev.actuallyPaid / ev.payAmount) * ev.priceUsd : 0);
 
-  const paid = await paidSoFarCents(ctx.db, target);
-  const tolerance = Math.floor((target.charged_cents * ctx.cfg.CRYPTO_UNDERPAY_TOLERANCE_BPS) / 10_000);
-  if (paid + tolerance < target.charged_cents) {
-    if (ev.status === 'partially_paid' && row.status !== 'partially_paid') {
-      const link = target.kind === 'order' ? target.id : `cart:${target.id}`;
-      await enqueueEmail(ctx.db, target.buyer_id, 'crypto_underpaid', { order_id: link, paid_cents: paid, owed_cents: target.charged_cents - paid, currency: target.currency }, `crypto_underpaid:${ev.paymentId}`);
-      if (target.kind === 'order') {
-        await withScope(ctx, async (s) => {
+  // Round 22 (7): one transaction from the decision to the capture, holding the order row(s) and then the payment row —
+  // the same order the unpaid-order reaper takes them in (cancelOrder → creditPartialPayments) — so an IPN and the reaper
+  // can never both act on the same money.
+  return withScope(ctx, async (s) => {
+    if (row0.order_id) await lockOrder(s.tx, row0.order_id);
+    else await s.tx.query('SELECT id FROM orders WHERE checkout_id = $1 ORDER BY id FOR UPDATE', [row0.checkout_id]);
+    const row = await one<{ id: string; status: string; applied_at: string | null }>(s.tx, 'SELECT id, status, applied_at FROM crypto_payments WHERE id = $1 FOR UPDATE', [row0.id]);
+    // A row already credited to the buyer's balance keeps that status; the deposit figures still update.
+    await s.tx.query(
+      `UPDATE crypto_payments SET status = CASE WHEN status = 'credited' THEN 'credited' ELSE $2 END, actually_paid = $3, actually_paid_usd = $4, outcome_amount = $5, outcome_currency = $6, raw = $7, updated_at = now() WHERE id = $1`,
+      [row.id, ev.status, ev.actuallyPaid, PAID_STATUSES.has(ev.status) ? paidUsd : null, ev.outcomeAmount, ev.outcomeCurrency, JSON.stringify(ev.raw ?? {})],
+    );
+    const target = await payable(s.tx, ref, buyerId, false);
+    if (!PAID_STATUSES.has(ev.status)) return target;
+    if (target.status !== 'awaiting_payment' || row.status === 'credited' || row.applied_at) {
+      // Money arriving after the order was cancelled, on top of an order already funded by other deposits, or a second
+      // transfer to an address whose payment already funded the order (Round 22, 8): never lost, never counted twice —
+      // the new part goes to the buyer's balance.
+      await creditLateDeposit(s, row.id, target);
+      return target;
+    }
+
+    const paid = await paidSoFarCents(s.tx, target);
+    const tolerance = Math.floor((target.charged_cents * ctx.cfg.CRYPTO_UNDERPAY_TOLERANCE_BPS) / 10_000);
+    if (paid + tolerance < target.charged_cents) {
+      if (ev.status === 'partially_paid' && row.status !== 'partially_paid') {
+        const link = target.kind === 'order' ? target.id : `cart:${target.id}`;
+        await enqueueEmail(s.tx, target.buyer_id, 'crypto_underpaid', { order_id: link, paid_cents: paid, owed_cents: target.charged_cents - paid, currency: target.currency }, `crypto_underpaid:${ev.paymentId}`);
+        if (target.kind === 'order') {
           const room = await maybeOne<{ id: string }>(s.tx, 'SELECT id FROM chat_rooms WHERE order_id = $1', [target.id]);
           if (room) await appendMessage(s, room.id, null, 'system', 'Payment arrived short. Buyer: send the rest or it goes to your balance.', [], undefined, { code: 'underpaid' });
-        });
+        }
       }
+      return target;
     }
-    return target;
-  }
-  // Enough has arrived. `paid` is what the buyer sent, valued in USD (gross); what reached the store wallet in USDT/USDC
-  // is the net; the gap is NOWPayments' fee — booked once, as psp_fee (CFO B1). Anything above the order total beyond the
-  // tolerance is the buyer's money: it goes to their balance (CFO B6), not to FX gain.
-  const settled = await settledCents(ctx.db, target, paid);
-  const fee = Math.max(0, paid - settled);
-  const overpaid = paid - target.charged_cents > tolerance ? paid - target.charged_cents : 0;
-  const captured: Extract<PaymentEvent, { type: 'payment.captured' }> = {
-    type: 'payment.captured',
-    ref: target.payment_ref!,
-    orderId: target.id,
-    amountCents: target.presentment_amount_cents,
-    currency: target.presentment_currency,
-    details: { settledAmountCents: paid, feeCents: fee, overpaidCents: overpaid, raw: { payments: await paymentsFor(ctx.db, ref) } },
-  };
-  // The deposits that fund this order are marked, so anything arriving later is treated as extra.
-  await ctx.db.query(`UPDATE crypto_payments SET applied_at = now() WHERE ${whereRef(target)} AND applied_at IS NULL AND status IN ('finished', 'confirmed', 'sending', 'partially_paid')`, [target.id]);
-  if (target.kind === 'checkout' && (await checkoutByRef(ctx.db, target.payment_ref!))) return handleCheckoutCaptured(ctx, captured);
-  return handlePaymentCaptured(ctx, captured);
+    // Enough has arrived. `paid` is what the buyer sent, valued in USD (gross); what reached the store wallet in USDT/USDC
+    // is the net; the gap is NOWPayments' fee — booked once, as psp_fee (CFO B1). Anything above the order total beyond the
+    // tolerance is the buyer's money: it goes to their balance (CFO B6), not to FX gain.
+    const settled = await settledCents(s.tx, target, paid);
+    const fee = Math.max(0, paid - settled);
+    const overpaid = paid - target.charged_cents > tolerance ? paid - target.charged_cents : 0;
+    const captured: Extract<PaymentEvent, { type: 'payment.captured' }> = {
+      type: 'payment.captured',
+      ref: target.payment_ref!,
+      orderId: target.id,
+      amountCents: target.presentment_amount_cents,
+      currency: target.presentment_currency,
+      details: { settledAmountCents: paid, feeCents: fee, overpaidCents: overpaid, raw: { payments: await paymentsFor(s.tx, ref) } },
+    };
+    // The deposits that fund this order are marked with what each was worth, so anything arriving later is treated as extra.
+    const funding = await many<{ id: string; actually_paid_usd: string | null; outcome_amount: string | null; outcome_currency: string | null }>(
+      s.tx, `SELECT id, actually_paid_usd::text, outcome_amount::text, outcome_currency FROM crypto_payments WHERE ${whereRef(target)} AND applied_at IS NULL AND status IN ('finished', 'confirmed', 'sending', 'partially_paid') FOR UPDATE`, [target.id],
+    );
+    for (const f of funding) await s.tx.query('UPDATE crypto_payments SET applied_at = now(), applied_cents = $2 WHERE id = $1', [f.id, settledOf(f)]);
+    if (target.kind === 'checkout' && (await checkoutByRef(s.tx, target.payment_ref!))) return handleCheckoutCapturedIn(ctx, s, captured);
+    return handlePaymentCapturedIn(ctx, s, captured);
+  });
 }
 
 /** USD cents a payment row is worth: what reached the wallet in USDT/USDC, else NOWPayments' valuation of the deposit. */
@@ -314,37 +324,41 @@ const settledOf = (r: { actually_paid_usd: string | null; outcome_amount: string
   r.outcome_amount != null && r.outcome_currency && /^usd[tc]/.test(r.outcome_currency) ? toCents(Number(r.outcome_amount)) : toCents(Number(r.actually_paid_usd ?? 0));
 
 /**
- * A deposit that cannot fund its order any more (the order was cancelled, or it was funded by other payments):
- * credit the buyer's balance with what has not been credited yet. Row-level lock, so a cart's sibling orders
- * and repeated IPNs never credit the same coins twice.
+ * A deposit that cannot fund its order any more (the order was cancelled, or it was funded by other payments), or more
+ * money sent to an address whose payment already funded the order: credit the buyer's balance with what has not been
+ * counted yet (settled − what funded the order − what was already credited), each top-up its own ledger entry. Row lock,
+ * so a cart's sibling orders and repeated IPNs never credit the same coins twice.
  */
-async function creditLateDeposit(ctx: Ctx, rowId: string, target: Payable) {
-  return withScope(ctx, async (s) => {
-    const r = await one<{ id: string; payment_id: string; applied_at: string | null; credited_cents: string | null; actually_paid_usd: string | null; outcome_amount: string | null; outcome_currency: string | null }>(
-      s.tx, 'SELECT id, payment_id, applied_at, credited_cents, actually_paid_usd::text, outcome_amount::text, outcome_currency FROM crypto_payments WHERE id = $1 FOR UPDATE', [rowId],
-    );
-    if (r.applied_at) return 0;
-    const settled = settledOf(r);
-    const diff = settled - Number(r.credited_cents ?? 0);
-    if (diff <= 0) return 0;
-    await s.tx.query(`UPDATE crypto_payments SET status = 'credited', credited_cents = $2 WHERE id = $1`, [r.id, settled]);
-    const orderId = target.kind === 'order' ? target.id : null;
-    await post(
-      s.tx,
-      [
-        { account: await accountId(s.tx, 'gateway_clearing', target.currency), amountCents: -diff },
-        { account: await accountId(s.tx, 'user_credit', target.currency, target.buyer_id), amountCents: diff },
-      ],
-      'crypto_late_deposit',
-      orderId,
-    );
-    if (orderId) {
-      const room = await maybeOne<{ id: string }>(s.tx, 'SELECT id FROM chat_rooms WHERE order_id = $1', [orderId]);
-      if (room) await appendMessage(s, room.id, null, 'system', `A payment of ${(diff / 100).toFixed(2)} ${target.currency} arrived after this order closed. It is in the buyer's balance.`, [], undefined, { code: 'underpayment_kept', params: { amount_cents: diff, currency: target.currency } });
-    }
-    await enqueueEmail(s.tx, target.buyer_id, 'crypto_kept_in_balance', { order_id: orderId ?? `cart:${target.id}`, amount_cents: diff, currency: target.currency }, `crypto_late:${r.payment_id}:${settled}`);
-    return diff;
-  });
+async function creditLateDeposit(s: TxScope, rowId: string, target: Payable) {
+  const r = await one<{ id: string; payment_id: string; applied_at: string | null; applied_cents: string | null; credited_cents: string | null; actually_paid_usd: string | null; outcome_amount: string | null; outcome_currency: string | null }>(
+    s.tx, 'SELECT id, payment_id, applied_at, applied_cents, credited_cents, actually_paid_usd::text, outcome_amount::text, outcome_currency FROM crypto_payments WHERE id = $1 FOR UPDATE', [rowId],
+  );
+  const settled = settledOf(r);
+  // A row that funded the order but has no applied_cents (funded before Round 22): its whole value counted then.
+  const counted = r.applied_at ? (r.applied_cents != null ? Number(r.applied_cents) : settled) : 0;
+  const diff = settled - counted - Number(r.credited_cents ?? 0);
+  if (diff <= 0) return 0;
+  const credited = Number(r.credited_cents ?? 0) + diff;
+  await s.tx.query(`UPDATE crypto_payments SET status = CASE WHEN applied_at IS NULL THEN 'credited' ELSE status END, credited_cents = $2 WHERE id = $1`, [r.id, credited]);
+  const orderId = target.kind === 'order' ? target.id : null;
+  await post(
+    s.tx,
+    [
+      { account: await accountId(s.tx, 'gateway_clearing', target.currency), amountCents: -diff },
+      { account: await accountId(s.tx, 'user_credit', target.currency, target.buyer_id), amountCents: diff },
+    ],
+    r.applied_at ? 'crypto_extra_deposit' : 'crypto_late_deposit',
+    orderId,
+  );
+  if (orderId) {
+    const room = await maybeOne<{ id: string }>(s.tx, 'SELECT id FROM chat_rooms WHERE order_id = $1', [orderId]);
+    const text = r.applied_at
+      ? `Another ${(diff / 100).toFixed(2)} ${target.currency} arrived after this order was paid. It is in the buyer's balance.`
+      : `A payment of ${(diff / 100).toFixed(2)} ${target.currency} arrived after this order closed. It is in the buyer's balance.`;
+    if (room) await appendMessage(s, room.id, null, 'system', text, [], undefined, { code: 'underpayment_kept', params: { amount_cents: diff, currency: target.currency } });
+  }
+  await enqueueEmail(s.tx, target.buyer_id, 'crypto_kept_in_balance', { order_id: orderId ?? `cart:${target.id}`, amount_cents: diff, currency: target.currency }, `crypto_late:${r.payment_id}:${credited}`);
+  return diff;
 }
 
 async function settledCents(q: Queryable, p: { kind: string; id: string }, fallback: number) {

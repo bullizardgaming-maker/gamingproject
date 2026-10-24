@@ -37,7 +37,8 @@ export const CATEGORY_ORDER = Object.keys(CATEGORY_META);
 /**
  * Launch phases: the API says which categories are open (GET /categories `open`); closed ones are
  * hidden everywhere until staff move the phase forward. Nothing is shown until the answer arrives
- * (no flash of closed categories, Round 20); if the request fails, everything is shown.
+ * (no flash of closed categories, Round 20); if the request fails, NO category is shown and the
+ * pages offer a retry (Round 22) — never "all of them", which would show closed ones.
  */
 let openSlugs: Set<string> | null = null;
 let categoriesLoading: Promise<void> | null = null;
@@ -46,6 +47,7 @@ export function loadCategories() {
   categoriesLoading ??= api<Array<{ slug: string; open?: boolean }>>('/categories')
     .then((rows) => {
       openSlugs = new Set(rows.filter((c) => c.open !== false).map((c) => c.slug));
+      categoriesFailed = false;
       catListeners.forEach((l) => l());
     })
     .catch(() => {
@@ -58,7 +60,15 @@ export function loadCategories() {
 let categoriesFailed = false;
 /** True once GET /categories has answered (or failed): until then category lists render empty. */
 export const categoriesKnown = () => openSlugs !== null || categoriesFailed;
-export const isCategoryOpen = (slug: string) => (openSlugs ? openSlugs.has(slug) : categoriesFailed);
+/** GET /categories failed and nothing is known yet: show none, with a retry. */
+export const categoriesUnavailable = () => openSlugs === null && categoriesFailed;
+export const isCategoryOpen = (slug: string) => (openSlugs ? openSlugs.has(slug) : false);
+/** Ask again after a failure (the retry button). */
+export function retryCategories() {
+  categoriesFailed = false;
+  catListeners.forEach((l) => l());
+  return loadCategories();
+}
 /** CATEGORY_ORDER without the categories closed in the current launch phase; re-renders once known. */
 export function useCategoryOrder(): string[] {
   const [, bump] = useState(0);

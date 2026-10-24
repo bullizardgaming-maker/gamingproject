@@ -6,65 +6,7 @@ import { buyAndPay, client, makeOffer, makeUser, setup, type Harness } from './h
 import { currentStep, totpAt } from '../src/domain/mfa.js';
 import { runJobsOnce } from '../src/worker.js';
 
-/**
- * A fake NOWPayments: records calls, answers like the real API, and lets the test "pay" by
- * posting a signed IPN exactly as the real one would.
- */
-class FakeNow {
-  payments = new Map<string, any>();
-  payouts: any[] = [];
-  minUsd: Record<string, number> = { btc: 8, usdttrc20: 1, eth: 12, ltc: 2 };
-  nextId = 5000;
-  /** Next payout call: 'timeout' throws after creating the payout (the provider acted, we never heard), 'down' fails with a 503 before acting. */
-  payoutMode: 'ok' | 'timeout' | 'down' | 'reject' = 'ok';
-  /** Extra coins in the custody wallet for the reconciliation valuation test (CFO B7). */
-  extraBalance: Record<string, { amount: number; pendingAmount?: number }> | null = null;
-  fetch = async (url: string, init?: RequestInit): Promise<Response> => {
-    const u = new URL(url);
-    const body = init?.body ? JSON.parse(String(init.body)) : null;
-    const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { 'content-type': 'application/json' } });
-    if (u.pathname === '/v1/merchant/coins') return json({ selectedCurrencies: Object.keys(this.minUsd) });
-    if (u.pathname === '/v1/min-amount') {
-      const from = u.searchParams.get('currency_from')!;
-      return json({ currency_from: from, currency_to: 'usdttrc20', min_amount: 0.0001, fiat_equivalent: this.minUsd[from] ?? 999 });
-    }
-    if (u.pathname === '/v1/payment' && init?.method === 'POST') {
-      const id = String(this.nextId++);
-      const p = {
-        payment_id: id, payment_status: 'waiting', pay_address: `addr_${body.pay_currency}_${id}`, price_amount: body.price_amount, price_currency: 'usd',
-        pay_amount: body.price_amount / 50_000, pay_currency: body.pay_currency, order_id: body.order_id, purchase_id: body.purchase_id ?? `pur_${id}`,
-        expiration_estimate_date: new Date(Date.now() + 20 * 60_000).toISOString(),
-      };
-      this.payments.set(id, p);
-      return json(p, 201);
-    }
-    const m = u.pathname.match(/^\/v1\/payment\/(\w+)$/);
-    if (m) return json(this.payments.get(m[1]!));
-    if (u.pathname === '/v1/auth') return json({ token: 'jwt-test' });
-    if (u.pathname === '/v1/payout' && init?.method === 'POST') {
-      expect(init?.headers).toMatchObject({ Authorization: 'Bearer jwt-test' });
-      const mode = this.payoutMode;
-      this.payoutMode = 'ok';
-      if (mode === 'down') return json({ message: 'maintenance' }, 503);
-      if (mode === 'reject') return json({ message: 'Invalid address' }, 400);
-      // Idempotent on unique_external_id, like the real API.
-      const dup = body.withdrawals[0].unique_external_id && this.payouts.find((p) => p.unique_external_id === body.withdrawals[0].unique_external_id);
-      const id = dup ? dup.id : String(this.nextId++);
-      const w = dup ?? { id, batch_withdrawal_id: `batch_${id}`, status: 'WAITING', ...body.withdrawals[0] };
-      if (!dup) this.payouts.push(w);
-      if (mode === 'timeout') throw new Error('socket hang up');
-      return json({ id: `batch_${id}`, withdrawals: [w] });
-    }
-    if (u.pathname === '/v1/payout' && (init?.method ?? 'GET') === 'GET') return json({ data: [...this.payouts].reverse() });
-    if (/^\/v1\/payout\/.*\/verify$/.test(u.pathname)) {
-      expect(body.verification_code).toMatch(/^\d{6}$/);
-      return json('OK');
-    }
-    if (u.pathname === '/v1/balance') return json({ usdttrc20: { amount: 1000, pendingAmount: 0 }, ...(this.extraBalance ?? {}) });
-    if (u.pathname === '/v1/estimate' && u.searchParams.get('currency_to') === 'usd') return json({ estimated_amount: Number(u.searchParams.get('amount')) * (u.searchParams.get('currency_from') === 'btc' ? 60000 : 1) });
-    return json({ message: `unexpected ${init?.method ?? 'GET'} ${u.pathname}` }, 404);
-  };
-}
+import { FakeNow } from './fakeNowPayments.js';
 
 const IPN_SECRET = 'ipn-secret-for-tests';
 let h: Harness;
@@ -375,6 +317,10 @@ describe('crypto checkout (NOWPayments)', () => {
     expect(fake.payouts.filter((p) => p.unique_external_id === big.id)).toHaveLength(0);
     expect((await finance.api.post(`/v1/admin/withdrawals/${big.id}/decide`, { approve: true })).body.error.code).toBe('four_eyes');
     expect((await finance2.api.post(`/v1/admin/withdrawals/${big.id}/decide`, { approve: true })).body.error.code).toBe('lead_required');
+    // Round 22: the Lead never gives the first approval, never approves a small one alone.
+    const leadFirst = (await seller.api.post('/v1/seller/withdrawals', { amountCents: 700_00 })).body;
+    expect((await lead.api.post(`/v1/admin/withdrawals/${leadFirst.id}/decide`, { approve: true })).body.error.code).toBe('finance_first');
+    await finance.api.post(`/v1/admin/withdrawals/${leadFirst.id}/decide`, { approve: false, note: 'Not now' });
     const second = await lead.api.post(`/v1/admin/withdrawals/${big.id}/decide`, { approve: true });
     expect(second.status, JSON.stringify(second.body)).toBe(200);
     expect(second.body.status).toBe('processing');
@@ -421,7 +367,10 @@ describe('crypto checkout (NOWPayments)', () => {
     expect(fake.payouts.filter((p) => p.unique_external_id === w1.id)).toHaveLength(1);
     // Approving again does not create a second payout (idempotency key = withdrawal id) and is refused anyway.
     expect((await cfo.api.post(`/v1/admin/withdrawals/${w1.id}/decide`, { approve: true })).status).toBe(409);
-    // The hourly recheck finds it at the provider → processing, then the IPN pays it.
+    // Round 22: Ops can't recheck in the first minutes after the call (the provider may still be creating it).
+    expect((await cfo.api.post(`/v1/admin/withdrawals/${w1.id}/recheck`, {})).body.error.code).toBe('too_early');
+    await h.ctx.db.query(`UPDATE withdrawals SET provider_attempted_at = now() - interval '15 minutes' WHERE id = $1`, [w1.id]);
+    // The recheck finds it at the provider → processing, then the IPN pays it.
     const rechecked = await cfo.api.post(`/v1/admin/withdrawals/${w1.id}/recheck`, {});
     expect(rechecked.status, JSON.stringify(rechecked.body)).toBe(200);
     expect(rechecked.body).toMatchObject({ status: 'processing', payout_id: fake.payouts.find((p) => p.unique_external_id === w1.id)!.id });
@@ -436,8 +385,16 @@ describe('crypto checkout (NOWPayments)', () => {
     expect((await cfo.api.post(`/v1/admin/withdrawals/${w2.id}/decide`, { approve: true })).body.error.code).toBe('payout_unknown');
     expect(await available()).toBe(before - 3000);
     const { recheckUnknownPayouts } = await import('../src/domain/cryptoPayouts.js');
+    // Round 22: "not found" reverses only after two answers 30+ minutes apart and PAYOUT_UNKNOWN_REVERSE_HOURS (6) after the call.
     await h.ctx.db.query(`UPDATE withdrawals SET updated_at = now() - interval '5 minutes' WHERE id = $1`, [w2.id]);
-    expect(await recheckUnknownPayouts(h.ctx)).toBe(1);
+    expect(await recheckUnknownPayouts(h.ctx)).toBeGreaterThanOrEqual(1);
+    row = (await seller.api.get('/v1/seller/withdrawals')).body.find((x: any) => x.id === w2.id);
+    expect(row.status).toBe('unknown'); // one "not found", and too soon anyway
+    await h.ctx.db.query(`UPDATE withdrawals SET provider_attempted_at = now() - interval '7 hours', updated_at = now() - interval '5 minutes' WHERE id = $1`, [w2.id]);
+    await recheckUnknownPayouts(h.ctx);
+    expect((await h.ctx.db.query('SELECT status, not_found_checks FROM withdrawals WHERE id = $1', [w2.id])).rows[0]).toMatchObject({ status: 'unknown', not_found_checks: 1 }); // the second answer came too soon after the first
+    await h.ctx.db.query(`UPDATE withdrawals SET last_not_found_at = now() - interval '31 minutes', updated_at = now() - interval '5 minutes' WHERE id = $1`, [w2.id]);
+    await recheckUnknownPayouts(h.ctx);
     row = (await seller.api.get('/v1/seller/withdrawals')).body.find((x: any) => x.id === w2.id);
     expect(row.status).toBe('failed');
     expect(await available()).toBe(before - 2000);

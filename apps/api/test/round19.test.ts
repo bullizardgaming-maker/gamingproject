@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buyAndPay, client, makeOffer, makeUser, setup, type Harness } from './helpers.js';
-import { detectOffPlatform as scan, detectSplit, isInstantBan } from '../src/domain/safety.js';
+import { classify, detectOffPlatform as scan, detectSplit } from '../src/domain/safety.js';
 
 let h: Harness;
 beforeAll(async () => {
@@ -160,18 +160,20 @@ describe('chat filter additions', () => {
     expect(scan('whаtsаpp me')).toContain('whatsapp'); // Cyrillic а
     expect(detectSplit(['what', 'sa'], 'pp me')).toContain('whatsapp');
     expect(detectSplit(['hello'], 'thanks')).toEqual([]);
-    expect(isInstantBan(['external_payment'])).toBe(true);
-    expect(isInstantBan(['whatsapp'])).toBe(false);
+    expect(classify(scan('vodafone cash 01012345678'), { body: 'vodafone cash 01012345678' })).toBe('ban');
+    expect(classify(['whatsapp'], { body: 'whatsapp?' })).toBe('queue');
     expect(scan('the EU version ships Monday')).toEqual([]);
   });
 
-  it('bans at once for payment details and suspends after the ladder for contact sharing', async () => {
+  it('bans at once only for unambiguous payment details; everything else is queued for staff', async () => {
     const seller = await makeUser(h, { tier: 2 });
     const buyer = await makeUser(h);
     const offer = await makeOffer(seller, { deliveryMode: 'manual', stock: 2 });
     const order = await buyAndPay(h, buyer, offer.id);
     const { room_id } = (await buyer.api.get(`/v1/orders/${order.id}`)).body;
-    const blocked = await seller.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'Pay me on instapay next time, no fee' });
+    const queued = await seller.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'Pay me on instapay next time, no fee' });
+    expect(queued.body.error.details.action).toBe('queue');
+    const blocked = await seller.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'or vodafone cash 01012345678' });
     expect(blocked.status).toBe(422);
     expect(blocked.body.error.details.action).toBe('ban');
     const u = await h.ctx.db.query('SELECT status, suspension_reason FROM users WHERE id = $1', [seller.id]);

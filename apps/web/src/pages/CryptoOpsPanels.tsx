@@ -27,7 +27,12 @@ export function PayoutsPanel() {
     setMsg('');
     try {
       const w = await api<any>(`/admin/withdrawals/${id}/recheck`, { body: {} });
-      setMsg(w.status === 'processing' ? 'The provider has this payout; waiting for it to finish.' : 'The provider never created it; the amount is back in the seller’s balance.');
+      setMsg(
+        w.status === 'processing' ? 'The provider has this payout; waiting for it to finish.'
+        : w.status === 'paid' ? 'The provider sent this payout; it is marked paid.'
+        : w.status === 'failed' ? 'The provider never created it (checked twice, hours apart); the amount is back in the seller’s balance.'
+        : 'Still unknown: the provider has no record yet. It is reversed only after two checks and several hours.',
+      );
       reload();
     } catch (e: any) {
       setMsg(e.message);

@@ -65,7 +65,7 @@ const fmt = (d: string) => new Date(d).toLocaleString([], { month: 'short', day:
 export function Admin() {
   usePageMeta({ title: 'Operations', noindex: true });
   const { user, can } = useSession();
-  const visible = TABS.filter((t) => can(t.perm));
+  const visible = TABS.filter((t) => can(t.perm) || (t.id === 'payouts' && can('withdrawals.second_approve' as any))); // the Lead co-signs large payouts (Round 22)
   const [picked, setTab] = useState<Tab | null>(null);
   const tab: Tab = picked && visible.some((t) => t.id === picked) ? picked : (visible[0]?.id ?? 'disputes');
   // Rows are tagged with the tab they were loaded for, so a tab switch never renders

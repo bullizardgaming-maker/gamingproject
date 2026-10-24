@@ -3,7 +3,7 @@
 State of the project for whoever picks it up next (a person or another Claude session). Read this first, then
 `README.md` (how to run) and `docs/ARCHITECTURE.md` (how each feature works).
 
-## Where things stand (Oct 22, 2026)
+## Where things stand (Oct 25, 2026, after Round 22)
 
 - All work is on `main`. CI (api, web, e2e, load, contracts, fraud-gnn, sdk-python) is green.
 - 14 rounds of features are built: 84 of 92 suggestions. The tracker lives in the Claude report doc
@@ -450,6 +450,63 @@ New config (all in `.env.example`, `render*.yaml`): `PAYOUT_HOLD_DAYS_NEW=1`, `P
 controls and `reconciliation_snapshots` (re-run `node dist/migrate.js` on staging; it is idempotent).
 
 Ops → Controls gained: platform payouts per day, four-eyes single withdrawal and user-day thresholds.
+
+## Round 22 (Oct 25, 2026) — review fixes (`claude/round-22-fixes.md`)
+
+Migration **069** (`069_round22.sql`, idempotent; re-run `node dist/migrate.js` on staging). New config
+`PAYOUT_UNKNOWN_REVERSE_HOURS=6`. CI runs the money property tests with `MONEY_FUZZ_RUNS=40` (default 25 locally).
+New tests: `round22.test.ts` (one case per item), `chat-filter.test.ts` + `test/fixtures/chat-phrases.ts` (the permanent
+fixture), `money-invariants.test.ts` (rewritten on the NOWPayments path), shared fake provider `test/fakeNowPayments.ts`;
+updates in `chat`, `moderation`, `round19`, `round20`, `unit`, `crypto-payments`. Browser: `launch-decisions` (categories retry).
+
+**Chat filter decision** (`safety.ts` `classify`, `chat.ts`, `moderation.ts` `decideChatFlag`). Every hit is blocked (not
+delivered) and queued for staff with **no strike**; a strike (and the staff-set warn → suspend → ban ladder) only happens
+when staff confirm the flag. Automatic ban only for the unambiguous: a chat/payment link (t.me/x, wa.me/…, paypal.me/x,
+discord.gg/…), a full phone number with a messenger or payment name ("whatsapp 0101234567", "my wats app is 0101234567"), a
+handle with a messenger name ("telegram @x", "discord: pat#1234", "snap: x"), a payment name with an email, a wallet address
+offered for payment ("send to 0x…"). Split-message hits never ban. Fixed false hits: Arabic فوري only as Fawry next to a
+payment word (whole words; الكود/تحويل/على طول no longer match), g2g/Eldorado need a shopping context or the site name,
+impersonation needs a claim about Bullizard/the site, "my id/username is", "hmu", "add me as friend in game", "insta
+delivery", "tele port", "line id", "ok.gg", "10.co" pass. Newly caught: "wats app", "on dc", "my disc is", any link with a
+path (bit.ly/abc). Top-up and in-game-delivery rooms strip labelled player IDs/UIDs before the phone check. A filter ban
+revokes every session, like the admin ban (item 20). Fixture: 140+ normal phrases (EN + Egyptian/MSA Arabic, top-up IDs) never flagged; 50 disguised/explicit contacts blocked, 16 of them the automatic-ban set; the 27 Round 20 hits stay in the fixture.
+
+| # | What changed |
+|---|---|
+| 2 | `lead` lost `treasury.approve`; new `withdrawals.second_approve` (Lead, admin). Finance always gives the first approval (`finance_first` otherwise); the Lead only adds the second signature above the four-eyes thresholds ($500 / $1,000 user day); treasury withdrawals and crypto-refund sends stay `treasury.approve` (Finance/admin). Lead sees Ops → Payouts. |
+| 3 | `NowPaymentsProvider.platformBalance` throws on a failed read or an unvaluable coin; reconciliation records `psp_balance_unreadable` → run is not ok and alerts admins + finance. `null` now only means "nothing held in that currency". |
+| 4 | `withdrawals.external_id` (= our id = `unique_external_id`) stored before the call; batch ids stored before the 2FA verify; a failed verify → `unknown` + `verify_pending`, never reversed, the job retries the verify. IPNs match by payout id, batch id or `unique_external_id` and are applied while `unknown`. Hourly job also polls `processing` payouts (lost IPNs) and sends approved ones never handed over. "Not found" reverses only after two answers ≥ 30 min apart **and** `PAYOUT_UNKNOWN_REVERSE_HOURS`; Ops recheck refuses during the first 10 min (`too_early`). |
+| 5 | Withdrawals kill switch also blocks staff approvals, `sendPayout` and treasury withdrawals (request + approve). Rejecting still works. |
+| 6 | Refund after release / warranty refunds on NOWPayments orders (and any order while `CARD_REFUNDS_ENABLED=false`) go to the buyer's balance; the crypto-refund queueing and the card refund call are gone from `clawback.ts`. |
+| 7 | `applyCryptoPayment` runs in one transaction holding the order row(s) then the payment row (same order as the reaper's `cancelOrder` → `creditPartialPayments`); capture happens inside it (`handlePaymentCapturedIn`, `handleCheckoutCapturedIn`). |
+| 8 | `crypto_payments.applied_cents` records what each deposit funded; a later, larger IPN for the same address credits the difference to the buyer's balance (memo `crypto_extra_deposit`), once. |
+| 9 | Cancelled-then-captured books the provider fee (`psp_fee`) and any overpayment. |
+| 10 | Withdrawals to a non-USDT payout address → 400 `unsupported_coin`; migration 069 clears non-USDT payout addresses (seller re-adds a USDT TRC-20/BEP-20 one). |
+| 11 | Platform daily payout cap read under an advisory lock; the per-user daily cap is re-checked at approval (`withdrawal_limit`). |
+| 12 | `withdrawal.approve` is audited even when the payout call fails (`details.payout = payout_failed / payout_unknown`). |
+| 13 | Creator codes: no earning when creator and buyer share a device, card, IP subnet or wallet. |
+| 14 | Warranty refunds on orders above $200 need `orders.lead`. |
+| 18/19 | No em dash in the dispute message (API + ar/fr/pt/de). After the account window the chat note says the buyer can still confirm or contact support; disputes are closed (matches `openDispute`). |
+| 21 | The inline ID deadline uses `rules_settings.id_due_days`. |
+| 22 | `material` is required on `PUT /admin/legal/:doc`; a draft announced as material can't be re-published as non-material (`material_draft`); the audit entry records `material`, `previousMaterial`, the hash. |
+| 23 | Ops Business money row: per currency (`byCurrency`; top level = USD), `unknown` withdrawals counted as pending, promo cost net of promo money returned by refunds/splits/refunds after release (`promoGrossCents` kept). |
+| 24 | Web: if GET /categories fails, no category is shown and "Try again" appears (Home, Games). Demo: `localStorage['bz.demo.fail']='categories'`. |
+| 25 | Referral "active" = the friend had a completed order in the 30 days before **this order was placed**. |
+| 15–17 | `money-invariants.test.ts` runs on a fake NOWPayments (exact/over/under/late payments, IPN replays, IPN vs reaper, second transfer, confirm vs dispute, staff release, refunds, splits, refunds after release, invite + creator codes, payouts ok/timeout/down/reject/verify-fail) and checks: one capture per order, every deposit counted once, nobody paid twice (a reversed withdrawal never has a live provider payout), rewards ≤ half the commission and booked as recorded, and the provider wallet equals the ledger (reconciliation clean). The late-deposit property calls the real IPN code. Breaking the payout lookup or the late-deposit `credited_cents` check makes it fail (checked). |
+
+**NOWPayments sandbox checks still needed** (we could not reach the sandbox; everything above runs against the provider
+interface with a fake). The CEO/Back-End must run these with the sandbox keys and note the answers here:
+1. `POST /v1/payout` twice with the same `unique_external_id`: is the second refused (which HTTP status / message) or does it
+   return the first withdrawal? Either is safe for us only if it never creates a second payout. Same check after a verify failure.
+2. `GET /v1/payout?limit=100&page=0&date_from=YYYY-MM-DD&order_by=created_at&order=desc`: the exact parameter names, whether the
+   rows carry `unique_external_id`, `id`, `batch_withdrawal_id`, `status`, `hash`, `fee`, `currency`, `amount`, and whether the
+   list is `{ data: [...] }` or a bare array (`findPayoutByExternalId` accepts both).
+3. `GET /v1/payout/:id`: does it take the withdrawal id (what we store as `payout_id`) or the batch id?
+4. A batch whose `/verify` failed: its status (CREATING or WAITING?), whether `/verify` can be retried with a new TOTP, how long
+   it stays verifiable, and whether it can be cancelled.
+5. The payout IPN body: does it include `unique_external_id`, `fee`, `conversion_fee`?
+6. `GET /v1/balance` shape (`{ coin: { amount, pendingAmount } }`) and its error responses.
+Then run `apps/api/scripts/money-paths.ts` against staging (docs/HOSTING.md).
 
 ## Suggested next round
 

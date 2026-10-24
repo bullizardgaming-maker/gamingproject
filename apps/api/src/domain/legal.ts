@@ -100,7 +100,8 @@ export interface PublishInput {
   effectiveAt?: string;
   title: string;
   contentMd: string;
-  material?: boolean;
+  /** Required: staff say explicitly whether the change is material (Round 22). */
+  material: boolean;
 }
 
 /** Staff publish a version. A material change needs at least NOTICE_DAYS before it takes effect; the notice email goes out at once. */
@@ -112,10 +113,16 @@ export async function publishDocument(ctx: Ctx, staffId: string, input: PublishI
   if (input.material && effective.getTime() < Date.now() + NOTICE_DAYS * 86_400_000 - 60_000) {
     throw badRequest('notice_required', `A material change takes effect at least ${NOTICE_DAYS} days after it is published`);
   }
+  if (typeof input.material !== 'boolean') throw badRequest('materiality_required', 'Say whether this is a material change (material: true or false)');
   const sha = createHash('sha256').update(input.contentMd, 'utf8').digest('hex');
   // A version that is already in force is immutable: the hash users accepted must stay checkable. Changes are a new version.
-  const existing = await maybeOne<{ effective_at: string }>(ctx.db, 'SELECT effective_at FROM legal_documents WHERE doc = $1 AND locale = $2 AND version = $3', [input.doc, locale, input.version]);
+  const existing = await maybeOne<{ effective_at: string; material: boolean }>(ctx.db, 'SELECT effective_at, material FROM legal_documents WHERE doc = $1 AND locale = $2 AND version = $3', [input.doc, locale, input.version]);
   if (existing && new Date(existing.effective_at) <= new Date()) throw conflict('version_in_force', 'This version is already in force and cannot be edited; publish a new version');
+  // Round 22 (22): a draft announced as material can't be re-published as non-material to skip the 14-day notice. If the
+  // change really is not material, publish it under a new version (staff mark it explicitly; the route audits it).
+  if (existing?.material && !input.material) {
+    throw conflict('material_draft', 'This draft was announced as a material change; it keeps the 14-day notice. Publish a corrected non-material change as a new version');
+  }
   const row = await one<LegalRow>(
     ctx.db,
     `INSERT INTO legal_documents (doc, locale, version, effective_at, title, content_md, sha256, material, created_by)
@@ -132,5 +139,5 @@ export async function publishDocument(ctx: Ctx, staffId: string, input: PublishI
       await enqueueEmail(ctx.db, u.id, 'legal_change', { doc: input.doc, version: input.version, effective_at: effective.toISOString(), title: input.title }, `legal_change:${input.doc}:${input.version}:${u.id}`);
     }
   }
-  return row;
+  return { ...row, previous_material: existing ? existing.material : null };
 }

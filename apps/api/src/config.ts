@@ -182,6 +182,7 @@ const Env = z.object({
   RETENTION_SECURITY_LOGS_DAYS: z.coerce.number().int().min(1).default(90),  // CSP reports, one-time codes, reset links
   RECON_INTERVAL_HOURS: z.coerce.number().default(24),
   RECON_TOLERANCE_CENTS: z.coerce.number().default(100), // CFO B7: $1.00 of coin valuation noise is not a mismatch
+  PAYOUT_UNKNOWN_REVERSE_HOURS: z.coerce.number().default(6), // Round 22: a payout the provider says it never created is reversed only after this long (and two checks)
   FRAUD_GNN_URL: z.string().optional(),
   // shadow: record the graph model's score next to the heuristic but act on the heuristic only.
   // enforce: act on the higher of the two. Switch to enforce once the model report backs it.

@@ -3,7 +3,7 @@ import { Link, NavLink, useNavigate, useParams, useSearchParams } from 'react-ro
 import { GameBanner } from '@/components/GameArt';
 import { MagnifyingGlass as Search, ShieldCheck, Lightning as Zap } from '@phosphor-icons/react';
 import { api } from '../api';
-import { CATEGORY_ICON, CurrencyTable, OfferTable } from '../components/CatalogUi';
+import { CATEGORY_ICON, CategoriesRetry, CurrencyTable, OfferTable } from '../components/CatalogUi';
 import { CATEGORY_META, categoryLabel, slugify, useCategoryOrder, useGames, type GameEntry } from '@/lib/catalog';
 import { cn } from '@/lib/utils';
 import { usePrice } from '@/lib/prefs';
@@ -84,6 +84,7 @@ export function Games() {
           <input aria-label={t('games.filter')} placeholder={t('games.filter')} value={filter} onChange={(e) => set('q', e.target.value)} style={{ paddingInlineStart: 36 }} />
         </label>
       </div>
+      <CategoriesRetry />
       <div className="filters" role="group" aria-label={t('market.category')} style={{ marginBottom: 0 }}>
         <button aria-pressed={!cat} onClick={() => set('category', '')}>{t('games.everything')}</button>
         {categoryOrder.map((slug) => (

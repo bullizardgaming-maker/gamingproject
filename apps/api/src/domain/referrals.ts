@@ -53,7 +53,7 @@ export async function referrerForCode(q: Queryable, code: string | undefined): P
 }
 
 /** Called in the same transaction that releases an order's escrow: the referrer's share of this order's commission. */
-export async function maybeGrantReferral(ctx: Ctx, s: TxScope, order: { id: string; buyer_id: string; seller_id?: string; amount_cents: number; commission_cents: number; currency: string }) {
+export async function maybeGrantReferral(ctx: Ctx, s: TxScope, order: { id: string; buyer_id: string; seller_id?: string; amount_cents: number; commission_cents: number; currency: string; created_at?: string | Date }) {
   // Lock the referee's row: two orders completing together can't both count as the "first" (Round 20).
   const buyer = await maybeOne<{ referred_by: string | null }>(s.tx, 'SELECT referred_by FROM users WHERE id = $1 FOR UPDATE', [order.buyer_id]);
   if (!buyer?.referred_by) return null;
@@ -82,18 +82,20 @@ export async function maybeGrantReferral(ctx: Ctx, s: TxScope, order: { id: stri
     return null;
   }
 
-  // CEO (Oct 24): the share starts AFTER the referee's first completed order, and only while they
-  // are active (a completed order within the last active_days).
+  // CEO (Oct 24): the share starts AFTER the referee's first completed order, and only while they are active. Round 22
+  // (25): "active" is measured when THIS order was placed: a completed order in the active_days before it.
+  const placedAt = order.created_at ? new Date(order.created_at) : new Date();
   const prev = await maybeOne<{ completed_at: string }>(
     s.tx,
-    `SELECT completed_at FROM orders WHERE buyer_id = $1 AND status = 'completed' AND id <> $2 ORDER BY completed_at DESC LIMIT 1`,
-    [order.buyer_id, order.id],
+    `SELECT completed_at FROM orders WHERE buyer_id = $1 AND status = 'completed' AND id <> $2 AND completed_at <= $3 ORDER BY completed_at DESC LIMIT 1`,
+    [order.buyer_id, order.id, placedAt.toISOString()],
   );
   if (!prev) {
-    await record('blocked', 'first_order');
+    const any = await maybeOne(s.tx, `SELECT 1 FROM orders WHERE buyer_id = $1 AND status = 'completed' AND id <> $2 LIMIT 1`, [order.buyer_id, order.id]);
+    await record('blocked', any ? 'inactive' : 'first_order');
     return null;
   }
-  if (Date.now() - new Date(prev.completed_at).getTime() > settings.activeDays * 86_400_000) {
+  if (placedAt.getTime() - new Date(prev.completed_at).getTime() > settings.activeDays * 86_400_000) {
     await record('blocked', 'inactive');
     return null;
   }

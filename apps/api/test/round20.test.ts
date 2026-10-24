@@ -36,18 +36,25 @@ describe('ban vs suspend', () => {
     expect((await row()).status).toBe('active');
   });
 
-  it('off-platform: a spelled-out payment method bans; a contact share on the ladder suspends for a week', async () => {
+  it('off-platform: staff-confirmed contact shares walk the ladder (a week\'s suspension); an unambiguous payment link bans', async () => {
     const seller = await makeUser(h, { tier: 2 });
     const buyer = await makeUser(h);
+    const mod = await makeUser(h, { role: 'support' });
     const offer = await makeOffer(seller, { deliveryMode: 'manual', stock: 2 });
     const order = await buyAndPay(h, buyer, offer.id);
     const { room_id } = (await buyer.api.get(`/v1/orders/${order.id}`)).body;
-    await buyer.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'my discord is pat#1' }); // warn
-    await buyer.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'telegram @pat' }); // suspend
+    // Round 22: blocked and queued, no strike, until staff confirm.
+    expect((await buyer.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'my discord is pat#1' })).body.error.details.action).toBe('queue');
+    expect((await buyer.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'or telegram maybe' })).body.error.details.action).toBe('queue');
+    expect((await h.ctx.db.query('SELECT status FROM users WHERE id = $1', [buyer.id])).rows[0].status).toBe('active');
+    const flags = (await mod.api.get('/v1/admin/moderation/chats')).body.filter((f: any) => f.user_id === buyer.id);
+    expect((await mod.api.post(`/v1/admin/moderation/chats/${flags[0].id}`, { confirm: true })).body.action).toBe('warn');
+    expect((await mod.api.post(`/v1/admin/moderation/chats/${flags[1].id}`, { confirm: true })).body.action).toBe('suspend');
     const b = (await h.ctx.db.query('SELECT status, suspended_until FROM users WHERE id = $1', [buyer.id])).rows[0];
     expect(b.status).toBe('suspended');
     expect(new Date(b.suspended_until).getTime()).toBeGreaterThan(Date.now() + 6 * 86_400_000);
-    const r = await seller.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'pay me on paypal' });
+    expect((await seller.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'pay me on paypal' })).body.error.details.action).toBe('queue');
+    const r = await seller.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'paypal.me/patgold' });
     expect(r.body.error.details.action).toBe('ban');
     expect((await h.ctx.db.query('SELECT status FROM users WHERE id = $1', [seller.id])).rows[0].status).toBe('banned');
   });
@@ -99,7 +106,8 @@ describe('referral and creator codes (CEO, Oct 24)', () => {
     const sockRows = (await h.ctx.db.query(`SELECT status, reason FROM referral_rewards WHERE referee_id = $1 ORDER BY created_at`, [sock.id])).rows;
     expect(sockRows.map((r) => [r.status, r.reason])).toEqual([['blocked', 'linked_accounts'], ['blocked', 'linked_accounts']]);
 
-    // Two orders paid and delivered, then confirmed at the same moment: exactly one is the "first", the other earns.
+    // Two orders paid and delivered, then confirmed at the same moment: exactly one is the "first". Round 22 (25): "active"
+    // is measured when an order was placed, and both were placed before either completed, so the other earns nothing.
     const friend = await signUp({ code }, { 'x-forwarded-for': '198.51.100.5' });
     const a = await buyAndPay(h, friend, offer.id);
     const b = await buyAndPay(h, friend, offer.id);
@@ -108,7 +116,11 @@ describe('referral and creator codes (CEO, Oct 24)', () => {
     const [ra, rb] = await Promise.all([friend.api.post(`/v1/orders/${a.id}/confirm`), friend.api.post(`/v1/orders/${b.id}/confirm`)]);
     expect([ra.status, rb.status], JSON.stringify([ra.body, rb.body])).toEqual([200, 200]);
     const rewards = async () => (await h.ctx.db.query(`SELECT status, reason FROM referral_rewards WHERE referee_id = $1 ORDER BY created_at`, [friend.id])).rows.map((r) => `${r.status}:${r.reason ?? ''}`);
-    expect((await rewards()).sort()).toEqual(['blocked:first_order', 'granted:']);
+    expect((await rewards()).sort()).toEqual(['blocked:first_order', 'blocked:inactive']);
+    expect(await sellerAvailable(referrer.id)).toBe(0);
+    // An order placed after a completed one (within 30 days) earns.
+    await complete(friend, seller, offer.id);
+    expect(await rewards()).toContain('granted:');
     const earnedOnce = await sellerAvailable(referrer.id);
     expect(earnedOnce).toBeGreaterThan(0);
 

@@ -1,6 +1,7 @@
 import type { Ctx } from '../context.js';
 import { many, maybeOne, one } from '../db.js';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
+import { assertNotPaused } from './controls.js';
 import { withScope } from './events.js';
 import { accountId, balance, post } from './ledger.js';
 
@@ -37,6 +38,7 @@ export async function treasuryBalance(ctx: Ctx, currency = 'USD') {
 }
 
 export async function requestTreasuryWithdrawal(ctx: Ctx, adminId: string, amountCents: number, note: string, currency = 'USD', source: WithdrawalSource = 'treasury') {
+  await assertNotPaused(ctx.db, 'withdrawals'); // the withdrawals kill switch covers the company's own withdrawals too (Round 22)
   const b = await treasuryBalance(ctx, currency);
   const available = source === 'treasury' ? b.availableCents : b.taxAvailableCents;
   if (amountCents > available) throw badRequest('insufficient_treasury', `Only ${available} cents of ${source === 'treasury' ? 'platform revenue' : 'collected tax'} is available`);
@@ -57,6 +59,7 @@ export async function decideTreasuryWithdrawal(ctx: Ctx, id: string, adminId: st
       await s.tx.query(`UPDATE treasury_withdrawals SET status = 'rejected', decided_by = $2, decided_at = now() WHERE id = $1`, [id, adminId]);
       return { ...w, status: 'rejected' };
     }
+    await assertNotPaused(s.tx, 'withdrawals');
     // Serialize against other approvals and re-check the balance under the lock.
     await s.tx.query('SELECT pg_advisory_xact_lock(727276)');
     const source = await accountId(s.tx, w.source, w.currency);

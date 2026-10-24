@@ -80,7 +80,16 @@ async function buildReport(ctx: Ctx, currency: string): Promise<ReconReport> {
   // chargebacks), minus what was paid out to sellers and to the company bank account, adjusted
   // for money converted into or out of this currency.
   const expected = -totals.gateway_clearing! - totals.payouts! - totals.platform_withdrawals! - totals.fx_conversion!;
-  const actual = await ctx.payments.platformBalance(currency);
+  // Round 22 (3): a provider balance that can't be read or valued is a failed check, never a silent OK.
+  const readBalance = async (cur: string) => {
+    try {
+      return await ctx.payments.platformBalance(cur);
+    } catch (err) {
+      issues.push({ check: 'psp_balance_unreadable', detail: { currency: cur, error: (err as Error).message.slice(0, 300) } });
+      return null;
+    }
+  };
+  const actual = await readBalance(currency);
   const difference = actual === null ? null : actual - expected;
   if (difference !== null && Math.abs(difference) > ctx.cfg.RECON_TOLERANCE_CENTS) {
     issues.push({ check: 'psp_balance_mismatch', detail: { expected, actual, difference } });
@@ -92,7 +101,7 @@ async function buildReport(ctx: Ctx, currency: string): Promise<ReconReport> {
     for (const { currency: cur } of others) {
       let exp = 0;
       for (const kind of ['gateway_clearing', 'payouts', 'platform_withdrawals', 'fx_conversion'] as const) exp -= await balance(ctx.db, await accountId(ctx.db, kind, cur));
-      const act = await ctx.payments.platformBalance(cur);
+      const act = await readBalance(cur);
       if (act !== null && Math.abs(act - exp) > ctx.cfg.RECON_TOLERANCE_CENTS) {
         issues.push({ check: 'psp_balance_mismatch', detail: { currency: cur, expected: exp, actual: act, difference: act - exp } });
       }

@@ -109,4 +109,17 @@ test.describe('damage limits (launch gate §4)', () => {
     await page.getByTestId('switch-pause_signups').click();
     await expect(page.getByRole('status').filter({ hasText: 'resumed' })).toBeVisible();
   });
+
+  test('Round 22: when GET /categories fails, no category is shown and a retry brings them back', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('bz.demo.fail', 'categories'));
+    await page.goto('/games');
+    const retry = page.getByTestId('categories-retry');
+    await expect(retry).toBeVisible();
+    const cats = page.getByRole('group', { name: 'Category' }).getByRole('button');
+    await expect(cats).toHaveCount(1); // only "Everything": never the full list, which would show closed categories
+    await page.evaluate(() => localStorage.removeItem('bz.demo.fail'));
+    await retry.getByRole('button', { name: 'Try again' }).click();
+    await expect(retry).toHaveCount(0);
+    await expect(cats.filter({ hasText: 'Accounts' })).toBeVisible();
+  });
 });

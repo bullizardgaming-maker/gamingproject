@@ -545,6 +545,8 @@ const en = {
   "nav.requests": "Requests",
   "footer.buyerRequests": "Buyer requests",
   "common.cancel": "Cancel",
+  "catalog.categoriesFailed": "Categories could not be loaded.",
+  "catalog.retry": "Try again",
   "req.eyebrow": "Buyer requests",
   "req.title": "Buyer requests",
   "req.lede": "Can't find it listed? Say what you want and verified sellers send you a price. You only pay when you accept one, into escrow like any order.",

@@ -2,7 +2,7 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { GameBanner } from '@/components/GameArt';
 import { ArrowRight } from '@phosphor-icons/react';
-import { CATEGORY_ICON, TrustStrip } from '../components/CatalogUi';
+import { CATEGORY_ICON, CategoriesRetry, TrustStrip } from '../components/CatalogUi';
 import { GameSearch } from '../components/SiteHeader';
 import { BrandMark } from '../components/Brand';
 import { api, money } from '../api';
@@ -92,6 +92,7 @@ export function Home() {
           <h2 id="home-top">{t('home.topGames')}</h2>
           <Link to="/games" className="home-more">{t('home.allGames')} <ArrowRight className="size-4 rtl:rotate-180" aria-hidden /></Link>
         </div>
+        <CategoriesRetry />
         <div className="home-games">
           {games === null
             ? Array.from({ length: 5 }, (_, i) => <div key={i} className="card home-game-skel" aria-hidden />)

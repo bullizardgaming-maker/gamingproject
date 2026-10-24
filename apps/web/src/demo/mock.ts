@@ -8,7 +8,7 @@
 import { CATEGORIES, DEMO_CODE, DEMO_FULL, seed, type DemoState, type DemoUser } from './seed';
 import { CATEGORY_DEFAULTS, GAME_SETS, LEAGUES, PERMANENT_LEAGUES, attributesFor, cleanAttributes, handoverFieldFor, handoverKey, setLeagues } from '../../../api/src/domain/attributeSets';
 import { checkTiers, effectivePrice, unitPriceFor } from '../../../api/src/domain/priceTiers';
-import { detectOffPlatform, matchTerms } from '../../../api/src/domain/safety';
+import { classify, detectOffPlatform, matchTerms } from '../../../api/src/domain/safety';
 import { parseCsv } from '../../../api/src/domain/csv';
 import { platformForGame } from '../../../api/src/domain/platforms';
 import { LAUNCH_GAMES, isLaunchGame } from '../lib/launch';
@@ -644,7 +644,15 @@ route('POST', '/me/delete', () => fail(409, 'demo', 'Demo accounts can’t be de
 // --- Catalog ---------------------------------------------------------------------------
 // The demo previews every phase: all categories are open (production starts at phase 1).
 const PHASE_OF: Record<string, number> = { accounts: 2, boosting: 2, keys: 3, 'gift-cards': 3, 'video-games': 3 };
-route('GET', '/categories', () => CATEGORIES.map((c) => ({ ...c, phase: PHASE_OF[c.slug] ?? 1, open: (PHASE_OF[c.slug] ?? 1) <= state.launchPhase, current_phase: state.launchPhase })));
+route('GET', '/categories', () => {
+  // Browser tests make the request fail with localStorage 'bz.demo.fail' = 'categories' (Round 22: no categories + a retry).
+  try {
+    if ((localStorage.getItem('bz.demo.fail') ?? '').split(',').includes('categories')) fail(503, 'unavailable', 'Categories are unavailable');
+  } catch (e) {
+    if ((e as any)?.status) throw e;
+  }
+  return CATEGORIES.map((c) => ({ ...c, phase: PHASE_OF[c.slug] ?? 1, open: (PHASE_OF[c.slug] ?? 1) <= state.launchPhase, current_phase: state.launchPhase }));
+});
 route('GET', '/admin/launch', ({ me }) => (needPerm(me, 'ranks.manage'), { phase: state.launchPhase, foundingUntil: state.launch.foundingUntil, foundingFeaturedSlots: state.launch.featuredSlots, featuredDays: state.launch.featuredDays, allowedGames: state.launch.allowedGames === undefined ? (DEMO_FULL ? null : [...LAUNCH_GAMES]) : state.launch.allowedGames, categories: CATEGORIES.map((c) => ({ slug: c.slug, name: c.name, phase: PHASE_OF[c.slug] ?? 1 })) }));
 route('PUT', '/admin/launch', ({ me, body }) => {
   needPerm(me, 'ranks.manage');
@@ -1346,7 +1354,8 @@ route('GET', '/seller/withdrawals/quote', ({ query }) => {
 });
 route('GET', '/seller/withdrawals', ({ me }) => state.withdrawals.filter((w) => w.user_id === need(me).id).sort((a, b) => b.created_at.localeCompare(a.created_at)));
 route('GET', '/admin/withdrawals', ({ me }) => {
-  needPerm(me, 'treasury.request');
+  // Finance, or the Support Lead who co-signs the large ones (Round 22).
+  if (!(me && permsOf(me).has('withdrawals.second_approve'))) needPerm(me, 'treasury.request');
   return state.withdrawals.filter((w) => ['pending_approval', 'processing', 'unknown'].includes(w.status)).map((w) => {
     const u = userById(w.user_id);
     return { ...w, email: u?.email, display_name: u?.display_name, kyc_tier: u?.kyc_tier, trust_level: state.trust[w.user_id] ?? 'new' };
@@ -1837,13 +1846,13 @@ route('POST', '/chat/rooms/:id/messages', ({ me, params, body }) => {
   const flagged = reasons.length > 0;
   if (flagged && u.role === 'user') {
     // Not delivered: kept hidden for the staff queue; the action per offence is staff-set.
+    // Round 22: blocked and queued for staff (no strike) unless the contact is unambiguous, which bans at once.
     const seq = (state.messages.filter((m) => m.room_id === r.id).length || 0) + 1;
-    state.chatFlags.unshift({ id: rid(), room_id: r.id, seq, user_id: u.id, reasons, status: 'open', note: null, created_at: now(), attempted: text });
-    const strikes = state.chatFlags.filter((x) => x.user_id === u.id && x.status !== 'dismissed').length;
-    const action = state.offplatformActions[Math.min(strikes, state.offplatformActions.length) - 1] ?? 'warn';
-    if (action !== 'warn') {
-      u.status = 'suspended';
-      live(appendMessage(r.id, null, 'warning', `This account has been ${action === 'ban' ? 'banned' : 'suspended'} for trying to move the deal outside Bullizard. Do not continue this trade anywhere else; staff will review the case.`));
+    const action = classify(reasons, { body: text });
+    state.chatFlags.unshift({ id: rid(), room_id: r.id, seq, user_id: u.id, reasons, status: 'open', note: null, created_at: now(), attempted: text, strike: action === 'ban' });
+    if (action === 'ban') {
+      u.status = 'banned';
+      live(appendMessage(r.id, null, 'warning', 'This account has been banned for trying to move the deal outside Bullizard. Do not continue this trade anywhere else; staff will review the case.'));
     }
     save();
     fail(422, 'offplatform_blocked', 'Not sent. Sharing outside contacts can get your account banned right away.');
@@ -2269,7 +2278,7 @@ route('GET', '/admin/moderation/chats', ({ me, query }) => {
       const room = state.rooms.find((r) => r.id === f.room_id);
       const u = userById(f.user_id);
       return {
-        ...f, user_name: u?.display_name ?? f.user_name ?? 'User', user_email: u?.email ?? f.user_email ?? '', offplatform_strikes: state.chatFlags.filter((x) => x.user_id === f.user_id && x.status !== 'dismissed').length,
+        ...f, user_name: u?.display_name ?? f.user_name ?? 'User', user_email: u?.email ?? f.user_email ?? '', offplatform_strikes: state.chatFlags.filter((x) => x.user_id === f.user_id && x.status !== 'dismissed' && x.strike !== false).length,
         user_status: 'active', order_id: room?.order_id ?? null, offer_id: room?.offer_id, role: room?.seller_id === f.user_id ? 'seller' : 'buyer',
         confirmed_before: state.chatFlags.filter((x) => x.user_id === f.user_id && x.status === 'confirmed' && x.id !== f.id).length,
         context: [...state.messages.filter((m) => m.room_id === f.room_id && m.seq <= f.seq && m.seq >= f.seq - 2).sort((a, b) => a.seq - b.seq).map((m) => ({ ...m, erased: false })), ...(f.attempted ? [{ seq: f.seq, sender_id: f.user_id, kind: 'text', body: f.attempted, flags: ['blocked'], created_at: f.created_at, erased: false }] : [])],
@@ -2280,7 +2289,20 @@ route('POST', '/admin/moderation/chats/:id', ({ me, params, body }) => {
   const u = needPerm(me, 'moderation.manage');
   const f = state.chatFlags.find((x) => x.id === params[0] && x.status === 'open') ?? fail(404, 'not_found', 'Open flag not found');
   Object.assign(f, { status: body.confirm ? 'confirmed' : 'dismissed', note: body.note ?? null, reviewed_by: u.id });
-  return { id: f.id, status: f.status, user_id: f.user_id };
+  // Round 22: a queued hit becomes a strike when staff confirm it; the staff-set ladder applies then.
+  let action: string | null = null;
+  if (body.confirm && f.strike === false) {
+    f.strike = true;
+    const strikes = state.chatFlags.filter((x) => x.user_id === f.user_id && x.status !== 'dismissed' && x.strike !== false).length;
+    action = state.offplatformActions[Math.min(strikes, state.offplatformActions.length) - 1] ?? 'warn';
+    const target = userById(f.user_id);
+    if (target && action !== 'warn') {
+      target.status = action === 'ban' ? 'banned' : 'suspended';
+      live(appendMessage(f.room_id, null, 'warning', `This account has been ${action === 'ban' ? 'banned' : 'suspended'} for trying to move the deal outside Bullizard. Do not continue this trade anywhere else; staff will review the case.`));
+    }
+  }
+  save();
+  return { id: f.id, status: f.status, user_id: f.user_id, strike: f.strike !== false, action };
 });
 route('GET', '/admin/moderation/offplatform-policy', ({ me }) => (needPerm(me, 'moderation.manage'), { actions: state.offplatformActions }));
 route('PUT', '/admin/moderation/offplatform-policy', ({ me, body }) => {
@@ -2630,7 +2652,7 @@ route('GET', '/admin/disputes/:id/case', ({ me, params }) => {
   const msgs = state.messages.filter((m) => m.room_id === o.room_id);
   const party = (id: string) => {
     const u = userById(id);
-    return { id, display_name: u?.display_name ?? 'User', created_at: u?.created_at, kyc_tier: u?.kyc_tier, trust_level: state.trust[id] ?? 'new', offplatform_strikes: state.chatFlags.filter((f) => f.user_id === id && f.status !== 'dismissed').length,
+    return { id, display_name: u?.display_name ?? 'User', created_at: u?.created_at, kyc_tier: u?.kyc_tier, trust_level: state.trust[id] ?? 'new', offplatform_strikes: state.chatFlags.filter((f) => f.user_id === id && f.status !== 'dismissed' && f.strike !== false).length,
       orders_as_buyer: state.orders.filter((x) => x.buyer_id === id && x.status !== 'awaiting_payment').length, completed_sales: sellerStats(id).completed,
       disputes_opened: state.orders.filter((x) => x.dispute?.opened_by === id).length, disputes_against_as_seller: state.orders.filter((x) => x.dispute && x.seller_id === id).length, disputes_lost_as_seller: 0, chargebacks_filed: 0 };
   };
@@ -3135,7 +3157,7 @@ route('GET', '/admin/analytics', ({ me, query }) => {
 
 // --- Staff permissions, compliance, treasury, tax, staff ------------------------------------
 const ALL_PERMS = [
-  'orders.lead', 'controls.manage',
+  'orders.lead', 'controls.manage', 'withdrawals.second_approve',
   'orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'risk.review', 'users.suspend', 'aml.review', 'aml.sar',
   'chargebacks.manage', 'orders.refund_after_release', 'orders.release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view',
   'ledger.adjust', 'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'keys.manage', 'retention.manage', 'audit.view', 'staff.manage', 'status.manage',
@@ -3144,7 +3166,7 @@ const ALL_PERMS = [
 const ROLE_PERMS: Record<string, string[]> = {
   arbiter: ['orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'orders.refund_after_release', 'orders.release', 'moderation.manage'],
   support: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage', 'support.manage', 'moderation.manage', 'orders.release', 'leagues.manage', 'rules.manage'],
-  lead: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage', 'support.manage', 'moderation.manage', 'orders.release', 'leagues.manage', 'rules.manage', 'disputes.manage', 'owner_proofs.review', 'orders.refund_after_release', 'orders.lead', 'users.suspend', 'audit.view', 'treasury.approve'],
+  lead: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage', 'support.manage', 'moderation.manage', 'orders.release', 'leagues.manage', 'rules.manage', 'disputes.manage', 'owner_proofs.review', 'orders.refund_after_release', 'orders.lead', 'users.suspend', 'audit.view', 'withdrawals.second_approve'],
   finance: ['controls.manage', 'chargebacks.manage', 'orders.refund_after_release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view', 'ledger.adjust', 'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'analytics.view'],
   compliance: ['orders.view_any', 'risk.review', 'users.suspend', 'aml.review', 'aml.sar', 'payout_holds.set', 'ledger.view', 'audit.view', 'retention.manage', 'analytics.view'],
   admin: ALL_PERMS,

@@ -74,6 +74,15 @@ export async function maybePayAffiliate(ctx: Ctx, s: TxScope, order: { id: strin
   );
   if (!a) return null;
   if (order.seller_id && order.seller_id === a.user_id) return null; // the creator never earns on their own sales
+  // Round 22 (13): the same linked-account check as invite codes — a creator sharing a device, card, IP subnet or paying
+  // wallet with the buyer earns nothing on that buyer's orders.
+  const linked = await maybeOne(
+    s.tx,
+    `SELECT 1 FROM risk_signals x JOIN risk_signals y ON x.kind = y.kind AND x.value = y.value
+      WHERE x.user_id = $1 AND y.user_id = $2 AND x.kind IN ('device', 'card', 'wallet', 'ip_subnet') LIMIT 1`,
+    [a.user_id, order.buyer_id],
+  );
+  if (linked) return null;
   const earned = Math.floor((order.commission_cents * Number(a.rate_bps)) / 10_000);
   if (earned <= 0) return null;
   const ins = await s.tx.query(

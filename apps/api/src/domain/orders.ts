@@ -536,38 +536,9 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
 export async function handlePaymentCaptured(ctx: Ctx, ev: Extract<PaymentEvent, { type: 'payment.captured' }>) {
   let refundNeeded: Order | null = null;
   const result = await withScope(ctx, async (s) => {
-    const order = await lockOrder(s.tx, ev.orderId);
-    if (order.payment_ref !== ev.ref) throw badRequest('payment_mismatch', 'Payment reference does not match order');
-    if (Number(order.presentment_amount_cents) !== ev.amountCents || order.presentment_currency !== ev.currency) {
-      throw badRequest('amount_mismatch', 'Captured amount does not match order');
-    }
-    // What the PSP credited in the settlement currency (differs from charged_cents only by FX conversion).
-    const settled = ev.details.settledAmountCents ?? order.charged_cents;
-    if (order.status !== 'awaiting_payment') {
-      if (order.status === 'cancelled' && !(await hasLedgerTxn(s.tx, order.id, 'payment_captured'))) {
-        // Paid after the reservation expired: record the money and refund it.
-        await postCapture(s.tx, order, 0, settled);
-        refundNeeded = order;
-      }
-      return order; // idempotent replay
-    }
-
-    await postCapture(s.tx, order, ev.details.feeCents, settled, ev.details.overpaidCents ?? 0);
-    if (ev.details.overpaidCents) {
-      const room = await roomOf(s.tx, order.id);
-      await appendMessage(s, room.id, null, 'system', `The payment arrived ${(ev.details.overpaidCents / 100).toFixed(2)} ${order.currency} above the order total. The extra is in the buyer's balance.`, [], undefined, { code: 'overpaid', params: { amount_cents: ev.details.overpaidCents, currency: order.currency } });
-    }
-    await postFunding(s.tx, order);
-    await setRedemptionStatus(s.tx, order.id, 'redeemed');
-    await s.tx.query(
-      `INSERT INTO payment_details (order_id, provider, avs_result, cvv_result, card_brand, card_last4, card_fingerprint, billing_country, ip_country, raw)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-      [order.id, order.payment_provider, ev.details.avsResult, ev.details.cvvResult, ev.details.cardBrand, ev.details.cardLast4,
-       ev.details.cardFingerprint, ev.details.billingCountry, (await ipCountryOf(s.tx, order.id)), JSON.stringify(ev.details.raw ?? {})],
-    );
-    await recordSignals(s.tx, order.buyer_id, { card: ev.details.cardFingerprint });
-    await onFunded(ctx, s, order);
-    return order;
+    const r = await capturePayment(ctx, s, ev);
+    refundNeeded = r.refundNeeded;
+    return r.order;
   });
 
   if (refundNeeded) {
@@ -581,6 +552,56 @@ export async function handlePaymentCaptured(ctx: Ctx, ev: Extract<PaymentEvent, 
     });
   }
   return result;
+}
+
+/**
+ * The same capture inside the caller's transaction (crypto, Round 22): the IPN path holds the order and payment rows
+ * locked from its decision to the capture, so the unpaid-order reaper can't cancel and credit in between. Crypto money
+ * that arrives on a cancelled order goes straight to the buyer's balance in the same transaction (no gateway call).
+ */
+export async function handlePaymentCapturedIn(ctx: Ctx, s: TxScope, ev: Extract<PaymentEvent, { type: 'payment.captured' }>) {
+  const { order, refundNeeded } = await capturePayment(ctx, s, ev);
+  if (refundNeeded) {
+    const cur = await lockOrder(s.tx, order.id);
+    await postRefund(s.tx, cur, undefined, 'late_payment');
+    await s.tx.query('INSERT INTO order_events (order_id, from_status, to_status, reason) VALUES ($1, $2, $2, $3)', [order.id, 'cancelled', 'late_payment_refunded']);
+  }
+  return order;
+}
+
+async function capturePayment(ctx: Ctx, s: TxScope, ev: Extract<PaymentEvent, { type: 'payment.captured' }>): Promise<{ order: Order & { delivery_mode: string; category_kind: string; title: string }; refundNeeded: Order | null }> {
+  const order = await lockOrder(s.tx, ev.orderId);
+  if (order.payment_ref !== ev.ref) throw badRequest('payment_mismatch', 'Payment reference does not match order');
+  if (Number(order.presentment_amount_cents) !== ev.amountCents || order.presentment_currency !== ev.currency) {
+    throw badRequest('amount_mismatch', 'Captured amount does not match order');
+  }
+  // What the PSP credited in the settlement currency (differs from charged_cents only by FX conversion).
+  const settled = ev.details.settledAmountCents ?? order.charged_cents;
+  if (order.status !== 'awaiting_payment') {
+    if (order.status === 'cancelled' && !(await hasLedgerTxn(s.tx, order.id, 'payment_captured'))) {
+      // Paid after the reservation expired: record the money (with the provider's fee, Round 22) and refund it.
+      await postCapture(s.tx, order, ev.details.feeCents, settled, ev.details.overpaidCents ?? 0);
+      return { order, refundNeeded: order };
+    }
+    return { order, refundNeeded: null }; // idempotent replay
+  }
+
+  await postCapture(s.tx, order, ev.details.feeCents, settled, ev.details.overpaidCents ?? 0);
+  if (ev.details.overpaidCents) {
+    const room = await roomOf(s.tx, order.id);
+    await appendMessage(s, room.id, null, 'system', `The payment arrived ${(ev.details.overpaidCents / 100).toFixed(2)} ${order.currency} above the order total. The extra is in the buyer's balance.`, [], undefined, { code: 'overpaid', params: { amount_cents: ev.details.overpaidCents, currency: order.currency } });
+  }
+  await postFunding(s.tx, order);
+  await setRedemptionStatus(s.tx, order.id, 'redeemed');
+  await s.tx.query(
+    `INSERT INTO payment_details (order_id, provider, avs_result, cvv_result, card_brand, card_last4, card_fingerprint, billing_country, ip_country, raw)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [order.id, order.payment_provider, ev.details.avsResult, ev.details.cvvResult, ev.details.cardBrand, ev.details.cardLast4,
+     ev.details.cardFingerprint, ev.details.billingCountry, (await ipCountryOf(s.tx, order.id)), JSON.stringify(ev.details.raw ?? {})],
+  );
+  await recordSignals(s.tx, order.buyer_id, { card: ev.details.cardFingerprint });
+  await onFunded(ctx, s, order);
+  return { order, refundNeeded: null };
 }
 
 async function ipCountryOf(q: Queryable, orderId: string) {
@@ -1013,7 +1034,7 @@ export async function autoCompleteExpired(ctx: Ctx, limit = 100): Promise<number
         if (order.status !== 'delivered' || !order.protection_ends_at || new Date(order.protection_ends_at) > new Date()) return;
         await s.tx.query(`INSERT INTO order_events (order_id, from_status, to_status, reason) VALUES ($1, 'delivered', 'delivered', 'protection_window_elapsed')`, [id]);
         const room = await roomOf(s.tx, id);
-        await appendMessage(s, room.id, null, 'system', 'The protection window has ended. Staff can now review the delivery and release the payment; the buyer can still confirm or open a dispute.', [], undefined, { code: 'protection_ended' });
+        await appendMessage(s, room.id, null, 'system', 'The protection window has ended. Staff can now review the delivery and release the payment; the buyer can still confirm the order or contact support, but a new dispute can no longer be opened.', [], undefined, { code: 'protection_ended' });
         done++;
       });
     } catch (err) {
@@ -1078,7 +1099,7 @@ export async function openDispute(ctx: Ctx, orderId: string, userId: string, rea
     // The opening reason is also the opener's first statement.
     await s.tx.query('INSERT INTO dispute_statements (dispute_id, user_id, role, body) VALUES ($1, $2, $3, $4)', [dispute.id, userId, userId === order.buyer_id ? 'buyer' : 'seller', reason]);
     const room = await roomOf(s.tx, orderId);
-    await appendMessage(s, room.id, null, 'system', `Dispute opened: "${reason}". Escrow is frozen. An arbitration specialist will review this chat log — keep all evidence here.`, [], undefined, { code: 'dispute_opened', params: { reason } });
+    await appendMessage(s, room.id, null, 'system', `Dispute opened: "${reason}". Escrow is frozen. An arbitration specialist will review this chat log. Keep all evidence here.`, [], undefined, { code: 'dispute_opened', params: { reason } });
     await enqueueWebhook(s.tx, order.seller_id, 'order.disputed', { ...orderSummary(order), reason });
     for (const uid of [order.buyer_id, order.seller_id]) await enqueueEmail(s.tx, uid, 'dispute_opened', emailData(order, { reason }));
     s.notifyUser(order.buyer_id, 'order.disputed', { orderId });

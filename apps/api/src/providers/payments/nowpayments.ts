@@ -47,6 +47,13 @@ export class NowPaymentsError extends Error {
   }
 }
 
+/** The batch was created but its 2FA verification failed: the payout exists at the provider, unverified. Never reverse on this. */
+export class NowPaymentsVerifyError extends Error {
+  constructor(message: string, public readonly batchId: string, public readonly payout: NowPayout) {
+    super(message);
+  }
+}
+
 export interface NowPayout {
   unique_external_id?: string | null;
   fee?: number | string | null;
@@ -237,6 +244,7 @@ export class NowPaymentsProvider implements PaymentProvider {
         networkFee: body.fee != null && body.fee !== '' ? Number(body.fee) : null,
         conversionFee: body.conversion_fee != null && body.conversion_fee !== '' ? Number(body.conversion_fee) : null,
         currency: body.currency ? String(body.currency).toLowerCase() : null,
+        externalId: body.unique_external_id ? String(body.unique_external_id) : null,
         raw: body,
       };
     }
@@ -264,6 +272,17 @@ export class NowPaymentsProvider implements PaymentProvider {
    * automated payouts; without the secret the batch waits for the code in the dashboard.
    */
   async createPayout(input: { address: string; currency: string; amount: number; ipnCallbackUrl: string; extraId?: string | null; externalId?: string }): Promise<{ batchId: string; payout: NowPayout }> {
+    const created = await this.createPayoutBatch(input);
+    try {
+      await this.verifyPayout(created.batchId);
+    } catch (err) {
+      throw new NowPaymentsVerifyError((err as Error).message, created.batchId, created.payout);
+    }
+    return created;
+  }
+
+  /** Step 1 of a payout: the batch (one withdrawal, our id as unique_external_id). Nothing is sent until it is verified. */
+  async createPayoutBatch(input: { address: string; currency: string; amount: number; ipnCallbackUrl: string; extraId?: string | null; externalId?: string }): Promise<{ batchId: string; payout: NowPayout }> {
     const token = await this.bearer();
     const r = await this.call<{ id: string | number; withdrawals: NowPayout[] }>(
       'POST',
@@ -275,11 +294,14 @@ export class NowPaymentsProvider implements PaymentProvider {
       },
       { Authorization: `Bearer ${token}` },
     );
-    const batchId = String(r.id);
-    if (this.opts.twoFactorSecret) {
-      await this.call('POST', `/v1/payout/${batchId}/verify`, { verification_code: totpAt(this.opts.twoFactorSecret, currentStep()) }, { Authorization: `Bearer ${token}` });
-    }
-    return { batchId, payout: r.withdrawals[0]! };
+    return { batchId: String(r.id), payout: r.withdrawals[0]! };
+  }
+
+  /** Step 2: the 2FA verification of a batch (automatic with the account's TOTP secret; without it the dashboard does it). */
+  async verifyPayout(batchId: string): Promise<boolean> {
+    if (!this.opts.twoFactorSecret) return false;
+    await this.call('POST', `/v1/payout/${batchId}/verify`, { verification_code: totpAt(this.opts.twoFactorSecret, currentStep()) }, { Authorization: `Bearer ${await this.bearer()}` });
+    return true;
   }
 
   async getPayout(payoutId: string): Promise<NowPayout> {
@@ -312,32 +334,30 @@ export class NowPaymentsProvider implements PaymentProvider {
     return { ref: `manual:${idempotencyKey}:${amountCents}:${currency}` };
   }
 
-  /** Store balance in the outcome currency, read as USD (USDT/USDC); other wallets are not summed. */
   /**
    * Everything in the custody wallet valued in USD (CFO B7): USD stablecoins 1:1, any other coin at the provider's
-   * current rate (`/v1/estimate` from 1 unit of the coin to USD). A coin that can't be valued is logged and left out,
-   * so the reconciliation shows a mismatch rather than a false match.
+   * current rate (`/v1/estimate` from 1 unit of the coin to USD). Round 22: a balance that can't be read, or a coin that
+   * can't be valued, THROWS, so the reconciliation run fails and alerts instead of reporting OK. `null` only means the
+   * provider holds nothing in that currency (EUR/EGP).
    */
   async platformBalance(currency: string) {
     if (currency !== 'USD') return null;
-    try {
-      const r = await this.call<Record<string, { amount: number; pendingAmount?: number }>>('GET', '/v1/balance');
-      let cents = 0;
-      for (const [coin, w] of Object.entries(r)) {
-        const units = Number(w.amount) + Number(w.pendingAmount ?? 0);
-        if (!units) continue;
-        if (/^usd[tc]/.test(coin)) {
-          cents += Math.round(units * 100);
-          continue;
-        }
-        const quote = await this.call<{ estimated_amount: number }>('GET', `/v1/estimate?amount=${units}&currency_from=${encodeURIComponent(coin)}&currency_to=usd`).catch(() => null);
-        if (!quote) throw new Error(`cannot value ${units} ${coin} in USD`);
-        cents += Math.round(Number(quote.estimated_amount) * 100);
+    const r = await this.call<Record<string, { amount: number; pendingAmount?: number }>>('GET', '/v1/balance');
+    if (!r || typeof r !== 'object') throw new Error('NOWPayments balance answer is not an object');
+    let cents = 0;
+    for (const [coin, w] of Object.entries(r)) {
+      const units = Number(w?.amount) + Number(w?.pendingAmount ?? 0);
+      if (!Number.isFinite(units)) throw new Error(`NOWPayments balance for ${coin} is not a number`);
+      if (!units) continue;
+      if (/^usd[tc]/.test(coin)) {
+        cents += Math.round(units * 100);
+        continue;
       }
-      return cents;
-    } catch {
-      return null;
+      const quote = await this.call<{ estimated_amount: number }>('GET', `/v1/estimate?amount=${units}&currency_from=${encodeURIComponent(coin)}&currency_to=usd`).catch(() => null);
+      if (!quote || !Number.isFinite(Number(quote.estimated_amount))) throw new Error(`cannot value ${units} ${coin} in USD`);
+      cents += Math.round(Number(quote.estimated_amount) * 100);
     }
+    return cents;
   }
 
   // --- Card-era parts with no crypto equivalent ---------------------------------------------

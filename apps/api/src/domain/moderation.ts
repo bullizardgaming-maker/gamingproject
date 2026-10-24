@@ -2,7 +2,8 @@ import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { many, maybeOne, one, withTx } from '../db.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
-import { openMessages } from './chat.js';
+import { applyOffplatformAction, offplatformPolicy, openMessages } from './chat.js';
+import { withScope } from './events.js';
 import { notify } from './notifications.js';
 import { detectOffPlatform, matchTerms, type ModerationTerm } from './safety.js';
 
@@ -92,15 +93,26 @@ export async function chatFlagQueue(ctx: Ctx, status: 'open' | 'confirmed' | 'di
 }
 
 export async function decideChatFlag(ctx: Ctx, flagId: string, staffId: string, confirm: boolean, note?: string) {
-  const f = await maybeOne(
-    ctx.db,
-    `UPDATE chat_flags SET status = $2, reviewed_by = $3, note = $4, reviewed_at = now() WHERE id = $1 AND status = 'open' RETURNING id, status, user_id, strike`,
-    [flagId, confirm ? 'confirmed' : 'dismissed', staffId, note?.trim() || null],
-  );
-  if (!f) throw notFound('Open flag');
-  // A false alarm shouldn't count towards the automatic suspension.
-  if (!confirm && f.strike) await ctx.db.query('UPDATE users SET offplatform_strikes = GREATEST(offplatform_strikes - 1, 0) WHERE id = $1', [f.user_id]);
-  return f;
+  return withScope(ctx, async (s) => {
+    const f = await maybeOne(
+      s.tx,
+      `UPDATE chat_flags SET status = $2, reviewed_by = $3, note = $4, reviewed_at = now() WHERE id = $1 AND status = 'open' RETURNING id, status, user_id, room_id, strike`,
+      [flagId, confirm ? 'confirmed' : 'dismissed', staffId, note?.trim() || null],
+    );
+    if (!f) throw notFound('Open flag');
+    // A false alarm shouldn't count towards the automatic suspension.
+    if (!confirm && f.strike) await s.tx.query('UPDATE users SET offplatform_strikes = GREATEST(offplatform_strikes - 1, 0) WHERE id = $1', [f.user_id]);
+    // Round 22: a queued hit becomes a strike only when staff confirm it; the staff-set ladder (warn → suspend → ban) applies then.
+    if (confirm && !f.strike) {
+      const { offplatform_strikes } = await one<{ offplatform_strikes: number }>(s.tx, 'UPDATE users SET offplatform_strikes = offplatform_strikes + 1 WHERE id = $1 RETURNING offplatform_strikes', [f.user_id]);
+      await s.tx.query('UPDATE chat_flags SET strike = true WHERE id = $1', [f.id]);
+      const policy = await offplatformPolicy(s.tx);
+      const action = policy[Math.min(offplatform_strikes, policy.length) - 1]!;
+      await applyOffplatformAction(s, f.user_id, f.room_id, action);
+      return { ...f, strike: true, action };
+    }
+    return { ...f, action: null };
+  });
 }
 
 // ---- Terms ---------------------------------------------------------------------------------

@@ -299,6 +299,8 @@ const es: Messages = {
   "nav.requests": "Solicitudes",
   "footer.buyerRequests": "Solicitudes de compradores",
   "common.cancel": "Cancelar",
+  "catalog.categoriesFailed": "No se pudieron cargar las categorías.",
+  "catalog.retry": "Reintentar",
   "req.eyebrow": "Solicitudes de compradores",
   "req.title": "Solicitudes de compradores",
   "req.lede": "¿No lo encuentras publicado? Di lo que quieres y vendedores verificados te envían un precio. Solo pagas cuando aceptas uno, en custodia como cualquier pedido.",

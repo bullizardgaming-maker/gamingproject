@@ -22,7 +22,8 @@ export const PERMISSIONS = [
   'reconciliation.run',
   'promos.manage',
   'treasury.request',
-  'treasury.approve',
+  'treasury.approve', // Finance: approve withdrawals (always the first signature), treasury withdrawals and crypto refunds
+  'withdrawals.second_approve', // the Support Lead: ONLY the second signature on a withdrawal above the four-eyes thresholds
   'ledger.view',
   'ledger.adjust',
   'payout_holds.set',
@@ -48,7 +49,7 @@ export const ROLE_PERMISSIONS: Record<StaffRole, readonly Permission[]> = {
   arbiter: ['orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'orders.refund_after_release', 'orders.release', 'moderation.manage'],
   support: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage', 'support.manage', 'moderation.manage', 'orders.release', 'leagues.manage', 'rules.manage'],
   // The Support Lead: everything support and arbiters do, plus the orders above $200, bans and appeals.
-  lead: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage', 'support.manage', 'moderation.manage', 'orders.release', 'leagues.manage', 'rules.manage', 'disputes.manage', 'owner_proofs.review', 'orders.refund_after_release', 'orders.lead', 'users.suspend', 'audit.view', 'treasury.approve'], // treasury.approve: the second signature on large withdrawals (CFO B9)
+  lead: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage', 'support.manage', 'moderation.manage', 'orders.release', 'leagues.manage', 'rules.manage', 'disputes.manage', 'owner_proofs.review', 'orders.refund_after_release', 'orders.lead', 'users.suspend', 'audit.view', 'withdrawals.second_approve'], // never treasury.approve: the Lead only co-signs large withdrawals (Round 22)
   finance: [
     'chargebacks.manage', 'orders.refund_after_release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view', 'ledger.adjust',
     'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'analytics.view', 'controls.manage',

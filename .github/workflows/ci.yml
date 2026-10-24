@@ -23,6 +23,8 @@ jobs:
       - run: npm run typecheck -w apps/api
       - run: npx tsc -p sdks/typescript/tsconfig.json --noEmit   # SDK; its tests run in the API suite
       - run: npm test -w apps/api
+        env:
+          MONEY_FUZZ_RUNS: '40' # money property tests (money-invariants.test.ts): more random scenarios in CI than locally
 
   web:
     runs-on: ubuntu-latest

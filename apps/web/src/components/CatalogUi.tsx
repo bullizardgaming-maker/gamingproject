@@ -2,7 +2,7 @@ import { useId } from 'react';
 import { Link } from 'react-router-dom';
 import { money } from '../api';
 import { Medal as Award, SealCheck as BadgeCheck, Coins, GameController as Gamepad2, Gift, Key as KeyRound, RocketLaunch as Rocket, ShieldCheck, DeviceMobile as Smartphone, Star, Sword as Swords, UserCircle as UserRound, VideoCamera as Video, Lightning as Zap } from '@phosphor-icons/react';
-import { categoryLabel, deliveryLabel, initials } from '@/lib/catalog';
+import { categoriesUnavailable, categoryLabel, deliveryLabel, initials, retryCategories, useCategoryOrder } from '@/lib/catalog';
 import { cn } from '@/lib/utils';
 import { attributePairs } from '@/lib/attributes';
 import { usePrice } from '@/lib/prefs';
@@ -22,6 +22,18 @@ export const CATEGORY_ICON: Record<string, typeof Coins> = {
   'gift-cards': Gift,
   'video-games': Gamepad2,
 };
+
+/** GET /categories failed: no category is shown (closed ones must never leak), only this note with a retry (Round 22). */
+export function CategoriesRetry() {
+  useCategoryOrder(); // re-renders when the answer (or the failure) arrives
+  if (!categoriesUnavailable()) return null;
+  return (
+    <div className="notice" role="status" data-testid="categories-retry">
+      {t('catalog.categoriesFailed')}{' '}
+      <button type="button" className="btn ghost" onClick={() => void retryCategories()}>{t('catalog.retry')}</button>
+    </div>
+  );
+}
 
 export function Avatar({ name, className }: { name: string; className?: string }) {
   return (

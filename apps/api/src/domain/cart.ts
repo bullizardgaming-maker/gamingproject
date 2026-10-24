@@ -4,7 +4,8 @@ import { many, maybeOne, one } from '../db.js';
 import { badRequest } from '../lib/errors.js';
 import type { PaymentEvent } from '../providers/payments/types.js';
 import { closeChargeback, receiveChargeback } from './chargebacks.js';
-import { cancelOrder, createOrder, fundWithoutCard, handlePaymentCaptured, type CreateOrderInput } from './orders.js';
+import { cancelOrder, createOrder, fundWithoutCard, handlePaymentCaptured, handlePaymentCapturedIn, type CreateOrderInput } from './orders.js';
+import type { TxScope } from './events.js';
 
 /**
  * Cart checkout: several listings, possibly from several sellers, paid with one card payment.
@@ -141,6 +142,30 @@ export async function handleCheckoutCaptured(ctx: Ctx, ev: Extract<PaymentEvent,
   }
   await ctx.db.query(`UPDATE checkouts SET status = 'paid', paid_at = COALESCE(paid_at, now()) WHERE id = $1`, [checkout.id]);
   return cartView(ctx.db, checkout.id);
+}
+
+/** The same inside the caller's transaction (crypto IPN path, which holds the cart's order rows locked; Round 22). */
+export async function handleCheckoutCapturedIn(ctx: Ctx, s: TxScope, ev: Extract<PaymentEvent, { type: 'payment.captured' }>) {
+  const checkout = await checkoutByRef(s.tx, ev.ref);
+  if (!checkout) throw badRequest('payment_mismatch', 'Unknown checkout');
+  if (Number(checkout.presentment_amount_cents) !== ev.amountCents || checkout.presentment_currency !== ev.currency) {
+    throw badRequest('amount_mismatch', 'Captured amount does not match checkout');
+  }
+  const orders = await many<{ id: string; presentment_amount_cents: number }>(s.tx, 'SELECT id, presentment_amount_cents FROM orders WHERE checkout_id = $1 ORDER BY created_at', [checkout.id]);
+  const weights = orders.map((o) => Number(o.presentment_amount_cents));
+  const settled = ev.details.settledAmountCents != null ? splitProportional(ev.details.settledAmountCents, weights) : null;
+  const fees = ev.details.feeCents != null ? splitProportional(ev.details.feeCents, weights) : null;
+  const over = ev.details.overpaidCents ? splitProportional(ev.details.overpaidCents, weights) : null;
+  for (const [i, o] of orders.entries()) {
+    await handlePaymentCapturedIn(ctx, s, {
+      ...ev,
+      orderId: o.id,
+      amountCents: Number(o.presentment_amount_cents),
+      details: { ...ev.details, settledAmountCents: settled?.[i], feeCents: fees?.[i], overpaidCents: over?.[i] },
+    });
+  }
+  await s.tx.query(`UPDATE checkouts SET status = 'paid', paid_at = COALESCE(paid_at, now()) WHERE id = $1`, [checkout.id]);
+  return cartView(s.tx, checkout.id);
 }
 
 /** A chargeback on a cart payment: shared out over its orders by what each charged to the card. */
