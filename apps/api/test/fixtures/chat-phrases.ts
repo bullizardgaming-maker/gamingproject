@@ -36,6 +36,10 @@ export const QUEUE_R22 = [
   'رقمي ٠١٠١٢٣٤٥٦٧٨', 'this is bullizard support, send the code', 'pay outside the site and save', 'work for me, better rates',
   'ضيفني على الواتس', 'كلمني على تيليجرام', 'facebook me', 'sn4pch4t?', 'tinyurl.com/x1', 'my number is 01112223334',
   '0x52908400098527886E0F7030069857D2E4169EE7',
+  // Round 22b: a buyer asking about a payment they made (past tense) is never banned; digits spaced out are still a phone.
+  'I sent USDT to TN3W4H6rK2ce4vX9YnFQHwKENnHjoxb3m9 on the checkout page, is it received?',
+  'sent the trc20 to the address the site gave me: TN3W4H6rK2ce4vX9YnFQHwKENnHjoxb3m9',
+  'my numbr is 0 1 0 1 2 3 4 5 6 7 8',
 ];
 
 /** Unambiguous: a contact link, a phone or handle with a messenger/payment name, a wallet offered for payment. */
@@ -44,4 +48,15 @@ export const BAN = [
   'telegram: t.me/cheapgold', 'telegram @cheapgold', 'my whatsapp is +44 7700 900123', 'discord: pat#1234', 'd i s c o r d: pat#1234',
   'snap: coolguy99', 'paypal: me@example.com', 'vodafone cash 01012345678', 'send to 0x52908400098527886E0F7030069857D2E4169EE7',
   'pay to TN3W4H6rK2ce4vX9YnFQHwKENnHjoxb3m9 in usdt',
+  // Round 22b: a wallet offered as the sender's own receiving address.
+  'send to my wallet 0x52908400098527886E0F7030069857D2E4169EE7', 'pay me at TN3W4H6rK2ce4vX9YnFQHwKENnHjoxb3m9',
+];
+
+/**
+ * Round 22b: account details in an account room (the login method and a labelled UID). Never banned anywhere; delivered
+ * as-is in account rooms (labelled IDs stripped, "linked to facebook" is how the account signs in, not a contact).
+ */
+export const ACCOUNT_R22B = [
+  'account linked to facebook, uid 0115566778',
+  'الحساب مربوط بالفيسبوك والـ UID 0112345678',
 ];

@@ -35,6 +35,8 @@ const CONFIRM_TTL_MINUTES = 60;
 export const PAYOUT_COINS = ['usdttrc20', 'usdtbsc'] as const;
 /** Coins whose amounts are USD 1:1 for fee booking. */
 const USD_STABLE = /^usd[tc]/;
+/** What the seller reads when a withdrawal in a coin we no longer pay out in is refused (Round 22b). */
+const UNSUPPORTED_COIN_REASON = 'payouts are sent in USDT only; add a USDT (TRC-20 or BEP-20) payout address';
 
 export function withdrawalFee(ctx: Ctx, amountCents: number) {
   return Math.min(amountCents, Math.max(ctx.cfg.WITHDRAWAL_FEE_MIN_CENTS, Math.ceil((amountCents * ctx.cfg.WITHDRAWAL_FEE_BPS) / 10_000)));
@@ -223,14 +225,21 @@ export async function decideWithdrawal(ctx: Ctx, id: string, staff: { id: string
     // CFO B9 + Round 22: Finance always gives the first approval. Above the threshold, or a user above the daily total, the
     // Support Lead (or an admin) adds the second signature, never the same person twice. The Lead never approves alone.
     const userDay = Number((await one<{ s: string }>(s.tx, `SELECT COALESCE(SUM(amount_cents), 0)::bigint AS s FROM withdrawals WHERE user_id = $1 AND status NOT IN ('rejected', 'failed') AND created_at > now() - interval '24 hours'`, [w.user_id])).s);
-    const needsFourEyes = amount > c.four_eyes_withdrawal_cents || userDay > c.four_eyes_user_day_cents;
+    // Round 22b: once the first approval said two signatures, it stays two (the user's 24h total can drop afterwards).
+    const needsFourEyes = !!w.four_eyes_required || amount > c.four_eyes_withdrawal_cents || userDay > c.four_eyes_user_day_cents;
     const secondStep = needsFourEyes && !!w.first_approved_by;
     if (!finance && !(lead && secondStep)) throw forbidden('finance_first', 'Finance gives the first approval; the Support Lead only adds the second signature on large withdrawals');
+    // Round 22b (6): a request made before Round 22 may name a coin we no longer pay out in; it is rejected, money back.
+    const unsupported = approve && !(PAYOUT_COINS as readonly string[]).includes(w.destination_currency);
+    if (unsupported) {
+      approve = false;
+      note = 'unsupported_coin';
+    }
     if (approve) {
       if (needsFourEyes) {
         if (!w.first_approved_by) {
-          await s.tx.query(`UPDATE withdrawals SET first_approved_by = $2, first_approved_at = now(), decision_note = COALESCE($3, decision_note), updated_at = now() WHERE id = $1`, [id, staffId, note ?? null]);
-          return { ...w, first_approved_by: staffId, status: 'pending_approval', needs_second_approval: true };
+          await s.tx.query(`UPDATE withdrawals SET first_approved_by = $2, first_approved_at = now(), four_eyes_required = true, decision_note = COALESCE($3, decision_note), updated_at = now() WHERE id = $1`, [id, staffId, note ?? null]);
+          return { ...w, first_approved_by: staffId, four_eyes_required: true, status: 'pending_approval', needs_second_approval: true };
         }
         if (w.first_approved_by === staffId) throw forbidden('four_eyes', 'A second person must give the second approval');
         if (!lead) throw forbidden('lead_required', 'Withdrawals above the four-eyes threshold are approved second by the Support Lead or an admin');
@@ -257,9 +266,9 @@ export async function decideWithdrawal(ctx: Ctx, id: string, staff: { id: string
         ],
         `withdrawal_rejected:${id}`,
       );
-      await enqueueEmail(s.tx, w.user_id, 'withdrawal_failed', { amount_cents: amount, currency: w.currency, reason: note || 'not approved' });
+      await enqueueEmail(s.tx, w.user_id, 'withdrawal_failed', { amount_cents: amount, currency: w.currency, reason: unsupported ? UNSUPPORTED_COIN_REASON : note || 'not approved' });
       await enqueueWebhook(s.tx, w.user_id, 'payout.failed', { withdrawal_id: id, amount_cents: amount, currency: w.currency, status: 'rejected', provider_ref: null, failure_reason: note ?? 'not approved' });
-      return { ...w, status: 'rejected' };
+      return { ...w, status: 'rejected', decision_note: note ?? null, ...(unsupported ? { refused: 'unsupported_coin' } : {}) };
     }
     await s.tx.query(`UPDATE withdrawals SET status = 'processing', decided_by = $2, decided_at = now(), decision_note = $3, updated_at = now() WHERE id = $1`, [id, staffId, note ?? null]);
     await post(
@@ -286,10 +295,26 @@ export async function decideWithdrawal(ctx: Ctx, id: string, staff: { id: string
  * ids are stored before the 2FA verify step; a failed verify leaves a real (unverified) batch at the provider, so the
  * withdrawal goes `unknown` with `verify_pending` and the job retries the verification. Money never goes back on a guess.
  */
-async function sendPayout(ctx: Ctx, np: NowPaymentsProvider, w: any) {
-  const id = w.id as string;
+async function sendPayout(ctx: Ctx, np: NowPaymentsProvider, w0: any) {
+  const id = w0.id as string;
   await assertNotPaused(ctx.db, 'withdrawals'); // kill switch: nothing leaves while paused; the job sends it once lifted
-  await ctx.db.query(`UPDATE withdrawals SET external_id = COALESCE(external_id, $1::text), provider_attempted_at = COALESCE(provider_attempted_at, now()), updated_at = now() WHERE id = $1`, [id]);
+  // Round 22b (6): an approved withdrawal in a coin we no longer pay out in is reversed, never sent.
+  if (!(PAYOUT_COINS as readonly string[]).includes(w0.destination_currency)) {
+    await failWithdrawal(ctx, id, 'unsupported_coin', UNSUPPORTED_COIN_REASON);
+    throw badRequest('unsupported_coin', `Payouts are sent in ${PAYOUT_COINS.map(coinName).join(', ')}; the amount is back in the seller’s balance`);
+  }
+  // Round 22b (1): claimed in one statement, and only if it was never handed over (no attempt, no provider ids). Two callers
+  // (an approval and the job, or two job processes) can't both get here for the same withdrawal; nothing is sent twice.
+  const w = await maybeOne<any>(
+    ctx.db,
+    `UPDATE withdrawals SET external_id = COALESCE(external_id, $1::text), provider_attempted_at = now(), updated_at = now()
+      WHERE id = $1 AND status = 'processing' AND provider_attempted_at IS NULL AND payout_id IS NULL AND provider_ref IS NULL RETURNING *`,
+    [id],
+  );
+  if (!w) {
+    ctx.log.warn({ withdrawalId: id }, 'payout already handed to the provider; not sent again');
+    throw conflict('payout_already_sent', 'This payout was already handed to the provider; it is checked, never sent twice');
+  }
   let batch: { batchId: string; payout: { id: string | number } };
   try {
     batch = await np.createPayoutBatch({
@@ -397,7 +422,14 @@ export async function recheckUnknownPayout(ctx: Ctx, id: string, opts: { manual?
 export async function recheckUnknownPayouts(ctx: Ctx) {
   if (!(ctx.payments instanceof NowPaymentsProvider)) return 0;
   const np = ctx.payments;
-  const rows = await many<{ id: string }>(ctx.db, `SELECT id FROM withdrawals WHERE status = 'unknown' AND updated_at < now() - interval '2 minutes' ORDER BY updated_at LIMIT 50`);
+  // Round 22b (1): rows are claimed atomically (SKIP LOCKED + a lease: updated_at for `unknown`, last_polled_at for
+  // `processing`), so two worker processes never check, poll or send the same withdrawal.
+  const rows = await many<{ id: string }>(
+    ctx.db,
+    `UPDATE withdrawals SET updated_at = now() WHERE id IN (
+       SELECT id FROM withdrawals WHERE status = 'unknown' AND updated_at < now() - interval '2 minutes' ORDER BY updated_at LIMIT 50 FOR UPDATE SKIP LOCKED
+     ) RETURNING id`,
+  );
   let n = 0;
   for (const r of rows) {
     try {
@@ -409,13 +441,14 @@ export async function recheckUnknownPayouts(ctx: Ctx) {
   }
   const processing = await many<any>(
     ctx.db,
-    `SELECT * FROM withdrawals WHERE status = 'processing' AND (last_polled_at IS NULL OR last_polled_at < now() - interval '30 minutes')
-        AND COALESCE(provider_attempted_at, decided_at, updated_at) < now() - interval '10 minutes' ORDER BY updated_at LIMIT 50`,
+    `UPDATE withdrawals SET last_polled_at = now() WHERE id IN (
+       SELECT id FROM withdrawals WHERE status = 'processing' AND (last_polled_at IS NULL OR last_polled_at < now() - interval '30 minutes')
+          AND COALESCE(provider_attempted_at, decided_at, updated_at) < now() - interval '10 minutes' ORDER BY updated_at LIMIT 50 FOR UPDATE SKIP LOCKED
+     ) RETURNING *`,
   );
   for (const w of processing) {
     try {
-      await ctx.db.query('UPDATE withdrawals SET last_polled_at = now() WHERE id = $1', [w.id]);
-      if (!w.provider_attempted_at) {
+      if (!w.provider_attempted_at && !w.payout_id && !w.provider_ref) {
         await sendPayout(ctx, np, w).catch((err) => ctx.log.warn({ err, withdrawalId: w.id }, 'deferred payout not sent'));
       } else if (w.payout_id) {
         await applyCryptoPayout(ctx, payoutEvent(w.id, await np.getPayout(w.payout_id)));
@@ -432,7 +465,7 @@ export async function recheckUnknownPayouts(ctx: Ctx) {
 }
 
 /** Reverses an approved withdrawal that the provider could not send (or definitely failed): fee and net return to the seller. */
-async function failWithdrawal(ctx: Ctx, id: string, reason: string) {
+async function failWithdrawal(ctx: Ctx, id: string, reason: string, emailReason = reason) {
   await withScope(ctx, async (s) => {
     const w = await maybeOne<any>(s.tx, 'SELECT * FROM withdrawals WHERE id = $1 FOR UPDATE', [id]);
     if (!w || !['processing', 'unknown'].includes(w.status)) return;
@@ -446,7 +479,7 @@ async function failWithdrawal(ctx: Ctx, id: string, reason: string) {
       ],
       `withdrawal_failed:${id}`,
     );
-    await enqueueEmail(s.tx, w.user_id, 'withdrawal_failed', { amount_cents: Number(w.amount_cents), currency: w.currency, reason });
+    await enqueueEmail(s.tx, w.user_id, 'withdrawal_failed', { amount_cents: Number(w.amount_cents), currency: w.currency, reason: emailReason });
     await enqueueWebhook(s.tx, w.user_id, 'payout.failed', { withdrawal_id: id, amount_cents: Number(w.amount_cents), currency: w.currency, status: 'failed', provider_ref: w.provider_ref, failure_reason: reason });
   });
 }
@@ -463,6 +496,18 @@ export async function applyCryptoPayout(ctx: Ctx, ev: Extract<PaymentEvent, { ty
   if (!w) {
     ctx.log.warn({ payoutId: ev.payoutId }, 'IPN for an unknown payout');
     return null;
+  }
+  // Round 22b (7): coins sent for a withdrawal we already reversed (balance refunded): the seller was paid twice. Recorded on
+  // the withdrawal for Finance and alerted at once; nothing is booked automatically (Finance recovers or writes it off).
+  if (w.status === 'failed' && ev.status === 'FINISHED') {
+    const first = await maybeOne<any>(
+      ctx.db,
+      `UPDATE withdrawals SET paid_after_reversal_at = now(), paid_after_reversal_hash = $2, payout_id = COALESCE(payout_id, $3), provider_ref = COALESCE(provider_ref, $4), updated_at = now()
+        WHERE id = $1 AND paid_after_reversal_at IS NULL RETURNING *`,
+      [w.id, ev.hash, ev.payoutId, ev.batchId],
+    );
+    if (first) await alertPaidAfterReversal(ctx, first);
+    return first ?? w;
   }
   if (w.status !== 'processing' && w.status !== 'unknown') return w;
   if (ev.status === 'FINISHED') {
@@ -497,4 +542,14 @@ export async function applyCryptoPayout(ctx: Ctx, ev: Extract<PaymentEvent, { ty
     return one(ctx.db, `UPDATE withdrawals SET status = 'processing', payout_id = COALESCE(payout_id, $2), provider_ref = COALESCE(provider_ref, $3), failure_reason = NULL, updated_at = now() WHERE id = $1 RETURNING *`, [w.id, ev.payoutId, ev.batchId]);
   }
   return w;
+}
+
+/** Finance and admins hear at once (email + an error line for Sentry); Ops alerts repeat it while it is unresolved. */
+async function alertPaidAfterReversal(ctx: Ctx, w: any) {
+  const title = 'Payout sent after it was reversed';
+  const detail = `Withdrawal ${w.id} (user ${w.user_id}, ${(Number(w.net_cents) / 100).toFixed(2)} ${w.currency}) was marked failed and refunded to the balance, then NOWPayments reported it FINISHED (hash ${w.paid_after_reversal_hash ?? 'none'}).`;
+  const action = 'Freeze the seller\'s withdrawals, recover the amount from their balance or write it off, and check why the provider sent a payout we had reversed.';
+  ctx.log.error({ withdrawalId: w.id, hash: w.paid_after_reversal_hash }, 'payout FINISHED after the withdrawal was reversed');
+  const staff = await many<{ id: string }>(ctx.db, `SELECT id FROM users WHERE (role IN ('admin', 'finance') OR staff_roles && ARRAY['admin', 'finance']) AND deleted_at IS NULL AND status = 'active'`);
+  for (const st of staff) await enqueueEmail(ctx.db, st.id, 'ops_alert', { title, detail, action }, `paid_after_reversal:${w.id}:${st.id}`);
 }

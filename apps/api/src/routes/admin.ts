@@ -756,6 +756,8 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const body = z.object({ confirm: z.boolean(), note: z.string().trim().max(1_000).optional() }).parse(req.body);
     const res = await decideChatFlag(ctx, id, staff.id, body.confirm, body.note);
     await audit(ctx.db, req, body.confirm ? 'moderation.chat_confirmed' : 'moderation.chat_dismissed', { type: 'chat_flag', id }, { note: body.note });
+    // Round 22b: the automatic ban this flag caused was lifted with it.
+    if ((res as any).banLifted) await audit(ctx.db, req, 'user.auto_ban_lifted', { type: 'user', id: res.user_id }, { flag: id, restored: (res as any).restoredStatus, note: body.note });
     return res;
   });
   /** Outside-contact policy: the action per offence (warn = block only, suspend, ban); the last repeats. */

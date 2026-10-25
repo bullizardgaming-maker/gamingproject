@@ -225,9 +225,11 @@ export async function postUserMessage(ctx: Ctx, roomId: string, user: { id: stri
   const accountOrder = room0.order_id
     ? !!(await maybeOne(ctx.db, `SELECT 1 FROM orders o JOIN offers f ON f.id = o.offer_id JOIN categories c ON c.slug = f.category_slug WHERE o.id = $1 AND c.kind = 'account'`, [room0.order_id]))
     : false;
-  // Top-ups and in-game deliveries need the buyer's player ID / UID: a labelled ID is never read as a phone number.
-  const offer = room0.offer_id ? await maybeOne<{ game: string; category_slug: string }>(ctx.db, 'SELECT game, category_slug FROM offers WHERE id = $1', [room0.offer_id]) : null;
-  const allowIds = !!offer && (offer.category_slug === 'top-ups' || !!handoverFieldFor(offer.game, offer.category_slug));
+  // Top-ups, in-game deliveries and accounts (Round 22b) carry a player ID / UID: a labelled ID is never read as a phone number.
+  const offer = room0.offer_id
+    ? await maybeOne<{ game: string; category_slug: string; kind: string }>(ctx.db, 'SELECT f.game, f.category_slug, c.kind FROM offers f JOIN categories c ON c.slug = f.category_slug WHERE f.id = $1', [room0.offer_id])
+    : null;
+  const allowIds = accountOrder || (!!offer && (offer.category_slug === 'top-ups' || offer.kind === 'account' || !!handoverFieldFor(offer.game, offer.category_slug)));
   const violations = detectOffPlatform(body, { allowEmail: accountOrder, allowIds });
   const split: string[] = [];
   if (!violations.length && user.role === 'user') {
@@ -248,8 +250,23 @@ export async function postUserMessage(ctx: Ctx, roomId: string, user: { id: stri
       const msg = await appendMessage(s, roomId, user.id, 'text', body, ['blocked', ...flags], ctx.keyring, { hidden: true });
       // Round 22 decision: everything is blocked and queued for staff, who confirm before any strike or ban (decideChatFlag);
       // only an unambiguous contact (classify) bans at once.
-      const kind = classify(violations, { split, body });
-      await s.tx.query(`INSERT INTO chat_flags (room_id, seq, user_id, reasons, strike) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (room_id, seq) DO NOTHING`, [roomId, msg.seq, user.id, violations, kind === 'ban']);
+      // Round 22b: our own NOWPayments deposit addresses (any order in this room or of this user) never ban.
+      const ownAddresses = violations.includes('wallet_address')
+        ? (await many<{ pay_address: string }>(
+            s.tx,
+            `SELECT DISTINCT p.pay_address FROM crypto_payments p
+               LEFT JOIN orders o ON o.id = p.order_id LEFT JOIN checkouts k ON k.id = p.checkout_id
+              WHERE p.order_id = $1::uuid OR o.buyer_id = $2::uuid OR k.buyer_id = $2::uuid OR p.checkout_id IN (SELECT checkout_id FROM orders WHERE id = $1::uuid)`,
+            [room0.order_id ?? null, user.id],
+          )).map((r) => r.pay_address)
+        : [];
+      const kind = classify(violations, { split, body, ownAddresses });
+      // An automatic ban records the status it replaced, so dismissing the flag can restore it (Round 22b).
+      await s.tx.query(
+        `INSERT INTO chat_flags (room_id, seq, user_id, reasons, strike, auto_ban, prior_status)
+         VALUES ($1, $2, $3, $4, $5, $5, CASE WHEN $5 THEN (SELECT status FROM users WHERE id = $3) END) ON CONFLICT (room_id, seq) DO NOTHING`,
+        [roomId, msg.seq, user.id, violations, kind === 'ban'],
+      );
       if (kind === 'queue') return 'queue';
       await s.tx.query('UPDATE users SET offplatform_strikes = offplatform_strikes + 1 WHERE id = $1', [user.id]);
       await applyOffplatformAction(s, user.id, roomId, 'ban');

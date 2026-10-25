@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { classify, detectOffPlatform, detectSplit } from '../src/domain/safety.js';
-import { BAN, NORMAL_R22, QUEUE_R22 } from './fixtures/chat-phrases.js';
+import { ACCOUNT_R22B, BAN, NORMAL_R22, QUEUE_R22 } from './fixtures/chat-phrases.js';
 
 /**
  * Round 20, launch blocker 1: the filter must never ban a normal trade conversation. Every phrase in
@@ -94,5 +94,31 @@ describe('chat filter fixture (Round 22)', () => {
     expect(detectOffPlatform('الايدي 0101234567')).toContain('phone_number');
     expect(detectOffPlatform('الايدي 0101234567', { allowIds: true })).toEqual([]);
     expect(detectOffPlatform('whatsapp 0101234567', { allowIds: true })).toContain('phone_number');
+  });
+});
+
+/** Round 22b: false automatic bans (deposit addresses, account details) and spaced-out phone digits. */
+describe('chat filter (Round 22b)', () => {
+  for (const phrase of ACCOUNT_R22B) {
+    it(`account details never ban, and pass in an account room: ${phrase}`, () => {
+      expect(classify(detectOffPlatform(phrase), { body: phrase })).toBe('queue');
+      expect(detectOffPlatform(phrase, { allowIds: true, allowEmail: true })).toEqual([]);
+    });
+  }
+  it('a wallet bans only when offered as the sender’s receiving address, never when it is our deposit address', () => {
+    const ours = 'TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE';
+    const ask = `should I send USDT to ${ours}?`;
+    expect(detectOffPlatform(ask)).toContain('wallet_address');
+    expect(classify(detectOffPlatform(ask), { body: ask })).toBe('ban'); // unknown address, worded as an order to pay it
+    expect(classify(detectOffPlatform(ask), { body: ask, ownAddresses: [ours.toLowerCase()] })).toBe('queue');
+    const paste = `I sent USDT to ${ours} on the checkout page, is it received?`;
+    expect(classify(detectOffPlatform(paste), { body: paste })).toBe('queue');
+    const mixed = `send to ${ours} or to 0x52908400098527886E0F7030069857D2E4169EE7`;
+    expect(classify(detectOffPlatform(mixed), { body: mixed, ownAddresses: [ours] })).toBe('ban'); // a foreign address offered too
+  });
+  it('catches a phone number with every digit spaced out (blocked and queued, no ban without a messenger name)', () => {
+    expect(detectOffPlatform('my numbr is 0 1 0 1 2 3 4 5 6 7 8')).toContain('phone_number');
+    expect(classify(detectOffPlatform('my numbr is 0 1 0 1 2 3 4 5 6 7 8'), { body: 'my numbr is 0 1 0 1 2 3 4 5 6 7 8' })).toBe('queue');
+    expect(classify(detectOffPlatform('whatsapp 0 1 0 1 2 3 4 5 6 7 8'), { body: 'whatsapp 0 1 0 1 2 3 4 5 6 7 8' })).toBe('ban');
   });
 });

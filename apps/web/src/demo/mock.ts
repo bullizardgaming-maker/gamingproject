@@ -1366,6 +1366,13 @@ route('POST', '/admin/withdrawals/:id/decide', ({ me, params, body }) => {
   const w = state.withdrawals.find((x) => x.id === params[0]) ?? fail(404, 'not_found', 'Withdrawal not found');
   if (w.user_id === staff.id) fail(403, 'own_withdrawal', 'You cannot decide your own withdrawal');
   if (w.status !== 'pending_approval') fail(409, 'invalid_state', `This withdrawal is ${w.status}`);
+  // Round 22b: a coin we no longer pay out in is rejected, money back.
+  if (body.approve && !PAYOUT_COINS.includes(w.destination_currency)) {
+    Object.assign(w, { status: 'rejected', decided_at: now(), decision_note: 'unsupported_coin', refused: 'unsupported_coin' });
+    state.balances[w.user_id] = (state.balances[w.user_id] ?? 0) + w.amount_cents;
+    save();
+    return w;
+  }
   if (body.approve) {
     Object.assign(w, { status: 'processing', decided_at: now(), decision_note: body.note ?? null, provider_ref: `batch_${rid().slice(0, 8)}`, payout_id: String(7_000_000 + state.withdrawals.length) });
     state.platform.treasury += w.fee_cents;
@@ -1842,14 +1849,17 @@ route('POST', '/chat/rooms/:id/messages', ({ me, params, body }) => {
   if (!text) fail(400, 'validation_error', 'Write a message');
   if (state.controls.pause_chat && u.role === 'user') fail(503, 'chat_paused', state.controls.pause_message || 'Chat is paused for a short while. Your order and its record are safe.');
   const accountOrder = !!r.order_id && state.orders.find((o) => o.id === r.order_id)?.category_kind === 'account';
-  const reasons = detectOffPlatform(text, { allowEmail: accountOrder });
+  // Round 22b: account rooms (order or inquiry) carry labelled UIDs too.
+  const accountRoom = accountOrder || state.offers?.find((f: any) => f.id === r.offer_id)?.category_kind === 'account';
+  const reasons = detectOffPlatform(text, { allowEmail: accountOrder, allowIds: accountRoom });
   const flagged = reasons.length > 0;
   if (flagged && u.role === 'user') {
     // Not delivered: kept hidden for the staff queue; the action per offence is staff-set.
     // Round 22: blocked and queued for staff (no strike) unless the contact is unambiguous, which bans at once.
     const seq = (state.messages.filter((m) => m.room_id === r.id).length || 0) + 1;
-    const action = classify(reasons, { body: text });
-    state.chatFlags.unshift({ id: rid(), room_id: r.id, seq, user_id: u.id, reasons, status: 'open', note: null, created_at: now(), attempted: text, strike: action === 'ban' });
+    // Round 22b: our own deposit addresses never ban.
+    const action = classify(reasons, { body: text, ownAddresses: state.cryptoPayments.map((p: any) => p.pay_address) });
+    state.chatFlags.unshift({ id: rid(), room_id: r.id, seq, user_id: u.id, reasons, status: 'open', note: null, created_at: now(), attempted: text, strike: action === 'ban', auto_ban: action === 'ban', prior_status: action === 'ban' ? u.status : null });
     if (action === 'ban') {
       u.status = 'banned';
       live(appendMessage(r.id, null, 'warning', 'This account has been banned for trying to move the deal outside Bullizard. Do not continue this trade anywhere else; staff will review the case.'));
@@ -2301,8 +2311,18 @@ route('POST', '/admin/moderation/chats/:id', ({ me, params, body }) => {
       live(appendMessage(f.room_id, null, 'warning', `This account has been ${action === 'ban' ? 'banned' : 'suspended'} for trying to move the deal outside Bullizard. Do not continue this trade anywhere else; staff will review the case.`));
     }
   }
+  // Round 22b: dismissing the flag behind an automatic ban lifts it, unless another offence still stands.
+  let banLifted = false;
+  if (!body.confirm && f.auto_ban) {
+    const other = state.chatFlags.some((x) => x.id !== f.id && x.user_id === f.user_id && (x.status === 'confirmed' || (x.status === 'open' && x.auto_ban)));
+    const target = userById(f.user_id);
+    if (!other && target?.status === 'banned') {
+      target.status = f.prior_status ?? 'active';
+      banLifted = true;
+    }
+  }
   save();
-  return { id: f.id, status: f.status, user_id: f.user_id, strike: f.strike !== false, action };
+  return { id: f.id, status: f.status, user_id: f.user_id, strike: f.strike !== false, action, banLifted, restoredStatus: banLifted ? (f.prior_status ?? 'active') : null };
 });
 route('GET', '/admin/moderation/offplatform-policy', ({ me }) => (needPerm(me, 'moderation.manage'), { actions: state.offplatformActions }));
 route('PUT', '/admin/moderation/offplatform-policy', ({ me, body }) => {

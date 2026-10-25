@@ -60,8 +60,9 @@ export async function decideTreasuryWithdrawal(ctx: Ctx, id: string, adminId: st
       return { ...w, status: 'rejected' };
     }
     await assertNotPaused(s.tx, 'withdrawals');
-    // Serialize against other approvals and re-check the balance under the lock.
-    await s.tx.query('SELECT pg_advisory_xact_lock(727276)');
+    // Serialize against other treasury approvals and re-check the balance under the lock. Its own lock id (Round 22b): 727276
+    // is the platform payout cap in decideWithdrawal, which has nothing to do with the company's own withdrawals.
+    await s.tx.query('SELECT pg_advisory_xact_lock(727281)');
     const source = await accountId(s.tx, w.source, w.currency);
     if (w.amount_cents > (await balance(s.tx, source))) throw badRequest('insufficient_treasury', 'The balance is now lower than this withdrawal');
     await post(

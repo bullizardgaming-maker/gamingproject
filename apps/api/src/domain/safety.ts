@@ -25,7 +25,8 @@ export const OFFPLATFORM_PATTERNS: Array<[string, RegExp]> = [
   ['other_marketplace', /\b(?:funpay|eldorado\.gg|playerauctions|playerup|z2u|igvault|mmoga|kinguin|eneba|odealo|u7buy|lootbar|overgear|skycoach)\b|\bg2g\.com\b|\b(?:on|at|from|via|use|try|check)\s+(?:g2g|eldorado)\b|\b(?:g2g|eldorado)\s+(?:has|sells?|is\s+cheaper|cheaper|price|prices|site|listing)\b|فن باي|جي تو جي/i],
   ['pay_outside', /\b(?:pay|send|transfer)(?:\s+\w+){0,3}\s+(?:outside|off)\s+(?:the\s+)?(?:site|platform|bullizard)\b|\boutside\s+(?:the\s+)?(?:site|platform|escrow)\b|\bskip\s+(?:the\s+)?escrow\b/i],
   // International numbers, and Egyptian mobiles written locally (010/011/012/015 + 7–8 digits, with or without spaces).
-  ['phone_number', /(?:\+|\b00)\d[\d\s().-]{7,}\d\b|\b01[0125](?:[\s.-]?\d){7,8}\b|(?<![٠-٩])٠١[٠١٢٥](?:[\s.-]?[٠-٩]){7,8}(?![٠-٩])/],
+  // Round 22b: also every digit spaced out ("0 1 0 1 2 3 4 5 6 7 8").
+  ['phone_number', /(?:\+|\b00)\d[\d\s().-]{7,}\d\b|\b0[\s.-]?1[\s.-]?[0125](?:[\s.-]?\d){7,8}\b|(?<![٠-٩])٠١[٠١٢٥](?:[\s.-]?[٠-٩]){7,8}(?![٠-٩])/],
   // Emails are only allowed inside account orders (the encrypted handover box), see detectOffPlatform().
   ['email', /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/],
   // Links anywhere but to Bullizard itself. A bare domain needs a name of 3+ characters starting with a letter, so
@@ -112,6 +113,7 @@ export function detectSplit(previous: string[], body: string): string[] {
  * for those rooms.
  */
 export function detectOffPlatform(body: string, opts: { allowEmail?: boolean; allowIds?: boolean } = {}): string[] {
+  body = withoutLoginMethods(body);
   if (opts.allowIds) body = withoutPlayerIds(body);
   const emailRe = OFFPLATFORM_PATTERNS.find(([n]) => n === 'email')![1];
   // An email's domain is not a link on its own.
@@ -129,8 +131,31 @@ const CONTACT_LINK = /\b(?:t\.me|telegram\.me|wa\.me|chat\.whatsapp\.com|m\.me|p
 /** A messenger handle: @name, a Discord tag (name#1234), or "discord: name". */
 const HANDLE = /(?:^|[\s(:])@[a-z0-9_.]{3,}|\b[\w.]{2,32}#\d{4}\b|\b(?:discord|telegram|tg|snap|snapchat|insta|instagram|whatsapp|skype|viber|wechat|kik)\s*:\s*@?[\w.#-]{3,}/i;
 const EMAIL = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/;
-/** Words that offer a wallet address for payment. */
-const PAY_WORDS = /\b(?:send|sent|pay|paying|transfer|deposit|wallet|address|usdt|usdc|btc|eth|trx|crypto|trc-?20|bep-?20|erc-?20)\b|ابعت|ابعتلي|حول|حوّل|ادفع|محفظة|عنوان/i;
+const WALLET = OFFPLATFORM_PATTERNS.find(([n]) => n === 'wallet_address')![1];
+/**
+ * A wallet address offered as the sender's own receiving address for a payment (Round 22b): an order to pay or send to it
+ * ("send to 0x…", "pay me at T…", "send to my wallet 0x…", "ابعت على محفظتي …"). Past tense ("I sent USDT to …", "paid to
+ * the address the site gave me: …") is a buyer asking about a payment and never matches. `<W>` stands for the address.
+ */
+const WALLET_OFFER = [
+  /\b(?:send|pay|transfer|deposit)\b(?:\s+[\w$<>-]+){0,3}?\s+(?:to|at|on|into)\s+(?:(?:my|this|the\s+following)\s+(?:\w+\s+)?(?:wallet|address|addy)\s*(?:address\s*)?[:=-]?\s*)?<W>/i,
+  /(?:ابعت|ابعتلي|ابعتها|حول|حوّل|حولي|حوللي|ادفع|ادفعلي)(?:\s+\S+){0,3}?\s+(?:على|ع|لـ?|في)\s+(?:(?:محفظتي|عنواني|المحفظة\s+دي|العنوان\s+ده)\s*[:=-]?\s*)?<W>/,
+];
+
+/**
+ * The automatic-ban test for a wallet address (Round 22b). Addresses that are a NOWPayments deposit address of one of the
+ * room's / user's orders (`ownAddresses`) never count; a remaining address bans only when offered for payment (WALLET_OFFER).
+ */
+function walletOffered(body: string, ownAddresses: string[] = []) {
+  const ours = new Set(ownAddresses.map((a) => a.toLowerCase()));
+  let foreign = false;
+  const marked = body.replace(new RegExp(WALLET.source, 'g'), (a) => {
+    if (ours.has(a.toLowerCase())) return ' <OURS> ';
+    foreign = true;
+    return ' <W> ';
+  });
+  return foreign && WALLET_OFFER.some((re) => re.test(marked.replace(/\s+/g, ' ')));
+}
 
 /**
  * The automatic filter decision (Round 22): every hit is blocked (not delivered) and goes to the staff queue; a staff member
@@ -139,10 +164,11 @@ const PAY_WORDS = /\b(?:send|sent|pay|paying|transfer|deposit|wallet|address|usd
  *  - a full phone number together with a messenger or payment name ("whatsapp 0101234567", "my wats app is 0101234567");
  *  - a messenger handle with a messenger name ("telegram: @cheapgold", "discord pat#1234");
  *  - a payment name with an email or phone ("paypal me@x.com");
- *  - a crypto wallet address offered for payment ("send to 0x…").
+ *  - a crypto wallet address offered as the sender's receiving address ("send to 0x…", "pay me at T…"), never one of our own
+ *    deposit addresses (`ownAddresses`) and never "I sent/paid to …" (Round 22b).
  * Split-message hits never count towards a ban.
  */
-export function classify(violations: string[], opts: { split?: string[]; body?: string } = {}): 'ban' | 'queue' {
+export function classify(violations: string[], opts: { split?: string[]; body?: string; ownAddresses?: string[] } = {}): 'ban' | 'queue' {
   const split = new Set(opts.split ?? []);
   const direct = new Set(violations.filter((v) => !split.has(v)));
   const body = opts.body ?? '';
@@ -153,7 +179,7 @@ export function classify(violations: string[], opts: { split?: string[]; body?: 
   if ((messenger || payment) && direct.has('phone_number')) return 'ban';
   if (messenger && HANDLE.test(body)) return 'ban';
   if (payment && EMAIL.test(body)) return 'ban';
-  if (direct.has('wallet_address') && PAY_WORDS.test(body.replace(OFFPLATFORM_PATTERNS.find(([n]) => n === 'wallet_address')![1], ' '))) return 'ban';
+  if (direct.has('wallet_address') && walletOffered(body, opts.ownAddresses)) return 'ban';
   return 'queue';
 }
 
@@ -161,8 +187,15 @@ export function classify(violations: string[], opts: { split?: string[]; body?: 
  * Rooms where the buyer gives a player ID / UID or a username for delivery (top-ups, in-game delivery): a labelled ID
  * ("id: 0123456789", "UID 0012345678", "الايدي 0101234567") is the delivery detail, not a phone number.
  */
-const LABELLED_ID = /\b(?:player\s*id|game\s*id|user\s*id|uid|id|pubg\s*id|character\s*id)\s*(?:is|:|#|=)?\s*\d[\d\s-]{3,}\d|(?:الايدي|الآيدي|ايدي|آيدي|اي دي|الأيدي)\s*[:=]?\s*[\d٠-٩][\d٠-٩\s-]{3,}/gi;
+const LABELLED_ID = /\b(?:player\s*id|game\s*id|user\s*id|uid|id|pubg\s*id|character\s*id)\s*(?:is|:|#|=)?\s*\d[\d\s-]{3,}\d|(?:الايدي|الآيدي|ايدي|آيدي|اي دي|الأيدي|الـ\s*UID|ال\s*UID|الـ\s*ID)\s*(?:is|:|=)?\s*[\d٠-٩][\d٠-٩\s-]{3,}/gi;
 export const withoutPlayerIds = (body: string) => body.replace(LABELLED_ID, ' ');
+
+/**
+ * How an account signs in ("account linked to facebook", "connected to google", "الحساب مربوط بالفيسبوك") is a detail of the
+ * account being sold, not an offer to talk on Facebook (Round 22b): dropped before the checks, in every room.
+ */
+const LOGIN_METHOD = /\b(?:linked|connected|bound|tied|attached|registered|signed\s+up)\s+(?:to|with|via|through)\s+(?:a\s+|an\s+|the\s+|my\s+)?(?:facebook|fb|google|gmail|apple(?:\s+id)?|twitter|x|vk|game\s*center|google\s+play|play\s+games)(?:\s+(?:account|login))?\b|(?:مربوط|مرتبط|متربط|متسجل)\s+(?:بـ?\s*|ب|على\s+|ع\s+)?(?:ال)?(?:فيسبوك|فيس\s+بوك|فيس|جوجل|جيميل|ابل|تويتر)/gi;
+export const withoutLoginMethods = (body: string) => body.replace(LOGIN_METHOD, ' ');
 
 /**
  * Listing terms staff maintain. `block` rejects the listing outright (clearly illegal goods);

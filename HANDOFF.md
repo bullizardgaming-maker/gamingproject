@@ -3,7 +3,7 @@
 State of the project for whoever picks it up next (a person or another Claude session). Read this first, then
 `README.md` (how to run) and `docs/ARCHITECTURE.md` (how each feature works).
 
-## Where things stand (Oct 25, 2026, after Round 22)
+## Where things stand (Oct 25, 2026, after Round 22b)
 
 - All work is on `main`. CI (api, web, e2e, load, contracts, fraud-gnn, sdk-python) is green.
 - 14 rounds of features are built: 84 of 92 suggestions. The tracker lives in the Claude report doc
@@ -507,6 +507,22 @@ interface with a fake). The CEO/Back-End must run these with the sandbox keys an
 5. The payout IPN body: does it include `unique_external_id`, `fee`, `conversion_fee`?
 6. `GET /v1/balance` shape (`{ coin: { amount, pendingAmount } }`) and its error responses.
 Then run `apps/api/scripts/money-paths.ts` against staging (docs/HOSTING.md).
+
+## Round 22b (Oct 25, 2026) — follow-ups to Round 22
+
+Migration **070** (`070_round22b.sql`, idempotent; re-run `node dist/migrate.js` on staging). New test file `round22b.test.ts`
+(one case per item, with a three-way concurrent job run); `chat-filter.test.ts` + the fixture gained the new phrases (and
+`ACCOUNT_R22B`); `fakeNowPayments.ts` records every payout POST/GET (`payoutPosts`, `payoutGets`). Demo mock follows items 2, 3, 5, 6.
+
+| # | What changed |
+|---|---|
+| 1 | `sendPayout` claims the row in one conditional `UPDATE … RETURNING` (status `processing`, no `provider_attempted_at`, no `payout_id`, no `provider_ref`); otherwise it refuses (`payout_already_sent`) and nothing is sent. Migration 070 backfills `provider_attempted_at` where provider ids exist. The hourly job claims its rows with `UPDATE … WHERE id IN (SELECT … FOR UPDATE SKIP LOCKED) RETURNING` (lease: `updated_at` for `unknown`, `last_polled_at` for `processing`), so two worker processes never check, poll or send the same withdrawal. |
+| 2 | Wallet addresses (`safety.ts` `classify`, `walletOffered`): automatic ban only when offered as the sender's receiving address ("send to …", "pay me at …", "send to my wallet …", "ابعت على محفظتي …"). Past tense ("I sent USDT to …", "sent the trc20 to the address the site gave me: …") never bans; a NOWPayments deposit address of any order in the room or of the user (`ownAddresses`, from `crypto_payments.pay_address`) never counts. Those messages are still blocked and queued (no strike). |
+| 3 | Account rooms (account order or inquiry on an account listing) strip labelled IDs like top-up rooms (`uid`, `id`, `player id`, `الـ UID`, `الايدي`). "linked/connected to facebook/google …", "مربوط بالفيسبوك" (how the account signs in) is dropped before the checks in every room, so it is never a contact offer. |
+| 4 | Phone numbers with every digit spaced out ("0 1 0 1 2 3 4 5 6 7 8") are caught: blocked and queued; a ban only with a messenger/payment name, as before. |
+| 5 | `chat_flags.auto_ban` + `prior_status` are stored when the filter bans. Dismissing that flag restores the prior status (only if the user is still under `off_platform_ban` and no other confirmed flag or other open automatic-ban flag remains); audited as `user.auto_ban_lifted`. Migration 070 marks the open Round 22 filter bans. |
+| 6 | `decideWithdrawal` rejects an approval whose `destination_currency` is not in `PAYOUT_COINS` (status `rejected`, note `unsupported_coin`, `refused: 'unsupported_coin'`, money back through the normal reject path). `sendPayout` reverses an approved one (`failed`, `unsupported_coin`). Migration 070 resets `users.payout_currency` EUR/EGP → USD. |
+| 7 | A FINISHED payout IPN/poll for a withdrawal already `failed` (reversed) sets `paid_after_reversal_at` / `paid_after_reversal_hash`, logs an error, emails admins + finance (`ops_alert`) once, and Ops alerts repeat it for 7 days (`payout_after_reversal`). Nothing is booked automatically: Finance recovers or writes it off. Four-eyes: the first approval stores `four_eyes_required`, so a withdrawal that needed two signatures still does after the user's 24h total drops. Treasury withdrawals lock `727281`; `727276` stays the platform payout cap. |
 
 ## Suggested next round
 

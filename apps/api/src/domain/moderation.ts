@@ -96,12 +96,29 @@ export async function decideChatFlag(ctx: Ctx, flagId: string, staffId: string, 
   return withScope(ctx, async (s) => {
     const f = await maybeOne(
       s.tx,
-      `UPDATE chat_flags SET status = $2, reviewed_by = $3, note = $4, reviewed_at = now() WHERE id = $1 AND status = 'open' RETURNING id, status, user_id, room_id, strike`,
+      `UPDATE chat_flags SET status = $2, reviewed_by = $3, note = $4, reviewed_at = now() WHERE id = $1 AND status = 'open' RETURNING id, status, user_id, room_id, strike, auto_ban, prior_status`,
       [flagId, confirm ? 'confirmed' : 'dismissed', staffId, note?.trim() || null],
     );
     if (!f) throw notFound('Open flag');
     // A false alarm shouldn't count towards the automatic suspension.
     if (!confirm && f.strike) await s.tx.query('UPDATE users SET offplatform_strikes = GREATEST(offplatform_strikes - 1, 0) WHERE id = $1', [f.user_id]);
+    // Round 22b: dismissing the flag that banned automatically lifts that ban (back to the status before it), unless another
+    // offence still stands: a confirmed flag, or another automatic ban not yet reviewed. An admin ban is never touched.
+    if (!confirm && f.auto_ban) {
+      const other = await maybeOne(
+        s.tx,
+        `SELECT 1 FROM chat_flags WHERE user_id = $1 AND id <> $2 AND (status = 'confirmed' OR (status = 'open' AND auto_ban)) LIMIT 1`,
+        [f.user_id, f.id],
+      );
+      const lifted = other
+        ? null
+        : await maybeOne<{ status: string }>(
+            s.tx,
+            `UPDATE users SET status = $2, suspended_until = NULL, suspension_reason = NULL WHERE id = $1 AND status = 'banned' AND suspension_reason = 'off_platform_ban' RETURNING status`,
+            [f.user_id, f.prior_status ?? 'active'],
+          );
+      return { ...f, action: null, banLifted: !!lifted, restoredStatus: lifted?.status ?? null };
+    }
     // Round 22: a queued hit becomes a strike only when staff confirm it; the staff-set ladder (warn → suspend → ban) applies then.
     if (confirm && !f.strike) {
       const { offplatform_strikes } = await one<{ offplatform_strikes: number }>(s.tx, 'UPDATE users SET offplatform_strikes = offplatform_strikes + 1 WHERE id = $1 RETURNING offplatform_strikes', [f.user_id]);

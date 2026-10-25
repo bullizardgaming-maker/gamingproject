@@ -14,6 +14,9 @@ export class FakeNow {
   /** Round 22: verify calls seen, and whether the next verify fails. */
   verifies: string[] = [];
   verifyFails = 0;
+  /** Round 22b: every payout POST (by unique_external_id) and payout GET (by id), duplicates included. */
+  payoutPosts: string[] = [];
+  payoutGets: string[] = [];
   /** Round 22: when set, /v1/balance answers this HTTP status (reconciliation must fail, not pass). */
   balanceStatus: number | null = null;
   /** Round 22 property tests: when set, the custody wallet holds exactly this many USDT (the test keeps it in step). */
@@ -44,6 +47,7 @@ export class FakeNow {
     if (u.pathname === '/v1/auth') return json({ token: 'jwt-test' });
     if (u.pathname === '/v1/payout' && init?.method === 'POST') {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer jwt-test' });
+      this.payoutPosts.push(String(body.withdrawals[0].unique_external_id));
       const mode = this.payoutMode;
       this.payoutMode = 'ok';
       if (mode === 'down') return json({ message: 'maintenance' }, 503);
@@ -59,6 +63,7 @@ export class FakeNow {
     }
     const po = u.pathname.match(/^\/v1\/payout\/([\w-]+)$/);
     if (po && (init?.method ?? 'GET') === 'GET') {
+      this.payoutGets.push(po[1]!);
       const w = this.payouts.find((x) => String(x.id) === po[1]);
       return w ? json(w) : json({ message: 'not found' }, 404);
     }
