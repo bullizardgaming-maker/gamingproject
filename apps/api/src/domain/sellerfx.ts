@@ -68,6 +68,8 @@ export async function sellerRateFor(ctx: Ctx, q: Queryable, sellerId: string, ra
 
 export async function setPayoutCurrency(ctx: Ctx, sellerId: string, currency: string) {
   const cur = currency.toUpperCase();
+  // Round 22b: payouts (and so new sales' crediting currency) are USD only; PAYOUT_CURRENCIES can't widen it any more.
+  if (cur !== 'USD') throw badRequest('unsupported_currency', 'Payouts are in USD only');
   assertSupported(ctx, cur);
   // CFO B12: payouts are locked to USD at launch; widen with PAYOUT_CURRENCIES later.
   const allowed = ctx.cfg.PAYOUT_CURRENCIES.split(',').map((c) => c.trim().toUpperCase()).filter(Boolean);

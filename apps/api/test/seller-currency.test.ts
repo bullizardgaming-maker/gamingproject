@@ -14,24 +14,22 @@ afterAll(async () => h.close());
 async function eurSeller() {
   const seller = await makeUser(h, { tier: 2 });
   await seller.api.put('/v1/seller/tax-profile', { country: 'US', isBusiness: false });
-  expect((await seller.api.put('/v1/seller/payout-currency', { currency: 'EUR' })).body.payoutCurrency).toBe('EUR');
+  // Round 22b: sellers can no longer choose EUR; this is a seller who chose it before (balances in EUR still exist).
+  await h.ctx.db.query(`UPDATE users SET payout_currency = 'EUR' WHERE id = $1`, [seller.id]);
   await h.ctx.db.query(`UPDATE users SET stripe_account_id = 'acct_eur', payouts_enabled = true, payout_hold_days = 0 WHERE id = $1`, [seller.id]);
   return seller;
 }
 
 describe('seller balances in their own currency', () => {
-  it('CFO B12: refuses a payout currency outside PAYOUT_CURRENCIES (USD-only at launch)', async () => {
-    const was = h.ctx.cfg.PAYOUT_CURRENCIES;
-    h.ctx.cfg.PAYOUT_CURRENCIES = 'USD';
-    try {
-      const seller = await makeUser(h, { tier: 2 });
-      const r = await seller.api.put('/v1/seller/payout-currency', { currency: 'EUR' });
-      expect(r.status).toBe(400);
-      expect(r.body.error.code).toBe('payout_currency_locked');
-      expect((await seller.api.put('/v1/seller/payout-currency', { currency: 'USD' })).body.payoutCurrency).toBe('USD');
-    } finally {
-      h.ctx.cfg.PAYOUT_CURRENCIES = was;
+  it('Round 22b: the payout currency is USD only, whatever PAYOUT_CURRENCIES says (400 unsupported_currency)', async () => {
+    expect(h.ctx.cfg.PAYOUT_CURRENCIES).toContain('EUR');
+    const seller = await makeUser(h, { tier: 2 });
+    for (const currency of ['EUR', 'EGP', 'eur']) {
+      const r = await seller.api.put('/v1/seller/payout-currency', { currency });
+      expect(r.status, currency).toBe(400);
+      expect(r.body.error.code, currency).toBe('unsupported_currency');
     }
+    expect((await seller.api.put('/v1/seller/payout-currency', { currency: 'USD' })).body.payoutCurrency).toBe('USD');
   });
 
   it('credits a EUR seller their EUR price minus commission at the rate locked at order time, but withdraws in USD only', async () => {

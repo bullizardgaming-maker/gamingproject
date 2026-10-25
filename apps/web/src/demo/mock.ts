@@ -2219,7 +2219,7 @@ function holdOf(sellerId: string) {
 route('GET', '/seller/payout-hold', ({ me }) => holdOf(needSeller(me).id));
 route('PUT', '/seller/payout-currency', ({ me, body }) => {
   const u = needSeller(me);
-  if (!['USD', 'EUR', 'EGP'].includes(body.currency)) fail(400, 'unsupported_currency', 'Choose USD, EUR or EGP');
+  if (String(body.currency).toUpperCase() !== 'USD') fail(400, 'unsupported_currency', 'Payouts are in USD only'); // Round 22b
   state.payoutCurrency[u.id] = body.currency;
   return { payoutCurrency: body.currency };
 });

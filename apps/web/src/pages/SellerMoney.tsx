@@ -26,7 +26,6 @@ interface TaxProfile {
   commissionTax: { country: string; treatment: 'standard' | 'reverse_charge' | 'outside_scope'; rateBps: number; note?: string };
 }
 
-const CURRENCIES = ['USD', 'EUR', 'EGP'];
 const holdLabel = (level: string) => (['new', 'established', 'trusted', 'watch', 'custom'].includes(level) ? t(`money.hold.${level}` as MessageKey) : level);
 const COUNTRIES: Array<[string, string]> = [
   ['AT', 'Austria'], ['BE', 'Belgium'], ['BG', 'Bulgaria'], ['HR', 'Croatia'], ['CY', 'Cyprus'], ['CZ', 'Czechia'], ['DK', 'Denmark'],
@@ -141,17 +140,7 @@ export function SellerMoney() {
         <aside className="card pg-withdraw" aria-labelledby="wallet-withdraw">
           <div className="row spread">
             <h2 id="wallet-withdraw" className="h3" style={{ margin: 0, fontSize: 19 }}>{t('money.withdraw')}</h2>
-            <label className="row small" style={{ gap: 8 }}>
-              {t('money.paidOutIn')}
-              <select
-                aria-label={t('money.payoutCurrency')}
-                value={currency}
-                style={{ width: 90, height: 36, padding: '0 8px' }}
-                onChange={(e) => run(() => api('/seller/payout-currency', { method: 'PUT', body: { currency: e.target.value } }), t('money.currencyChanged', { currency: e.target.value }))}
-              >
-                {CURRENCIES.map((c) => <option key={c}>{c}</option>)}
-              </select>
-            </label>
+            {/* Round 22b: payouts are USD only, so there is no payout-currency picker. */}
           </div>
           <Withdraw
             currency={currency}

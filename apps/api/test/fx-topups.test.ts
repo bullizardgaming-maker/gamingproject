@@ -17,7 +17,7 @@ const eurPosition = async (admin: { api: any }) => (await admin.api.get('/v1/adm
 async function eurSale(priceEurCents = 46_00) {
   const seller = await makeUser(h, { tier: 2 });
   await seller.api.put('/v1/seller/tax-profile', { country: 'US', isBusiness: false });
-  await seller.api.put('/v1/seller/payout-currency', { currency: 'EUR' });
+  await h.ctx.db.query(`UPDATE users SET payout_currency = 'EUR' WHERE id = $1`, [seller.id]); // chosen before Round 22b (USD only now)
   const buyer = await makeUser(h, { tier: 1 });
   const offer = await makeOffer(seller, { priceCents: priceEurCents, currency: 'EUR', categorySlug: 'boosting', deliveryMode: 'manual', stock: 1 } as any);
   const order = await buyAndPay(h, buyer, offer.id);
