@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { NowPaymentsProvider, ipnSignature, sortDeep } from '../src/providers/payments/nowpayments.js';
 import { makeOffer, makeUser, setup, type Harness } from './helpers.js';
 import { FakeNow } from './fakeNowPayments.js';
-import { ACCOUNT_R22B } from './fixtures/chat-phrases.js';
+import { ACCOUNT_R22B, DEPOSIT_R22B, OWN_DEPOSIT_DELIVERED, OWN_DEPOSIT_WITH_CONTACT } from './fixtures/chat-phrases.js';
 import { recheckUnknownPayouts } from '../src/domain/cryptoPayouts.js';
 import { decideTreasuryWithdrawal } from '../src/domain/treasury.js';
 import { forgetControlsCache } from '../src/domain/controls.js';
@@ -106,22 +106,31 @@ describe('1. a payout is never sent twice', () => {
 });
 
 describe('2-5. false automatic bans', () => {
-  it('a buyer pasting our deposit address is never banned; a foreign wallet offered for payment still is', async () => {
+  it('a message with our own deposit address is delivered (the rest still checked); an unknown address is queued; only an offered own wallet bans', async () => {
     const seller = await makeUser(h, { tier: 2 });
     const buyer = await makeUser(h, { tier: 1 });
     const offer = await makeOffer(seller, { deliveryMode: 'manual', stock: 5, categorySlug: 'currency', title: 'Gold', priceCents: 10_00 });
     const { order } = await cryptoOrder(buyer, offer.id, false);
-    const deposit = 'TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE';
-    await h.ctx.db.query('UPDATE crypto_payments SET pay_address = $2 WHERE order_id = $1', [order.id, deposit]);
+    await h.ctx.db.query('UPDATE crypto_payments SET pay_address = $2 WHERE order_id = $1', [order.id, DEPOSIT_R22B]);
     const room = (await buyer.api.post('/v1/chat/rooms', { offerId: offer.id })).body.id;
-    for (const body of [`should I send USDT to ${deposit}?`, `I sent USDT to ${deposit} on the checkout page, is it received?`, `sent the trc20 to the address the site gave me: ${deposit}`]) {
+    for (const body of OWN_DEPOSIT_DELIVERED) {
       const r = await buyer.api.post(`/v1/chat/rooms/${room}/messages`, { body });
-      expect(r.status, body).toBe(422);
-      expect(r.body.error.details.action, body).toBe('queue');
+      expect(r.status, `${body}: ${JSON.stringify(r.body)}`).toBe(201);
     }
+    const q = await buyer.api.post(`/v1/chat/rooms/${room}/messages`, { body: 'Should I send USDT to 0x52908400098527886E0F7030069857D2E4169EE7?' });
+    expect(q.status).toBe(422);
+    expect(q.body.error.details.action).toBe('queue');
     expect((await h.ctx.db.query('SELECT status, offplatform_strikes FROM users WHERE id = $1', [buyer.id])).rows[0]).toMatchObject({ status: 'active', offplatform_strikes: 0 });
+    const other = await makeUser(h, { tier: 1 });
+    const { order: o2 } = await cryptoOrder(other, offer.id, false); // before the seller's ban takes the listing down
     const r = await seller.api.post(`/v1/chat/rooms/${room}/messages`, { body: 'pay me at 0x52908400098527886E0F7030069857D2E4169EE7' });
     expect(r.body.error.details.action).toBe('ban');
+    // The rest of the message is still checked: our address plus a messenger and a phone number bans as usual.
+    await h.ctx.db.query('UPDATE crypto_payments SET pay_address = $2 WHERE order_id = $1', [o2.id, DEPOSIT_R22B]);
+    const room2 = (await other.api.post('/v1/chat/rooms', { offerId: offer.id })).body.id;
+    const c = await other.api.post(`/v1/chat/rooms/${room2}/messages`, { body: OWN_DEPOSIT_WITH_CONTACT[0] });
+    expect(c.status).toBe(422);
+    expect(c.body.error.details.action).toBe('ban');
   });
 
   it('account details in an account room (login method, labelled UID) are delivered, never banned', async () => {

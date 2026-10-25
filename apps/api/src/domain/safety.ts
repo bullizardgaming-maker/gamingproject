@@ -112,8 +112,11 @@ export function detectSplit(previous: string[], body: string): string[] {
  * one thing an account order may carry (the credentials handover), so callers pass `allowEmail`
  * for those rooms.
  */
-export function detectOffPlatform(body: string, opts: { allowEmail?: boolean; allowIds?: boolean } = {}): string[] {
+export function detectOffPlatform(body: string, opts: { allowEmail?: boolean; allowIds?: boolean; ownAddresses?: string[] } = {}): string[] {
   body = withoutLoginMethods(body);
+  // Round 22b: our own NOWPayments deposit addresses are not outside contacts (buyers ask about their payment); the rest of the
+  // message is checked as usual.
+  if (opts.ownAddresses?.length) body = withoutOwnAddresses(body, opts.ownAddresses);
   if (opts.allowIds) body = withoutPlayerIds(body);
   const emailRe = OFFPLATFORM_PATTERNS.find(([n]) => n === 'email')![1];
   // An email's domain is not a link on its own.
@@ -133,14 +136,23 @@ const HANDLE = /(?:^|[\s(:])@[a-z0-9_.]{3,}|\b[\w.]{2,32}#\d{4}\b|\b(?:discord|t
 const EMAIL = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/;
 const WALLET = OFFPLATFORM_PATTERNS.find(([n]) => n === 'wallet_address')![1];
 /**
- * A wallet address offered as the sender's own receiving address for a payment (Round 22b): an order to pay or send to it
- * ("send to 0x…", "pay me at T…", "send to my wallet 0x…", "ابعت على محفظتي …"). Past tense ("I sent USDT to …", "paid to
- * the address the site gave me: …") is a buyer asking about a payment and never matches. `<W>` stands for the address.
+ * A wallet address offered as the sender's OWN receiving address (Round 22b): "send to my wallet 0x…", "pay me at T…",
+ * "send me 50 usdt to …", "ابعتلي على محفظتي …". A question or an order to pay some address ("Should I send USDT to …?",
+ * "send to 0x…") and past tense ("I sent USDT to …") never match: blocked and queued only. `<W>` stands for the address.
  */
 const WALLET_OFFER = [
-  /\b(?:send|pay|transfer|deposit)\b(?:\s+[\w$<>-]+){0,3}?\s+(?:to|at|on|into)\s+(?:(?:my|this|the\s+following)\s+(?:\w+\s+)?(?:wallet|address|addy)\s*(?:address\s*)?[:=-]?\s*)?<W>/i,
-  /(?:ابعت|ابعتلي|ابعتها|حول|حوّل|حولي|حوللي|ادفع|ادفعلي)(?:\s+\S+){0,3}?\s+(?:على|ع|لـ?|في)\s+(?:(?:محفظتي|عنواني|المحفظة\s+دي|العنوان\s+ده)\s*[:=-]?\s*)?<W>/,
+  /\b(?:send|pay|transfer|deposit)\b(?:\s+[\w$<>-]+){0,3}?\s+(?:to|at|on|into)\s+my\s+(?:\w+\s+)?(?:wallet|address|addy)\s*(?:address\s*)?[:=-]?\s*<W>/i,
+  /\b(?:send|pay|transfer)\s+me\b(?:\s+[\w$<>-]+){0,3}?\s+(?:to|at|on|into|via)\s+(?:my\s+(?:\w+\s+)?(?:wallet|address|addy)\s*(?:address\s*)?[:=-]?\s*)?<W>/i,
+  /(?:ابعتلي|حولي|حوللي|ادفعلي)(?:\s+\S+){0,3}?\s+(?:على|ع|لـ?|في)\s+(?:(?:محفظتي|عنواني)\s*[:=-]?\s*)?<W>/,
+  /(?:ابعت|ابعتها|حول|حوّل|ادفع)(?:\s+\S+){0,3}?\s+(?:على|ع|لـ?|في)\s+(?:محفظتي|عنواني)\s*[:=-]?\s*<W>/,
 ];
+
+const withoutOwnAddresses = (body: string, own: string[]) => {
+  const ours = new Set(own.map((a) => a.toLowerCase()));
+  return body.replace(new RegExp(WALLET.source, 'g'), (a) => (ours.has(a.toLowerCase()) ? ' ' : a));
+};
+/** Whether a text contains anything shaped like a wallet address (chat.ts looks up the deposit addresses only then). */
+export const hasWalletAddress = (body: string) => WALLET.test(body);
 
 /**
  * The automatic-ban test for a wallet address (Round 22b). Addresses that are a NOWPayments deposit address of one of the
@@ -164,8 +176,8 @@ function walletOffered(body: string, ownAddresses: string[] = []) {
  *  - a full phone number together with a messenger or payment name ("whatsapp 0101234567", "my wats app is 0101234567");
  *  - a messenger handle with a messenger name ("telegram: @cheapgold", "discord pat#1234");
  *  - a payment name with an email or phone ("paypal me@x.com");
- *  - a crypto wallet address offered as the sender's receiving address ("send to 0x…", "pay me at T…"), never one of our own
- *    deposit addresses (`ownAddresses`) and never "I sent/paid to …" (Round 22b).
+ *  - a crypto wallet address the sender offers as their own receiving address ("send to my wallet 0x…", "pay me at T…"); never
+ *    a question ("Should I send USDT to …?"), "I sent/paid to …", or one of our own deposit addresses (Round 22b).
  * Split-message hits never count towards a ban.
  */
 export function classify(violations: string[], opts: { split?: string[]; body?: string; ownAddresses?: string[] } = {}): 'ban' | 'queue' {

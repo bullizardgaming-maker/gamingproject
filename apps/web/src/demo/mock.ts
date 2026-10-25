@@ -1851,14 +1851,16 @@ route('POST', '/chat/rooms/:id/messages', ({ me, params, body }) => {
   const accountOrder = !!r.order_id && state.orders.find((o) => o.id === r.order_id)?.category_kind === 'account';
   // Round 22b: account rooms (order or inquiry) carry labelled UIDs too.
   const accountRoom = accountOrder || state.offers?.find((f: any) => f.id === r.offer_id)?.category_kind === 'account';
-  const reasons = detectOffPlatform(text, { allowEmail: accountOrder, allowIds: accountRoom });
+  // Round 22b: our own deposit addresses are delivered; the rest of the message is checked as usual.
+  const ownAddresses = state.cryptoPayments.map((p: any) => p.pay_address);
+  const reasons = detectOffPlatform(text, { allowEmail: accountOrder, allowIds: accountRoom, ownAddresses });
   const flagged = reasons.length > 0;
   if (flagged && u.role === 'user') {
     // Not delivered: kept hidden for the staff queue; the action per offence is staff-set.
     // Round 22: blocked and queued for staff (no strike) unless the contact is unambiguous, which bans at once.
     const seq = (state.messages.filter((m) => m.room_id === r.id).length || 0) + 1;
     // Round 22b: our own deposit addresses never ban.
-    const action = classify(reasons, { body: text, ownAddresses: state.cryptoPayments.map((p: any) => p.pay_address) });
+    const action = classify(reasons, { body: text, ownAddresses });
     state.chatFlags.unshift({ id: rid(), room_id: r.id, seq, user_id: u.id, reasons, status: 'open', note: null, created_at: now(), attempted: text, strike: action === 'ban', auto_ban: action === 'ban', prior_status: action === 'ban' ? u.status : null });
     if (action === 'ban') {
       u.status = 'banned';

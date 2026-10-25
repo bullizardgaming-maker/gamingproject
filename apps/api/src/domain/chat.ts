@@ -41,7 +41,7 @@ export interface ChatMessage {
 
 // Off-platform contact detection lives in safety.ts (shared with the web app).
 export { detectOffPlatform } from './safety.js';
-import { classify, detectOffPlatform, detectSplit } from './safety.js';
+import { classify, detectOffPlatform, detectSplit, hasWalletAddress } from './safety.js';
 import { assertNotPaused } from './controls.js';
 import { handoverFieldFor } from './attributeSets.js';
 
@@ -230,7 +230,17 @@ export async function postUserMessage(ctx: Ctx, roomId: string, user: { id: stri
     ? await maybeOne<{ game: string; category_slug: string; kind: string }>(ctx.db, 'SELECT f.game, f.category_slug, c.kind FROM offers f JOIN categories c ON c.slug = f.category_slug WHERE f.id = $1', [room0.offer_id])
     : null;
   const allowIds = accountOrder || (!!offer && (offer.category_slug === 'top-ups' || offer.kind === 'account' || !!handoverFieldFor(offer.game, offer.category_slug)));
-  const violations = detectOffPlatform(body, { allowEmail: accountOrder, allowIds });
+  // Round 22b: our own NOWPayments deposit addresses (any order in this room or of this user) are delivered, not blocked.
+  const ownAddresses = hasWalletAddress(body)
+    ? (await many<{ pay_address: string }>(
+        ctx.db,
+        `SELECT DISTINCT p.pay_address FROM crypto_payments p
+           LEFT JOIN orders o ON o.id = p.order_id LEFT JOIN checkouts k ON k.id = p.checkout_id
+          WHERE p.order_id = $1::uuid OR o.buyer_id = $2::uuid OR k.buyer_id = $2::uuid OR p.checkout_id IN (SELECT checkout_id FROM orders WHERE id = $1::uuid)`,
+        [room0.order_id ?? null, user.id],
+      )).map((r) => r.pay_address)
+    : [];
+  const violations = detectOffPlatform(body, { allowEmail: accountOrder, allowIds, ownAddresses });
   const split: string[] = [];
   if (!violations.length && user.role === 'user') {
     // Split messages ("dis" … "cord"): the sender's last few lines, joined with this one.
@@ -250,16 +260,6 @@ export async function postUserMessage(ctx: Ctx, roomId: string, user: { id: stri
       const msg = await appendMessage(s, roomId, user.id, 'text', body, ['blocked', ...flags], ctx.keyring, { hidden: true });
       // Round 22 decision: everything is blocked and queued for staff, who confirm before any strike or ban (decideChatFlag);
       // only an unambiguous contact (classify) bans at once.
-      // Round 22b: our own NOWPayments deposit addresses (any order in this room or of this user) never ban.
-      const ownAddresses = violations.includes('wallet_address')
-        ? (await many<{ pay_address: string }>(
-            s.tx,
-            `SELECT DISTINCT p.pay_address FROM crypto_payments p
-               LEFT JOIN orders o ON o.id = p.order_id LEFT JOIN checkouts k ON k.id = p.checkout_id
-              WHERE p.order_id = $1::uuid OR o.buyer_id = $2::uuid OR k.buyer_id = $2::uuid OR p.checkout_id IN (SELECT checkout_id FROM orders WHERE id = $1::uuid)`,
-            [room0.order_id ?? null, user.id],
-          )).map((r) => r.pay_address)
-        : [];
       const kind = classify(violations, { split, body, ownAddresses });
       // An automatic ban records the status it replaced, so dismissing the flag can restore it (Round 22b).
       await s.tx.query(

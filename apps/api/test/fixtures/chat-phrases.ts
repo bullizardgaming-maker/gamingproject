@@ -40,14 +40,17 @@ export const QUEUE_R22 = [
   'I sent USDT to TN3W4H6rK2ce4vX9YnFQHwKENnHjoxb3m9 on the checkout page, is it received?',
   'sent the trc20 to the address the site gave me: TN3W4H6rK2ce4vX9YnFQHwKENnHjoxb3m9',
   'my numbr is 0 1 0 1 2 3 4 5 6 7 8',
+  // Round 22b (second pass): a question about an unknown address, or an order to pay one that is not the sender's own, is
+  // blocked and queued, never an automatic ban. Moved here from BAN (they banned in Round 22).
+  'Should I send USDT to TN3W4H6rK2ce4vX9YnFQHwKENnHjoxb3m9?', 'send to 0x52908400098527886E0F7030069857D2E4169EE7',
+  'pay to TN3W4H6rK2ce4vX9YnFQHwKENnHjoxb3m9 in usdt',
 ];
 
-/** Unambiguous: a contact link, a phone or handle with a messenger/payment name, a wallet offered for payment. */
+/** Unambiguous: a contact link, a phone or handle with a messenger/payment name, the sender's own wallet offered for payment. */
 export const BAN = [
   'my wats app is 0101234567', 'whatsapp 0101234567', 't.me/xyz', 'paypal.me/x', 'wa.me/201012345678', 'discord.gg/abcd',
   'telegram: t.me/cheapgold', 'telegram @cheapgold', 'my whatsapp is +44 7700 900123', 'discord: pat#1234', 'd i s c o r d: pat#1234',
-  'snap: coolguy99', 'paypal: me@example.com', 'vodafone cash 01012345678', 'send to 0x52908400098527886E0F7030069857D2E4169EE7',
-  'pay to TN3W4H6rK2ce4vX9YnFQHwKENnHjoxb3m9 in usdt',
+  'snap: coolguy99', 'paypal: me@example.com', 'vodafone cash 01012345678',
   // Round 22b: a wallet offered as the sender's own receiving address.
   'send to my wallet 0x52908400098527886E0F7030069857D2E4169EE7', 'pay me at TN3W4H6rK2ce4vX9YnFQHwKENnHjoxb3m9',
 ];
@@ -56,6 +59,19 @@ export const BAN = [
  * Round 22b: account details in an account room (the login method and a labelled UID). Never banned anywhere; delivered
  * as-is in account rooms (labelled IDs stripped, "linked to facebook" is how the account signs in, not a contact).
  */
+/**
+ * Round 22b: our own NOWPayments deposit address (DEPOSIT_R22B, the room's/user's order) in a message is delivered, so buyers
+ * can ask about their payment; the rest of the message is still checked (OWN_DEPOSIT_WITH_CONTACT is blocked).
+ */
+export const DEPOSIT_R22B = 'TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE';
+export const OWN_DEPOSIT_DELIVERED = [
+  `I sent USDT to ${DEPOSIT_R22B} on the checkout page, is it received?`,
+  `sent the trc20 to the address the site gave me: ${DEPOSIT_R22B}`,
+  `Should I send USDT to ${DEPOSIT_R22B}?`,
+  `send to ${DEPOSIT_R22B} right?`,
+];
+export const OWN_DEPOSIT_WITH_CONTACT = [`I sent to ${DEPOSIT_R22B}, whatsapp me 01012345678`];
+
 export const ACCOUNT_R22B = [
   'account linked to facebook, uid 0115566778',
   'الحساب مربوط بالفيسبوك والـ UID 0112345678',
