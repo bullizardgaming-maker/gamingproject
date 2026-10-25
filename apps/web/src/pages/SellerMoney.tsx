@@ -164,7 +164,7 @@ export function SellerMoney() {
           {others.map((b: any) => (
             <div key={b.currency} className="notice row spread">
               <span>{t('money.alsoHold', { amount: money(b.cents, b.currency) })}</span>
-              {b.cents > 0 && (
+              {b.cents > 0 && b.currency === 'USD' /* withdrawals are USD only (Round 22b) */ && (
                 <button className="btn ghost" disabled={!user?.payouts_enabled} onClick={() => run(() => api('/seller/withdrawals', { body: { amountCents: b.cents, currency: b.currency } }), t('money.onItsWayShort', { amount: money(b.cents, b.currency) }))}>
                   {t('money.withdraw')}
                 </button>

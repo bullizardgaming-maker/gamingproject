@@ -248,7 +248,7 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/seller/withdrawals', async (req, reply) => {
     const user = me(req);
     const body = z.object({ amountCents: z.number().int().positive(), currency: z.string().length(3).toUpperCase().optional() }).parse(req.body);
-    const currency = body.currency ?? (await payoutCurrency(ctx, ctx.db, user.id));
+    const currency = body.currency ?? 'USD'; // Round 22b: withdrawals are USD only (anything else: 400 unsupported_currency)
     const crypto = ctx.payments instanceof NowPaymentsProvider;
     return reply.status(201).send(crypto ? await requestCryptoWithdrawal(ctx, user.id, body.amountCents, currency) : await requestWithdrawal(ctx, user.id, body.amountCents, currency));
   });

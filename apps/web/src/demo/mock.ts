@@ -1861,7 +1861,7 @@ route('POST', '/chat/rooms/:id/messages', ({ me, params, body }) => {
     const seq = (state.messages.filter((m) => m.room_id === r.id).length || 0) + 1;
     // Round 22b: our own deposit addresses never ban.
     const action = classify(reasons, { body: text, ownAddresses });
-    state.chatFlags.unshift({ id: rid(), room_id: r.id, seq, user_id: u.id, reasons, status: 'open', note: null, created_at: now(), attempted: text, strike: action === 'ban', auto_ban: action === 'ban', prior_status: action === 'ban' ? u.status : null });
+    state.chatFlags.unshift({ id: rid(), room_id: r.id, seq, user_id: u.id, reasons, status: 'open', note: null, created_at: now(), attempted: text, strike: action === 'ban', auto_ban: action === 'ban', prior_status: action === 'ban' ? u.status : null, prior_suspended_until: action === 'ban' ? (u as any).suspended_until ?? null : null });
     if (action === 'ban') {
       u.status = 'banned';
       live(appendMessage(r.id, null, 'warning', 'This account has been banned for trying to move the deal outside Bullizard. Do not continue this trade anywhere else; staff will review the case.'));
@@ -2184,6 +2184,8 @@ route('GET', '/seller/payout-account', ({ me }) => {
 });
 route('POST', '/seller/withdrawals', ({ me, body }) => {
   const u = needSeller(me);
+  // Round 22b: withdrawals are USD only.
+  if (body.currency && String(body.currency).toUpperCase() !== 'USD') fail(400, 'unsupported_currency', 'Withdrawals are in USD only; contact support about a balance in another currency');
   if (!u.payout_address) fail(400, 'no_payout_address', 'Add and confirm a payout address first');
   const available = state.balances[u.id] ?? 0;
   const { withdrawableCents } = holdOf(u.id);
@@ -2319,12 +2321,16 @@ route('POST', '/admin/moderation/chats/:id', ({ me, params, body }) => {
     const other = state.chatFlags.some((x) => x.id !== f.id && x.user_id === f.user_id && (x.status === 'confirmed' || (x.status === 'open' && x.auto_ban)));
     const target = userById(f.user_id);
     if (!other && target?.status === 'banned') {
-      target.status = f.prior_status ?? 'active';
+      // A prior suspension comes back with its original end; without one still ahead, the user is active again.
+      const resuspend = f.prior_status === 'suspended' && f.prior_suspended_until && new Date(f.prior_suspended_until).getTime() > Date.now();
+      target.status = resuspend ? 'suspended' : f.prior_status && f.prior_status !== 'suspended' ? f.prior_status : 'active';
+      (target as any).suspended_until = resuspend ? f.prior_suspended_until : null;
+      f.restored_status = target.status;
       banLifted = true;
     }
   }
   save();
-  return { id: f.id, status: f.status, user_id: f.user_id, strike: f.strike !== false, action, banLifted, restoredStatus: banLifted ? (f.prior_status ?? 'active') : null };
+  return { id: f.id, status: f.status, user_id: f.user_id, strike: f.strike !== false, action, banLifted, restoredStatus: banLifted ? f.restored_status : null };
 });
 route('GET', '/admin/moderation/offplatform-policy', ({ me }) => (needPerm(me, 'moderation.manage'), { actions: state.offplatformActions }));
 route('PUT', '/admin/moderation/offplatform-policy', ({ me, body }) => {

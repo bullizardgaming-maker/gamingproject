@@ -38,6 +38,11 @@ const USD_STABLE = /^usd[tc]/;
 /** What the seller reads when a withdrawal in a coin we no longer pay out in is refused (Round 22b). */
 const UNSUPPORTED_COIN_REASON = 'payouts are sent in USDT only; add a USDT (TRC-20 or BEP-20) payout address';
 
+/** Round 22b: every withdrawal is in USD; a balance in another currency waits for Finance's manual conversion (Ops alert). */
+export function assertUsdWithdrawal(currency: string) {
+  if (String(currency).toUpperCase() !== 'USD') throw badRequest('unsupported_currency', 'Withdrawals are in USD only; contact support about a balance in another currency');
+}
+
 export function withdrawalFee(ctx: Ctx, amountCents: number) {
   return Math.min(amountCents, Math.max(ctx.cfg.WITHDRAWAL_FEE_MIN_CENTS, Math.ceil((amountCents * ctx.cfg.WITHDRAWAL_FEE_BPS) / 10_000)));
 }
@@ -131,6 +136,7 @@ export async function removePayoutAddress(ctx: Ctx, userId: string) {
 /** A withdrawal request: fee computed, gross moved out of the balance, waits for the CFO. */
 export async function requestCryptoWithdrawal(ctx: Ctx, userId: string, amountCents: number, currency = ctx.cfg.SETTLEMENT_CURRENCY, opts: { source?: 'balance' | 'credit' } = {}) {
   const source = opts.source ?? 'balance';
+  assertUsdWithdrawal(currency);
   if (!(ctx.payments instanceof NowPaymentsProvider)) throw new AppError(503, 'payouts_unavailable', 'Crypto payouts are not configured');
   await ensureScreenedForPayout(ctx, userId);
   return withScope(ctx, async (s) => {

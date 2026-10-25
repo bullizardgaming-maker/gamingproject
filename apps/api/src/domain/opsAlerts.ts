@@ -33,6 +33,16 @@ export async function detectOpsAlerts(ctx: Ctx): Promise<OpsAlert[]> {
   const late = await many<{ id: string; user_id: string; net_cents: string }>(ctx.db, `SELECT id, user_id, net_cents FROM withdrawals WHERE paid_after_reversal_at > now() - interval '7 days'`);
   if (late.length) alerts.push({ key: 'payout_after_reversal', title: `${late.length} payout(s) sent after they were reversed`, detail: late.map((w) => `withdrawal ${w.id}: ${(Number(w.net_cents) / 100).toFixed(2)} USD to user ${w.user_id}`).join('; '), action: 'Freeze the seller\'s withdrawals and recover the amount from their balance (Ops → Payouts), or write it off.' });
 
+  // Round 22b: withdrawals are USD only. Any seller/buyer balance left in another currency is listed for Finance to convert by a
+  // manual ledger adjustment (never converted automatically).
+  const foreign = await many<{ owner_id: string; kind: string; currency: string; cents: string }>(
+    ctx.db,
+    `SELECT a.owner_id, a.kind, a.currency, SUM(e.amount_cents)::bigint AS cents FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id
+      WHERE a.kind IN ('seller_available', 'user_credit') AND a.currency <> 'USD' AND a.owner_id IS NOT NULL
+      GROUP BY a.owner_id, a.kind, a.currency HAVING SUM(e.amount_cents) <> 0 ORDER BY a.currency, a.owner_id LIMIT 50`,
+  );
+  if (foreign.length) alerts.push({ key: 'non_usd_balances', title: `${foreign.length} balance(s) not in USD`, detail: foreign.map((b) => `user ${b.owner_id}: ${(Number(b.cents) / 100).toFixed(2)} ${b.currency} (${b.kind})`).join('; '), action: 'Withdrawals are USD only: convert each balance to USD with a manual ledger adjustment (Ops → Ledger) at the day\'s rate, and note the rate used.' });
+
   const big = await many<{ id: string; user_id: string; amount_cents: string }>(ctx.db, `SELECT id, user_id, amount_cents FROM withdrawals WHERE created_at > now() - interval '1 hour' AND amount_cents >= $1`, [c.alert_withdrawal_cents]);
   if (big.length) alerts.push({ key: 'withdrawals_large', title: `${big.length} large withdrawal request(s)`, detail: big.map((w) => `${(Number(w.amount_cents) / 100).toFixed(2)} USD by user ${w.user_id}`).join('; '), action: 'Finance checks the seller\'s recent sales and disputes before approving (Ops → Payouts).' });
   const repeat = await many<{ user_id: string; n: number }>(ctx.db, `SELECT user_id, count(*)::int AS n FROM withdrawals WHERE created_at > now() - interval '24 hours' GROUP BY user_id HAVING count(*) >= 3`);

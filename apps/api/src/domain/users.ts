@@ -1,4 +1,5 @@
 import { SignJWT, jwtVerify } from 'jose';
+import { assertUsdWithdrawal } from './cryptoPayouts.js';
 import { PACKS, isLocale } from './locales/index.js';
 import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
@@ -379,6 +380,7 @@ export async function applyKycResult(ctx: Ctx, result: { externalId: string; sta
 // Withdrawals (Tier 2 only)
 // ---------------------------------------------------------------------------
 export async function requestWithdrawal(ctx: Ctx, userId: string, amountCents: number, currency = ctx.cfg.SETTLEMENT_CURRENCY) {
+  assertUsdWithdrawal(currency); // Round 22b: USD only on every withdrawal path
   await ensureScreenedForPayout(ctx, userId);
   const w = await withScope(ctx, async (s) => {
     // Lock the user row to serialize concurrent withdrawals against the same balance.

@@ -263,3 +263,52 @@ describe('7. minor money items', () => {
     }
   });
 });
+
+describe('Round 22b, third pass', () => {
+  it('withdrawals are USD only on every path (400 unsupported_currency) and Ops reports non-USD balances', async () => {
+    const { seller } = await sellerWithSales(1);
+    const r = await seller.api.post('/v1/seller/withdrawals', { amountCents: 10_00, currency: 'EUR' });
+    expect(r.status).toBe(400);
+    expect(r.body.error.code).toBe('unsupported_currency');
+    const { requestCryptoWithdrawal } = await import('../src/domain/cryptoPayouts.js');
+    const { requestWithdrawal } = await import('../src/domain/users.js');
+    await expect(requestCryptoWithdrawal(h.ctx, seller.id, 10_00, 'EGP', { source: 'credit' })).rejects.toMatchObject({ code: 'unsupported_currency' });
+    await expect(requestWithdrawal(h.ctx, seller.id, 10_00, 'EUR')).rejects.toMatchObject({ code: 'unsupported_currency' });
+    expect((await seller.api.post('/v1/seller/withdrawals', { amountCents: 10_00 })).status).toBe(201); // USD still works
+    // A left-over EUR balance is reported for a manual ledger adjustment, never converted automatically.
+    await withTx(h.ctx.db, async (tx) => {
+      await post(tx, [
+        { account: await accountId(tx, 'seller_available', 'EUR', seller.id), amountCents: 5_00 },
+        { account: await accountId(tx, 'gateway_clearing', 'EUR'), amountCents: -5_00 },
+      ], 'test_eur_balance');
+    });
+    const { detectOpsAlerts } = await import('../src/domain/opsAlerts.js');
+    const alert = (await detectOpsAlerts(h.ctx)).find((a) => a.key === 'non_usd_balances');
+    expect(alert?.detail).toContain(seller.id);
+    expect(alert?.detail).toContain('EUR');
+    expect(Number((await h.ctx.db.query(`SELECT COALESCE(SUM(e.amount_cents), 0)::bigint AS s FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id WHERE a.kind = 'seller_available' AND a.owner_id = $1 AND a.currency = 'EUR'`, [seller.id])).rows[0].s)).toBe(5_00);
+  });
+
+  it('dismissing restores a prior suspension with its original end, or active when no end was stored', async () => {
+    const admin = await makeUser(h, { role: 'admin' });
+    const seller = await makeUser(h, { tier: 2 });
+    const offer = await makeOffer(seller, { deliveryMode: 'manual', stock: 5, categorySlug: 'currency', title: 'Gold', priceCents: 10_00 });
+    const until = new Date(Date.now() + 2 * 86_400_000);
+    for (const [stored, expected] of [[until, 'suspended'], [null, 'active']] as const) {
+      const u = await makeUser(h, { tier: 1 });
+      const room = (await u.api.post('/v1/chat/rooms', { offerId: offer.id })).body.id;
+      expect((await u.api.post(`/v1/chat/rooms/${room}/messages`, { body: 'whatsapp 0101234567' })).body.error.details.action).toBe('ban');
+      const flag = (await h.ctx.db.query(`SELECT id FROM chat_flags WHERE user_id = $1 AND status = 'open'`, [u.id])).rows[0].id;
+      // As if the user had been suspended (until `stored`) when the filter banned them.
+      await h.ctx.db.query(`UPDATE chat_flags SET prior_status = 'suspended', prior_suspended_until = $2, prior_suspension_reason = 'off_platform_contact' WHERE id = $1`, [flag, stored]);
+      const d = await admin.api.post(`/v1/admin/moderation/chats/${flag}`, { confirm: false });
+      expect(d.body).toMatchObject({ banLifted: true, restoredStatus: expected });
+      const after = (await h.ctx.db.query('SELECT status, suspended_until, suspension_reason FROM users WHERE id = $1', [u.id])).rows[0];
+      expect(after.status).toBe(expected);
+      if (stored) {
+        expect(new Date(after.suspended_until).getTime()).toBe(until.getTime());
+        expect(after.suspension_reason).toBe('off_platform_contact');
+      } else expect(after.suspended_until).toBeNull();
+    }
+  });
+});

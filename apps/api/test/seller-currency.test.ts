@@ -34,7 +34,7 @@ describe('seller balances in their own currency', () => {
     }
   });
 
-  it('credits a EUR seller their EUR price minus commission at the rate locked at order time, and pays out in EUR', async () => {
+  it('credits a EUR seller their EUR price minus commission at the rate locked at order time, but withdraws in USD only', async () => {
     const seller = await eurSeller();
     const buyer = await makeUser(h, { tier: 1 });
     const offer = await makeOffer(seller, { priceCents: 92_00, currency: 'EUR', categorySlug: 'boosting', deliveryMode: 'manual', stock: 1 } as any);
@@ -57,29 +57,24 @@ describe('seller balances in their own currency', () => {
     expect(dash.balances).toMatchObject({ currency: 'EUR', availableCents: expectedEur, withdrawableCents: expectedEur });
     expect(dash.allBalances).toEqual([{ currency: 'EUR', cents: expectedEur }]);
 
-    const w = await seller.api.post('/v1/seller/withdrawals', { amountCents: expectedEur });
-    expect(w.status).toBe(201);
-    expect(w.body.currency).toBe('EUR');
-    expect(await sellerAvailable(h.ctx.db, seller.id, 'EUR')).toBe(0);
+    // Round 22b: withdrawals are USD only; the EUR balance stays for Finance to convert by a manual ledger adjustment.
+    const w = await seller.api.post('/v1/seller/withdrawals', { amountCents: expectedEur, currency: 'EUR' });
+    expect(w.status).toBe(400);
+    expect(w.body.error.code).toBe('unsupported_currency');
+    expect(await sellerAvailable(h.ctx.db, seller.id, 'EUR')).toBe(expectedEur);
 
-    // Treasury sees it is short of EUR, converts, and every currency's PSP balance check stays exact.
+    // Treasury sees the EUR owed to the seller; every currency's PSP balance check stays exact.
     const admin = await makeUser(h, { role: 'admin' });
-    let pos = (await admin.api.get('/v1/admin/fx/position')).body.positions;
+    const pos = (await admin.api.get('/v1/admin/fx/position')).body.positions;
     const eur = pos.find((p: any) => p.currency === 'EUR');
-    // The EUR paid out hasn't been bought yet: that's the shortfall to convert.
-    expect(eur).toMatchObject({ positionCents: -expectedEur, pspExpectedCents: -expectedEur, shortfallCents: expectedEur });
-    const conv = await admin.api.post('/v1/admin/fx/conversions', { fromCurrency: 'USD', fromCents: Number(row.seller_net_cents), toCurrency: 'EUR', toCents: expectedEur, reference: 'stripe_fx_123' });
-    expect(conv.status).toBe(201);
-    pos = (await admin.api.get('/v1/admin/fx/position')).body.positions;
-    expect(pos.find((p: any) => p.currency === 'EUR')).toMatchObject({ positionCents: 0, pspExpectedCents: 0, shortfallCents: 0 });
-    expect(pos.find((p: any) => p.currency === 'USD')).toMatchObject({ positionCents: 0 });
-
-    // USD at the PSP: 105.27 captured - 100.00 converted to EUR = the commission.
+    // The EUR owed to the seller hasn't been bought yet: that's the shortfall to convert.
+    expect(eur).toMatchObject({ positionCents: -expectedEur, sellerBalancesCents: expectedEur, shortfallCents: expectedEur });
+    // Nothing is converted automatically (Round 22b): the USD captured stays at the PSP until Finance adjusts the balance.
     const mock = h.ctx.payments as MockPaymentProvider;
-    mock.balanceOverride = { USD: Number(row.commission_cents), EUR: 0 };
+    mock.balanceOverride = { USD: Number(row.amount_cents), EUR: 0 };
     expect((await runReconciliation(h.ctx)).report.issues).toEqual([]);
-    // Had treasury forgotten to record the conversion, the EUR check would catch it.
-    mock.balanceOverride = { USD: Number(row.commission_cents), EUR: 5_00 };
+    // EUR at the PSP that the books don't know about is caught.
+    mock.balanceOverride = { USD: Number(row.amount_cents), EUR: 5_00 };
     const bad = await runReconciliation(h.ctx);
     mock.balanceOverride = null;
     expect(bad.report.issues).toEqual([{ check: 'psp_balance_mismatch', detail: { currency: 'EUR', expected: 0, actual: 5_00, difference: 5_00 } }]);

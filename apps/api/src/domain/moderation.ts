@@ -96,7 +96,7 @@ export async function decideChatFlag(ctx: Ctx, flagId: string, staffId: string, 
   return withScope(ctx, async (s) => {
     const f = await maybeOne(
       s.tx,
-      `UPDATE chat_flags SET status = $2, reviewed_by = $3, note = $4, reviewed_at = now() WHERE id = $1 AND status = 'open' RETURNING id, status, user_id, room_id, strike, auto_ban, prior_status`,
+      `UPDATE chat_flags SET status = $2, reviewed_by = $3, note = $4, reviewed_at = now() WHERE id = $1 AND status = 'open' RETURNING id, status, user_id, room_id, strike, auto_ban, prior_status, prior_suspended_until, prior_suspension_reason`,
       [flagId, confirm ? 'confirmed' : 'dismissed', staffId, note?.trim() || null],
     );
     if (!f) throw notFound('Open flag');
@@ -110,12 +110,15 @@ export async function decideChatFlag(ctx: Ctx, flagId: string, staffId: string, 
         `SELECT 1 FROM chat_flags WHERE user_id = $1 AND id <> $2 AND (status = 'confirmed' OR (status = 'open' AND auto_ban)) LIMIT 1`,
         [f.user_id, f.id],
       );
+      // A prior suspension comes back with its original end (and reason); without a stored end still ahead, the user is active
+      // again rather than suspended for ever.
+      const resuspend = f.prior_status === 'suspended' && f.prior_suspended_until && new Date(f.prior_suspended_until).getTime() > Date.now();
       const lifted = other
         ? null
         : await maybeOne<{ status: string }>(
             s.tx,
-            `UPDATE users SET status = $2, suspended_until = NULL, suspension_reason = NULL WHERE id = $1 AND status = 'banned' AND suspension_reason = 'off_platform_ban' RETURNING status`,
-            [f.user_id, f.prior_status ?? 'active'],
+            `UPDATE users SET status = $2, suspended_until = $3, suspension_reason = $4 WHERE id = $1 AND status = 'banned' AND suspension_reason = 'off_platform_ban' RETURNING status`,
+            [f.user_id, resuspend ? 'suspended' : f.prior_status && f.prior_status !== 'suspended' ? f.prior_status : 'active', resuspend ? f.prior_suspended_until : null, resuspend ? f.prior_suspension_reason ?? 'off_platform_contact' : null],
           );
       return { ...f, action: null, banLifted: !!lifted, restoredStatus: lifted?.status ?? null };
     }

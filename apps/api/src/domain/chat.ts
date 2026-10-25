@@ -263,8 +263,9 @@ export async function postUserMessage(ctx: Ctx, roomId: string, user: { id: stri
       const kind = classify(violations, { split, body, ownAddresses });
       // An automatic ban records the status it replaced, so dismissing the flag can restore it (Round 22b).
       await s.tx.query(
-        `INSERT INTO chat_flags (room_id, seq, user_id, reasons, strike, auto_ban, prior_status)
-         VALUES ($1, $2, $3, $4, $5, $5, CASE WHEN $5 THEN (SELECT status FROM users WHERE id = $3) END) ON CONFLICT (room_id, seq) DO NOTHING`,
+        `INSERT INTO chat_flags (room_id, seq, user_id, reasons, strike, auto_ban, prior_status, prior_suspended_until, prior_suspension_reason)
+         SELECT $1, $2, $3, $4, $5, $5, CASE WHEN $5 THEN u.status END, CASE WHEN $5 THEN u.suspended_until END, CASE WHEN $5 THEN u.suspension_reason END
+           FROM users u WHERE u.id = $3 ON CONFLICT (room_id, seq) DO NOTHING`,
         [roomId, msg.seq, user.id, violations, kind === 'ban'],
       );
       if (kind === 'queue') return 'queue';
