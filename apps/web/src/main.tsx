@@ -25,6 +25,7 @@ import { MyProposals, MyRequests, RequestNew, RequestPage, RequestsBoard } from 
 import { SiteHeader } from './components/SiteHeader';
 import { SiteFooter } from './components/SiteFooter';
 import { LegalNotice } from './components/LegalNotice';
+import { TurnstileUnloader } from './components/Turnstile';
 import { DEMO } from './api';
 import { DemoBanner, DemoCheckout } from './demo/DemoUi';
 import { applyTheme } from '@/lib/prefs';
@@ -84,6 +85,7 @@ function App() {
       <LegalNotice />
       <ScrollToTop />
       <RouteAnnouncer />
+      <TurnstileUnloader />
       <main className="shell" id="main" tabIndex={-1}>
         <Routes>
           <Route path="/" element={<Home />} />

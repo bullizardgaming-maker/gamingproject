@@ -1,5 +1,6 @@
 import type { Ctx } from '../context.js';
 import { many, maybeOne, one } from '../db.js';
+import { forgetNewsletterContact } from './newsletter.js';
 import { sellerBalances } from './sellerfx.js';
 import { openMessages } from './chat.js';
 import { hashPassword, randomToken, verifyPassword } from '../lib/crypto.js';
@@ -83,12 +84,15 @@ export async function deleteAccount(ctx: Ctx, user: User, password: string, code
   if (balances.some((b) => b < 0)) throw new AppError(409, 'balance_owed', 'Your balance is negative after a chargeback. Contact support to settle it first.');
 
   const scrambled = await hashPassword(randomToken(32));
+  // A newsletter contact that reached Brevo is deleted there before the address is scrubbed here.
+  const news = await maybeOne<{ email: string; news_synced_at: string | null }>(ctx.db, 'SELECT email, news_synced_at FROM users WHERE id = $1', [user.id]);
+  if (news?.news_synced_at) await forgetNewsletterContact(ctx, news.email);
   return withScope(ctx, async (s) => {
     await s.tx.query(
       `UPDATE users SET
           email = 'deleted-' || id || '@deleted.invalid', display_name = 'Deleted user', password_hash = $2,
           phone = NULL, legal_name = NULL, wallet_address = NULL,
-          totp_secret_ciphertext = NULL, totp_enabled_at = NULL, email_preferences = '{}',
+          totp_secret_ciphertext = NULL, totp_enabled_at = NULL, email_preferences = '{}', news_opt_in = false, news_opt_in_at = NULL,
           status = 'suspended', suspension_reason = 'account_deleted', deleted_at = now()
         WHERE id = $1`,
       [user.id, scrambled],

@@ -15,10 +15,20 @@ export interface Queryable {
   query<R extends pg.QueryResultRow = any>(text: string, params?: unknown[]): Promise<pg.QueryResult<R>>;
 }
 
+/**
+ * pg 8 treats sslmode=prefer|require|verify-ca as verify-full (and warns that pg 9 will weaken them to libpq's
+ * meaning). Ask for verify-full explicitly, so the connection keeps checking the certificate and host name
+ * (Neon's certificates are publicly trusted) whatever pg version runs. Other modes (disable, no-verify,
+ * verify-full) and URLs without sslmode are left as they are.
+ */
+export function strictSslUrl(url: string): string {
+  return url.replace(/([?&]sslmode=)(prefer|require|verify-ca)(?=&|#|$)/i, '$1verify-full');
+}
+
 export function createPool(url: string, max = Number(process.env.DB_POOL_MAX ?? 20), opts: { connectTimeoutMs?: number } = {}): Db {
   // The timeout covers queueing for a free pooled connection, not just connecting, so it must
   // tolerate load bursts on the primary; replicas use a short one because reads can fall back.
-  const pool = new pg.Pool({ connectionString: url, max, connectionTimeoutMillis: opts.connectTimeoutMs ?? 30_000 });
+  const pool = new pg.Pool({ connectionString: strictSslUrl(url), max, connectionTimeoutMillis: opts.connectTimeoutMs ?? 30_000 });
   // An idle connection dropped by the server (failover, restart, admin kill) is reported here.
   // Without a listener Node treats it as an uncaught error and the process dies; the pool
   // already discards the broken client and opens a new one on demand.

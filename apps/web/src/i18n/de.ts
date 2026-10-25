@@ -868,5 +868,14 @@ const de: Messages = {
   "sp.showing": "Die {n} neuesten schriftlichen Bewertungen von {total}.",
   "sp.offers": "Angebote",
   "sp.reviews": "Bewertungen",
+  // Round 23a: newsletter consent, bot check (Turnstile), proof video size
+  "auth.newsOptIn": "Schickt mir Neuigkeiten, neue Spiele und Angebote.",
+  "auth.botCheck": "Bot-Prüfung",
+  "err.captcha_required": "Bitte schließe die Bot-Prüfung ab.",
+  "err.captcha_failed": "Die Bot-Prüfung ist fehlgeschlagen. Bitte versuche es erneut.",
+  "account.newsletter.title": "Neuigkeiten und Angebote",
+  "account.newsletter.hint": "Gelegentliche E-Mails zu neuen Spielen und Angeboten. Du kannst sie hier oder über den Link in jedem Newsletter abbestellen.",
+  "account.newsletter.saved": "Gespeichert.",
+  "upload.videoTooLarge": "Videos dürfen bis zu 95 MB groß sein. Kürze die Aufnahme oder senke die Qualität und versuche es erneut.",
 };
 export default de;

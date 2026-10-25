@@ -31,6 +31,7 @@ import { maybeSendRetentionDigest } from './domain/retentionDigest.js';
 import { refreshSellerRates } from './domain/commission.js';
 import { recheckUnknownPayouts } from './domain/cryptoPayouts.js';
 import { sendOpsAlerts } from './domain/opsAlerts.js';
+import { syncNewsletter } from './domain/newsletter.js';
 
 /**
  * Background jobs. Every job is safe to run on several worker processes at
@@ -94,6 +95,7 @@ export async function runJobsOnce(ctx: Ctx) {
   await job(ctx, 'referral_digests', () => every('referral_digests', HOUR, () => sendReferralDigests(ctx)), null);
   await job(ctx, 'payouts_unknown', () => every('payouts_unknown', HOUR, () => recheckUnknownPayouts(ctx)), null);
   await job(ctx, 'ops_alerts', () => every('ops_alerts', 15 * 60_000, () => sendOpsAlerts(ctx)), null);
+  await job(ctx, 'newsletter_sync', () => every('newsletter_sync', 15 * 60_000, () => syncNewsletter(ctx)), null);
   await job(ctx, 'suspensions', () => every('suspensions', HOUR, () => ctx.db.query(`UPDATE users SET status = 'active', suspended_until = NULL, suspension_reason = NULL WHERE status = 'suspended' AND suspended_until <= now()`).then((r) => r.rowCount ?? 0)), null);
   // Send after the jobs above so emails they queued go out in the same tick.
   const emails = await job(ctx, 'emails', () => dispatchEmails(ctx), 0);

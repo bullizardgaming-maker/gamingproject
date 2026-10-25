@@ -472,6 +472,18 @@ export async function enqueueEmail(q: Queryable, userId: string, template: Templ
 /** Every notification goes to the inbox and, per preferences, to email and push. */
 export const notify = enqueueEmail;
 
+/**
+ * Round 23a: an email to a team mailbox (ALERTS_EMAIL, FINANCE_EMAIL) rather than a user: same outbox, retries and
+ * dedupe key, English, no inbox item. Does nothing when the address is not configured.
+ */
+export async function enqueueMailboxEmail(q: Queryable, to: string | undefined, template: TemplateName, data: Data, dedupeKey: string) {
+  if (!to) return;
+  await q.query(
+    `INSERT INTO notifications (user_id, to_email, template, data, dedupe_key, status) VALUES (NULL, $1, $2, $3, $4, 'pending') ON CONFLICT (dedupe_key) DO NOTHING`,
+    [to, template, JSON.stringify(data), `${dedupeKey}:${to}`],
+  );
+}
+
 /** Inbox wording: the email subject as title, its first paragraph as body, its first app link as the target. */
 function inboxText(t: Template, data: Data) {
   const MARK = '\u0000';
@@ -532,11 +544,13 @@ export async function dispatchEmails(ctx: Ctx, limit = 50): Promise<number> {
     many(
       tx,
       `UPDATE notifications n SET attempts = n.attempts + 1, next_attempt_at = now() + interval '2 minutes'
-         FROM users u
-        WHERE u.id = n.user_id AND n.id IN (
+        WHERE n.id IN (
           SELECT id FROM notifications WHERE status = 'pending' AND next_attempt_at <= now()
            ORDER BY created_at LIMIT $1 FOR UPDATE SKIP LOCKED)
-        RETURNING n.id, n.template, n.data, n.attempts, u.email, u.email_preferences, u.locale`,
+        RETURNING n.id, n.template, n.data, n.attempts,
+          COALESCE(n.to_email, (SELECT u.email FROM users u WHERE u.id = n.user_id)) AS email,
+          (SELECT u.email_preferences FROM users u WHERE u.id = n.user_id) AS email_preferences,
+          (SELECT u.locale FROM users u WHERE u.id = n.user_id) AS locale`,
       [limit],
     ),
   );
@@ -552,7 +566,8 @@ export async function dispatchEmails(ctx: Ctx, limit = 50): Promise<number> {
     }
     try {
       const msg = render(ctx, n.template as TemplateName, n.data, isLocale(n.locale) ? n.locale : 'en');
-      await ctx.messenger.send({ channel: 'email', to: n.email, subject: msg.subject, body: msg.text, html: msg.html });
+      // The notification id is the idempotency key: a retry after a timeout is the same message, sent once.
+      await ctx.messenger.send({ channel: 'email', to: n.email, subject: msg.subject, body: msg.text, html: msg.html, idempotencyKey: `notification-${n.id}` });
       await ctx.db.query(`UPDATE notifications SET status = 'sent', sent_at = now(), last_error = NULL WHERE id = $1`, [n.id]);
     } catch (err) {
       const dead = n.attempts >= MAX_ATTEMPTS;

@@ -2,7 +2,7 @@ import { ShieldCheck } from '@phosphor-icons/react';
 import { BuyerProtection } from '../components/Brand';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { api, apiUpload, money, realtime } from '../api';
+import { api, money, realtime, uploadChatFile } from '../api';
 import { Chat } from '../components/Chat';
 import { BoostProgress, type ProgressUpdate } from '../components/BoostProgress';
 import { BuyerCard, type BuyerRep, type BuyerTag } from '../components/BuyerReputation';
@@ -505,7 +505,7 @@ export function OrderPage() {
                   setDelivering(true);
                   setError('');
                   try {
-                    const proof = proofFile ? await apiUpload<{ id: string }>(`/chat/rooms/${order.room_id}/attachments`, proofFile) : null;
+                    const proof = proofFile ? await uploadChatFile<{ id: string }>(order.room_id, proofFile) : null;
                     await api(`/orders/${order.id}/deliver`, { body: { payload: payload || undefined, ...(proof ? { proofAttachmentId: proof.id } : {}) } });
                     setProofFile(null);
                     await load();

@@ -1,9 +1,13 @@
+import { randomUUID } from 'node:crypto';
+
 export interface OutboundMessage {
   channel: 'email' | 'sms';
   to: string;
   body: string;
   subject?: string;
   html?: string;
+  /** Same key = same message: the provider sends it once even if we retry (Resend keeps keys for 24 hours). */
+  idempotencyKey?: string;
 }
 
 /**
@@ -52,6 +56,43 @@ export class PostmarkMessenger implements Messenger {
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) throw new Error(`postmark ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  }
+}
+
+/**
+ * Email through Resend's HTTP API (https://resend.com/docs/api-reference/emails/send-email). Every message carries an
+ * Idempotency-Key, so a retry after a timeout never sends it twice. No open/click tracking: we add no pixel and
+ * no tracked links, and tracking stays off on the sending domain (Resend → Domains → mail.bullizard.com).
+ */
+export class ResendMessenger implements Messenger {
+  constructor(
+    private readonly apiKey: string,
+    private readonly from: string,
+    private readonly replyTo: string | undefined,
+    private readonly apiUrl = 'https://api.resend.com',
+    private readonly fetchImpl: typeof fetch = fetch,
+  ) {}
+
+  async send(msg: OutboundMessage) {
+    if (msg.channel !== 'email') throw new Error('ResendMessenger only sends email');
+    const res = await this.fetchImpl(`${this.apiUrl.replace(/\/+$/, '')}/emails`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        'Content-Type': 'application/json',
+        'Idempotency-Key': (msg.idempotencyKey ?? randomUUID()).slice(0, 256),
+      },
+      body: JSON.stringify({
+        from: this.from,
+        to: [msg.to],
+        subject: msg.subject ?? 'Bullizard',
+        text: msg.body,
+        ...(msg.html ? { html: msg.html } : {}),
+        ...(this.replyTo ? { reply_to: this.replyTo } : {}),
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) throw new Error(`resend ${res.status}: ${(await res.text()).slice(0, 200)}`);
   }
 }
 

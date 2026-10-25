@@ -34,6 +34,9 @@ export interface User {
   rules_passed_at?: string | null;
   selling_restricted_at?: string | null;
   seller_since?: string | null;
+  /** Newsletter consent (Round 23a). */
+  news_opt_in?: boolean;
+  news_opt_in_at?: string | null;
 }
 
 /**
@@ -171,6 +174,36 @@ export async function apiUpload<T = any>(path: string, file: File): Promise<T> {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new ApiError(res.status, data.error?.code ?? 'error', data.error?.message ?? '');
   return data as T;
+}
+
+/** Videos the API accepts in one request (under Cloudflare's 100 MB limit); larger ones go straight to storage. */
+export const MAX_VIDEO_BYTES = 95 * 1024 * 1024;
+
+/**
+ * Chat evidence / delivery proof (Round 23a). Images and videos up to 95 MB are posted to the API; a larger video is
+ * PUT straight to object storage with a signed URL (when the API has one) and then confirmed, so it never crosses
+ * Cloudflare. Without object storage a larger video gets the translated size message before anything is sent.
+ */
+export async function uploadChatFile<T = any>(roomId: string, file: File): Promise<T> {
+  const isVideo = file.type.startsWith('video/');
+  const tooLarge = () => new ApiError(413, 'file_too_large', t('upload.videoTooLarge'));
+  try {
+    if (!isVideo || file.size <= MAX_VIDEO_BYTES) return await apiUpload<T>(`/chat/rooms/${roomId}/attachments`, file);
+  } catch (err) {
+    if (isVideo && !DEMO && err instanceof ApiError && err.code === 'file_too_large') throw tooLarge();
+    throw err;
+  }
+  if (DEMO) throw tooLarge();
+  let start: { id: string; url: string; method: 'PUT'; headers: Record<string, string> };
+  try {
+    start = await api(`/chat/rooms/${roomId}/attachments/direct`, { body: { fileName: file.name, contentType: file.type === 'video/webm' ? 'video/webm' : 'video/mp4', bytes: file.size } });
+  } catch (err) {
+    if (err instanceof ApiError && (err.code === 'direct_upload_unavailable' || err.code === 'file_too_large')) throw tooLarge();
+    throw err;
+  }
+  const put = await fetch(start.url, { method: start.method, headers: start.headers, body: file }).catch(() => null);
+  if (!put?.ok) throw new ApiError(put?.status ?? 0, 'network', 'Upload failed');
+  return api<T>(`/chat/attachments/${start.id}/complete`, { body: {} });
 }
 
 export async function signOut() {

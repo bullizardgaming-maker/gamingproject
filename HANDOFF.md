@@ -3,7 +3,7 @@
 State of the project for whoever picks it up next (a person or another Claude session). Read this first, then
 `README.md` (how to run) and `docs/ARCHITECTURE.md` (how each feature works).
 
-## Where things stand (Oct 25, 2026, after Round 22b)
+## Where things stand (Oct 25, 2026, after Round 23a)
 
 - All work is on `main`. CI (api, web, e2e, load, contracts, fraud-gnn, sdk-python) is green.
 - 14 rounds of features are built: 84 of 92 suggestions. The tracker lives in the Claude report doc
@@ -35,7 +35,9 @@ npm run typecheck -w apps/api
 npm test -w apps/api                       # needs Postgres (and Redis for a few tests)
 npm run build -w apps/web
 VITE_DEMO=true npm run build -w apps/web && npm run e2e -w apps/web
+docker build -f apps/api/Dockerfile -t bz-api . && docker run --rm -v "$PWD/apps/api/scripts:/app/apps/api/scripts:ro" bz-api node scripts/check-runtime-imports.mjs
 ```
+CI also starts the built image against Postgres and waits for `/readyz` (job `api-image`).
 
 ## Conventions that matter
 
@@ -526,6 +528,77 @@ Migration **070** (`070_round22b.sql`, idempotent; re-run `node dist/migrate.js`
 | USD-2 | `PUT /seller/payout-currency` accepts USD only (400 `unsupported_currency`, whatever `PAYOUT_CURRENCIES` says); the payout-currency picker is gone from Sell → Money. Tests that need a legacy EUR seller set `users.payout_currency` directly. |
 | 5b | (Third pass.) The filter ban also stores `prior_suspended_until` / `prior_suspension_reason`; dismissing restores a prior suspension with its original end, or `active` when no end (still ahead) was stored. |
 | 7 | A FINISHED payout IPN/poll for a withdrawal already `failed` (reversed) sets `paid_after_reversal_at` / `paid_after_reversal_hash`, logs an error, emails admins + finance (`ops_alert`) once, and Ops alerts repeat it for 7 days (`payout_after_reversal`). Nothing is booked automatically: Finance recovers or writes it off. Four-eyes: the first approval stores `four_eyes_required`, so a withdrawal that needed two signatures still does after the user's 24h total drops. Treasury withdrawals lock `727281`; `727276` stays the platform payout cap. |
+
+## Round 23a (Oct 25, 2026) — domain, email, Cloudflare (`claude/round-23a-domain-code.md`)
+
+Migration **072** (`072_round23a.sql`, idempotent; runs in Render's pre-deploy step). New test files: `round23a.test.ts`
+(one block per item, 23 cases), browser `e2e/round23a.spec.ts` (newsletter, Turnstile, video size). Whole API suite: 80 files, 682 tests; browser suite: 127 passed (5 skipped as before). New checks:
+`apps/api/scripts/check-runtime-imports.mjs`, `apps/web/scripts/verify-static-files.mjs` (part of `npm run build -w apps/web`),
+CI job **`api-image`** (builds `apps/api/Dockerfile`, checks the image's imports, migrates, starts `node dist/index.js`, waits for
+`/readyz` and `/healthz`).
+
+| # | What changed |
+|---|---|
+| 9 | Crash on start: npm keeps `@sentry/node` and `undici` under `apps/api/node_modules` (versions differing from the hoisted ones) and the Dockerfile copied only the root `node_modules`. It now copies both. `@sentry/node` was already a production dependency. Every runtime import of `dist/` resolves in the image (24 package specifiers); `dist/index.js` and `dist/worker.js` start in it. |
+| 7 | `APP_ENV=development|test|staging|production` (default = NODE_ENV). Staging = `NODE_ENV=production` + `APP_ENV=staging`: every production check, plus `MALWARE_SCANNER=dev` allowed (no ClamAV, no `CLAMD_HOST`). `NODE_ENV=staging` now fails with that instruction instead of a ZodError (docs/HOSTING.md had suggested it). Logs and Sentry report APP_ENV. Blank values of `sync: false` keys count as unset. |
+| 8 | `render.yaml`: `region: frankfurt` on the API and the Key Value store (Render env groups have no region field), ClamAV service removed, `APP_ENV=staging`, `MALWARE_SCANNER=dev`, Resend email, NOWPayments sandbox URL; secrets `sync: false` (list below). `render.production.yaml` switched to Resend and gained the Turnstile / origin / Brevo keys. |
+| 10 | `createPool` rewrites `sslmode=require|prefer|verify-ca` to `verify-full` (what pg 8 already does, without the pg 9 warning); docs say to use `?sslmode=verify-full`. |
+| 1 | `EMAIL_PROVIDER=resend` (`ResendMessenger`, HTTP API, `Idempotency-Key` = `notification-<id>` from the outbox, so a retry is one message; status emails `status-email-<id>`; others a fresh UUID), `reply_to` = `EMAIL_REPLY_TO` (support@bullizard.com). We add no tracking: keep open/click tracking **off** on the Resend domain. Production/staging refuse `console`; console and postmark stay for development. Team mailboxes go through the same outbox (`notifications.to_email`): ops alerts → `ALERTS_EMAIL`, reconciliation and payout-after-reversal → `ALERTS_EMAIL` + `FINANCE_EMAIL`. |
+| 2 | `ORIGIN_SHARED_SECRET` set → every request needs `X-Origin-Auth` = the secret (SHA-256 digests compared in constant time), else 403 `origin_forbidden`; `/readyz` and `/healthz` are exempt. With the header, `req.ip` becomes `CF-Connecting-IP` (first hook, before rate limits), so rate limits, fraud signals, referral `ip_subnet`, audit log, `buyer_ip`, sessions and the captcha check all see the client. Unset: unchanged (TRUST_PROXY). |
+| 3 | WebSocket ping frame every `WS_PING_SECONDS` (30; Cloudflare idles out at 100 s); sockets missing two pongs are dropped. Request bodies stay ≤ 12 MB except proof videos, now ≤ 95 MB (413 `file_too_large`, `details.maxMb`; the web app shows `upload.videoTooLarge` in 6 languages before uploading). With S3/R2 storage, larger videos (≤ 500 MB) go straight to the bucket: `POST /v1/chat/rooms/:id/attachments/direct` → signed PUT URL (15 min, exact type and size) → `POST /v1/chat/attachments/:id/complete` (read back, sniffed, scanned, posted). Abandoned reservations are removed by the daily retention job. The bucket needs CORS for PUT from the web origin, and the web build `VITE_UPLOAD_ORIGIN`. |
+| 4 | `apps/web/public/.well-known/security.txt` (exact text from the spec). Both `vercel.json` files: the SPA rewrite skips `/.well-known/`, and the file is served `text/plain; charset=utf-8`. |
+| 5 | Newsletter consent, unticked: sign-up checkbox and Account → "News and offers" (`PUT /v1/me/newsletter`); `users.news_opt_in`, `news_opt_in_at` (time of the current choice), `news_synced_at`. With `BREVO_API_KEY` + `BREVO_LIST_ID_EN/AR` the worker (`newsletter_sync`, every 15 min) adds the contact to the list for their language (Arabic → Newsletter AR, others → EN) or unlinks both; failures retry. Account deletion deletes the Brevo contact. Without Brevo: Ops → Business → "Download subscribers (CSV)" (`GET /v1/admin/newsletter.csv`, `analytics.view`, audited). Campaign sender `news@news.bullizard.com` is set in Brevo (`NEWSLETTER_SENDER` documents it). |
+| 6 | Turnstile: `TURNSTILE_SECRET` (+ `TURNSTILE_SITE_KEY`) on the API, `VITE_TURNSTILE_SITE_KEY` on the web; required in production and staging. Sign-up, every sign-in and the password-reset request need a token. The widget script is injected only by those forms (never in `index.html`); leaving the auth pages after it loaded reloads the next page, so checkout pages never carry it and `payment-scripts.json` stays first-party. CSP adds `https://challenges.cloudflare.com` to `script-src` and `frame-src` only when the site key is set (checked at build). Tests use Cloudflare's test keys (`1x…AA` pass, `2x…AA` fail, token `XXXX.DUMMY.TOKEN.XXXX`); the demo turns it on with `localStorage['bz.demo.turnstile']`. |
+
+`docker compose` (the image runs NODE_ENV=production) now needs `EMAIL_PROVIDER=resend` + `RESEND_API_KEY` in `.env`, and uses
+Cloudflare's always-pass Turnstile test secret unless `.env` sets one.
+
+### What the Domain helper needs back
+
+**Render, staging API (`bullizard-api-staging`, Frankfurt).** Set by the blueprint (not secret): `NODE_ENV=production`,
+`APP_ENV=staging`, `SANDBOX_MODE=true`, `PAYMENT_PROVIDER=mock`, `KYC_PROVIDER=mock`, `EMAIL_PROVIDER=resend`,
+`EMAIL_FROM="Bullizard <no-reply@mail.bullizard.com>"`, `EMAIL_REPLY_TO=support@bullizard.com`, `ALERTS_EMAIL=alerts@bullizard.com`,
+`FINANCE_EMAIL=finance@bullizard.com`, `SMS_PROVIDER=console`, `MALWARE_SCANNER=dev`, `PLATFORM_ACCOUNTS=mock`, `TRUST_PROXY=1`,
+`NOWPAYMENTS_API_URL=https://api-sandbox.nowpayments.io`, `MERCHANT_API_ENABLED=true`, `AUTO_REFUND_LATE_ORDERS=false`,
+`CARD_REFUNDS_ENABLED=false`, `CARD_PAYMENTS_ENABLED=false`, `PAYOUT_CURRENCIES=USD`, `FX_SPREAD_BPS=0`, `PAYOUT_HOLD_DAYS_NEW=1`,
+`PAYOUT_HOLD_DAYS_ESTABLISHED=0`, `RECON_TOLERANCE_CENTS=100`, `PAYOUT_UNKNOWN_REVERSE_HOURS=6`, `RUN_WORKER_IN_PROCESS=true`,
+`STORAGE_DIR=/data/uploads`, `REDIS_URL` (from the Key Value store). Generated by Render (secret): `JWT_SECRET`, `FINGERPRINT_KEY`,
+`CRYPTO_INDEXER_SECRET`. Asked for on creation (`sync: false`):
+
+| Name | Value / example | Secret |
+|---|---|---|
+| `DATA_ENCRYPTION_KEYS` | `v1:` + `openssl rand -base64 32` (keep a copy) | yes |
+| `PUBLIC_WEB_URL` | `https://staging.bullizard.com` (exact web origin; CORS allows only it) | no |
+| `PUBLIC_API_URL` | `https://api-staging.bullizard.com` | no |
+| `DATABASE_URL` | Neon pooled URL of the `staging` branch, `…neon.tech/neondb?sslmode=verify-full` | yes |
+| `RESEND_API_KEY` | `re_…` (sending access, domain mail.bullizard.com) | yes |
+| `TURNSTILE_SECRET` | the staging widget's secret, `0x4AAAA…` | yes |
+| `ORIGIN_SHARED_SECRET` | `openssl rand -hex 32`, same value as Cloudflare's `X-Origin-Auth` | yes |
+| `BREVO_API_KEY` | `xkeysib-…`, optional (blank = CSV export) | yes |
+| `BREVO_LIST_ID_EN` / `BREVO_LIST_ID_AR` | list ids of "Newsletter EN" / "Newsletter AR", e.g. `3` / `4`; optional | no |
+| `NOWPAYMENTS_API_KEY` / `NOWPAYMENTS_IPN_SECRET` | sandbox keys; blank while `PAYMENT_PROVIDER=mock` | yes |
+
+Optional, not in the blueprint: `TURNSTILE_SITE_KEY` (not secret; only echoed by `/v1/auth/config`), `GEO_COUNTRY_HEADER=cf-ipcountry`
+(safe once `ORIGIN_SHARED_SECRET` is set), `SENTRY_DSN` (secret). To test NOWPayments on staging later: `PAYMENT_PROVIDER=nowpayments`,
+`SANDBOX_MODE=false`, `PLATFORM_ACCOUNTS=live`, plus the two keys.
+
+**NOWPayments IPN (payments and payouts, one path):** `POST https://api-staging.bullizard.com/v1/payments/webhook/nowpayments`
+(production: `https://api.bullizard.com/v1/payments/webhook/nowpayments`). Server-to-server, signed (`x-nowpayments-sig`): skip
+Cloudflare bot/challenge rules for this path; it still needs the `X-Origin-Auth` Transform Rule like every other request.
+
+**Auth paths for the Cloudflare rate-limit rule (all `POST`):** sign-in `/v1/auth/login` (+ 2FA step `/v1/auth/mfa`); sign-up
+`/v1/auth/register`; code verify `/v1/verify/email/confirm`, `/v1/verify/sms/confirm` (sending: `/v1/verify/email/send`,
+`/v1/verify/sms/send`), payout address `/v1/seller/payout-address/confirm`; password reset `/v1/auth/password/forgot`,
+`/v1/auth/password/reset`; withdrawal request `/v1/seller/withdrawals`, `/v1/me/withdrawals`, `/v1/me/credit/withdraw`.
+
+**Health:** `GET /readyz` (Render health check) and `GET /healthz` answer without `X-Origin-Auth` (query strings too); every other
+path without the header gets 403 `origin_forbidden`. WebSocket: `/v1/ws` (enable WebSockets on the zone; we ping every 30 s).
+Uploads through Cloudflare stay under 100 MB (videos ≤ 95 MB).
+
+**Vercel, staging environment:** `VITE_DEMO=false`, `VITE_API_URL=https://api-staging.bullizard.com`,
+`VITE_TURNSTILE_SITE_KEY=<staging site key>` (public), `VITE_SITE_URL=https://staging.bullizard.com`; only with S3/R2 uploads:
+`VITE_UPLOAD_ORIGIN=<bucket endpoint>`. All are build-time: redeploy after a change. `/.well-known/security.txt` is served as
+`text/plain`.
 
 ## Suggested next round
 

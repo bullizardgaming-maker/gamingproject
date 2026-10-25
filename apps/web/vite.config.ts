@@ -10,7 +10,7 @@ import { seed } from './src/demo/seed';
  * ship a strict CSP that only allows first-party scripts. Violations are reported
  * to the API. Dev mode is exempt because Vite injects inline HMR scripts.
  */
-function csp(apiUrl?: string) {
+export function csp(apiUrl?: string, opts: { turnstile?: boolean; uploadOrigin?: string } = {}) {
   // A separately hosted API (VITE_API_URL) must be allowed for fetch and the WebSocket.
   let api = '';
   let apiImg = ''; // shop banners are served by the API
@@ -19,25 +19,32 @@ function csp(apiUrl?: string) {
     api = ` ${u.origin} ${u.origin.replace(/^http/, 'ws')}`;
     apiImg = ` ${u.origin}`;
   }
+  // Cloudflare Turnstile (VITE_TURNSTILE_SITE_KEY): its script is injected only by the sign-in, sign-up and
+  // password-reset forms (components/Turnstile.tsx), never by index.html, so the payment-page script inventory stays
+  // first-party; the origin is allowed here so those forms can load it and its challenge frame.
+  const cf = opts.turnstile ? ' https://challenges.cloudflare.com' : '';
+  // Large proof videos are PUT straight to the upload bucket (VITE_UPLOAD_ORIGIN, e.g. the R2/S3 endpoint).
+  const upload = opts.uploadOrigin ? ` ${new URL(opts.uploadOrigin).origin}` : '';
   return [
   "default-src 'self'",
-  "script-src 'self'",
+  `script-src 'self'${cf}`,
   "style-src 'self' https://fonts.googleapis.com",
   "font-src https://fonts.gstatic.com",
   `img-src 'self' data:${apiImg}`,
-  `connect-src 'self' ws: wss:${api}`,
-  "frame-src https://checkout.stripe.com https://js.stripe.com",
+  `connect-src 'self' ws: wss:${api}${upload}`,
+  `frame-src https://checkout.stripe.com https://js.stripe.com${cf}`,
   "form-action 'self' https://checkout.stripe.com",
   "base-uri 'none'",
   "object-src 'none'",
   ].join('; ');
 }
 
-function cspPlugin(apiUrl?: string): Plugin {
+function cspPlugin(env: Record<string, string | undefined>): Plugin {
+  const content = csp(env.VITE_API_URL, { turnstile: !!env.VITE_TURNSTILE_SITE_KEY, uploadOrigin: env.VITE_UPLOAD_ORIGIN });
   return {
     name: 'csp-meta',
     apply: 'build',
-    transformIndexHtml: () => [{ tag: 'meta', attrs: { 'http-equiv': 'Content-Security-Policy', content: csp(apiUrl) }, injectTo: 'head-prepend' }],
+    transformIndexHtml: () => [{ tag: 'meta', attrs: { 'http-equiv': 'Content-Security-Policy', content }, injectTo: 'head-prepend' }],
   };
 }
 
@@ -123,9 +130,15 @@ const siteUrl = () =>
   process.env.VITE_SITE_URL ||
   (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://bullizard.com');
 
+const viteEnv = (mode: string) => {
+  const file = loadEnv(mode, process.cwd(), 'VITE_');
+  const pick = (k: string) => file[k] || process.env[k];
+  return { VITE_API_URL: pick('VITE_API_URL'), VITE_TURNSTILE_SITE_KEY: pick('VITE_TURNSTILE_SITE_KEY'), VITE_UPLOAD_ORIGIN: pick('VITE_UPLOAD_ORIGIN') };
+};
+
 export default defineConfig(({ mode }) => ({
   resolve: { alias: { '@': path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'src') } },
-  plugins: [react(), tailwindcss(), cspPlugin(loadEnv(mode, process.cwd(), 'VITE_').VITE_API_URL || process.env.VITE_API_URL), seoFilesPlugin(siteUrl()), appLinksPlugin()],
+  plugins: [react(), tailwindcss(), cspPlugin(viteEnv(mode)), seoFilesPlugin(siteUrl()), appLinksPlugin()],
   build: { sourcemap: false },
   server: {
     port: 5173,

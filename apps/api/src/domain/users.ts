@@ -47,6 +47,9 @@ export interface User {
   seller_since?: string | null;
   /** Interface and message language (en, ar, es, fr, de, pt). */
   locale: string;
+  /** Newsletter consent (Round 23a): unticked by default; the time of the current choice. */
+  news_opt_in?: boolean;
+  news_opt_in_at?: string | null;
   /** True when the current session was established with a second factor. */
   session_mfa?: boolean;
   session_id?: string;
@@ -54,7 +57,7 @@ export interface User {
 }
 
 export const PUBLIC_USER_COLUMNS =
-  'id, email, display_name, role, kyc_tier, status, email_verified_at, phone, phone_verified_at, withdrawals_frozen, stripe_account_id, legal_name, created_at, (totp_enabled_at IS NOT NULL) AS totp_enabled, payouts_enabled, staff_roles, locale, handover_names, rules_passed_at, selling_restricted_at, seller_since, listing_banned_at, suspended_until';
+  'id, email, display_name, role, kyc_tier, status, email_verified_at, phone, phone_verified_at, withdrawals_frozen, stripe_account_id, legal_name, created_at, (totp_enabled_at IS NOT NULL) AS totp_enabled, payouts_enabled, staff_roles, locale, handover_names, rules_passed_at, selling_restricted_at, seller_since, listing_banned_at, suspended_until, news_opt_in, news_opt_in_at';
 
 // ---------------------------------------------------------------------------
 // Authentication. Sessions live in ./sessions.ts (15-minute access tokens +
@@ -108,7 +111,7 @@ function sessionResponse(user: User, s: IssuedSession) {
   return { user, token: s.accessToken, refreshToken: s.refreshToken, expiresIn: s.expiresIn };
 }
 
-export async function register(ctx: Ctx, input: { email: string; password: string; displayName: string; code?: string; referralCode?: string; creatorCode?: string; locale?: string } & AuthMeta) {
+export async function register(ctx: Ctx, input: { email: string; password: string; displayName: string; code?: string; referralCode?: string; creatorCode?: string; locale?: string; newsOptIn?: boolean } & AuthMeta) {
   await assertNotPaused(ctx.db, 'signups'); // kill switch (Ops → Controls)
   const hash = await hashPassword(input.password);
   // One code per user, entered at sign-up only (CEO, Oct 24): a friend's invite code or a creator code, whichever this is.
@@ -120,8 +123,9 @@ export async function register(ctx: Ctx, input: { email: string; password: strin
   try {
     const user = await one<User>(
       ctx.db,
-      `INSERT INTO users (email, password_hash, display_name, referred_by, locale, tos_version, tos_accepted_at) VALUES ($1, $2, $3, $4, $5, $6, now()) RETURNING ${PUBLIC_USER_COLUMNS}`,
-      [input.email, hash, input.displayName, referrer, isLocale(input.locale) ? input.locale : 'en', await tosVersion(ctx.db)],
+      `INSERT INTO users (email, password_hash, display_name, referred_by, locale, tos_version, tos_accepted_at, news_opt_in, news_opt_in_at)
+       VALUES ($1, $2, $3, $4, $5, $6, now(), $7, CASE WHEN $7 THEN now() END) RETURNING ${PUBLIC_USER_COLUMNS}`,
+      [input.email, hash, input.displayName, referrer, isLocale(input.locale) ? input.locale : 'en', await tosVersion(ctx.db), input.newsOptIn === true],
     );
     await recordSignals(ctx.db, user.id, { device: input.device, ip_subnet: subnetOf(input.ip) });
     await enqueueEmail(ctx.db, user.id, 'welcome', { name: input.displayName }, `welcome:${user.id}`);

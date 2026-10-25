@@ -13,9 +13,29 @@ envVarGroups:
         value: nowpayments
       - key: KYC_PROVIDER
         value: sumsub
+      - key: APP_ENV
+        value: production
       - key: EMAIL_PROVIDER
-        value: postmark
-      - key: POSTMARK_SERVER_TOKEN
+        value: resend
+      - key: EMAIL_FROM
+        value: "Bullizard <no-reply@mail.bullizard.com>"
+      - key: EMAIL_REPLY_TO
+        value: support@bullizard.com
+      - key: ALERTS_EMAIL
+        value: alerts@bullizard.com
+      - key: FINANCE_EMAIL
+        value: finance@bullizard.com
+      - key: RESEND_API_KEY
+        sync: false
+      - key: TURNSTILE_SECRET
+        sync: false # Cloudflare Turnstile; the site key is VITE_TURNSTILE_SITE_KEY on Vercel
+      - key: ORIGIN_SHARED_SECRET
+        sync: false # = the X-Origin-Auth value Cloudflare adds; requests without it are refused
+      - key: BREVO_API_KEY
+        sync: false # newsletter sync; blank = CSV export in Ops
+      - key: BREVO_LIST_ID_EN
+        sync: false
+      - key: BREVO_LIST_ID_AR
         sync: false
       - key: SMS_PROVIDER
         value: twilio
@@ -71,7 +91,7 @@ envVarGroups:
       - key: PUBLIC_API_URL
         sync: false # https://api.<domain>
       - key: DATABASE_URL
-        sync: false # Neon `main` branch, pooled, ?sslmode=require
+        sync: false # Neon `main` branch, pooled, ?sslmode=verify-full
       - key: S3_BUCKET
         sync: false
       - key: S3_REGION

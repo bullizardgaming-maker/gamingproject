@@ -11,7 +11,7 @@ import type { PaymentEvent } from '../providers/payments/types.js';
 import { NowPaymentsError, NowPaymentsProvider, type NowPayout } from '../providers/payments/nowpayments.js';
 import { accountId, post } from './ledger.js';
 import { availableCredit } from './referrals.js';
-import { enqueueEmail } from './notifications.js';
+import { enqueueEmail, enqueueMailboxEmail } from './notifications.js';
 import { enqueueWebhook } from './webhooks.js';
 import { withScope } from './events.js';
 import { checkSecondFactor } from './mfa.js';
@@ -558,4 +558,5 @@ async function alertPaidAfterReversal(ctx: Ctx, w: any) {
   ctx.log.error({ withdrawalId: w.id, hash: w.paid_after_reversal_hash }, 'payout FINISHED after the withdrawal was reversed');
   const staff = await many<{ id: string }>(ctx.db, `SELECT id FROM users WHERE (role IN ('admin', 'finance') OR staff_roles && ARRAY['admin', 'finance']) AND deleted_at IS NULL AND status = 'active'`);
   for (const st of staff) await enqueueEmail(ctx.db, st.id, 'ops_alert', { title, detail, action }, `paid_after_reversal:${w.id}:${st.id}`);
+  for (const to of new Set([ctx.cfg.ALERTS_EMAIL, ctx.cfg.FINANCE_EMAIL])) await enqueueMailboxEmail(ctx.db, to, 'ops_alert', { title, detail, action }, `paid_after_reversal:${w.id}`);
 }

@@ -37,6 +37,9 @@ services:
       CLAMD_HOST: clamav
       PLATFORM_ACCOUNTS: live # Steam sign-in needs no key; Riot only with RIOT_CLIENT_ID/SECRET in .env
       STORAGE_DIR: /data/uploads
+      # The image runs NODE_ENV=production: Turnstile is required (Cloudflare's always-pass test secret unless .env
+      # sets a real one) and email must be resend (EMAIL_PROVIDER=resend + RESEND_API_KEY in .env).
+      TURNSTILE_SECRET: ${TURNSTILE_SECRET:-1x0000000000000000000000000000000AA}
     volumes: [uploads:/data/uploads]
     depends_on:
       postgres: { condition: service_healthy }
@@ -54,6 +57,7 @@ services:
       MALWARE_SCANNER: clamd
       CLAMD_HOST: clamav
       PLATFORM_ACCOUNTS: live
+      TURNSTILE_SECRET: ${TURNSTILE_SECRET:-1x0000000000000000000000000000000AA}
     depends_on:
       api: { condition: service_started }
 

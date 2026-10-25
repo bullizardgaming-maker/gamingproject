@@ -63,8 +63,17 @@ export function registerGateway(app: FastifyInstance, ctx: Ctx) {
     let tokens = 10;
     const refill = setInterval(() => (tokens = Math.min(10, tokens + 1)), 1_000);
     const authTimer = setTimeout(() => !user && ws.close(4401, 'auth timeout'), 5_000);
+    // Keep-alive (Round 23a): Cloudflare closes a WebSocket after 100 s without traffic; browsers answer pings
+    // on their own. A socket that missed two pongs is dead and is dropped.
+    let missed = 0;
+    ws.on('pong', () => (missed = 0));
+    const keepAlive = setInterval(() => {
+      if (++missed > 2) return ws.terminate();
+      if (ws.readyState === 1) ws.ping();
+    }, ctx.cfg.WS_PING_SECONDS * 1_000);
 
     ws.on('close', () => {
+      clearInterval(keepAlive);
       clearInterval(refill);
       clearTimeout(authTimer);
       joined.forEach((r) => remove(rooms, r, ws));

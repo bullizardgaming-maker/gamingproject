@@ -36,6 +36,7 @@ import { TICKET_CATEGORIES, createTicket, customerReply, customerResolve, getTic
 import { createWatch, deleteWatch, listWatches, updateWatch } from '../domain/watches.js';
 import { confirmSubscription, getIncident, statusSummary, subscribe, unsubscribe } from '../domain/status.js';
 import { me, requestMeta } from '../server.js';
+import { setNewsOptIn } from '../domain/newsletter.js';
 
 const Credentials = z.object({ email: z.string().email().max(254), password: z.string().min(10).max(200), captchaToken: z.string().max(4096).optional() });
 
@@ -82,6 +83,8 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
       referralCode: z.string().trim().max(20).optional(), // older clients
       creatorCode: z.string().trim().max(20).optional(), // older clients
       locale: z.enum(LOCALES).optional(),
+      /** "Send me news, new games and offers." — unticked unless the user ticks it (Round 23a). */
+      newsOptIn: z.boolean().optional(),
       /** "I'm 18 or older and agree to the Terms and Privacy Policy" — required (Legal, Oct 24). */
       acceptTerms: z.literal(true, { message: 'You must be 18 or older and accept the Terms and Privacy Policy' }),
     }).parse(req.body);
@@ -185,6 +188,12 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // --- Email preferences ---------------------------------------------------------------
   app.get('/me/email-preferences', async (req) => getPreferences(ctx.db, me(req).id));
+  /** Newsletter consent (Account → Notifications): the choice and its time are stored; Brevo is updated by the worker. */
+  app.put('/me/newsletter', async (req) => {
+    const { optIn } = z.object({ optIn: z.boolean() }).parse(req.body);
+    const row = await setNewsOptIn(ctx.db, me(req).id, optIn);
+    return { newsOptIn: row.news_opt_in, newsOptInAt: row.news_opt_in_at };
+  });
   app.patch('/me/email-preferences', async (req) => {
     const changes = z.record(z.string(), z.boolean()).parse(req.body);
     return setPreferences(ctx.db, me(req).id, changes);

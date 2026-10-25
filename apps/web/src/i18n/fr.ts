@@ -868,5 +868,14 @@ const fr: Messages = {
   "sp.showing": "Les {n} avis écrits les plus récents sur {total}.",
   "sp.offers": "Offres",
   "sp.reviews": "Avis",
+  // Round 23a: newsletter consent, bot check (Turnstile), proof video size
+  "auth.newsOptIn": "Envoyez-moi les actualités, les nouveaux jeux et les offres.",
+  "auth.botCheck": "Vérification anti-robot",
+  "err.captcha_required": "Effectuez la vérification anti-robot.",
+  "err.captcha_failed": "La vérification anti-robot a échoué. Réessayez.",
+  "account.newsletter.title": "Actualités et offres",
+  "account.newsletter.hint": "Des e-mails de temps en temps sur les nouveaux jeux et les offres. Désactivez-les ici ou avec le lien de chaque newsletter.",
+  "account.newsletter.saved": "Enregistré.",
+  "upload.videoTooLarge": "Les vidéos peuvent faire jusqu’à 95 Mo. Raccourcissez l’enregistrement ou baissez sa qualité, puis réessayez.",
 };
 export default fr;

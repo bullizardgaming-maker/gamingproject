@@ -524,7 +524,18 @@ const orderFor = (me: DemoUser, id: string) => {
 };
 
 // --- Auth & account --------------------------------------------------------------------
+/** Turnstile (Round 23a): on when a browser test sets a site key, like the API with TURNSTILE_SECRET. */
+const demoCaptcha = (body: any) => {
+  let on = false;
+  try {
+    on = !!localStorage.getItem('bz.demo.turnstile');
+  } catch {
+    /* storage blocked */
+  }
+  if (on && !body.captchaToken) fail(400, 'captcha_required', 'Please complete the bot check.');
+};
 route('POST', '/auth/login', ({ body }) => {
+  demoCaptcha(body);
   const u = state.users.find((x) => x.email.toLowerCase() === String(body.email ?? '').toLowerCase());
   if (!u || u.password !== body.password) fail(401, 'unauthorized', 'Invalid email or password');
   if (u!.totp_enabled) return { mfaRequired: true, mfaToken: `mfa:${u!.id}` };
@@ -537,6 +548,7 @@ route('POST', '/auth/mfa', ({ body }) => {
   return { token: `demo:${id}`, user: publicUser(userById(id)!) };
 });
 route('POST', '/auth/register', ({ body }) => {
+  demoCaptcha(body);
   if (!/^\S+@\S+\.\S+$/.test(body.email ?? '') || String(body.password ?? '').length < 10) fail(400, 'validation_error', 'Invalid request');
   if (state.users.some((x) => x.email === body.email)) fail(409, 'email_taken', 'An account with this email already exists');
   if (body.acceptTerms !== true) fail(400, 'validation_error', 'You must be 18 or older and accept the Terms and Privacy Policy');
@@ -551,6 +563,7 @@ route('POST', '/auth/register', ({ body }) => {
     email_verified_at: null, phone_verified_at: null, withdrawals_frozen: false, totp_enabled: false, payouts_enabled: false, legal_name: null, created_at: now(),
     locale: ['ar', 'es', 'fr', 'de', 'pt'].includes(body.locale) ? body.locale : 'en',
     tos_version: TOS_VERSION, tos_accepted_at: now(),
+    news_opt_in: body.newsOptIn === true, news_opt_in_at: body.newsOptIn === true ? now() : null,
   };
   state.users.push(u);
   let codeApplied: 'referral' | 'creator' | null = null;
@@ -566,7 +579,7 @@ route('PUT', '/me/locale', ({ me, body }) => {
   return { locale: body.locale };
 });
 route('POST', '/auth/refresh', () => fail(401, 'unauthorized', 'Sign in again'));
-route('POST', '/auth/password/forgot', () => ({ message: 'If an account uses this email, a reset link is on its way.' }));
+route('POST', '/auth/password/forgot', ({ body }) => (demoCaptcha(body), { message: 'If an account uses this email, a reset link is on its way.' }));
 route('POST', '/auth/password/reset', () => fail(400, 'invalid_reset_link', 'Reset links are emailed in the real app; this demo has no email.'));
 
 route('GET', '/me', ({ me }) => {
@@ -615,6 +628,12 @@ const PREF_CATS = [
 ] as const;
 const prefsOf = (id: string) => PREF_CATS.map(([category, label, mandatory]) => ({ category, label, mandatory, enabled: mandatory || state.emailPrefs[id]?.[category] !== false }));
 route('GET', '/me/email-preferences', ({ me }) => prefsOf(need(me).id));
+route('PUT', '/me/newsletter', ({ me, body }) => {
+  const u = need(me);
+  if (typeof body.optIn !== 'boolean') fail(400, 'validation_error', 'Invalid request');
+  if (!!u.news_opt_in !== body.optIn) { u.news_opt_in = body.optIn; u.news_opt_in_at = now(); }
+  return { newsOptIn: !!u.news_opt_in, newsOptInAt: u.news_opt_in_at ?? null };
+});
 route('PATCH', '/me/email-preferences', ({ me, body }) => {
   const u = need(me);
   state.emailPrefs[u.id] = { ...state.emailPrefs[u.id], ...body };
@@ -1589,6 +1608,9 @@ route('POST', '/chat/rooms/:id/attachments', ({ me, params, body }) => {
   const m = appendMessage(room.id, u.id, 'attachment', video ? '🎬 video proof' : '📎 screenshot');
   return { id: att.id, mime: att.mime, width: video ? null : 0, created_at: att.created_at, seq: m.seq };
 });
+// Large videos go straight to object storage in the real app; the demo has none (like an API without S3).
+route('POST', '/chat/rooms/:id/attachments/direct', ({ me }) => (need(me), fail(409, 'direct_upload_unavailable', 'Videos can be up to 95 MB')));
+route('POST', '/chat/attachments/:id/complete', () => fail(404, 'not_found', 'Upload not found'));
 route('POST', '/orders/:id/progress', ({ me, params, body }) => {
   const u = need(me);
   const o = orderFor(u, params[0]!);
@@ -3296,6 +3318,7 @@ function taxRows(from: string, to: string) {
     return { country, treatment, rate_bps, orders: Math.round(orders * k), credit_notes: Math.round(credit_notes * k), currency: 'USD', commission_gross_cents, tax_cents: Math.round((commission_gross_cents * rate_bps) / (10_000 + rate_bps)) };
   });
 }
+route('GET', '/admin/newsletter/status', ({ me }) => (needPerm(me, 'analytics.view'), { subscribers: state.users.filter((u) => u.news_opt_in && u.status !== 'banned').length, brevoSync: false }));
 route('GET', '/admin/tax/report', ({ me, query }) => (needPerm(me, 'tax.manage'), taxRows(query.get('from') ?? '', query.get('to') ?? '')));
 
 route('GET', '/admin/staff', ({ me }) => {
@@ -3390,6 +3413,13 @@ function blobRoute(me: DemoUser | null, path: string, query: URLSearchParams): B
     };
     const rows = (kinds[m[1]!] ?? fail(404, 'not_found', 'Unknown export'))();
     return new Blob([csv(rows)], { type: 'text/csv' });
+  }
+  if (path === '/admin/newsletter.csv') {
+    needPerm(me, 'analytics.view');
+    const rows = state.users.filter((u) => u.news_opt_in && u.status !== 'banned').map((u) => ({
+      email: u.email, name: u.display_name, language: u.locale === 'ar' ? 'ar' : 'en', list: u.locale === 'ar' ? 'Newsletter AR' : 'Newsletter EN', opted_in_at: u.news_opt_in_at ?? '',
+    }));
+    return new Blob([rows.length ? csv(rows) : 'email,name,language,list,opted_in_at\n'], { type: 'text/csv' });
   }
   if (path === '/admin/tax/report') {
     needPerm(me, 'tax.manage');

@@ -103,6 +103,13 @@ export async function runRetention(ctx: Ctx, existingRunId?: string) {
     counts.verificationCodes = await count(ctx, `DELETE FROM verification_codes WHERE created_at < now() - make_interval(days => $1)`, [c.RETENTION_SECURITY_LOGS_DAYS]);
     counts.passwordResets = await count(ctx, `DELETE FROM password_resets WHERE created_at < now() - make_interval(days => $1)`, [c.RETENTION_SECURITY_LOGS_DAYS]);
     counts.cspReports = await count(ctx, `DELETE FROM csp_reports WHERE created_at < now() - make_interval(days => $1)`, [c.RETENTION_SECURITY_LOGS_DAYS]);
+    // Direct video uploads (Round 23a) never completed within a day: the object and the reservation go.
+    const abandoned = await many<{ id: string; storage_key: string }>(ctx.db, `SELECT id, storage_key FROM chat_attachments WHERE status = 'uploading' AND created_at < now() - interval '1 day' LIMIT 500`);
+    for (const a of abandoned) {
+      await ctx.storage.delete(a.storage_key).catch(() => {});
+      await ctx.db.query(`DELETE FROM chat_attachments WHERE id = $1 AND status = 'uploading'`, [a.id]);
+    }
+    counts.abandonedUploads = abandoned.length;
     // Only needed for the 15-minute CAPTCHA window.
     counts.loginFailures = await count(ctx, `DELETE FROM login_failures WHERE created_at < now() - interval '1 day'`, []);
     await ctx.db.query(`UPDATE retention_runs SET status = 'ok', counts = $2, finished_at = now() WHERE id = $1`, [run.id, JSON.stringify(counts)]);

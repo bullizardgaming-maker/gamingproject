@@ -1,7 +1,7 @@
 import type { Ctx } from '../context.js';
 import { many, one } from '../db.js';
 import { controls } from './controls.js';
-import { enqueueEmail } from './notifications.js';
+import { enqueueEmail, enqueueMailboxEmail } from './notifications.js';
 
 /**
  * Launch gate §4 — alerts to admins and finance (email + an error log line that Sentry picks up), checked every
@@ -68,6 +68,7 @@ export async function sendOpsAlerts(ctx: Ctx) {
       await enqueueEmail(ctx.db, s.id, 'ops_alert', { title: a.title, detail: a.detail, action: a.action }, `ops_alert:${a.key}:${hour}:${s.id}`);
       sent++;
     }
+    await enqueueMailboxEmail(ctx.db, ctx.cfg.ALERTS_EMAIL, 'ops_alert', { title: a.title, detail: a.detail, action: a.action }, `ops_alert:${a.key}:${hour}`);
   }
   return sent;
 }

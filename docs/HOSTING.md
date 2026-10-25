@@ -28,14 +28,14 @@ ever a problem; the Dockerfile and env vars are the same.
 |---|---|---|
 | API (worker runs in-process) | Render Starter, 512 MB | 7 |
 | Redis | Render Key Value Starter, 256 MB | 10 |
-| ClamAV | Render Standard private service, 2 GB | 25 |
 | Uploads disk 1 GB | | ~0.25 |
 | Database | Neon Free (0.5 GB, auto-suspend) or a branch of the Launch plan | 0 |
 | Web | Vercel Hobby (preview env) | 0 |
-| **Total** | | **≈ 42** |
+| **Total** | | **≈ 17** |
 
-Staging can drop ClamAV (≈ 25) by running with `NODE_ENV=staging` + `MALWARE_SCANNER=dev`; then uploads are not
-scanned there, which is fine for money-path testing but not for testing uploads.
+Staging drops ClamAV (≈ 25): `render.yaml` runs `NODE_ENV=production` + `APP_ENV=staging` + `MALWARE_SCANNER=dev`
+(Round 23a; `NODE_ENV=staging` is not a valid value). Uploads are then not scanned there, which is fine for
+money-path testing but not for testing uploads.
 
 ### Production (`render.production.yaml`)
 | Item | Plan | Cost |

@@ -4,7 +4,7 @@
   "installCommand": "npm ci --workspace apps/web --include-workspace-root",
   "buildCommand": "VITE_DEMO=${VITE_DEMO:-true} npm run build --workspace apps/web",
   "outputDirectory": "apps/web/dist",
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }],
+  "rewrites": [{ "source": "/((?!\\.well-known/).*)", "destination": "/index.html" }],
   "headers": [
     {
       "source": "/(.*)",
@@ -26,6 +26,10 @@
     {
       "source": "/.well-known/apple-app-site-association",
       "headers": [{ "key": "Content-Type", "value": "application/json" }]
+    },
+    {
+      "source": "/.well-known/security.txt",
+      "headers": [{ "key": "Content-Type", "value": "text/plain; charset=utf-8" }, { "key": "Cache-Control", "value": "public, max-age=86400" }]
     },
     {
       "source": "/assets/(.*)",

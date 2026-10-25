@@ -2,6 +2,7 @@ import { connect } from 'node:net';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Keyring } from '../lib/crypto.js';
 
 // ---------------------------------------------------------------------------
@@ -20,6 +21,11 @@ export interface FileStorage {
   rekey(key: string): Promise<string | null>;
   /** Key version new files are written with (null if the store encrypts by itself). */
   readonly keyVersion: string | null;
+  /**
+   * Object stores only (Round 23a): a short-lived URL the browser PUTs a large file to directly, so it never passes
+   * through Cloudflare and the API (100 MB request limit). The API then reads it back, scans it and accepts it.
+   */
+  presignPut?(key: string, contentType: string, bytes: number, expiresSeconds: number): Promise<{ url: string; headers: Record<string, string> }>;
 }
 
 /** Local disk, encrypted with the data keyring (development / single-server). */
@@ -77,6 +83,13 @@ export class S3Storage implements FileStorage {
   }
   async delete(key: string) {
     await this.s3.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+  }
+  async presignPut(key: string, contentType: string, bytes: number, expiresSeconds: number) {
+    // Content type and length are signed: the upload must be exactly what was announced.
+    const url = await getSignedUrl(this.s3, new PutObjectCommand({ Bucket: this.bucket, Key: key, ContentType: contentType, ContentLength: bytes }), {
+      expiresIn: expiresSeconds,
+    });
+    return { url, headers: { 'Content-Type': contentType } };
   }
   readonly keyVersion = null;
   async rekey() {

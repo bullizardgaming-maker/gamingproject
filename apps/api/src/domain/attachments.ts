@@ -8,8 +8,14 @@ import { appendMessage, roomForParticipant } from './chat.js';
 import { withScope } from './events.js';
 
 export const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
-/** Delivery proof videos (a trade window recording) may be larger than screenshots. */
-export const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
+/**
+ * Delivery proof videos (a trade window recording) may be larger than screenshots. Uploads through the API stay
+ * under Cloudflare's 100 MB request limit; with object storage (S3/R2) larger videos go straight to the bucket
+ * (startDirectVideoUpload) up to MAX_DIRECT_VIDEO_BYTES.
+ */
+export const MAX_VIDEO_BYTES = 95 * 1024 * 1024;
+export const MAX_DIRECT_VIDEO_BYTES = 500 * 1024 * 1024;
+const DIRECT_UPLOAD_TTL_SECONDS = 15 * 60;
 const MAX_PIXELS = 40_000_000;
 const MAX_EDGE = 2560;
 const UPLOADS_PER_HOUR = 20;
@@ -60,22 +66,55 @@ export async function uploadAttachment(ctx: Ctx, roomId: string, user: { id: str
   if (!kind) throw badRequest('unsupported_file', 'Only PNG, JPEG and WebP images or MP4/WebM videos can be attached');
   const isVideo = VIDEO.has(kind);
   if (!isVideo && body.length > MAX_ATTACHMENT_BYTES) throw new AppError(413, 'file_too_large', 'Images can be up to 8 MB');
-  if (isVideo && body.length > MAX_VIDEO_BYTES) throw new AppError(413, 'file_too_large', 'Videos can be up to 50 MB');
+  if (isVideo && body.length > MAX_VIDEO_BYTES) throw videoTooLarge(ctx);
+  await checkUploadRate(ctx, user.id);
+  const name = cleanName(fileName);
+  return acceptUpload(ctx, room, user, name, kind, body);
+}
+
+/** 413 with the limit in `details`, so the web app shows a translated message (and the size). */
+function videoTooLarge(ctx: Ctx) {
+  const direct = !!ctx.storage.presignPut;
+  return new AppError(413, 'file_too_large', `Videos can be up to ${MAX_VIDEO_BYTES / 1_048_576} MB`, {
+    maxBytes: MAX_VIDEO_BYTES,
+    maxMb: MAX_VIDEO_BYTES / 1_048_576,
+    directUpload: direct,
+  });
+}
+
+async function checkUploadRate(ctx: Ctx, userId: string) {
   const recent = await one<{ n: number }>(
     ctx.db,
     `SELECT count(*)::int AS n FROM chat_attachments WHERE uploader_id = $1 AND created_at > now() - interval '1 hour'`,
-    [user.id],
+    [userId],
   );
   if (recent.n >= UPLOADS_PER_HOUR) throw new AppError(429, 'too_many_uploads', 'Upload limit reached; try again later');
-  const name = cleanName(fileName);
+}
 
+/** Scan, re-encode (images), store and post the chat message. `pending`: a direct upload already stored at its key. */
+async function acceptUpload(
+  ctx: Ctx,
+  room: { id: string; buyer_id: string; seller_id: string },
+  user: { id: string },
+  name: string,
+  kind: Kind,
+  body: Buffer,
+  pending?: { id: string; key: string },
+) {
+  const roomId = room.id;
+  const isVideo = VIDEO.has(kind);
   const scan = await scanOrPause(ctx, body);
   if (!scan.clean) {
+    if (pending) await ctx.storage.delete(pending.key);
     await withScope(ctx, async (s) => {
-      await s.tx.query(
-        `INSERT INTO chat_attachments (room_id, uploader_id, original_name, mime, bytes, status, scan_result) VALUES ($1, $2, $3, $4, $5, 'infected', $6)`,
-        [roomId, user.id, name, MIME[kind], body.length, scan.signature ?? 'malware'],
-      );
+      if (pending) {
+        await s.tx.query(`UPDATE chat_attachments SET status = 'infected', scan_result = $2, storage_key = NULL WHERE id = $1`, [pending.id, scan.signature ?? 'malware']);
+      } else {
+        await s.tx.query(
+          `INSERT INTO chat_attachments (room_id, uploader_id, original_name, mime, bytes, status, scan_result) VALUES ($1, $2, $3, $4, $5, 'infected', $6)`,
+          [roomId, user.id, name, MIME[kind], body.length, scan.signature ?? 'malware'],
+        );
+      }
       await s.tx.query(
         `INSERT INTO risk_flags (user_id, score, reasons) VALUES ($1, 0.9, $2)`,
         [user.id, JSON.stringify([{ code: 'malware_upload', weight: 0.9, detail: { signature: scan.signature, roomId } }])],
@@ -101,9 +140,9 @@ export async function uploadAttachment(ctx: Ctx, roomId: string, user: { id: str
   }
 
   const hash = sha256(out.data);
-  const id = randomUUID();
-  const key = `chat/${roomId}/${id}`;
-  await ctx.storage.put(key, out.data, MIME[kind]);
+  const id = pending?.id ?? randomUUID();
+  const key = pending?.key ?? `chat/${roomId}/${id}`;
+  if (!pending) await ctx.storage.put(key, out.data, MIME[kind]);
 
   return withScope(ctx, async (s) => {
     const msg = await appendMessage(
@@ -115,17 +154,78 @@ export async function uploadAttachment(ctx: Ctx, roomId: string, user: { id: str
       [],
       ctx.keyring,
     );
-    const att = await one(
-      s.tx,
-      `INSERT INTO chat_attachments (id, room_id, uploader_id, message_id, original_name, mime, bytes, width, height, sha256, storage_key, status, scan_result, key_version)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'clean', $12, $13)
-       RETURNING id, message_id, original_name, mime, bytes, width, height, sha256, created_at`,
-      [id, roomId, user.id, msg.id, name, MIME[kind], out.data.length, isVideo ? null : out.info.width, isVideo ? null : out.info.height, hash, key, `${ctx.scanner.name}: clean`, ctx.storage.keyVersion],
-    );
+    const att = pending
+      ? await one(
+          s.tx,
+          `UPDATE chat_attachments SET message_id = $2, mime = $3, bytes = $4, sha256 = $5, status = 'clean', scan_result = $6, key_version = $7
+            WHERE id = $1 AND status = 'uploading'
+            RETURNING id, message_id, original_name, mime, bytes, width, height, sha256, created_at`,
+          [id, msg.id, MIME[kind], out.data.length, hash, `${ctx.scanner.name}: clean`, ctx.storage.keyVersion],
+        )
+      : await one(
+          s.tx,
+          `INSERT INTO chat_attachments (id, room_id, uploader_id, message_id, original_name, mime, bytes, width, height, sha256, storage_key, status, scan_result, key_version)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'clean', $12, $13)
+           RETURNING id, message_id, original_name, mime, bytes, width, height, sha256, created_at`,
+          [id, roomId, user.id, msg.id, name, MIME[kind], out.data.length, isVideo ? null : out.info.width, isVideo ? null : out.info.height, hash, key, `${ctx.scanner.name}: clean`, ctx.storage.keyVersion],
+        );
     const counterpart = room.buyer_id === user.id ? room.seller_id : room.buyer_id;
     s.notifyUser(counterpart, 'chat.message', { roomId, seq: msg.seq });
     return { ...att, seq: msg.seq };
   });
+}
+
+/**
+ * Round 23a: a proof video larger than the API accepts (Cloudflare's 100 MB request limit) goes straight to object
+ * storage. Step 1 reserves the attachment and returns a signed PUT URL (15 minutes, exact type and size); step 2
+ * (completeDirectVideoUpload) reads the object back, checks it is a video of that size, scans it and posts it.
+ */
+export async function startDirectVideoUpload(
+  ctx: Ctx,
+  roomId: string,
+  user: { id: string; role: string; status: string },
+  input: { fileName: string; contentType: 'video/mp4' | 'video/webm'; bytes: number },
+) {
+  if (!ctx.storage.presignPut) throw new AppError(409, 'direct_upload_unavailable', `Videos can be up to ${MAX_VIDEO_BYTES / 1_048_576} MB`, { maxBytes: MAX_VIDEO_BYTES, maxMb: MAX_VIDEO_BYTES / 1_048_576 });
+  if (user.status !== 'active') throw forbidden('suspended', 'Account suspended');
+  const room = await roomForParticipant(ctx.db, roomId, user);
+  if (room.buyer_id !== user.id && room.seller_id !== user.id) throw forbidden('not_participant', 'Only the buyer and seller can add evidence');
+  if (input.bytes > MAX_DIRECT_VIDEO_BYTES) {
+    throw new AppError(413, 'file_too_large', `Videos can be up to ${MAX_DIRECT_VIDEO_BYTES / 1_048_576} MB`, { maxBytes: MAX_DIRECT_VIDEO_BYTES, maxMb: MAX_DIRECT_VIDEO_BYTES / 1_048_576 });
+  }
+  await checkUploadRate(ctx, user.id);
+  const id = randomUUID();
+  const key = `chat/${roomId}/${id}`;
+  const signed = await ctx.storage.presignPut(key, input.contentType, input.bytes, DIRECT_UPLOAD_TTL_SECONDS);
+  await ctx.db.query(
+    `INSERT INTO chat_attachments (id, room_id, uploader_id, original_name, mime, bytes, storage_key, status) VALUES ($1, $2, $3, $4, $5, $6, $7, 'uploading')`,
+    [id, roomId, user.id, cleanName(input.fileName), input.contentType, input.bytes, key],
+  );
+  return { id, url: signed.url, method: 'PUT' as const, headers: signed.headers, expiresInSeconds: DIRECT_UPLOAD_TTL_SECONDS };
+}
+
+export async function completeDirectVideoUpload(ctx: Ctx, attachmentId: string, user: { id: string; role: string; status: string }) {
+  const att = await maybeOne<{ id: string; room_id: string; uploader_id: string; original_name: string; bytes: number; storage_key: string; created_at: string }>(
+    ctx.db,
+    `SELECT id, room_id, uploader_id, original_name, bytes, storage_key, created_at FROM chat_attachments WHERE id = $1 AND status = 'uploading'`,
+    [attachmentId],
+  );
+  if (!att || att.uploader_id !== user.id) throw notFound('Upload');
+  if (user.status !== 'active') throw forbidden('suspended', 'Account suspended');
+  const room = await roomForParticipant(ctx.db, att.room_id, user);
+  let body: Buffer;
+  try {
+    body = await ctx.storage.get(att.storage_key);
+  } catch {
+    throw badRequest('upload_missing', 'The upload has not arrived yet. Try again.');
+  }
+  const kind = sniffImage(body);
+  if (body.length !== Number(att.bytes) || !kind || !VIDEO.has(kind)) {
+    await ctx.storage.delete(att.storage_key);
+    await ctx.db.query(`DELETE FROM chat_attachments WHERE id = $1 AND status = 'uploading'`, [att.id]);
+    throw badRequest('unsupported_file', 'Only MP4/WebM videos can be uploaded this way');
+  }
+  return acceptUpload(ctx, room, user, att.original_name, kind, body, { id: att.id, key: att.storage_key });
 }
 
 export async function readAttachment(ctx: Ctx, id: string, user: { id: string; role: string }) {

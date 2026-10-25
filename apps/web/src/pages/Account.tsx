@@ -5,6 +5,7 @@ import { DEMO, api, money, session } from '../api';
 import { DemoSignIn } from '../demo/DemoUi';
 import { PushSettings } from '../components/NotificationSettings';
 import { MyBuyerReputation } from '../components/BuyerReputation';
+import { Turnstile } from '../components/Turnstile';
 import { useSession } from '../session';
 import { currentLocale, t } from '../i18n';
 import { usePageMeta } from '@/lib/seo';
@@ -14,6 +15,8 @@ export function Login() {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [error, setError] = useState('');
   const [mfaToken, setMfaToken] = useState<string | null>(null);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaReset, setCaptchaReset] = useState(0);
   const [params] = useSearchParams();
   const nav = useNavigate();
 
@@ -27,10 +30,17 @@ export function Login() {
     const f = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>;
     setError('');
     try {
-      const res = await api<{ token?: string; mfaRequired?: boolean; mfaToken?: string }>(mode === 'login' ? '/auth/login' : '/auth/register', { body: mode === 'login' ? f : { ...f, code: f.code?.trim() || undefined, acceptTerms: f.acceptTerms === 'true', locale: currentLocale() } });
+      const captcha = captchaToken ? { captchaToken } : {};
+      const res = await api<{ token?: string; mfaRequired?: boolean; mfaToken?: string }>(mode === 'login' ? '/auth/login' : '/auth/register', {
+        body:
+          mode === 'login'
+            ? { email: f.email, password: f.password, ...captcha }
+            : { ...f, ...captcha, code: f.code?.trim() || undefined, acceptTerms: f.acceptTerms === 'true', newsOptIn: f.newsOptIn === 'true', locale: currentLocale() },
+      });
       if (res.mfaRequired && res.mfaToken) setMfaToken(res.mfaToken);
       else finish(res.token!, mode === 'register');
     } catch (err: any) {
+      setCaptchaReset((n) => n + 1); // a Turnstile token works once
       setError(err.code === 'validation_error' ? 'Use a valid email and a password of at least 10 characters.' : err.message);
     }
   };
@@ -89,6 +99,14 @@ export function Login() {
             </span>
           </label>
         )}
+        {mode === 'register' && (
+          <label className="small" style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 13 }}>
+            {/* Newsletter consent: optional and unticked (Round 23a). */}
+            <input name="newsOptIn" type="checkbox" value="true" defaultChecked={false} style={{ marginTop: 3 }} />
+            <span>{t('auth.newsOptIn')}</span>
+          </label>
+        )}
+        <Turnstile action={mode === 'login' ? 'signin' : 'signup'} onToken={setCaptchaToken} resetKey={captchaReset} />
         {error && <div className="alert" role="alert">{error}</div>}
         <button className="btn" type="submit">{mode === 'login' ? 'Sign in' : 'Create account'}</button>
       </form>
@@ -288,6 +306,7 @@ export function Account() {
       <PasswordChange />
       <div id="notifications" />
       <EmailPreferences />
+      <Newsletter />
       <PushSettings />
       <CreditCard />
       <InviteFriends />
@@ -366,6 +385,44 @@ function PasswordChange() {
   );
 }
 
+/** Newsletter consent (Round 23a): off unless ticked; the API stores the choice and its time. */
+function Newsletter() {
+  const { user, refresh } = useSession();
+  const [on, setOn] = useState(!!user?.news_opt_in);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => setOn(!!user?.news_opt_in), [user?.news_opt_in]);
+  if (!user) return null;
+  const toggle = async (optIn: boolean) => {
+    setError('');
+    setSaved(false);
+    setOn(optIn);
+    try {
+      const res = await api<{ newsOptIn: boolean }>('/me/newsletter', { method: 'PUT', body: { optIn } });
+      setOn(res.newsOptIn);
+      setSaved(true);
+      refresh();
+    } catch (e: any) {
+      setOn(!optIn);
+      setError(e.message);
+    }
+  };
+  return (
+    <div className="card stack checklist">
+      <h3>{t('account.newsletter.title')}</h3>
+      <p className="small muted">{t('account.newsletter.hint')}</p>
+      <div>
+        <label>
+          <input type="checkbox" checked={on} onChange={(e) => toggle(e.target.checked)} />
+          <span>{t('auth.newsOptIn')}</span>
+        </label>
+      </div>
+      {saved && <div className="ok small" role="status">{t('account.newsletter.saved')}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
+    </div>
+  );
+}
+
 function EmailPreferences() {
   const [prefs, setPrefs] = useState<Array<{ category: string; label: string; mandatory: boolean; enabled: boolean }>>([]);
   useEffect(() => {
@@ -393,9 +450,21 @@ function EmailPreferences() {
 export function ForgotPassword() {
   usePageMeta({ title: 'Reset your password', noindex: true });
   const [sent, setSent] = useState(false);
+  const [error, setError] = useState('');
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaReset, setCaptchaReset] = useState(0);
   const submit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    await api('/auth/password/forgot', { body: { email: new FormData(e.currentTarget).get('email') } }).catch(() => {});
+    setError('');
+    try {
+      await api('/auth/password/forgot', { body: { email: new FormData(e.currentTarget).get('email'), ...(captchaToken ? { captchaToken } : {}) } });
+    } catch (err: any) {
+      // Only the bot check is reported: anything else must not reveal whether the email has an account.
+      if (String(err.code).startsWith('captcha_')) {
+        setCaptchaReset((n) => n + 1);
+        return setError(err.message);
+      }
+    }
     setSent(true);
   };
   return (
@@ -406,6 +475,8 @@ export function ForgotPassword() {
       ) : (
         <>
           <label className="field">Email<input name="email" type="email" required autoComplete="email" /></label>
+          <Turnstile action="reset" onToken={setCaptchaToken} resetKey={captchaReset} />
+          {error && <div className="alert" role="alert">{error}</div>}
           <button className="btn">Email me a reset link</button>
         </>
       )}

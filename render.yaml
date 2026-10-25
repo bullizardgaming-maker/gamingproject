@@ -1,5 +1,8 @@
 # Staging blueprint for Render (https://render.com/docs/blueprint-spec).
 # Runs the real API against mock payments and mock KYC (SANDBOX_MODE), so nothing here moves money.
+# APP_ENV=staging with NODE_ENV=production: every production check applies (real email through Resend,
+# Turnstile, explicit encryption keys) except that there is no ClamAV service (MALWARE_SCANNER=dev).
+# Everything runs in Frankfurt, next to the Neon database (eu-central-1); an env group has no region.
 # The database is a Neon branch (DATABASE_URL is asked for on first deploy). Setup and the web side
 # (Vercel): docs/STAGING.md; host choice and costs: docs/HOSTING.md. Production: render.production.yaml.
 envVarGroups:
@@ -7,6 +10,8 @@ envVarGroups:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: APP_ENV
+        value: staging
       - key: SANDBOX_MODE
         value: "true"
       - key: PAYMENT_PROVIDER
@@ -14,17 +19,25 @@ envVarGroups:
       - key: KYC_PROVIDER
         value: mock
       - key: EMAIL_PROVIDER
-        value: console
+        value: resend
+      - key: EMAIL_FROM
+        value: "Bullizard <no-reply@mail.bullizard.com>"
+      - key: EMAIL_REPLY_TO
+        value: support@bullizard.com
+      - key: ALERTS_EMAIL
+        value: alerts@bullizard.com
+      - key: FINANCE_EMAIL
+        value: finance@bullizard.com
       - key: SMS_PROVIDER
         value: console
       - key: MALWARE_SCANNER
-        value: clamd
+        value: dev # no ClamAV on staging (allowed only with APP_ENV=staging); detects the EICAR test file only
       - key: PLATFORM_ACCOUNTS
         value: mock # Steam/Riot linking completes without leaving the site
-      - key: CLAMD_PORT
-        value: "3310"
       - key: TRUST_PROXY
-        value: "1" # Render's load balancer
+        value: "1" # Render's load balancer; behind Cloudflare the client IP is CF-Connecting-IP (ORIGIN_SHARED_SECRET)
+      - key: NOWPAYMENTS_API_URL
+        value: https://api-sandbox.nowpayments.io
       - key: MERCHANT_API_ENABLED
         value: "true" # on staging only: the OpenAPI document feeds the ZAP scan (security/zap)
       - key: AUTO_REFUND_LATE_ORDERS
@@ -60,8 +73,30 @@ envVarGroups:
       # This API's public URL, e.g. https://api-staging.example.com (payment return links)
       - key: PUBLIC_API_URL
         sync: false
-      # Neon: the pooled connection string of the `staging` branch (with ?sslmode=require)
+      # Neon: the pooled connection string of the `staging` branch, ending ?sslmode=verify-full
+      # (require is also accepted and upgraded to verify-full by the API)
       - key: DATABASE_URL
+        sync: false
+      # Resend API key (sending access, domain mail.bullizard.com)
+      - key: RESEND_API_KEY
+        sync: false
+      # Cloudflare Turnstile secret for the staging widget (the site key is VITE_TURNSTILE_SITE_KEY on Vercel)
+      - key: TURNSTILE_SECRET
+        sync: false
+      # Same random value as the X-Origin-Auth header Cloudflare adds (Transform Rule): openssl rand -hex 32
+      - key: ORIGIN_SHARED_SECRET
+        sync: false
+      # Brevo newsletter sync (optional; blank = Ops exports a CSV instead)
+      - key: BREVO_API_KEY
+        sync: false
+      - key: BREVO_LIST_ID_EN
+        sync: false
+      - key: BREVO_LIST_ID_AR
+        sync: false
+      # NOWPayments sandbox keys, for when staging switches to PAYMENT_PROVIDER=nowpayments (blank while it uses mock)
+      - key: NOWPAYMENTS_API_KEY
+        sync: false
+      - key: NOWPAYMENTS_IPN_SECRET
         sync: false
 
 services:
@@ -71,6 +106,7 @@ services:
     dockerfilePath: ./apps/api/Dockerfile
     dockerContext: .
     plan: starter
+    region: frankfurt
     healthCheckPath: /readyz
     preDeployCommand: node dist/migrate.js
     disk:
@@ -87,18 +123,9 @@ services:
         value: /data/uploads
       - key: REDIS_URL
         fromService: { type: keyvalue, name: bullizard-staging-redis, property: connectionString }
-      - key: CLAMD_HOST
-        fromService: { type: pserv, name: bullizard-clamav-staging, property: host }
-
-  # ClamAV for upload scanning; private, reachable only from the API.
-  - type: pserv
-    name: bullizard-clamav-staging
-    runtime: image
-    image:
-      url: docker.io/clamav/clamav:stable
-    plan: standard # the signature database needs ~2 GB of memory
 
   - type: keyvalue
     name: bullizard-staging-redis
+    region: frankfurt
     plan: starter
     ipAllowList: [] # private network only

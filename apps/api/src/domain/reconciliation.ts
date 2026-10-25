@@ -1,7 +1,7 @@
 import type { Ctx } from '../context.js';
 import { many, maybeOne, one, withTx, type Queryable } from '../db.js';
 import { accountId, balance } from './ledger.js';
-import { enqueueEmail } from './notifications.js';
+import { enqueueEmail, enqueueMailboxEmail } from './notifications.js';
 
 /**
  * Daily money reconciliation.
@@ -151,6 +151,9 @@ async function alertAdmins(ctx: Ctx, runId: string, status: string, report: Pick
   const summary = report.issues.map((i) => `- ${i.check}${typeof i.detail === 'object' && i.detail && 'difference' in (i.detail as any) ? ` (difference ${(i.detail as any).difference} cents)` : ''}`);
   for (const a of admins) {
     await enqueueEmail(ctx.db, a.id, 'reconciliation_alert', { status, issues: report.issues.length, summary, started_at: new Date().toISOString().slice(0, 10) }, `recon:${runId}:${a.id}`);
+  }
+  for (const to of new Set([ctx.cfg.ALERTS_EMAIL, ctx.cfg.FINANCE_EMAIL])) {
+    await enqueueMailboxEmail(ctx.db, to, 'reconciliation_alert', { status, issues: report.issues.length, summary, started_at: new Date().toISOString().slice(0, 10) }, `recon:${runId}`);
   }
   ctx.log.error({ runId, status, issues: report.issues.map((i) => i.check) }, 'reconciliation found problems');
 }

@@ -22,6 +22,7 @@ import {
   ConsoleMessenger,
   MockPhoneChecker,
   PostmarkMessenger,
+  ResendMessenger,
   RoutingMessenger,
   TwilioLookupChecker,
   TwilioSmsMessenger,
@@ -163,7 +164,11 @@ function buildStorage(cfg: Config, keyring: Keyring): FileStorage {
 function buildMessenger(cfg: Config, log: Logger): Messenger {
   const consoleOut = new ConsoleMessenger((m) => log.info(m));
   const email =
-    cfg.EMAIL_PROVIDER === 'postmark' ? new PostmarkMessenger(required(cfg.POSTMARK_SERVER_TOKEN, 'POSTMARK_SERVER_TOKEN'), cfg.EMAIL_FROM) : consoleOut;
+    cfg.EMAIL_PROVIDER === 'resend'
+      ? new ResendMessenger(required(cfg.RESEND_API_KEY, 'RESEND_API_KEY'), cfg.EMAIL_FROM, cfg.EMAIL_REPLY_TO || undefined, cfg.RESEND_API_URL)
+      : cfg.EMAIL_PROVIDER === 'postmark'
+        ? new PostmarkMessenger(required(cfg.POSTMARK_SERVER_TOKEN, 'POSTMARK_SERVER_TOKEN'), cfg.EMAIL_FROM)
+        : consoleOut;
   const sms =
     cfg.SMS_PROVIDER === 'twilio'
       ? new TwilioSmsMessenger(required(cfg.TWILIO_ACCOUNT_SID, 'TWILIO_ACCOUNT_SID'), required(cfg.TWILIO_AUTH_TOKEN, 'TWILIO_AUTH_TOKEN'), required(cfg.TWILIO_FROM, 'TWILIO_FROM'))

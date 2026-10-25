@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, money } from '../api';
+import { api, download, money } from '../api';
 import { BarChart, Kpi, Legend, LineChart } from '../components/Charts';
 import { categoryLabel } from '@/lib/catalog';
 import { PERIODS, pctText, periodLabel } from './SellerAnalytics';
@@ -166,6 +166,35 @@ export function BusinessPanel() {
           </p>
         </>
       )}
+      <NewsletterExport />
     </div>
+  );
+}
+
+/** Round 23a: newsletter subscribers (opted in at sign-up or in Account). Synced to Brevo when configured, else a CSV. */
+function NewsletterExport() {
+  const [status, setStatus] = useState<{ subscribers: number; brevoSync: boolean } | null>(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    api<{ subscribers: number; brevoSync: boolean }>('/admin/newsletter/status').then(setStatus).catch(() => {});
+  }, []);
+  if (!status) return null;
+  return (
+    <section className="card stack" aria-label="Newsletter">
+      <h3 style={{ margin: 0 }}>Newsletter</h3>
+      <p className="small muted" style={{ margin: 0 }}>
+        {status.subscribers.toLocaleString()} subscriber(s) opted in.{' '}
+        {status.brevoSync ? 'Synced to Brevo (Newsletter EN / Newsletter AR) every 15 minutes.' : 'Brevo sync is off (no BREVO_API_KEY): download the list and import it by hand.'}
+      </p>
+      <div className="row">
+        <button
+          className="btn ghost"
+          onClick={() => download('/admin/newsletter.csv', `bullizard-newsletter-${new Date().toISOString().slice(0, 10)}.csv`).catch((e) => setError(e.message))}
+        >
+          Download subscribers (CSV)
+        </button>
+      </div>
+      {error && <div className="alert" role="alert">{error}</div>}
+    </section>
   );
 }

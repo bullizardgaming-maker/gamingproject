@@ -7,8 +7,9 @@ import websocket from '@fastify/websocket';
 import { ZodError } from 'zod';
 import { Redis } from 'ioredis';
 import { randomUUID } from 'node:crypto';
+import { isIP } from 'node:net';
 import type { Logger as PinoLogger } from 'pino';
-import { safeEqual } from './lib/crypto.js';
+import { safeEqual, sha256 } from './lib/crypto.js';
 import { captureException, createMetrics } from './observability.js';
 import type { Ctx } from './context.js';
 import { AppError, forbidden, unauthorized } from './lib/errors.js';
@@ -94,6 +95,31 @@ export function parseTrustProxy(v: string): boolean | number | string[] {
   return v.split(',').map((s) => s.trim()).filter(Boolean);
 }
 
+/** Health checks Render (and uptime monitors) call directly on the origin, without Cloudflare's header. */
+const ORIGIN_AUTH_EXEMPT = new Set(['/readyz', '/healthz']);
+
+/**
+ * Round 23a, behind Cloudflare: with ORIGIN_SHARED_SECRET set, only requests carrying X-Origin-Auth = the secret
+ * (added by a Cloudflare Transform Rule) are served, so nobody can reach the origin around Cloudflare's WAF and
+ * rate limits; the client IP is then CF-Connecting-IP. `req.ip` is replaced on the request itself, so every use of
+ * it (rate limits, fraud signals, referral ip_subnet, audit log, buyer_ip, sessions, captcha) sees the real client.
+ * Without the secret nothing changes: the IP comes from TRUST_PROXY / X-Forwarded-For.
+ */
+export function originGuard(secret: string | undefined) {
+  return async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!secret) return;
+    const path = req.url.split('?')[0]!;
+    if (ORIGIN_AUTH_EXEMPT.has(path)) return;
+    const given = req.headers['x-origin-auth'];
+    // Compared as SHA-256 digests: constant time, and the secret's length doesn't leak either.
+    if (typeof given !== 'string' || !safeEqual(sha256(given), sha256(secret))) {
+      return reply.status(403).send({ error: { code: 'origin_forbidden', message: 'Direct access to the origin is not allowed' } });
+    }
+    const cf = req.headers['cf-connecting-ip'];
+    if (typeof cf === 'string' && isIP(cf.trim())) Object.defineProperty(req, 'ip', { value: cf.trim(), configurable: true, enumerable: true });
+  };
+}
+
 export async function buildApp(ctx: Ctx, opts: { logger?: PinoLogger } = {}): Promise<FastifyInstance> {
   geoHeader = ctx.cfg.GEO_COUNTRY_HEADER;
   const app = Fastify({
@@ -106,6 +132,9 @@ export async function buildApp(ctx: Ctx, opts: { logger?: PinoLogger } = {}): Pr
       return typeof id === 'string' && /^[A-Za-z0-9._:-]{1,64}$/.test(id) ? id : randomUUID();
     },
   }) as unknown as FastifyInstance;
+
+  // First hook of all: before rate limits, auth and every route (WebSocket upgrades included).
+  app.addHook('onRequest', originGuard(ctx.cfg.ORIGIN_SHARED_SECRET));
 
   app.decorateRequest('user', null);
   app.decorateRequest('apiScopes', null);
@@ -201,6 +230,10 @@ export async function buildApp(ctx: Ctx, opts: { logger?: PinoLogger } = {}): Pr
   app.setErrorHandler((err: any, req, reply: FastifyReply) => {
     if (err instanceof AppError) return reply.status(err.status).send({ error: { code: err.code, message: err.message, details: err.details } });
     if (err instanceof ZodError) return reply.status(400).send({ error: { code: 'validation_error', message: 'Invalid request', details: err.issues } });
+    if (err.code === 'FST_ERR_CTP_BODY_TOO_LARGE' && String(req.headers['content-type'] ?? '').startsWith('video/')) {
+      const maxMb = MAX_VIDEO_BYTES / 1_048_576;
+      return reply.status(413).send({ error: { code: 'file_too_large', message: `Videos can be up to ${maxMb} MB`, details: { maxBytes: MAX_VIDEO_BYTES, maxMb, directUpload: !!ctx.storage.presignPut } } });
+    }
     if (err.statusCode && err.statusCode < 500) return reply.status(err.statusCode).send({ error: { code: err.code ?? 'bad_request', message: err.message } });
     req.log.error({ err }, 'unhandled error');
     captureException(err, { requestId: req.id, route: req.routeOptions?.url });

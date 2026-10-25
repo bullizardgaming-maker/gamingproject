@@ -1,0 +1,4 @@
+Contact: mailto:security@bullizard.com
+Expires: 2027-10-25T00:00:00.000Z
+Preferred-Languages: en, ar
+Canonical: https://bullizard.com/.well-known/security.txt

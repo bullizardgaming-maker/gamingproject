@@ -26,6 +26,58 @@ jobs:
         env:
           MONEY_FUZZ_RUNS: '40' # money property tests (money-invariants.test.ts): more random scenarios in CI than locally
 
+  # The production image as Render runs it (Round 23a): build apps/api/Dockerfile, check every package the built
+  # code imports resolves inside the image, run the migrations, start node dist/index.js and wait for /readyz.
+  api-image:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_USER: market, POSTGRES_PASSWORD: market, POSTGRES_DB: market }
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 3s --health-retries 20
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f apps/api/Dockerfile -t bullizard-api:ci .
+      - name: Runtime imports resolve in the image
+        run: docker run --rm -v "$PWD/apps/api/scripts:/app/apps/api/scripts:ro" bullizard-api:ci node scripts/check-runtime-imports.mjs
+      - name: Migrate, start and reach /readyz
+        run: |
+          cat > image.env <<'ENV'
+          NODE_ENV=production
+          APP_ENV=staging
+          DATABASE_URL=postgres://market:market@localhost:5432/market
+          REDIS_URL=redis://localhost:6379
+          JWT_SECRET=ci-only-jwt-secret-0000000000000000000000
+          DATA_ENCRYPTION_KEYS=v1:Y2ktb25seS1kYXRhLWtleS0zMi1ieXRlcy0tLS0tLS0=
+          FINGERPRINT_KEY=ci-only-fingerprint-key
+          CRYPTO_INDEXER_SECRET=ci-only-indexer-secret
+          SANDBOX_MODE=true
+          PLATFORM_ACCOUNTS=mock
+          MALWARE_SCANNER=dev
+          EMAIL_PROVIDER=resend
+          RESEND_API_KEY=re_ci_placeholder
+          CAPTCHA_PROVIDER=turnstile
+          TURNSTILE_SITE_KEY=1x00000000000000000000AA
+          TURNSTILE_SECRET=1x0000000000000000000000000000000AA
+          ORIGIN_SHARED_SECRET=ci-only-origin-secret
+          RUN_WORKER_IN_PROCESS=false
+          ENV
+          docker run --rm --network host --env-file image.env bullizard-api:ci node dist/migrate.js
+          docker run -d --name api --network host --env-file image.env bullizard-api:ci
+          for i in $(seq 1 40); do
+            if curl -sf localhost:4000/readyz; then
+              curl -sf localhost:4000/healthz && exit 0
+            fi
+            sleep 1
+          done
+          docker logs api; exit 1
+      - if: failure()
+        run: docker logs api || true
+
   web:
     runs-on: ubuntu-latest
     steps:

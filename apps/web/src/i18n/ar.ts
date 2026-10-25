@@ -1446,6 +1446,14 @@ const ar: Messages = {
   "seo.path-of-exile-2.intro": "Wraeclast أصبحت أصعب، لكن مخزنك لا يجب أن يكون كذلك. اشترِ Exalted وDivine Orbs والآيتمز من لاعبي PoE 2 الحقيقيين، تُسلَّم داخل اللعبة مع إثبات بالفيديو.",
   "seo.path-of-exile-2.buy": "العملات: Exalted Orbs وDivine Orbs وغيرها بالكمية. الآيتمز: يونيك وعتاد.",
   "seo.path-of-exile-2.servers": "اختر الليج والوضع (Softcore أو Hardcore) من الفلتر. عروض الليج المنتهي تُزال تلقائيًا.",
-
+  // Round 23a: newsletter consent, bot check (Turnstile), proof video size
+  "auth.newsOptIn": "أرسل لي الأخبار والألعاب الجديدة والعروض.",
+  "auth.botCheck": "التحقق من أنك لست روبوتًا",
+  "err.captcha_required": "أكمل التحقق من أنك لست روبوتًا.",
+  "err.captcha_failed": "فشل التحقق من أنك لست روبوتًا. حاول مرة أخرى.",
+  "account.newsletter.title": "الأخبار والعروض",
+  "account.newsletter.hint": "رسائل من حين لآخر عن الألعاب الجديدة والعروض. يمكنك إيقافها من هنا أو من الرابط في أي رسالة.",
+  "account.newsletter.saved": "تم الحفظ.",
+  "upload.videoTooLarge": "الحد الأقصى لحجم الفيديو 95 ميغابايت. قصّر التسجيل أو خفّض جودته وحاول مرة أخرى.",
 };
 export default ar;

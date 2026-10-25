@@ -24,7 +24,7 @@ export const REDACT_PATHS = [
 export function createLogger(cfg: Config): PinoLogger {
   return pino({
     level: cfg.LOG_LEVEL,
-    base: { service: 'bullizard-api', env: cfg.NODE_ENV },
+    base: { service: 'bullizard-api', env: cfg.APP_ENV },
     redact: { paths: REDACT_PATHS, censor: '[redacted]' },
   });
 }
@@ -51,7 +51,7 @@ export function initSentry(cfg: Config) {
   if (!cfg.SENTRY_DSN || sentryOn) return;
   Sentry.init({
     dsn: cfg.SENTRY_DSN,
-    environment: cfg.NODE_ENV,
+    environment: cfg.APP_ENV,
     tracesSampleRate: cfg.SENTRY_TRACES_SAMPLE_RATE,
     beforeSend(event) {
       // Never ship credentials or cookies to the error tracker.

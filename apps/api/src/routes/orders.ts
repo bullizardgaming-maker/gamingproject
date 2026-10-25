@@ -22,7 +22,7 @@ import { coinsFor, paymentsFor, refreshCryptoPayment, setRefundAddress, startCry
 import { BUYER_TAGS, buyerReputation, rateBuyer } from '../domain/buyerReputation.js';
 import { createReview, replyToReview, sellerProfile } from '../domain/reviews.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
-import { readAttachment, uploadAttachment } from '../domain/attachments.js';
+import { completeDirectVideoUpload, readAttachment, startDirectVideoUpload, uploadAttachment } from '../domain/attachments.js';
 import { audit } from '../domain/audit.js';
 import { readBanner } from '../domain/storefront.js';
 import { me, requestMeta } from '../server.js';
@@ -319,6 +319,19 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
       /* malformed percent-encoding: keep the default name */
     }
     return reply.status(201).send(await uploadAttachment(ctx, id, me(req), name, req.body));
+  });
+
+  /** Videos above the 95 MB API cap, when uploads live in object storage: reserve, PUT to the signed URL, complete. */
+  app.post('/chat/rooms/:id/attachments/direct', async (req, reply) => {
+    const { id } = Id.parse(req.params);
+    const body = z
+      .object({ fileName: z.string().max(200).default('video'), contentType: z.enum(['video/mp4', 'video/webm']), bytes: z.number().int().positive() })
+      .parse(req.body);
+    return reply.status(201).send(await startDirectVideoUpload(ctx, id, me(req), body));
+  });
+
+  app.post('/chat/attachments/:id/complete', async (req, reply) => {
+    return reply.status(201).send(await completeDirectVideoUpload(ctx, Id.parse(req.params).id, me(req)));
   });
 
   app.get('/chat/attachments/:id', async (req, reply) => {

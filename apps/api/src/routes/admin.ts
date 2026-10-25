@@ -47,6 +47,7 @@ import { enforceIdDeadlines, listQuestions, rulesSettings, updateRulesTest } fro
 import { createAffiliate, listAffiliates, updateAffiliate } from '../domain/affiliates.js';
 import { setSuggestionStatus } from '../domain/gameVotes.js';
 import { offplatformPolicy, setOffplatformPolicy } from '../domain/chat.js';
+import { newsletterCsv } from '../domain/newsletter.js';
 
 const Id = z.object({ id: z.string().uuid() });
 
@@ -854,6 +855,20 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const row = await recordConversion(ctx, admin.id, body);
     await audit(ctx.db, req, 'fx.conversion_recorded', { type: 'fx_conversion', id: row.id }, body);
     return reply.status(201).send(row);
+  });
+
+  // --- Newsletter (Round 23a) -----------------------------------------------------------
+  /** Opted-in subscribers as CSV (for the newsletter tool when the Brevo sync is off). Personal data: audited. */
+  app.get('/admin/newsletter/status', async (req) => {
+    requirePermission(req, 'analytics.view');
+    const n = await one<{ n: number }>(ctx.db, `SELECT count(*)::int AS n FROM users WHERE news_opt_in AND deleted_at IS NULL AND status <> 'banned'`);
+    return { subscribers: n.n, brevoSync: !!ctx.cfg.BREVO_API_KEY };
+  });
+  app.get('/admin/newsletter.csv', async (req, reply) => {
+    const user = requirePermission(req, 'analytics.view');
+    await audit(ctx.db, req, 'newsletter.exported', { type: 'user', id: user.id }, {});
+    reply.header('Content-Type', 'text/csv; charset=utf-8').header('Content-Disposition', `attachment; filename="bullizard-newsletter-${new Date().toISOString().slice(0, 10)}.csv"`);
+    return newsletterCsv(ctx.db);
   });
 
   // --- Tax ------------------------------------------------------------------------------

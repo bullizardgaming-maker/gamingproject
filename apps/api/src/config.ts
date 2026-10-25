@@ -2,8 +2,14 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 
+/** An optional secret: Render sends a blank value for a `sync: false` key left empty; treat it as unset. */
+const secret = () => z.string().optional().transform((v) => (v ? v : undefined));
+
 const Env = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  // Which deployment this is. staging runs with NODE_ENV=production and keeps every production check, except that
+  // MALWARE_SCANNER=dev is allowed (no ClamAV service on staging). Defaults to NODE_ENV.
+  APP_ENV: z.enum(['development', 'test', 'staging', 'production']).optional(),
   PORT: z.coerce.number().default(4000),
   PUBLIC_WEB_URL: z.string().default('http://localhost:5173'),
   PUBLIC_API_URL: z.string().optional(), // defaults to http://localhost:PORT
@@ -20,10 +26,17 @@ const Env = z.object({
   LOGIN_MAX_FAILURES: z.coerce.number().int().min(3).default(10),
   LOGIN_LOCK_MINUTES: z.coerce.number().int().min(1).default(15),
   // Bot checks: sign-up and password reset always; sign-in after this many failures from one IP in 15 minutes.
+  // Required in production and staging (Cloudflare Turnstile). TURNSTILE_SITE_KEY / TURNSTILE_SECRET set the provider
+  // to turnstile; sign-in then always asks for a token too (CAPTCHA_AFTER_FAILED_LOGINS=0).
   CAPTCHA_PROVIDER: z.enum(['none', 'turnstile', 'hcaptcha']).default('none'),
-  CAPTCHA_SITE_KEY: z.string().optional(),
-  CAPTCHA_SECRET: z.string().optional(),
-  CAPTCHA_AFTER_FAILED_LOGINS: z.coerce.number().int().min(1).default(3),
+  CAPTCHA_SITE_KEY: secret(),
+  CAPTCHA_SECRET: secret(),
+  TURNSTILE_SITE_KEY: secret(),
+  TURNSTILE_SECRET: secret(),
+  CAPTCHA_AFTER_FAILED_LOGINS: z.coerce.number().int().min(0).optional(), // 0 = every sign-in; default 3 (0 with Turnstile keys)
+  // Behind Cloudflare: Cloudflare adds X-Origin-Auth = this secret (a Transform Rule). When set, requests without it are
+  // refused (except /readyz and /healthz) and the client IP is CF-Connecting-IP. Unset: TRUST_PROXY / X-Forwarded-For.
+  ORIGIN_SHARED_SECRET: secret(),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   SENTRY_DSN: z.string().optional(),
   SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0),
@@ -76,9 +89,23 @@ const Env = z.object({
   SUMSUB_SECRET_KEY: z.string().optional(),
   SUMSUB_WEBHOOK_SECRET: z.string().optional(),
   SUMSUB_LEVEL_NAME: z.string().default('basic-kyc-level'),
-  EMAIL_PROVIDER: z.enum(['console', 'postmark']).default('console'),
+  // console and postmark stay for development; production and staging use resend (console is refused there).
+  EMAIL_PROVIDER: z.enum(['console', 'postmark', 'resend']).default('console'),
   EMAIL_FROM: z.string().default('Bullizard <no-reply@bullizard.local>'),
+  EMAIL_REPLY_TO: z.string().default('support@bullizard.com'),
   POSTMARK_SERVER_TOKEN: z.string().optional(),
+  RESEND_API_KEY: secret(),
+  RESEND_API_URL: z.string().default('https://api.resend.com'),
+  // Operational alerts (ops_alert, reconciliation) also go to these mailboxes, besides the staff accounts.
+  ALERTS_EMAIL: secret(),
+  FINANCE_EMAIL: secret(), // reconciliation results
+  // Newsletter (opt-in at sign-up and in settings). With BREVO_API_KEY the worker syncs subscribers to Brevo
+  // (one list per language); without it, Ops exports a CSV.
+  BREVO_API_KEY: secret(),
+  BREVO_API_URL: z.string().default('https://api.brevo.com'),
+  BREVO_LIST_ID_EN: z.coerce.number().int().positive().optional(), // "Newsletter EN"
+  BREVO_LIST_ID_AR: z.coerce.number().int().positive().optional(), // "Newsletter AR"
+  NEWSLETTER_SENDER: z.string().default('Bullizard <news@news.bullizard.com>'),
   // Web Push (VAPID). Generate keys: npx web-push generate-vapid-keys. Push is off without them.
   VAPID_PUBLIC_KEY: z.string().optional(),
   VAPID_PRIVATE_KEY: z.string().optional(),
@@ -196,6 +223,8 @@ const Env = z.object({
   ORDER_PAYMENT_TTL_MINUTES: z.coerce.number().default(30),
   // Admin/arbiter actions need a session signed in with a second factor (PCI DSS 8.4). Defaults to on in production.
   STAFF_MFA_REQUIRED: z.enum(['true', 'false']).optional(),
+  // WebSocket keep-alive: a ping frame this often, well under Cloudflare's 100-second idle timeout.
+  WS_PING_SECONDS: z.coerce.number().min(1).max(90).default(30),
   RUN_WORKER_IN_PROCESS: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
   // Web3 escrow
   ESCROW_CHAIN_ID: z.coerce.number().default(31337),
@@ -212,7 +241,8 @@ const Env = z.object({
   ESCROW_START_BLOCK: z.coerce.number().default(0),
 });
 
-export type Config = z.infer<typeof Env>;
+export type AppEnv = 'development' | 'test' | 'staging' | 'production';
+export type Config = Omit<z.infer<typeof Env>, 'APP_ENV' | 'CAPTCHA_AFTER_FAILED_LOGINS'> & { APP_ENV: AppEnv; CAPTCHA_AFTER_FAILED_LOGINS: number };
 
 /**
  * Local development reads `.env` from the repo root (or the current directory). Variables already
@@ -234,15 +264,25 @@ function loadDotEnv() {
 
 export function loadConfig(overrides: Partial<Record<keyof Config, string>> = {}): Config {
   loadDotEnv();
-  const cfg = Env.parse({ ...process.env, ...overrides });
+  const raw = { ...process.env, ...overrides };
+  if (raw.NODE_ENV === 'staging') throw new Error('NODE_ENV=staging is not supported: use NODE_ENV=production with APP_ENV=staging');
+  const parsed = Env.parse(raw);
+  if (parsed.TURNSTILE_SECRET) Object.assign(parsed, { CAPTCHA_PROVIDER: 'turnstile', CAPTCHA_SECRET: parsed.TURNSTILE_SECRET, CAPTCHA_SITE_KEY: parsed.TURNSTILE_SITE_KEY ?? parsed.CAPTCHA_SITE_KEY });
+  const cfg: Config = {
+    ...parsed,
+    APP_ENV: parsed.APP_ENV ?? parsed.NODE_ENV,
+    CAPTCHA_AFTER_FAILED_LOGINS: parsed.CAPTCHA_AFTER_FAILED_LOGINS ?? (parsed.TURNSTILE_SECRET ? 0 : 3),
+  };
+  if (cfg.APP_ENV === 'staging' && cfg.NODE_ENV !== 'production') throw new Error('APP_ENV=staging needs NODE_ENV=production (staging keeps the production checks)');
+  if (cfg.APP_ENV === 'production' && cfg.NODE_ENV !== 'production') throw new Error('APP_ENV=production needs NODE_ENV=production');
   if (cfg.SANDBOX_MODE && (cfg.PAYMENT_PROVIDER !== 'mock' || cfg.KYC_PROVIDER !== 'mock')) {
     throw new Error('SANDBOX_MODE requires PAYMENT_PROVIDER=mock and KYC_PROVIDER=mock');
   }
   if (cfg.NODE_ENV === 'production' && cfg.PLATFORM_ACCOUNTS === 'mock' && !cfg.SANDBOX_MODE) {
     throw new Error('PLATFORM_ACCOUNTS=live is required in production (mock links are for the sandbox)');
   }
-  if (cfg.NODE_ENV === 'production' && cfg.MALWARE_SCANNER === 'dev') {
-    throw new Error('MALWARE_SCANNER=clamd is required in production');
+  if (cfg.NODE_ENV === 'production' && cfg.MALWARE_SCANNER === 'dev' && cfg.APP_ENV !== 'staging') {
+    throw new Error('MALWARE_SCANNER=clamd is required in production (staging may use dev: APP_ENV=staging)');
   }
   if (cfg.NODE_ENV === 'production' && cfg.ESCROW_SIGNER === 'local' && cfg.ESCROW_SIGNER_PRIVATE_KEY && !cfg.ESCROW_ALLOW_LOCAL_KEY_IN_PRODUCTION) {
     throw new Error('Use ESCROW_SIGNER=aws_kms in production: the escrow signing key must not sit in an environment variable');
@@ -250,8 +290,12 @@ export function loadConfig(overrides: Partial<Record<keyof Config, string>> = {}
   if (cfg.ESCROW_SIGNER === 'aws_kms' && !cfg.ESCROW_KMS_KEY_ID) throw new Error('ESCROW_KMS_KEY_ID is required with ESCROW_SIGNER=aws_kms');
   if (cfg.NODE_ENV === 'production') {
     for (const key of ['JWT_SECRET', 'DATA_ENCRYPTION_KEYS', 'FINGERPRINT_KEY', 'CRYPTO_INDEXER_SECRET'] as const) {
-      if (!process.env[key]) throw new Error(`${key} must be set explicitly in production`);
+      if (!process.env[key] && !overrides[key]) throw new Error(`${key} must be set explicitly in production`);
     }
+    // Production and staging (Round 23a): real email, bot checks on.
+    if (cfg.EMAIL_PROVIDER === 'console') throw new Error('EMAIL_PROVIDER=console is not allowed in production or staging: use resend');
+    if (cfg.EMAIL_PROVIDER === 'resend' && !cfg.RESEND_API_KEY) throw new Error('RESEND_API_KEY is required with EMAIL_PROVIDER=resend');
+    if (cfg.CAPTCHA_PROVIDER === 'none') throw new Error('TURNSTILE_SECRET (Cloudflare Turnstile) is required in production and staging');
   }
   return cfg;
 }

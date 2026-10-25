@@ -1642,7 +1642,15 @@ const en = {
   "seo.path-of-exile-2.intro": "Wraeclast got harder. Your stash doesn't have to. Buy Exalted and Divine Orbs and items from real PoE 2 players, traded in-game with video proof.",
   "seo.path-of-exile-2.buy": "Currency: Exalted Orbs, Divine Orbs and more, by amount. Items: uniques and gear.",
   "seo.path-of-exile-2.servers": "Pick the league and mode (Softcore or Hardcore) from the filter. Offers in an ended league come down automatically.",
-
+  // Round 23a: newsletter consent, bot check (Turnstile), proof video size
+  "auth.newsOptIn": "Send me news, new games and offers.",
+  "auth.botCheck": "Bot check",
+  "err.captcha_required": "Please complete the bot check.",
+  "err.captcha_failed": "The bot check failed. Please try again.",
+  "account.newsletter.title": "News and offers",
+  "account.newsletter.hint": "Occasional emails about new games and offers. You can stop them here or with the link in any newsletter.",
+  "account.newsletter.saved": "Saved.",
+  "upload.videoTooLarge": "Videos can be up to 95 MB. Trim the recording or lower its quality and try again.",
 };
 
 export type MessageKey = keyof typeof en;

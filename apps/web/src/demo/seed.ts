@@ -33,6 +33,9 @@ export interface DemoUser {
   email: string;
   password: string;
   locale?: string;
+  /** Newsletter consent (Round 23a). */
+  news_opt_in?: boolean;
+  news_opt_in_at?: string | null;
   tos_version?: string | null;
   tos_accepted_at?: string | null;
   listing_banned_at?: string | null;
