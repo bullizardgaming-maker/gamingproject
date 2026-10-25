@@ -33,6 +33,8 @@ const Env = z.object({
   CAPTCHA_SECRET: secret(),
   TURNSTILE_SITE_KEY: secret(),
   TURNSTILE_SECRET: secret(),
+  // Host the Turnstile token must come from (Round 23b); defaults to PUBLIC_WEB_URL's host.
+  TURNSTILE_HOSTNAME: secret(),
   CAPTCHA_AFTER_FAILED_LOGINS: z.coerce.number().int().min(0).optional(), // 0 = every sign-in; default 3 (0 with Turnstile keys)
   // Behind Cloudflare: Cloudflare adds X-Origin-Auth = this secret (a Transform Rule). When set, requests without it are
   // refused (except /readyz and /healthz) and the client IP is CF-Connecting-IP. Unset: TRUST_PROXY / X-Forwarded-For.
@@ -262,6 +264,14 @@ function loadDotEnv() {
   }
 }
 
+/** Startup warning for staging without ORIGIN_SHARED_SECRET (anyone can reach the origin around Cloudflare). */
+export function originWarning(cfg: Config): string | null {
+  if (cfg.APP_ENV === 'staging' && !cfg.ORIGIN_SHARED_SECRET) {
+    return 'ORIGIN_SHARED_SECRET is not set: the API accepts requests that bypass Cloudflare and trusts X-Forwarded-For (TRUST_PROXY). Set it once the Cloudflare proxy is on.';
+  }
+  return null;
+}
+
 export function loadConfig(overrides: Partial<Record<keyof Config, string>> = {}): Config {
   loadDotEnv();
   const raw = { ...process.env, ...overrides };
@@ -296,6 +306,10 @@ export function loadConfig(overrides: Partial<Record<keyof Config, string>> = {}
     if (cfg.EMAIL_PROVIDER === 'console') throw new Error('EMAIL_PROVIDER=console is not allowed in production or staging: use resend');
     if (cfg.EMAIL_PROVIDER === 'resend' && !cfg.RESEND_API_KEY) throw new Error('RESEND_API_KEY is required with EMAIL_PROVIDER=resend');
     if (cfg.CAPTCHA_PROVIDER === 'none') throw new Error('TURNSTILE_SECRET (Cloudflare Turnstile) is required in production and staging');
+    // Round 23b. Production proper: the origin only answers Cloudflare, and SMS must really be sent. Staging may run
+    // without the secret until the Cloudflare proxy is on (the API logs a warning at start: originWarning()).
+    if (cfg.APP_ENV === 'production' && !cfg.ORIGIN_SHARED_SECRET) throw new Error('ORIGIN_SHARED_SECRET is required in production (the X-Origin-Auth value Cloudflare adds)');
+    if (cfg.APP_ENV === 'production' && cfg.SMS_PROVIDER === 'console') throw new Error('SMS_PROVIDER=console is not allowed in production: use twilio');
   }
   return cfg;
 }

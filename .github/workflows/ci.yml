@@ -75,6 +75,14 @@ jobs:
             sleep 1
           done
           docker logs api; exit 1
+      - name: ClamAV image limits (proof videos up to 100 MB)
+        run: |
+          docker build -t bullizard-clamav:ci services/clamav
+          docker run --rm --entrypoint clamconf bullizard-clamav:ci -n > clamconf.txt
+          for k in StreamMaxLength MaxScanSize MaxFileSize; do
+            v=$(grep -E "^$k = " clamconf.txt | grep -oE '[0-9]+'); echo "$k=$v"
+            test "$v" -ge 125829120
+          done
       - if: failure()
         run: docker logs api || true
 

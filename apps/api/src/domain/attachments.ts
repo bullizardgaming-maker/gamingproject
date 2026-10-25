@@ -1,4 +1,10 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { Transform, pipeline as pipelineCb, type Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import sharp, { type OutputInfo } from 'sharp';
 import type { Ctx } from '../context.js';
 import { maybeOne, one } from '../db.js';
@@ -14,7 +20,8 @@ export const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
  * (startDirectVideoUpload) up to MAX_DIRECT_VIDEO_BYTES.
  */
 export const MAX_VIDEO_BYTES = 95 * 1024 * 1024;
-export const MAX_DIRECT_VIDEO_BYTES = 500 * 1024 * 1024;
+/** Proof clips don't need more (Round 23b). Videos are streamed to disk, the scanner and storage, never buffered whole. */
+export const MAX_DIRECT_VIDEO_BYTES = 100 * 1024 * 1024;
 const DIRECT_UPLOAD_TTL_SECONDS = 15 * 60;
 const MAX_PIXELS = 40_000_000;
 const MAX_EDGE = 2560;
@@ -46,6 +53,53 @@ export async function scanOrPause(ctx: Ctx, body: Buffer): Promise<{ clean: bool
   }
 }
 
+/** The same for a spooled file, streamed to the scanner (fails closed, like scanOrPause). */
+async function scanFileOrPause(ctx: Ctx, file: string, size: number) {
+  try {
+    return await ctx.scanner.scanStream(createReadStream(file), size);
+  } catch (err) {
+    ctx.log.error({ err }, 'malware scanner unavailable');
+    throw new AppError(503, 'scanner_unavailable', 'Uploads are paused for a moment. Try again shortly.');
+  }
+}
+
+/**
+ * Round 23b: write an incoming stream to a private temp file in chunks, hashing and counting as it goes, and stop
+ * as soon as it passes `max`. Memory stays at one chunk whatever the size. Call `cleanup` when done.
+ */
+export async function spool(source: Readable, max: number, tooLarge: () => Error) {
+  const dir = await mkdtemp(path.join(tmpdir(), 'bz-upload-'));
+  const file = path.join(dir, 'upload');
+  const hash = createHash('sha256');
+  let size = 0;
+  const head: Buffer[] = [];
+  let headLen = 0;
+  const meter = new Transform({
+    transform(chunk: Buffer, _enc, cb) {
+      size += chunk.length;
+      if (size > max) return cb(tooLarge());
+      hash.update(chunk);
+      if (headLen < 16) {
+        const part = Buffer.from(chunk.subarray(0, 16 - headLen));
+        head.push(part);
+        headLen += part.length;
+      }
+      cb(null, chunk);
+    },
+  });
+  const cleanup = () => rm(dir, { recursive: true, force: true });
+  try {
+    await pipeline(source, meter, createWriteStream(file, { mode: 0o600 }));
+  } catch (err) {
+    await cleanup();
+    throw err;
+  }
+  return { file, size, sha256: hash.digest('hex'), head: Buffer.concat(head), cleanup };
+}
+
+/** What acceptUpload stores: bytes in memory (images, ≤ 8 MB) or a spooled file (videos). */
+type Incoming = { data: Buffer } | { file: string; size: number; sha256: string };
+
 const cleanName = (name: string) => name.replace(/[^\w.\- ]+/g, '_').slice(0, 100) || 'image';
 
 /**
@@ -69,7 +123,35 @@ export async function uploadAttachment(ctx: Ctx, roomId: string, user: { id: str
   if (isVideo && body.length > MAX_VIDEO_BYTES) throw videoTooLarge(ctx);
   await checkUploadRate(ctx, user.id);
   const name = cleanName(fileName);
-  return acceptUpload(ctx, room, user, name, kind, body);
+  return acceptUpload(ctx, room, user, name, kind, { data: body });
+}
+
+/**
+ * Round 23b: a proof video posted to the API arrives as a stream (the video/* body parser does not buffer). It is
+ * spooled to a temp file (≤ 95 MB, counted while reading), sniffed, streamed to the scanner and to storage.
+ */
+export async function uploadVideoStream(
+  ctx: Ctx,
+  roomId: string,
+  user: { id: string; role: string; status: string },
+  fileName: string,
+  stream: Readable,
+  declaredBytes?: number,
+) {
+  if (user.status !== 'active') throw forbidden('suspended', 'Account suspended');
+  const room = await roomForParticipant(ctx.db, roomId, user);
+  if (room.buyer_id !== user.id && room.seller_id !== user.id) throw forbidden('not_participant', 'Only the buyer and seller can add evidence');
+  if (declaredBytes && declaredBytes > MAX_VIDEO_BYTES) throw videoTooLarge(ctx);
+  await checkUploadRate(ctx, user.id);
+  const spooled = await spool(stream, MAX_VIDEO_BYTES, () => videoTooLarge(ctx));
+  try {
+    if (spooled.size === 0) throw badRequest('empty_file', 'The file is empty');
+    const kind = sniffImage(spooled.head);
+    if (!kind || !VIDEO.has(kind)) throw badRequest('unsupported_file', 'Only PNG, JPEG and WebP images or MP4/WebM videos can be attached');
+    return await acceptUpload(ctx, room, user, cleanName(fileName), kind, { file: spooled.file, size: spooled.size, sha256: spooled.sha256 });
+  } finally {
+    await spooled.cleanup();
+  }
 }
 
 /** 413 with the limit in `details`, so the web app shows a translated message (and the size). */
@@ -98,12 +180,13 @@ async function acceptUpload(
   user: { id: string },
   name: string,
   kind: Kind,
-  body: Buffer,
+  input: Incoming,
   pending?: { id: string; key: string },
 ) {
   const roomId = room.id;
   const isVideo = VIDEO.has(kind);
-  const scan = await scanOrPause(ctx, body);
+  const size = 'data' in input ? input.data.length : input.size;
+  const scan = 'data' in input ? await scanOrPause(ctx, input.data) : await scanFileOrPause(ctx, input.file, input.size);
   if (!scan.clean) {
     if (pending) await ctx.storage.delete(pending.key);
     await withScope(ctx, async (s) => {
@@ -112,7 +195,7 @@ async function acceptUpload(
       } else {
         await s.tx.query(
           `INSERT INTO chat_attachments (room_id, uploader_id, original_name, mime, bytes, status, scan_result) VALUES ($1, $2, $3, $4, $5, 'infected', $6)`,
-          [roomId, user.id, name, MIME[kind], body.length, scan.signature ?? 'malware'],
+          [roomId, user.id, name, MIME[kind], size, scan.signature ?? 'malware'],
         );
       }
       await s.tx.query(
@@ -125,11 +208,12 @@ async function acceptUpload(
 
   // Images are re-encoded (strips metadata and anything smuggled after the image data); videos are
   // stored as scanned, since they cannot be re-encoded here.
-  let out: { data: Buffer; info: Pick<OutputInfo, 'width' | 'height'> };
-  if (isVideo) out = { data: body, info: { width: 0, height: 0 } };
+  let out: { data: Buffer | null; info: Pick<OutputInfo, 'width' | 'height'> };
+  if (!('data' in input)) out = { data: null, info: { width: 0, height: 0 } };
+  else if (isVideo) out = { data: input.data, info: { width: 0, height: 0 } };
   else {
     try {
-      const img = sharp(body, { limitInputPixels: MAX_PIXELS, failOn: 'error' })
+      const img = sharp(input.data, { limitInputPixels: MAX_PIXELS, failOn: 'error' })
         .rotate() // apply EXIF orientation before metadata is dropped
         .resize({ width: MAX_EDGE, height: MAX_EDGE, fit: 'inside', withoutEnlargement: true });
       const encoded = kind === 'png' ? img.png({ compressionLevel: 9 }) : kind === 'webp' ? img.webp({ quality: 85 }) : img.jpeg({ quality: 85, mozjpeg: true });
@@ -139,10 +223,14 @@ async function acceptUpload(
     }
   }
 
-  const hash = sha256(out.data);
+  const hash = out.data ? sha256(out.data) : (input as { sha256: string }).sha256;
+  const storedBytes = out.data ? out.data.length : size;
   const id = pending?.id ?? randomUUID();
   const key = pending?.key ?? `chat/${roomId}/${id}`;
-  if (!pending) await ctx.storage.put(key, out.data, MIME[kind]);
+  if (!pending) {
+    if (out.data) await ctx.storage.put(key, out.data, MIME[kind]);
+    else await ctx.storage.putFile(key, (input as { file: string }).file, MIME[kind], size);
+  }
 
   return withScope(ctx, async (s) => {
     const msg = await appendMessage(
@@ -150,7 +238,7 @@ async function acceptUpload(
       roomId,
       user.id,
       'attachment',
-      isVideo ? `🎬 ${name} (${(out.data.length / 1_048_576).toFixed(1)} MB video, sha256 ${hash})` : `📎 ${name} (${out.info.width}×${out.info.height}, sha256 ${hash})`,
+      isVideo ? `🎬 ${name} (${(storedBytes / 1_048_576).toFixed(1)} MB video, sha256 ${hash})` : `📎 ${name} (${out.info.width}×${out.info.height}, sha256 ${hash})`,
       [],
       ctx.keyring,
     );
@@ -160,14 +248,14 @@ async function acceptUpload(
           `UPDATE chat_attachments SET message_id = $2, mime = $3, bytes = $4, sha256 = $5, status = 'clean', scan_result = $6, key_version = $7
             WHERE id = $1 AND status = 'uploading'
             RETURNING id, message_id, original_name, mime, bytes, width, height, sha256, created_at`,
-          [id, msg.id, MIME[kind], out.data.length, hash, `${ctx.scanner.name}: clean`, ctx.storage.keyVersion],
+          [id, msg.id, MIME[kind], storedBytes, hash, `${ctx.scanner.name}: clean`, ctx.storage.keyVersion],
         )
       : await one(
           s.tx,
           `INSERT INTO chat_attachments (id, room_id, uploader_id, message_id, original_name, mime, bytes, width, height, sha256, storage_key, status, scan_result, key_version)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'clean', $12, $13)
            RETURNING id, message_id, original_name, mime, bytes, width, height, sha256, created_at`,
-          [id, roomId, user.id, msg.id, name, MIME[kind], out.data.length, isVideo ? null : out.info.width, isVideo ? null : out.info.height, hash, key, `${ctx.scanner.name}: clean`, ctx.storage.keyVersion],
+          [id, roomId, user.id, msg.id, name, MIME[kind], storedBytes, isVideo ? null : out.info.width, isVideo ? null : out.info.height, hash, key, `${ctx.scanner.name}: clean`, ctx.storage.keyVersion],
         );
     const counterpart = room.buyer_id === user.id ? room.seller_id : room.buyer_id;
     s.notifyUser(counterpart, 'chat.message', { roomId, seq: msg.seq });
@@ -213,19 +301,56 @@ export async function completeDirectVideoUpload(ctx: Ctx, attachmentId: string, 
   if (!att || att.uploader_id !== user.id) throw notFound('Upload');
   if (user.status !== 'active') throw forbidden('suspended', 'Account suspended');
   const room = await roomForParticipant(ctx.db, att.room_id, user);
-  let body: Buffer;
+  let source: Readable;
   try {
-    body = await ctx.storage.get(att.storage_key);
+    source = await ctx.storage.getStream(att.storage_key);
   } catch {
     throw badRequest('upload_missing', 'The upload has not arrived yet. Try again.');
   }
-  const kind = sniffImage(body);
-  if (body.length !== Number(att.bytes) || !kind || !VIDEO.has(kind)) {
+  // Streamed from the bucket to a temp file (hash, size, first bytes), then to the scanner: never held in memory.
+  const reject = async () => {
     await ctx.storage.delete(att.storage_key);
     await ctx.db.query(`DELETE FROM chat_attachments WHERE id = $1 AND status = 'uploading'`, [att.id]);
-    throw badRequest('unsupported_file', 'Only MP4/WebM videos can be uploaded this way');
+    return badRequest('unsupported_file', 'Only MP4/WebM videos can be uploaded this way');
+  };
+  let spooled: Awaited<ReturnType<typeof spool>>;
+  try {
+    spooled = await spool(source, Number(att.bytes), () => new AppError(413, 'file_too_large', 'Larger than announced'));
+  } catch (err) {
+    if (err instanceof AppError && err.code === 'file_too_large') throw await reject();
+    throw badRequest('upload_missing', 'The upload has not arrived yet. Try again.');
   }
-  return acceptUpload(ctx, room, user, att.original_name, kind, body, { id: att.id, key: att.storage_key });
+  try {
+    const kind = sniffImage(spooled.head);
+    if (spooled.size !== Number(att.bytes) || !kind || !VIDEO.has(kind)) throw await reject();
+    return await acceptUpload(ctx, room, user, att.original_name, kind, { file: spooled.file, size: spooled.size, sha256: spooled.sha256 }, { id: att.id, key: att.storage_key });
+  } finally {
+    await spooled.cleanup();
+  }
+}
+
+/**
+ * Round 23b: an attachment as a stream (videos), hashed on the way out. A stored file that no longer matches its
+ * SHA-256 ends the response with an error instead of completing it (the check needs the last byte).
+ */
+export async function openAttachment(ctx: Ctx, id: string, user: { id: string; role: string }) {
+  const att = await maybeOne(ctx.db, `SELECT * FROM chat_attachments WHERE id = $1 AND status = 'clean'`, [id]);
+  if (!att) throw notFound('Attachment');
+  const room = await roomForParticipant(ctx.db, att.room_id, user);
+  const hash = createHash('sha256');
+  const verify = new Transform({
+    transform(chunk: Buffer, _e, cb) {
+      hash.update(chunk);
+      cb(null, chunk);
+    },
+    flush(cb) {
+      if (hash.digest('hex') === att.sha256) return cb();
+      ctx.log.error({ attachmentId: att.id }, 'stored attachment failed its integrity check');
+      cb(new AppError(500, 'integrity_error', 'Stored file failed its integrity check'));
+    },
+  });
+  const stream = pipelineCb(await ctx.storage.getStream(att.storage_key), verify, () => {});
+  return { att, stream, isParticipant: room.buyer_id === user.id || room.seller_id === user.id };
 }
 
 export async function readAttachment(ctx: Ctx, id: string, user: { id: string; role: string }) {

@@ -343,12 +343,13 @@ export function TaxPanel() {
 // ---------------------------------------------------------------------------
 // Staff & roles
 // ---------------------------------------------------------------------------
-const ROLES = ['arbiter', 'support', 'lead', 'finance', 'compliance', 'admin'] as const;
+const ROLES = ['arbiter', 'support', 'lead', 'finance', 'compliance', 'marketing', 'admin'] as const;
 const ROLE_HINT: Record<string, string> = {
   arbiter: 'Disputes, owner proofs, reviews, refunds after release',
   support: 'Read orders and chats, post status-page incidents; no money movement',
   finance: 'Treasury, chargebacks, tax, invoices, ledger corrections',
   compliance: 'Fraud and AML review, suspensions, audit log',
+  marketing: 'Newsletter subscriber list (CSV); nothing else',
   admin: 'Everything, including staff access',
 };
 

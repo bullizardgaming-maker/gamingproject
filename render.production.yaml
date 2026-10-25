@@ -156,10 +156,10 @@ services:
 
   - type: pserv
     name: bullizard-clamav
-    runtime: image
+    runtime: docker # clamav/clamav:stable plus services/clamav/clamd-limits.conf (120M stream/scan/file limits)
+    dockerfilePath: ./services/clamav/Dockerfile
+    dockerContext: ./services/clamav
     region: frankfurt
-    image:
-      url: docker.io/clamav/clamav:stable
     plan: standard
 
   - type: keyvalue

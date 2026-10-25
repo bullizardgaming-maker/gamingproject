@@ -86,13 +86,13 @@ export async function deleteAccount(ctx: Ctx, user: User, password: string, code
   const scrambled = await hashPassword(randomToken(32));
   // A newsletter contact that reached Brevo is deleted there before the address is scrubbed here.
   const news = await maybeOne<{ email: string; news_synced_at: string | null }>(ctx.db, 'SELECT email, news_synced_at FROM users WHERE id = $1', [user.id]);
-  if (news?.news_synced_at) await forgetNewsletterContact(ctx, news.email);
+  if (news?.news_synced_at) await forgetNewsletterContact(ctx, news.email); // (the address scrubbed below is the one Brevo had)
   return withScope(ctx, async (s) => {
     await s.tx.query(
       `UPDATE users SET
           email = 'deleted-' || id || '@deleted.invalid', display_name = 'Deleted user', password_hash = $2,
           phone = NULL, legal_name = NULL, wallet_address = NULL,
-          totp_secret_ciphertext = NULL, totp_enabled_at = NULL, email_preferences = '{}', news_opt_in = false, news_opt_in_at = NULL,
+          totp_secret_ciphertext = NULL, totp_enabled_at = NULL, email_preferences = '{}', news_opt_in = false, news_opt_in_at = NULL, news_synced_email = NULL, news_synced_list = NULL,
           status = 'suspended', suspension_reason = 'account_deleted', deleted_at = now()
         WHERE id = $1`,
       [user.id, scrambled],

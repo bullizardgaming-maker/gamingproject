@@ -3,7 +3,7 @@
 State of the project for whoever picks it up next (a person or another Claude session). Read this first, then
 `README.md` (how to run) and `docs/ARCHITECTURE.md` (how each feature works).
 
-## Where things stand (Oct 25, 2026, after Round 23a)
+## Where things stand (Oct 25, 2026, after Round 23b)
 
 - All work is on `main`. CI (api, web, e2e, load, contracts, fraud-gnn, sdk-python) is green.
 - 14 rounds of features are built: 84 of 92 suggestions. The tracker lives in the Claude report doc
@@ -599,6 +599,27 @@ Uploads through Cloudflare stay under 100 MB (videos ≤ 95 MB).
 `VITE_TURNSTILE_SITE_KEY=<staging site key>` (public), `VITE_SITE_URL=https://staging.bullizard.com`; only with S3/R2 uploads:
 `VITE_UPLOAD_ORIGIN=<bucket endpoint>`. All are build-time: redeploy after a change. `/.well-known/security.txt` is served as
 `text/plain`.
+
+## Round 23b (Oct 25, 2026) — review fixes to Round 23a
+
+Migration **073** (`073_round23b.sql`, idempotent): `users.news_synced_email` / `news_synced_list`, table `newsletter_state`,
+staff role `marketing` (and the staff_roles check now also allows `lead`, which it never did). New test file `round23b.test.ts`
+(18 cases); `round23a.test.ts` updated (production env now has the origin secret and Twilio; CSV export as marketing; Turnstile
+test tokens carry their action). New ClamAV image `services/clamav/` (CI builds it and checks the limits with `clamconf`).
+
+| # | What changed |
+|---|---|
+| 1 | `APP_ENV=production` refuses to start without `ORIGIN_SHARED_SECRET`. Staging may leave it blank; `index.ts` then logs a warning at start (`originWarning`). `/metrics` stays behind the origin guard (not exempt) and `METRICS_TOKEN`: scrape it through Cloudflare with both headers (`X-Origin-Auth` from the Transform Rule, `Authorization: Bearer <METRICS_TOKEN>`); without the token it is 404 in production. |
+| 2 | Videos are never buffered. The `video/*` body parser hands the route the request stream; `uploadVideoStream` spools it to a private temp file in chunks (SHA-256 and size counted on the way, refused with 413 as soon as it passes 95 MB or when Content-Length says so), streams the file to the scanner (`scanStream`) and to storage (`putFile`; local storage encrypts as a stream in the same AES-GCM format, S3 uploads the file stream). `completeDirectVideoUpload` reads the object with `getStream` into the same spool. Videos are served as a stream, hashed on the way out (a mismatch ends the response with an error). Direct uploads are capped at **100 MB** (`MAX_DIRECT_VIDEO_BYTES`), the API path stays 95 MB. Images (≤ 8 MB) are unchanged. Tests check that a 90 MB upload and a 99 MB direct upload never allocate a buffer of 8 MB or more (the old parser allocated 94 MB at once). |
+| 3 | `services/clamav/Dockerfile` = `clamav/clamav:stable` + `clamd-limits.conf`: `StreamMaxLength`, `MaxScanSize`, `MaxFileSize` 120M, `ReadTimeout`/`CommandReadTimeout` 180. `render.production.yaml` (`bullizard-clamav`, `runtime: docker`) and `docker-compose.yml` build it. The clamd scan timeout is 15 s + 1 s per 5 MB, capped at 120 s (`clamdTimeoutMs`; 95 MB → 34 s). Still fail closed: a timeout, a dropped socket or any reply other than OK/FOUND (e.g. "INSTREAM size limit exceeded") → 503 `scanner_unavailable`, nothing stored. |
+| 4a | Turnstile siteverify must return the endpoint's `action` (`signup` register, `signin` login, `reset` password forgot; the widget already sends them) and `hostname` = `TURNSTILE_HOSTNAME` or PUBLIC_WEB_URL's host (case-insensitive). |
+| 4b | Brevo sync keeps Brevo equal to what each user should be: in the list for their language only while opted in, active (not banned/suspended) and not deleted, under their current address. A ban/suspension unlinks the contact; reactivation re-adds it; an address change unlinks the old contact and adds the new one; a language change moves the list. What Brevo holds is stored (`news_synced_email`, `news_synced_list`); deletion clears both. |
+| 4c | `pullBrevoUnsubscribes` (runs at the start of each `newsletter_sync`, every 15 min): contacts of our lists changed since the last pull (1 h overlap) that are blacklisted or unsubscribed from the list → `news_opt_in = false`, so neither the sync nor the CSV re-subscribes them. |
+| 4d | New permission `newsletter.export` (admin and the new `marketing` role only; compliance, finance and support get 403) for `GET /v1/admin/newsletter.csv` (still audited) and `/v1/admin/newsletter/status`. Ops → **Newsletter** tab (moved out of Business). The CSV and the count include active accounts only. |
+| 4e | `SMS_PROVIDER=console` is refused when `APP_ENV=production` (staging may keep it). |
+
+Render production now needs `ORIGIN_SHARED_SECRET` set (already `sync: false` in `render.production.yaml`) and the ClamAV service
+rebuilt from `services/clamav` (a blueprint sync recreates it as a Docker service).
 
 ## Suggested next round
 

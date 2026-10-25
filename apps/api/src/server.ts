@@ -157,8 +157,9 @@ export async function buildApp(ctx: Ctx, opts: { logger?: PinoLogger } = {}): Pr
   app.addContentTypeParser(['image/png', 'image/jpeg', 'image/webp', 'application/octet-stream'], { parseAs: 'buffer', bodyLimit: 8 * 1024 * 1024 }, (_req, body, done) =>
     done(null, body),
   );
-  // Delivery proof videos (sniffed too); larger than images, still capped.
-  app.addContentTypeParser(['video/mp4', 'video/webm'], { parseAs: 'buffer', bodyLimit: MAX_VIDEO_BYTES }, (_req, body, done) => done(null, body));
+  // Delivery proof videos (sniffed too): handed to the route as the raw request stream, never buffered (Round 23b).
+  // The upload code counts the bytes and stops at MAX_VIDEO_BYTES.
+  app.addContentTypeParser(['video/mp4', 'video/webm'], (_req, payload, done) => done(null, payload));
   app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (_req, body, done) =>
     done(null, Object.fromEntries(new URLSearchParams(body as string))),
   );

@@ -41,7 +41,7 @@ export interface DemoUser {
   listing_banned_at?: string | null;
   listing_ban_reason?: string | null;
   display_name: string;
-  role: 'user' | 'arbiter' | 'support' | 'lead' | 'finance' | 'compliance' | 'admin';
+  role: 'user' | 'arbiter' | 'support' | 'lead' | 'finance' | 'compliance' | 'marketing' | 'admin';
   staff_roles?: string[];
   kyc_tier: number;
   status: string;

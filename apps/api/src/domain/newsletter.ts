@@ -1,6 +1,6 @@
 import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
-import { many, one } from '../db.js';
+import { many, maybeOne, one } from '../db.js';
 import { toCsv } from './exports.js';
 
 /**
@@ -16,7 +16,6 @@ export async function setNewsOptIn(q: Queryable, userId: string, optIn: boolean)
   return one<{ news_opt_in: boolean; news_opt_in_at: string | null }>(q, `SELECT news_opt_in, news_opt_in_at FROM users WHERE id = $1`, [userId]);
 }
 
-const listFor = (ctx: Ctx, locale: string | null) => (locale === 'ar' ? ctx.cfg.BREVO_LIST_ID_AR : ctx.cfg.BREVO_LIST_ID_EN);
 
 function brevo(ctx: Ctx, fetchImpl: FetchLike) {
   const base = ctx.cfg.BREVO_API_URL.replace(/\/+$/, '');
@@ -32,9 +31,11 @@ function brevo(ctx: Ctx, fetchImpl: FetchLike) {
 }
 
 /**
- * Worker: push consent changes made since the last sync to Brevo. Opted in → the contact is created/updated in the
- * list for their language (and taken off the other list); opted out → taken off both lists. A failed call is
- * retried on the next run (news_synced_at stays behind news_opt_in_at). Returns the number synced.
+ * Worker: make Brevo match what each user should be (Round 23b). A user belongs in a list only while opted in,
+ * active (not banned or suspended) and not deleted: the list for their language (Arabic → AR, others → EN), under
+ * their current address. Whatever Brevo holds is recorded (news_synced_email, news_synced_list), so a ban, an address
+ * change or a language change takes the old contact off its list and adds the new one. Failures are retried on the
+ * next run. Brevo's own unsubscribes are pulled first (pullBrevoUnsubscribes), so they are never re-subscribed.
  */
 export async function syncNewsletter(ctx: Ctx, fetchImpl: FetchLike = fetch, limit = 100): Promise<number> {
   if (!ctx.cfg.BREVO_API_KEY) return 0;
@@ -43,41 +44,81 @@ export async function syncNewsletter(ctx: Ctx, fetchImpl: FetchLike = fetch, lim
     ctx.log.warn({}, 'BREVO_API_KEY is set but BREVO_LIST_ID_EN / BREVO_LIST_ID_AR are not: newsletter sync skipped');
     return 0;
   }
+  await pullBrevoUnsubscribes(ctx, fetchImpl).catch((err) => ctx.log.warn({ err: (err as Error).message }, 'newsletter unsubscribes not pulled; retried next run'));
+  const en = ctx.cfg.BREVO_LIST_ID_EN ?? lists[0]!;
+  const ar = ctx.cfg.BREVO_LIST_ID_AR ?? lists[0]!;
   const call = brevo(ctx, fetchImpl);
-  const due = await many<{ id: string; email: string; locale: string | null; news_opt_in: boolean; news_opt_in_at: string }>(
+  const due = await many<{ id: string; email: string; locale: string | null; want: number | null; synced_email: string | null; synced_list: number | null }>(
     ctx.db,
-    `SELECT id, email, locale, news_opt_in, news_opt_in_at::text AS news_opt_in_at FROM users
-      WHERE news_opt_in_at IS NOT NULL AND (news_synced_at IS NULL OR news_synced_at < news_opt_in_at) AND deleted_at IS NULL
-      ORDER BY news_opt_in_at LIMIT $1`,
-    [limit],
+    `SELECT id, email, locale, want, news_synced_email AS synced_email, news_synced_list AS synced_list FROM (
+       SELECT u.*, CASE WHEN u.news_opt_in AND u.status = 'active' AND u.deleted_at IS NULL THEN (CASE WHEN u.locale = 'ar' THEN $2::int ELSE $1::int END) END AS want
+         FROM users u WHERE u.news_opt_in OR u.news_synced_list IS NOT NULL) x
+      WHERE want IS DISTINCT FROM news_synced_list OR (want IS NOT NULL AND email IS DISTINCT FROM news_synced_email)
+      ORDER BY news_opt_in_at NULLS FIRST LIMIT $3`,
+    [en, ar, limit],
   );
   let synced = 0;
   for (const u of due) {
     try {
-      let res: Response;
-      if (u.news_opt_in) {
-        const list = listFor(ctx, u.locale) ?? lists[0]!;
-        res = await call('POST', '/v3/contacts', {
+      // The contact Brevo has now, if it is not the one we want: off every list (a missing contact is fine).
+      if (u.synced_email && (u.want === null || u.synced_email !== u.email)) {
+        const res = await call('PUT', `/v3/contacts/${encodeURIComponent(u.synced_email)}`, { unlinkListIds: lists });
+        if (!res.ok && res.status !== 404) throw new Error(`brevo ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      }
+      if (u.want !== null) {
+        const res = await call('POST', '/v3/contacts', {
           email: u.email,
-          listIds: [list],
-          unlinkListIds: lists.filter((l) => l !== list),
+          listIds: [u.want],
+          unlinkListIds: lists.filter((l) => l !== u.want),
           updateEnabled: true,
           attributes: { LANGUAGE: u.locale === 'ar' ? 'ar' : 'en' },
         });
-      } else {
-        res = await call('PUT', `/v3/contacts/${encodeURIComponent(u.email)}`, { unlinkListIds: lists });
-        if (res.status === 404) res = new Response(null, { status: 204 }); // never reached Brevo: nothing to remove
+        if (!res.ok) throw new Error(`brevo ${res.status}: ${(await res.text()).slice(0, 200)}`);
       }
-      if (!res.ok) throw new Error(`brevo ${res.status}: ${(await res.text()).slice(0, 200)}`);
-      // Only if the choice did not change again while we were calling.
-      // (Compared as text: a JS Date would drop the microseconds.)
-      await ctx.db.query(`UPDATE users SET news_synced_at = now() WHERE id = $1 AND news_opt_in_at = $2::timestamptz`, [u.id, u.news_opt_in_at]);
+      await ctx.db.query(`UPDATE users SET news_synced_email = $2, news_synced_list = $3, news_synced_at = now() WHERE id = $1`, [u.id, u.want === null ? null : u.email, u.want]);
       synced++;
     } catch (err) {
       ctx.log.warn({ err: (err as Error).message, userId: u.id }, 'newsletter sync failed; retried next run');
     }
   }
   return synced;
+}
+
+/**
+ * Brevo → us (Round 23b): contacts that unsubscribed in Brevo (the link in a newsletter: blacklisted, or unsubscribed
+ * from our list) are opted out here, so neither the sync nor the CSV export subscribes them again. Reads the contacts
+ * of each list changed since the last pull (one hour of overlap). Returns the number opted out.
+ */
+export async function pullBrevoUnsubscribes(ctx: Ctx, fetchImpl: FetchLike = fetch): Promise<number> {
+  if (!ctx.cfg.BREVO_API_KEY) return 0;
+  const lists = [ctx.cfg.BREVO_LIST_ID_EN, ctx.cfg.BREVO_LIST_ID_AR].filter((id): id is number => !!id);
+  const call = brevo(ctx, fetchImpl);
+  const last = await maybeOne<{ value: string }>(ctx.db, `SELECT value::text AS value FROM newsletter_state WHERE key = 'unsubscribes_pulled_at'`);
+  const since = new Date(last ? new Date(last.value).getTime() - 3_600_000 : Date.now() - 30 * 86_400_000).toISOString();
+  const startedAt = new Date().toISOString();
+  let optedOut = 0;
+  for (const list of lists) {
+    for (let offset = 0; ; offset += 500) {
+      const res = await call('GET', `/v3/contacts/lists/${list}/contacts?limit=500&offset=${offset}&modifiedSince=${encodeURIComponent(since)}`);
+      if (!res.ok) throw new Error(`brevo ${res.status}`);
+      const body = (await res.json()) as { contacts?: Array<{ email: string; emailBlacklisted?: boolean; listUnsubscribed?: number[] }> };
+      const contacts = body.contacts ?? [];
+      const gone = contacts.filter((c) => c.emailBlacklisted || c.listUnsubscribed?.includes(list)).map((c) => c.email.toLowerCase());
+      if (gone.length) {
+        const r = await ctx.db.query(
+          `UPDATE users SET news_opt_in = false, news_opt_in_at = now() WHERE news_opt_in AND lower(email) = ANY($1::text[])`,
+          [gone],
+        );
+        optedOut += r.rowCount ?? 0;
+      }
+      if (contacts.length < 500) break;
+    }
+  }
+  await ctx.db.query(
+    `INSERT INTO newsletter_state (key, value) VALUES ('unsubscribes_pulled_at', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+    [startedAt],
+  );
+  return optedOut;
 }
 
 /** Account deletion: a contact that reached Brevo is deleted there too (best effort, logged on failure). */
@@ -95,7 +136,7 @@ export async function forgetNewsletterContact(ctx: Ctx, email: string, fetchImpl
 export async function newsletterCsv(q: Queryable) {
   const rows = await many<{ email: string; display_name: string; locale: string | null; news_opt_in_at: string }>(
     q,
-    `SELECT email, display_name, locale, news_opt_in_at FROM users WHERE news_opt_in AND deleted_at IS NULL AND status <> 'banned' ORDER BY news_opt_in_at`,
+    `SELECT email, display_name, locale, news_opt_in_at FROM users WHERE news_opt_in AND deleted_at IS NULL AND status = 'active' ORDER BY news_opt_in_at`,
   );
   return toCsv(
     ['email', 'name', 'language', 'list', 'opted_in_at'],

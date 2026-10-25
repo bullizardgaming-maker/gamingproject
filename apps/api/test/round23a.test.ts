@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { Readable } from 'node:stream';
 import type { AddressInfo } from 'node:net';
 import { WebSocket } from 'ws';
 import { parse as parseYaml } from 'yaml';
@@ -35,6 +36,8 @@ const prodEnv = (extra: Record<string, string> = {}) =>
     EMAIL_PROVIDER: 'resend',
     RESEND_API_KEY: 're_test',
     TURNSTILE_SECRET: '1x0000000000000000000000000000000AA',
+    ORIGIN_SHARED_SECRET: 'origin', // required in production since Round 23b
+    SMS_PROVIDER: 'twilio',
     ...extra,
   }) as any;
 
@@ -315,6 +318,12 @@ describe('3. Cloudflare limits', () => {
       delete: async (k) => void objects.delete(k),
       rekey: async () => null,
       keyVersion: null,
+      putFile: async (k, file) => void objects.set(k, readFileSync(file)),
+      getStream: async (k) => {
+        const b = objects.get(k);
+        if (!b) throw new Error('NoSuchKey');
+        return Readable.from([b]);
+      },
       presignPut: async (key, contentType, bytes) => ({ url: `https://bucket.test/${key}?signed=1&len=${bytes}`, headers: { 'Content-Type': contentType } }),
     };
     const s3 = await buildApp(createContext(h.ctx.cfg, silent, { db: h.ctx.db, pubsub: new MemoryPubSub(), storage }));
@@ -326,7 +335,7 @@ describe('3. Cloudflare limits', () => {
       const order = await buyAndPay(h, buyer, offer.id);
       const room = (await buyer.api.get(`/v1/orders/${order.id}`)).body.room_id;
       const api = client(s3, seller.token);
-      const video = Buffer.alloc(120 * 1024 * 1024);
+      const video = Buffer.alloc(99 * 1024 * 1024); // above the 95 MB API cap, within the 100 MB direct cap
       video.write('\x00\x00\x00\x18ftypmp42', 0, 'latin1');
       const start = await api.post(`/v1/chat/rooms/${room}/attachments/direct`, { fileName: 'trade.mp4', contentType: 'video/mp4', bytes: video.length });
       expect(start.status).toBe(201);
@@ -347,7 +356,7 @@ describe('3. Cloudflare limits', () => {
       // Only participants, and not larger than the direct limit.
       const stranger = await makeUser(h);
       expect((await client(s3, stranger.token).post(`/v1/chat/rooms/${room}/attachments/direct`, { contentType: 'video/mp4', bytes: 10 })).status).toBe(403);
-      expect((await api.post(`/v1/chat/rooms/${room}/attachments/direct`, { contentType: 'video/mp4', bytes: 501 * 1024 * 1024 })).status).toBe(413);
+      expect((await api.post(`/v1/chat/rooms/${room}/attachments/direct`, { contentType: 'video/mp4', bytes: 101 * 1024 * 1024 })).status).toBe(413);
     } finally {
       await s3.close();
     }
@@ -389,7 +398,8 @@ describe('5. newsletter consent', () => {
   });
 
   it('syncs changes to Brevo lists by language (EN / AR), retries failures, and Ops can export a CSV', async () => {
-    await h.ctx.db.query(`UPDATE users SET news_synced_at = now() WHERE news_opt_in_at IS NOT NULL`);
+    // Earlier subscribers count as already in Brevo.
+    await h.ctx.db.query(`UPDATE users SET news_synced_at = now(), news_synced_email = email, news_synced_list = CASE WHEN locale = 'ar' THEN 12 ELSE 11 END WHERE news_opt_in`);
     const en = (await client(h.app).post('/v1/auth/register', { email: `en${Date.now()}@example.com`, password: 'correct horse battery', displayName: 'En', acceptTerms: true, newsOptIn: true })).body;
     const ar = (await client(h.app).post('/v1/auth/register', { email: `ar${Date.now()}@example.com`, password: 'correct horse battery', displayName: 'Ar', acceptTerms: true, newsOptIn: true, locale: 'ar' })).body;
     const calls: Array<{ method: string; url: string; body: any; key: string }> = [];
@@ -415,8 +425,8 @@ describe('5. newsletter consent', () => {
     // Without a key: no calls.
     expect(await syncNewsletter(h.ctx, (async () => { throw new Error('called'); }) as any)).toBe(0);
 
-    const finance = await makeUser(h, { role: 'finance' });
-    const csv = await finance.api.get('/v1/admin/newsletter.csv');
+    const marketing = await makeUser(h, { role: 'marketing' as any }); // newsletter.export (Round 23b)
+    const csv = await marketing.api.get('/v1/admin/newsletter.csv');
     expect(csv.status).toBe(200);
     expect(String(csv.headers['content-type'])).toMatch(/text\/csv/);
     expect(csv.body).toContain(ar.user.email);
@@ -433,7 +443,9 @@ describe('6. Cloudflare Turnstile', () => {
   const DUMMY = 'XXXX.DUMMY.TOKEN.XXXX'; // what the test site keys hand the browser
   const siteverify = (async (_url: string, init: any) => {
     const form = new URLSearchParams(init.body);
-    return new Response(JSON.stringify({ success: form.get('secret') === PASS && !!form.get('response') }));
+    // The test token carries the action it was solved for: "XXXX.DUMMY.TOKEN.XXXX:signup".
+    const action = String(form.get('response')).split(':')[1];
+    return new Response(JSON.stringify({ success: form.get('secret') === PASS && !!form.get('response'), action, hostname: 'localhost' }));
   }) as any;
 
   it('TURNSTILE_SECRET switches the bot check on (every sign-in too) and is required in production and staging', () => {
@@ -459,13 +471,13 @@ describe('6. Cloudflare Turnstile', () => {
       const creds = { email: `t${Date.now()}@example.com`, password: 'correct horse battery' };
       const signup = { ...creds, displayName: 'Turnstile', acceptTerms: true };
       expect((await api.post('/v1/auth/register', signup)).body.error.code).toBe('captcha_required');
-      expect((await client(bad).post('/v1/auth/register', { ...signup, captchaToken: DUMMY })).body.error.code).toBe('captcha_failed');
-      expect((await api.post('/v1/auth/register', { ...signup, captchaToken: DUMMY })).status).toBe(201);
+      expect((await client(bad).post('/v1/auth/register', { ...signup, captchaToken: `${DUMMY}:signup` })).body.error.code).toBe('captcha_failed');
+      expect((await api.post('/v1/auth/register', { ...signup, captchaToken: `${DUMMY}:signup` })).status).toBe(201);
       // Sign-in asks for it every time, not only after failures.
       expect((await api.post('/v1/auth/login', creds)).body.error.code).toBe('captcha_required');
-      expect((await api.post('/v1/auth/login', { ...creds, captchaToken: DUMMY })).status).toBe(200);
+      expect((await api.post('/v1/auth/login', { ...creds, captchaToken: `${DUMMY}:signin` })).status).toBe(200);
       expect((await api.post('/v1/auth/password/forgot', { email: creds.email })).body.error.code).toBe('captcha_required');
-      expect((await api.post('/v1/auth/password/forgot', { email: creds.email, captchaToken: DUMMY })).status).toBe(202);
+      expect((await api.post('/v1/auth/password/forgot', { email: creds.email, captchaToken: `${DUMMY}:reset` })).status).toBe(202);
     } finally {
       await ok.close();
       await bad.close();

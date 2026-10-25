@@ -22,7 +22,7 @@ import { coinsFor, paymentsFor, refreshCryptoPayment, setRefundAddress, startCry
 import { BUYER_TAGS, buyerReputation, rateBuyer } from '../domain/buyerReputation.js';
 import { createReview, replyToReview, sellerProfile } from '../domain/reviews.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
-import { completeDirectVideoUpload, readAttachment, startDirectVideoUpload, uploadAttachment } from '../domain/attachments.js';
+import { completeDirectVideoUpload, openAttachment, readAttachment, startDirectVideoUpload, uploadAttachment, uploadVideoStream } from '../domain/attachments.js';
 import { audit } from '../domain/audit.js';
 import { readBanner } from '../domain/storefront.js';
 import { me, requestMeta } from '../server.js';
@@ -311,14 +311,20 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
   /** Upload a screenshot or a short video (raw PNG/JPEG/WebP/MP4/WebM body; file name in X-Filename). */
   app.post('/chat/rooms/:id/attachments', async (req, reply) => {
     const { id } = Id.parse(req.params);
-    if (!Buffer.isBuffer(req.body)) throw badRequest('unsupported_file', 'Send the file bytes with Content-Type image/png, image/jpeg, image/webp, video/mp4 or video/webm');
     let name = 'screenshot';
     try {
       if (typeof req.headers['x-filename'] === 'string') name = decodeURIComponent(req.headers['x-filename']);
     } catch {
       /* malformed percent-encoding: keep the default name */
     }
-    return reply.status(201).send(await uploadAttachment(ctx, id, me(req), name, req.body));
+    // Videos arrive as a stream (Round 23b: never buffered whole); images as bytes.
+    const body = req.body as unknown;
+    if (body && typeof (body as NodeJS.ReadableStream).pipe === 'function' && !Buffer.isBuffer(body)) {
+      const declared = Number(req.headers['content-length'] ?? 0) || undefined;
+      return reply.status(201).send(await uploadVideoStream(ctx, id, me(req), name, body as import('node:stream').Readable, declared));
+    }
+    if (!Buffer.isBuffer(body)) throw badRequest('unsupported_file', 'Send the file bytes with Content-Type image/png, image/jpeg, image/webp, video/mp4 or video/webm');
+    return reply.status(201).send(await uploadAttachment(ctx, id, me(req), name, body));
   });
 
   /** Videos above the 95 MB API cap, when uploads live in object storage: reserve, PUT to the signed URL, complete. */
@@ -336,8 +342,13 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.get('/chat/attachments/:id', async (req, reply) => {
     const user = me(req);
-    const { att, bytes, isParticipant } = await readAttachment(ctx, Id.parse(req.params).id, user);
+    const id = Id.parse(req.params).id;
+    // Videos are streamed (Round 23b); images (≤ 8 MB) are read whole so a failed integrity check is a clean 500.
+    const video = await ctx.db.query(`SELECT 1 FROM chat_attachments WHERE id = $1 AND mime LIKE 'video/%'`, [id]);
+    const { att, isParticipant, ...file } = video.rowCount ? await openAttachment(ctx, id, user) : await readAttachment(ctx, id, user);
+    const bytes = 'stream' in file ? file.stream : file.bytes;
     if (!isParticipant) await audit(ctx.db, req, 'attachment.viewed', { type: 'chat_attachment', id: att.id });
+    if ('stream' in file) reply.header('Content-Length', String(att.bytes));
     return reply
       .header('Content-Type', att.mime)
       .header('Content-Disposition', `inline; filename="${att.original_name.replace(/"/g, '')}"`)

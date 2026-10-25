@@ -18,7 +18,7 @@ services:
     ports: ["6379:6379"]
 
   clamav:
-    image: clamav/clamav:stable
+    build: services/clamav # clamav/clamav:stable with stream/scan limits of 120M (proof videos up to 100 MB)
     healthcheck:
       test: ["CMD", "clamdcheck.sh"]
       interval: 30s

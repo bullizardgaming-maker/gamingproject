@@ -39,10 +39,11 @@ export const PERMISSIONS = [
   'moderation.manage', // listing review queue, flagged chats, banned terms
   'analytics.view', // business dashboard: GMV, take rate, dispute and chargeback rates
   'controls.manage', // kill switches and beta limits (Ops → Controls): admin, and finance for the money ones
+  'newsletter.export', // newsletter subscriber list (CSV, personal data): admin and marketing only (Round 23b)
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
-export const STAFF_ROLES = ['arbiter', 'support', 'lead', 'finance', 'compliance', 'admin'] as const;
+export const STAFF_ROLES = ['arbiter', 'support', 'lead', 'finance', 'compliance', 'marketing', 'admin'] as const;
 export type StaffRole = (typeof STAFF_ROLES)[number];
 
 export const ROLE_PERMISSIONS: Record<StaffRole, readonly Permission[]> = {
@@ -55,6 +56,8 @@ export const ROLE_PERMISSIONS: Record<StaffRole, readonly Permission[]> = {
     'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'analytics.view', 'controls.manage',
   ],
   compliance: ['orders.view_any', 'risk.review', 'users.suspend', 'aml.review', 'aml.sar', 'payout_holds.set', 'ledger.view', 'audit.view', 'retention.manage', 'analytics.view'],
+  // Marketing / community: the newsletter list, nothing else.
+  marketing: ['newsletter.export'],
   admin: PERMISSIONS,
 };
 

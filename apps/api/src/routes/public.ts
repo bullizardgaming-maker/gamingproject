@@ -62,9 +62,10 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   };
 
   /** Throws unless the request carries a valid CAPTCHA token (no-op when CAPTCHA is off). */
-  const requireCaptcha = async (req: FastifyRequest, token: string | undefined) => {
+  const webHost = ctx.cfg.TURNSTILE_HOSTNAME ?? new URL(ctx.cfg.PUBLIC_WEB_URL).hostname;
+  const requireCaptcha = async (req: FastifyRequest, token: string | undefined, action: 'signin' | 'signup' | 'reset') => {
     if (!ctx.captcha.enabled) return;
-    if (!(await ctx.captcha.verify(token, req.ip))) {
+    if (!(await ctx.captcha.verify(token, req.ip, { action, hostname: webHost }))) {
       throw new AppError(400, token ? 'captcha_failed' : 'captcha_required', token ? 'The bot check failed. Please try again.' : 'Please complete the bot check.');
     }
   };
@@ -88,7 +89,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
       /** "I'm 18 or older and agree to the Terms and Privacy Policy" — required (Legal, Oct 24). */
       acceptTerms: z.literal(true, { message: 'You must be 18 or older and accept the Terms and Privacy Policy' }),
     }).parse(req.body);
-    await requireCaptcha(req, body.captchaToken);
+    await requireCaptcha(req, body.captchaToken, 'signup');
     const res = await register(ctx, { ...body, ...meta(req) });
     return reply.status(201).send(deliver(req, reply, res));
   });
@@ -96,7 +97,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/auth/login', strict, async (req, reply) => {
     const body = Credentials.parse(req.body);
     // Per IP (not per account, which would reveal whether an email is registered).
-    if (ctx.captcha.enabled && (await recentIpFailures(req.ip)) >= ctx.cfg.CAPTCHA_AFTER_FAILED_LOGINS) await requireCaptcha(req, body.captchaToken);
+    if (ctx.captcha.enabled && (await recentIpFailures(req.ip)) >= ctx.cfg.CAPTCHA_AFTER_FAILED_LOGINS) await requireCaptcha(req, body.captchaToken, 'signin');
     let res: Awaited<ReturnType<typeof login>>;
     try {
       res = await login(ctx, { ...body, ...meta(req) });
@@ -135,7 +136,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.post('/auth/password/forgot', strict, async (req, reply) => {
     const { email, captchaToken } = z.object({ email: z.string().email().max(254), captchaToken: z.string().max(4096).optional() }).parse(req.body);
-    await requireCaptcha(req, captchaToken);
+    await requireCaptcha(req, captchaToken, 'reset');
     await requestPasswordReset(ctx, email, requestMeta(req).ip);
     return reply.status(202).send({ message: 'If an account uses this email, a reset link is on its way.' });
   });

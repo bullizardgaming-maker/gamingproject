@@ -7,6 +7,8 @@ import {
   randomInt,
   scrypt as scryptCb,
   timingSafeEqual,
+  type CipherGCM,
+  type DecipherGCM,
 } from 'node:crypto';
 import { promisify } from 'node:util';
 
@@ -66,6 +68,36 @@ export class Keyring {
     const data = Buffer.concat([cipher.update(plain), cipher.final()]);
     const v = Buffer.from(this.current);
     return Buffer.concat([Buffer.from([v.length]), v, iv, cipher.getAuthTag(), data]);
+  }
+
+  /**
+   * Streaming encryptBytes (Round 23b, large files): the same format, but the tag is known only at the end, so the
+   * header carries 16 zero bytes at `tagOffset` for the caller to overwrite with `cipher.getAuthTag()`.
+   */
+  encryptStream(aad = ''): { header: Buffer; tagOffset: number; cipher: CipherGCM } {
+    const iv = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', this.keys.get(this.current)!, iv);
+    cipher.setAAD(Buffer.from(aad));
+    const v = Buffer.from(this.current);
+    const header = Buffer.concat([Buffer.from([v.length]), v, iv, Buffer.alloc(16)]);
+    return { header, tagOffset: 1 + v.length + 12, cipher };
+  }
+
+  /** Length of the header (version, iv, tag) of an encryptBytes blob, from its first byte. */
+  static bytesHeaderLength(firstByte: number) {
+    return 1 + firstByte + 28;
+  }
+
+  /** Streaming decryptBytes: `header` is the blob's first bytesHeaderLength() bytes; pipe the rest through it. */
+  decryptStream(header: Buffer, aad = ''): DecipherGCM {
+    const vlen = header[0]!;
+    const key = this.keys.get(header.subarray(1, 1 + vlen).toString());
+    if (!key) throw new Error('unknown key version');
+    const o = 1 + vlen;
+    const decipher = createDecipheriv('aes-256-gcm', key, header.subarray(o, o + 12), { authTagLength: 16 });
+    decipher.setAAD(Buffer.from(aad));
+    decipher.setAuthTag(header.subarray(o + 12, o + 28));
+    return decipher;
   }
 
   decryptBytes(blob: Buffer, aad = ''): Buffer {

@@ -1,6 +1,10 @@
 import { connect } from 'node:net';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { pipeline as pipelineCb } from 'node:stream';
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Keyring } from '../lib/crypto.js';
@@ -11,6 +15,10 @@ import { Keyring } from '../lib/crypto.js';
 export interface FileStorage {
   put(key: string, bytes: Buffer, contentType: string): Promise<void>;
   get(key: string): Promise<Buffer>;
+  /** Round 23b, large files (videos): store a file from disk, streamed (never held in memory whole). */
+  putFile(key: string, filePath: string, contentType: string, size: number): Promise<void>;
+  /** Round 23b: read a stored file as a stream (decrypted if the store encrypts). */
+  getStream(key: string): Promise<Readable>;
   /** Idempotent: deleting a missing key is not an error. */
   delete(key: string): Promise<void>;
   /**
@@ -45,6 +53,36 @@ export class LocalEncryptedStorage implements FileStorage {
   }
   async get(key: string) {
     return this.keyring.decryptBytes(await readFile(this.file(key)), `file:${key}`);
+  }
+  async putFile(key: string, src: string) {
+    const f = this.file(key);
+    await mkdir(path.dirname(f), { recursive: true });
+    const { header, tagOffset, cipher } = this.keyring.encryptStream(`file:${key}`);
+    const part = `${f}.part`;
+    await writeFile(part, header, { mode: 0o600 });
+    await pipeline(createReadStream(src), cipher, createWriteStream(part, { flags: 'r+', start: header.length }));
+    const fh = await open(part, 'r+');
+    try {
+      await fh.write(cipher.getAuthTag(), 0, 16, tagOffset);
+    } finally {
+      await fh.close();
+    }
+    await rename(part, f);
+  }
+  async getStream(key: string): Promise<Readable> {
+    const f = this.file(key);
+    const fh = await open(f, 'r');
+    let header: Buffer;
+    try {
+      const first = Buffer.alloc(1);
+      await fh.read(first, 0, 1, 0);
+      header = Buffer.alloc(Keyring.bytesHeaderLength(first[0]!));
+      await fh.read(header, 0, header.length, 0);
+    } finally {
+      await fh.close();
+    }
+    // The tag is checked at the end: a tampered file errors the stream after its last chunk.
+    return pipelineCb(createReadStream(f, { start: header.length }), this.keyring.decryptStream(header, `file:${key}`), () => {});
   }
   async delete(key: string) {
     await rm(this.file(key), { force: true });
@@ -81,6 +119,15 @@ export class S3Storage implements FileStorage {
     const res = await this.s3.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
     return Buffer.from(await res.Body!.transformToByteArray());
   }
+  async putFile(key: string, src: string, contentType: string, size: number) {
+    await this.s3.send(
+      new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: createReadStream(src), ContentLength: size, ContentType: contentType, ServerSideEncryption: 'AES256' }),
+    );
+  }
+  async getStream(key: string): Promise<Readable> {
+    const res = await this.s3.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+    return res.Body as Readable; // Node: an IncomingMessage
+  }
   async delete(key: string) {
     await this.s3.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
   }
@@ -103,6 +150,13 @@ export class S3Storage implements FileStorage {
 export interface MalwareScanner {
   readonly name: string;
   scan(bytes: Buffer): Promise<{ clean: boolean; signature?: string }>;
+  /** Round 23b: scan a stream of `size` bytes without holding it in memory. */
+  scanStream(stream: Readable, size: number): Promise<{ clean: boolean; signature?: string }>;
+}
+
+/** clamd scan timeout: 15 s plus 1 s per 5 MB, at most 120 s (a 95 MB video gets 34 s). */
+export function clamdTimeoutMs(size: number) {
+  return Math.min(120_000, 15_000 + Math.ceil(size / (5 * 1024 * 1024)) * 1_000);
 }
 
 /**
@@ -115,32 +169,53 @@ export class ClamdScanner implements MalwareScanner {
   constructor(
     private readonly host: string,
     private readonly port: number,
-    private readonly timeoutMs = 15_000,
+    /** Fixed timeout (tests); by default it scales with the size (clamdTimeoutMs). */
+    private readonly timeoutMs?: number,
   ) {}
 
   scan(bytes: Buffer): Promise<{ clean: boolean; signature?: string }> {
+    return this.scanStream(Readable.from([bytes]), bytes.length);
+  }
+
+  /**
+   * Streams to clamd in 64 KB chunks with backpressure. Fails closed: a timeout, a dropped connection or any reply
+   * other than OK/FOUND (e.g. "INSTREAM size limit exceeded") rejects, and the caller refuses the upload.
+   */
+  scanStream(stream: Readable, size: number): Promise<{ clean: boolean; signature?: string }> {
     return new Promise((resolve, reject) => {
       const sock = connect({ host: this.host, port: this.port });
       const chunks: Buffer[] = [];
-      const timer = setTimeout(() => sock.destroy(new Error('clamd timeout')), this.timeoutMs);
-      sock.on('connect', () => {
-        sock.write('zINSTREAM\0');
-        for (let i = 0; i < bytes.length; i += 64 * 1024) {
-          const part = bytes.subarray(i, i + 64 * 1024);
-          const len = Buffer.alloc(4);
-          len.writeUInt32BE(part.length);
-          sock.write(len);
-          sock.write(part);
+      let failed: Error | null = null;
+      const fail = (e: Error) => {
+        failed ??= e;
+        stream.destroy();
+        sock.destroy();
+      };
+      const timer = setTimeout(() => fail(new Error('clamd timeout')), this.timeoutMs ?? clamdTimeoutMs(size));
+      const write = (b: Buffer) => (sock.write(b) ? Promise.resolve() : new Promise<void>((r) => sock.once('drain', () => r())));
+      sock.on('connect', async () => {
+        try {
+          await write(Buffer.from('zINSTREAM\0'));
+          for await (const chunk of stream) {
+            const buf = chunk as Buffer;
+            for (let i = 0; i < buf.length; i += 64 * 1024) {
+              const part = buf.subarray(i, i + 64 * 1024);
+              const len = Buffer.alloc(4);
+              len.writeUInt32BE(part.length);
+              await write(len);
+              await write(part);
+            }
+          }
+          await write(Buffer.alloc(4)); // end of stream
+        } catch (e) {
+          fail(e as Error);
         }
-        sock.write(Buffer.alloc(4)); // end of stream
       });
       sock.on('data', (d: Buffer) => chunks.push(Buffer.from(d)));
-      sock.on('error', (e) => {
-        clearTimeout(timer);
-        reject(e);
-      });
+      sock.on('error', (e) => fail(e));
       sock.on('close', () => {
         clearTimeout(timer);
+        if (failed) return reject(failed);
         const reply = Buffer.concat(chunks).toString().replace(/\0/g, '').trim();
         if (/: OK$/.test(reply)) return resolve({ clean: true });
         const found = /: (.+) FOUND$/.exec(reply);
@@ -157,5 +232,19 @@ export class EicarOnlyScanner implements MalwareScanner {
   static readonly EICAR = 'X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*';
   async scan(bytes: Buffer) {
     return bytes.includes(EicarOnlyScanner.EICAR) ? { clean: false, signature: 'Eicar-Test-Signature' } : { clean: true };
+  }
+  /** Chunk by chunk, keeping the last few bytes so a match across a chunk boundary is found. */
+  async scanStream(stream: Readable) {
+    const keep = EicarOnlyScanner.EICAR.length - 1;
+    let tail = Buffer.alloc(0);
+    for await (const chunk of stream) {
+      const window = Buffer.concat([tail, chunk as Buffer]);
+      if (window.includes(EicarOnlyScanner.EICAR)) {
+        stream.destroy();
+        return { clean: false, signature: 'Eicar-Test-Signature' };
+      }
+      tail = window.subarray(Math.max(0, window.length - keep));
+    }
+    return { clean: true };
   }
 }

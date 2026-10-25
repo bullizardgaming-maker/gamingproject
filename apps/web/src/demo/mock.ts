@@ -3211,7 +3211,7 @@ const ALL_PERMS = [
   'orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'risk.review', 'users.suspend', 'aml.review', 'aml.sar',
   'chargebacks.manage', 'orders.refund_after_release', 'orders.release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view',
   'ledger.adjust', 'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'keys.manage', 'retention.manage', 'audit.view', 'staff.manage', 'status.manage',
-  'analytics.view', 'support.manage', 'moderation.manage', 'ranks.manage', 'leagues.manage', 'rules.manage',
+  'analytics.view', 'support.manage', 'moderation.manage', 'ranks.manage', 'leagues.manage', 'rules.manage', 'newsletter.export',
 ];
 const ROLE_PERMS: Record<string, string[]> = {
   arbiter: ['orders.view_any', 'disputes.manage', 'owner_proofs.review', 'reviews.moderate', 'orders.refund_after_release', 'orders.release', 'moderation.manage'],
@@ -3219,6 +3219,7 @@ const ROLE_PERMS: Record<string, string[]> = {
   lead: ['orders.view_any', 'reviews.moderate', 'ledger.view', 'status.manage', 'support.manage', 'moderation.manage', 'orders.release', 'leagues.manage', 'rules.manage', 'disputes.manage', 'owner_proofs.review', 'orders.refund_after_release', 'orders.lead', 'users.suspend', 'audit.view', 'withdrawals.second_approve'],
   finance: ['controls.manage', 'chargebacks.manage', 'orders.refund_after_release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view', 'ledger.adjust', 'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'analytics.view'],
   compliance: ['orders.view_any', 'risk.review', 'users.suspend', 'aml.review', 'aml.sar', 'payout_holds.set', 'ledger.view', 'audit.view', 'retention.manage', 'analytics.view'],
+  marketing: ['newsletter.export'],
   admin: ALL_PERMS,
 };
 const permsOf = (u: DemoUser) => new Set([u.role, ...(u.staff_roles ?? [])].flatMap((r) => ROLE_PERMS[r] ?? []));
@@ -3318,7 +3319,7 @@ function taxRows(from: string, to: string) {
     return { country, treatment, rate_bps, orders: Math.round(orders * k), credit_notes: Math.round(credit_notes * k), currency: 'USD', commission_gross_cents, tax_cents: Math.round((commission_gross_cents * rate_bps) / (10_000 + rate_bps)) };
   });
 }
-route('GET', '/admin/newsletter/status', ({ me }) => (needPerm(me, 'analytics.view'), { subscribers: state.users.filter((u) => u.news_opt_in && u.status !== 'banned').length, brevoSync: false }));
+route('GET', '/admin/newsletter/status', ({ me }) => (needPerm(me, 'newsletter.export'), { subscribers: state.users.filter((u) => u.news_opt_in && u.status === 'active').length, brevoSync: false }));
 route('GET', '/admin/tax/report', ({ me, query }) => (needPerm(me, 'tax.manage'), taxRows(query.get('from') ?? '', query.get('to') ?? '')));
 
 route('GET', '/admin/staff', ({ me }) => {
@@ -3415,8 +3416,8 @@ function blobRoute(me: DemoUser | null, path: string, query: URLSearchParams): B
     return new Blob([csv(rows)], { type: 'text/csv' });
   }
   if (path === '/admin/newsletter.csv') {
-    needPerm(me, 'analytics.view');
-    const rows = state.users.filter((u) => u.news_opt_in && u.status !== 'banned').map((u) => ({
+    needPerm(me, 'newsletter.export');
+    const rows = state.users.filter((u) => u.news_opt_in && u.status === 'active').map((u) => ({
       email: u.email, name: u.display_name, language: u.locale === 'ar' ? 'ar' : 'en', list: u.locale === 'ar' ? 'Newsletter AR' : 'Newsletter EN', opted_in_at: u.news_opt_in_at ?? '',
     }));
     return new Blob([rows.length ? csv(rows) : 'email,name,language,list,opted_in_at\n'], { type: 'text/csv' });

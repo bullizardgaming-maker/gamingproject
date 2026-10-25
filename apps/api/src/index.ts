@@ -1,4 +1,4 @@
-import { loadConfig } from './config.js';
+import { loadConfig, originWarning } from './config.js';
 import { createContext } from './context.js';
 import { loadLeagues } from './domain/leagues.js';
 import { migrate } from './db.js';
@@ -11,6 +11,8 @@ const cfg = loadConfig();
 initSentry(cfg);
 const logger = createLogger(cfg);
 const log = asCtxLogger(logger);
+const warning = originWarning(cfg);
+if (warning) log.warn({ config: 'ORIGIN_SHARED_SECRET' }, warning);
 const ctx = createContext(cfg, log);
 await migrate(ctx.db, (m) => log.info({ migration: m }, 'migration applied'));
 await loadLeagues(ctx.db); // open challenge leagues become sell-form choices

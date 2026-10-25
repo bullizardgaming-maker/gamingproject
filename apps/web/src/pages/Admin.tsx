@@ -7,7 +7,7 @@ import { ControlsPanel, CurrencyPanel, DebtsPanel, FraudModelPanel, IncidentsPan
 import { CryptoRefundsPanel, PayoutsPanel, ReleasesPanel } from './CryptoOpsPanels';
 import { usePageMeta } from '@/lib/seo';
 import { currentLocale, t } from '../i18n';
-import { BusinessPanel } from './BusinessPanel';
+import { BusinessPanel, NewsletterExport } from './BusinessPanel';
 import { RetentionPanel } from './RetentionPanel';
 import { SupportPanel } from './SupportPanel';
 import { DisputeCase } from './DisputeCase';
@@ -16,13 +16,14 @@ import { ModerationPanel } from './ModerationPanel';
 import { WarrantyPanel } from './WarrantyPanel';
 
 type ListTab = 'disputes' | 'risk' | 'proofs' | 'chargebacks' | 'ledger' | 'recon' | 'audit';
-type PanelTab = 'business' | 'retention' | 'support' | 'releases' | 'moderation' | 'warranty' | 'aml' | 'treasury' | 'payouts' | 'refunds' | 'tax' | 'staff' | 'status' | 'debts' | 'currency' | 'model' | 'privacy' | 'ranks' | 'leagues' | 'rules' | 'affiliates' | 'legal' | 'listingban' | 'controls';
+type PanelTab = 'business' | 'retention' | 'support' | 'releases' | 'moderation' | 'warranty' | 'aml' | 'treasury' | 'payouts' | 'refunds' | 'tax' | 'staff' | 'status' | 'debts' | 'currency' | 'model' | 'privacy' | 'ranks' | 'leagues' | 'rules' | 'affiliates' | 'legal' | 'listingban' | 'controls' | 'newsletter';
 type Tab = ListTab | PanelTab;
 
 /** Each tab is shown to whoever holds its permission (see the API's domain/permissions.ts). */
 const TABS: Array<{ id: Tab; label: string; perm: string }> = [
   { id: 'business', label: 'Business', perm: 'analytics.view' },
   { id: 'retention', label: 'Retention', perm: 'analytics.view' },
+  { id: 'newsletter', label: 'Newsletter', perm: 'newsletter.export' },
   { id: 'support', label: 'Support', perm: 'support.manage' },
   { id: 'releases', label: 'Releases', perm: 'orders.release' },
   { id: 'moderation', label: 'Moderation', perm: 'moderation.manage' },
@@ -54,7 +55,7 @@ const TABS: Array<{ id: Tab; label: string; perm: string }> = [
   { id: 'listingban', label: 'Listing bans', perm: 'moderation.manage' },
 ];
 const PANELS: Record<PanelTab, () => React.ReactElement> = {
-  business: BusinessPanel, retention: RetentionPanel, support: SupportPanel, moderation: ModerationPanel, warranty: WarrantyPanel, aml: AmlPanel, treasury: TreasuryPanel, tax: TaxPanel, staff: StaffPanel,
+  business: BusinessPanel, retention: RetentionPanel, newsletter: NewsletterExport, support: SupportPanel, moderation: ModerationPanel, warranty: WarrantyPanel, aml: AmlPanel, treasury: TreasuryPanel, tax: TaxPanel, staff: StaffPanel,
   status: IncidentsPanel, debts: DebtsPanel, currency: CurrencyPanel, model: FraudModelPanel, privacy: PrivacyPanel, legal: LegalPanel, listingban: ListingBanPanel, controls: ControlsPanel,
   releases: ReleasesPanel, payouts: PayoutsPanel, refunds: CryptoRefundsPanel, ranks: RanksPanel, leagues: LeaguesPanel, rules: RulesTestPanel, affiliates: AffiliatesPanel,
 };

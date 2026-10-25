@@ -166,19 +166,21 @@ export function BusinessPanel() {
           </p>
         </>
       )}
-      <NewsletterExport />
     </div>
   );
 }
 
-/** Round 23a: newsletter subscribers (opted in at sign-up or in Account). Synced to Brevo when configured, else a CSV. */
-function NewsletterExport() {
+/**
+ * Operations → Newsletter (newsletter.export: admin, marketing). Subscribers opted in at sign-up or in Account;
+ * synced to Brevo when configured, else a CSV.
+ */
+export function NewsletterExport() {
   const [status, setStatus] = useState<{ subscribers: number; brevoSync: boolean } | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
-    api<{ subscribers: number; brevoSync: boolean }>('/admin/newsletter/status').then(setStatus).catch(() => {});
+    api<{ subscribers: number; brevoSync: boolean }>('/admin/newsletter/status').then(setStatus).catch((e) => setError(e.message));
   }, []);
-  if (!status) return null;
+  if (!status) return error ? <div className="alert" role="alert">{error}</div> : <p className="muted">Loading…</p>;
   return (
     <section className="card stack" aria-label="Newsletter">
       <h3 style={{ margin: 0 }}>Newsletter</h3>
