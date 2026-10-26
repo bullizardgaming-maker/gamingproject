@@ -10,9 +10,7 @@ import { OrderPage } from './pages/OrderPage';
 import { InquiryChat, Orders } from './pages/Orders';
 import { Sell } from './pages/Sell';
 import { Messages } from './pages/Messages';
-import { Developers } from './pages/Developers';
 import { LegalHistory, LegalPage } from './pages/Legal';
-import { useFeatures } from './lib/features';
 import { Account, ForgotPassword, Login, ResetPassword } from './pages/Account';
 import { Admin } from './pages/Admin';
 import { GamePage, Games } from './pages/Games';
@@ -117,7 +115,6 @@ function App() {
           <Route path="/sell/money" element={<Sell />} />
           <Route path="/sell/analytics" element={<Sell />} />
           <Route path="/sell/invoices" element={<Navigate to="/sell/money" replace />} />
-          <Route path="/developers" element={<DevelopersGate />} />
           <Route path="/terms" element={<LegalPage doc="terms" />} />
           <Route path="/terms/history" element={<LegalHistory doc="terms" />} />
           <Route path="/terms/versions/:version" element={<LegalPage doc="terms" />} />
@@ -137,12 +134,6 @@ function App() {
       <SiteFooter />
     </SessionProvider>
   );
-}
-
-/** The Merchant API is hidden at launch: the page exists only once the server switches it on. */
-function DevelopersGate() {
-  const { merchantApi } = useFeatures();
-  return merchantApi ? <Developers /> : <div className="card"><h2>{t('common.notFound')}</h2><Link to="/help">{t('footer.helpCentre')}</Link></div>;
 }
 
 applyTheme();

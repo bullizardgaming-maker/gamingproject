@@ -1,4 +1,3 @@
-import { createHmac } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { REDACT_PATHS } from '../src/observability.js';
 import { runJobsOnce } from '../src/worker.js';
@@ -97,41 +96,22 @@ describe('staff audit log', () => {
   });
 });
 
-describe('seller API docs', () => {
-  it('serves an OpenAPI 3.1 document that matches the real routes', async () => {
-    const spec = (await client(h.app).get('/v1/openapi.json')).body;
-    expect(spec.openapi).toBe('3.1.0');
-    for (const [path, ops] of Object.entries<any>(spec.paths)) {
-      for (const method of Object.keys(ops)) {
-        const url = path.replace(/\{(\w+)\}/g, ':$1');
-        expect(h.app.hasRoute({ method: method.toUpperCase() as any, url }), `${method} ${path}`).toBe(true);
-      }
-    }
-    expect(Object.keys(spec.webhooks)).toContain('order.created');
-    expect(spec.paths['/v1/merchant/prices'].patch.requestBody.content['application/json'].schema.properties.updates.maxItems).toBe(500);
-    const docs = await client(h.app).get('/v1/docs/');
-    expect(docs.status).toBe(200);
-  });
-});
-
 describe('sandbox', () => {
-  it('lets a seller bot run a whole order lifecycle against simulated buyers', async () => {
+  it('lets a signed-in seller run a whole order lifecycle against simulated buyers', async () => {
     const dev = await makeUser(h, { tier: 1 });
     await dev.api.post('/v1/sandbox/verify-me');
-    const hook = await dev.api.post('/v1/developer/webhooks', { url: 'https://bot.example/hooks', events: ['order.created', 'order.completed', 'order.disputed', 'chargeback.created'] });
-    const key = (await dev.api.post('/v1/developer/api-keys', { name: 'bot', scopes: ['orders:read', 'orders:write', 'inventory:write'] })).body.key;
-    const bot = client(h.app, key);
+    const bot = dev.api;
     const offer = await makeOffer(dev, { categorySlug: 'boosting', deliveryMode: 'manual', stock: 10, priceCents: 40_00 });
 
     const o1 = (await bot.post('/v1/sandbox/orders', { offerId: offer.id })).body;
     expect(o1.status).toBe('paid');
-    expect((await bot.post(`/v1/merchant/orders/${o1.id}/deliver`, { payload: 'done' })).status).toBe(200);
+    expect((await bot.post(`/v1/orders/${o1.id}/deliver`, { payload: 'done' })).status).toBe(200);
     expect((await bot.post(`/v1/sandbox/orders/${o1.id}/expire-protection`)).body.status).toBe('delivered'); // no auto-release: staff release it
 
     const o2 = (await bot.post('/v1/sandbox/orders', { offerId: offer.id })).body;
     expect((await bot.post(`/v1/sandbox/orders/${o2.id}/dispute`, {})).status).toBe(200);
     const o3 = (await bot.post('/v1/sandbox/orders', { offerId: offer.id })).body;
-    await bot.post(`/v1/merchant/orders/${o3.id}/deliver`);
+    await bot.post(`/v1/orders/${o3.id}/deliver`, { payload: 'done' });
     await bot.post(`/v1/sandbox/orders/${o3.id}/confirm`);
     expect((await bot.post(`/v1/sandbox/orders/${o3.id}/chargeback`, { network: 'visa', reasonCode: '10.4' })).status).toBe(201);
 
@@ -139,17 +119,7 @@ describe('sandbox', () => {
     const other = await makeUser(h, { tier: 2 });
     const foreign = await makeOffer(other, { categorySlug: 'boosting', deliveryMode: 'manual', stock: 1 });
     expect((await bot.post('/v1/sandbox/orders', { offerId: foreign.id })).status).toBe(403);
-
-    const received: string[] = [];
-    const secret = hook.body.secret;
-    const fakeFetch = (async (_u: string, init: any) => {
-      expect(init.headers['X-Hook-Signature']).toBe(createHmac('sha256', secret).update(init.body).digest('hex'));
-      received.push(JSON.parse(init.body).type);
-      return new Response('', { status: 200 });
-    }) as typeof fetch;
-    const { dispatchDueWebhooks } = await import('../src/domain/webhooks.js');
-    await dispatchDueWebhooks(h.ctx, { fetchImpl: fakeFetch, limit: 100 });
-    expect(new Set(received)).toEqual(new Set(['order.created', 'order.completed', 'order.disputed', 'chargeback.created']));
+    expect((await client(h.app).post('/v1/sandbox/orders', { offerId: offer.id })).status).toBe(401); // a session is required
   });
 
   it('refuses to start with real payment providers', async () => {
@@ -160,7 +130,7 @@ describe('sandbox', () => {
   it('is not mounted outside sandbox mode', async () => {
     const plain = await setup();
     expect((await client(plain.app).post('/v1/sandbox/orders', {})).status).toBe(404);
-    expect((await client(plain.app).get('/v1/openapi.json')).body.paths['/v1/sandbox/orders']).toBeUndefined();
+    expect((await client(plain.app).get('/v1/openapi.json')).status).toBe(404); // no public API docs (Round 23c)
     await plain.close();
     // setup() reset the shared schema; recreate this suite's harness state for later tests.
     h = await setup({ SANDBOX_MODE: 'true' });
@@ -178,7 +148,7 @@ describe('monitoring', () => {
     for (const g of ['bullizard_escrow_held_cents', 'bullizard_disputes_open', 'bullizard_chargebacks_due_within_7d', 'bullizard_reconciliation_last_status']) {
       expect(text).toContain(g);
     }
-    expect(text).toMatch(/bullizard_worker_job_last_success_age_seconds\{[^}]*job="webhooks"/);
+    expect(text).toMatch(/bullizard_worker_job_last_success_age_seconds\{[^}]*job="emails"/);
   });
 
   it('protects /metrics with a token and hides it in production without one', async () => {

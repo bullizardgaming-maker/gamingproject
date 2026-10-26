@@ -96,11 +96,10 @@ describe('notification centre', () => {
   });
 });
 
-describe('payout and invoice webhooks', () => {
-  it('tells merchants when payouts succeed or fail and when invoices are issued', async () => {
+describe('payout and invoice notifications', () => {
+  it('tells sellers when payouts succeed or fail and when invoices are issued', async () => {
     const seller = await makeUser(h, { tier: 2 });
     await h.ctx.db.query(`UPDATE users SET stripe_account_id = 'acct_w', payouts_enabled = true, payout_hold_days = 0 WHERE id = $1`, [seller.id]);
-    await seller.api.post('/v1/developer/webhooks', { url: 'https://merchant.example/hook', events: ['payout.paid', 'payout.failed', 'invoice.issued'] });
     const buyer = await makeUser(h, { tier: 1 });
     const offer = await makeOffer(seller, { categorySlug: 'boosting', deliveryMode: 'manual', stock: 1, priceCents: 30_00 });
     const order = await buyAndPay(h, buyer, offer.id);
@@ -115,22 +114,13 @@ describe('payout and invoice webhooks', () => {
     expect(w.status).toBe(201);
     await issueMonthlyInvoices(h.ctx, monthStart(new Date()));
 
-    const { rows } = await h.ctx.db.query(
-      `SELECT d.event_type, d.payload FROM webhook_deliveries d JOIN webhook_endpoints e ON e.id = d.endpoint_id WHERE e.user_id = $1 ORDER BY d.created_at`,
-      [seller.id],
-    );
-    expect(rows.map((r) => r.event_type)).toEqual(['payout.failed', 'payout.paid', 'invoice.issued']);
-    expect(rows[0].payload.data).toMatchObject({ amount_cents: 10_00, status: 'failed', failure_reason: 'account_closed' });
-    expect(rows[1].payload.data).toMatchObject({ withdrawal_id: w.body.id, status: 'paid', provider_ref: expect.stringMatching(/^mock_tr_/) });
-    expect(rows[2].payload.data).toMatchObject({ currency: 'USD', number: expect.stringMatching(/^BZ-/) });
-
     const titles = (await seller.api.get('/v1/me/notifications')).body.items.map((i: any) => i.template);
     expect(titles).toEqual(expect.arrayContaining(['withdrawal_failed', 'withdrawal_paid', 'invoice_issued']));
 
-    const key = (await seller.api.post('/v1/developer/api-keys', { name: 'books', scopes: ['reports:read'] })).body.key;
-    const invoices = (await client(h.app, key).get('/v1/merchant/invoices')).body;
+    const invoices = (await seller.api.get('/v1/seller/invoices')).body;
     expect(invoices).toHaveLength(1);
-    const pdf = await client(h.app, key).get(`/v1/merchant/invoices/${invoices[0].id}/pdf`);
+    expect(invoices[0].number).toMatch(/^BZ-/);
+    const pdf = await seller.api.get(`/v1/seller/invoices/${invoices[0].id}/pdf`);
     expect(String(pdf.body).slice(0, 4)).toBe('%PDF');
   });
 });

@@ -31,14 +31,6 @@ export const TEXT_TARGETS: TextTarget[] = [
     aad: `'inventory:' || offer_id`,
   },
   {
-    name: 'webhook_secrets',
-    table: 'webhook_endpoints',
-    id: 'id',
-    column: 'secret_ciphertext',
-    write: 'UPDATE webhook_endpoints SET secret_ciphertext = $2 WHERE id = $1 AND secret_ciphertext = $3',
-    aad: `'webhook'`,
-  },
-  {
     name: 'totp_secrets',
     table: 'users',
     id: 'id',

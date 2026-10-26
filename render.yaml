@@ -38,8 +38,6 @@ envVarGroups:
         value: "1" # Render's load balancer; behind Cloudflare the client IP is CF-Connecting-IP (ORIGIN_SHARED_SECRET)
       - key: NOWPAYMENTS_API_URL
         value: https://api-sandbox.nowpayments.io
-      - key: MERCHANT_API_ENABLED
-        value: "true" # on staging only: the OpenAPI document feeds the ZAP scan (security/zap)
       - key: AUTO_REFUND_LATE_ORDERS
         value: "false"
       - key: CARD_REFUNDS_ENABLED
@@ -97,6 +95,11 @@ envVarGroups:
       - key: NOWPAYMENTS_API_KEY
         sync: false
       - key: NOWPAYMENTS_IPN_SECRET
+        sync: false
+      # Staging test workflows (.github/workflows/staging-*.yml): requests with X-Staging-Test-Token = this value skip
+      # Turnstile on sign-in. openssl rand -hex 32, the same value as the GitHub secret STAGING_TEST_TOKEN. Staging only:
+      # the API refuses to start with it unless APP_ENV=staging. Blank = scripted sign-ins are refused (Turnstile).
+      - key: STAGING_TEST_TOKEN
         sync: false
 
 services:

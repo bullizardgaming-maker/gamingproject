@@ -3,7 +3,6 @@ import type { Ctx } from '../context.js';
 import { many, maybeOne, one, withTx } from '../db.js';
 import { notFound } from '../lib/errors.js';
 import { notify } from './notifications.js';
-import { enqueueWebhook } from './webhooks.js';
 
 /**
  * Monthly commission invoices. One per seller, month and currency, covering every order
@@ -116,7 +115,6 @@ async function issueInvoice(ctx: Ctx, sellerId: string, currency: string, period
       invoice_id: inv.id, number, period_start: periodStart, period_end: periodEnd, currency,
       net_cents: sum('netCents'), tax_cents: sum('taxCents'), gross_cents: sum('grossCents'),
     };
-    await enqueueWebhook(tx, sellerId, 'invoice.issued', summary);
     await notify(tx, sellerId, 'invoice_issued', { ...summary, period: periodStart.slice(0, 7) }, `invoice_issued:${inv.id}`);
     return inv;
   });

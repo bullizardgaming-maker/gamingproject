@@ -39,6 +39,9 @@ const Env = z.object({
   // Behind Cloudflare: Cloudflare adds X-Origin-Auth = this secret (a Transform Rule). When set, requests without it are
   // refused (except /readyz and /healthz) and the client IP is CF-Connecting-IP. Unset: TRUST_PROXY / X-Forwarded-For.
   ORIGIN_SHARED_SECRET: secret(),
+  // Staging test workflows (Round 23c): requests with X-Staging-Test-Token = this value skip the Turnstile check, so
+  // scripted logins work. Allowed only with APP_ENV=staging (production refuses to start with it); at least 32 chars.
+  STAGING_TEST_TOKEN: secret(),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   SENTRY_DSN: z.string().optional(),
   SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0),
@@ -80,8 +83,6 @@ const Env = z.object({
   ONCHAIN_ESCROW_ENABLED: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
   // Sellers must attach a photo/video of an in-game delivery before marking it delivered.
   DELIVERY_PROOF_REQUIRED: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
-  /** Seller Merchant API (API keys, webhooks, /v1/docs, the Developers page). Off at launch; the code stays. */
-  MERCHANT_API_ENABLED: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
   /** Network-fee estimates shown at checkout (USD per coin code, buyer pays on top); JSON, e.g. {"usdttrc20":1,"eth":4}. */
   CRYPTO_NETWORK_FEES_JSON: z.string().default('{}'),
   /** Underpayments within this share of the price are accepted as paid in full (network dust, rounding). */
@@ -203,7 +204,6 @@ const Env = z.object({
   RETENTION_SESSIONS_DAYS: z.coerce.number().int().min(1).default(90),       // after expiry or sign-out
   RETENTION_NOTIFICATIONS_DAYS: z.coerce.number().int().min(1).default(90),
   RETENTION_INBOX_DAYS: z.coerce.number().int().min(7).default(180),
-  RETENTION_WEBHOOK_DELIVERIES_DAYS: z.coerce.number().int().min(1).default(90),
   // Weekly retention digest to staff with analytics access (Monday, UTC), with alerts when a rate crosses a line.
   COHORT_DIGEST_ENABLED: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
   COHORT_ALERT_SELLER_CHURN_PCT: z.coerce.number().min(0).max(100).default(20), // alert when last month's seller churn is above this
@@ -274,7 +274,12 @@ export function originWarning(cfg: Config): string | null {
 
 export function loadConfig(overrides: Partial<Record<keyof Config, string>> = {}): Config {
   loadDotEnv();
-  const raw = { ...process.env, ...overrides };
+  const raw: Record<string, string | undefined> = { ...process.env, ...overrides };
+  // Render sends "" for a `sync: false` key left empty (follow-up 11): a blank optional key means unset, so its default
+  // applies, numbers included (z.coerce.number() would turn "" into 0).
+  for (const [key, schema] of Object.entries(Env.shape)) {
+    if (typeof raw[key] === 'string' && raw[key]!.trim() === '' && schema.safeParse(undefined).success) delete raw[key];
+  }
   if (raw.NODE_ENV === 'staging') throw new Error('NODE_ENV=staging is not supported: use NODE_ENV=production with APP_ENV=staging');
   const parsed = Env.parse(raw);
   if (parsed.TURNSTILE_SECRET) Object.assign(parsed, { CAPTCHA_PROVIDER: 'turnstile', CAPTCHA_SECRET: parsed.TURNSTILE_SECRET, CAPTCHA_SITE_KEY: parsed.TURNSTILE_SITE_KEY ?? parsed.CAPTCHA_SITE_KEY });
@@ -285,6 +290,8 @@ export function loadConfig(overrides: Partial<Record<keyof Config, string>> = {}
   };
   if (cfg.APP_ENV === 'staging' && cfg.NODE_ENV !== 'production') throw new Error('APP_ENV=staging needs NODE_ENV=production (staging keeps the production checks)');
   if (cfg.APP_ENV === 'production' && cfg.NODE_ENV !== 'production') throw new Error('APP_ENV=production needs NODE_ENV=production');
+  if (cfg.STAGING_TEST_TOKEN && cfg.APP_ENV !== 'staging') throw new Error('STAGING_TEST_TOKEN is only allowed with APP_ENV=staging');
+  if (cfg.STAGING_TEST_TOKEN && cfg.STAGING_TEST_TOKEN.length < 32) throw new Error('STAGING_TEST_TOKEN must be at least 32 characters');
   if (cfg.SANDBOX_MODE && (cfg.PAYMENT_PROVIDER !== 'mock' || cfg.KYC_PROVIDER !== 'mock')) {
     throw new Error('SANDBOX_MODE requires PAYMENT_PROVIDER=mock and KYC_PROVIDER=mock');
   }

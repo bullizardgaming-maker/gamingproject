@@ -13,28 +13,22 @@ import { safeEqual, sha256 } from './lib/crypto.js';
 import { captureException, createMetrics } from './observability.js';
 import type { Ctx } from './context.js';
 import { AppError, forbidden, unauthorized } from './lib/errors.js';
-import { authenticateApiKey } from './domain/apikeys.js';
 import { userFromToken, type User } from './domain/users.js';
 import { hasPermission, type Permission } from './domain/permissions.js';
 import { publicRoutes } from './routes/public.js';
 import { orderRoutes } from './routes/orders.js';
 import { sellerRoutes } from './routes/seller.js';
 import { requestRoutes } from './routes/requests.js';
-import { merchantRoutes } from './routes/merchant.js';
 import { integrationRoutes } from './routes/integrations.js';
 import { adminRoutes } from './routes/admin.js';
 import { registerGateway } from './ws/gateway.js';
 import { touchPresence } from './domain/presence.js';
 import { sandboxRoutes } from './routes/sandbox.js';
-import { buildOpenApi } from './openapi.js';
 import { MAX_VIDEO_BYTES } from './domain/attachments.js';
-import swagger from '@fastify/swagger';
-import swaggerUi from '@fastify/swagger-ui';
 
 declare module 'fastify' {
   interface FastifyRequest {
     user: User | null;
-    apiScopes: string[] | null;
     staffMfaRequired: boolean;
     rawBody?: Buffer;
   }
@@ -73,19 +67,6 @@ export function requirePermission(req: FastifyRequest, permission: Permission): 
     throw forbidden('mfa_required', 'Staff actions need two-factor login. Turn it on in Account, then sign in again.');
   }
   return user;
-}
-
-/** Merchant API: authenticate with an API key and require a scope. */
-export function requireScope(ctx: Ctx) {
-  return (scope: string) => async (req: FastifyRequest) => {
-    const header = req.headers.authorization ?? '';
-    const key = header.startsWith('Bearer ') ? header.slice(7) : '';
-    const { user, scopes } = await authenticateApiKey(ctx, key);
-    if (!scopes.includes(scope)) throw forbidden('missing_scope', `API key lacks scope ${scope}`);
-    req.user = user;
-    req.apiScopes = scopes;
-    touchPresence(ctx, user.id); // a seller's bot answering counts as the shop being online
-  };
 }
 
 export function parseTrustProxy(v: string): boolean | number | string[] {
@@ -137,7 +118,6 @@ export async function buildApp(ctx: Ctx, opts: { logger?: PinoLogger } = {}): Pr
   app.addHook('onRequest', originGuard(ctx.cfg.ORIGIN_SHARED_SECRET));
 
   app.decorateRequest('user', null);
-  app.decorateRequest('apiScopes', null);
   app.decorateRequest('staffMfaRequired', false);
   const staffMfaRequired = (ctx.cfg.STAFF_MFA_REQUIRED ?? (ctx.cfg.NODE_ENV === 'production' ? 'true' : 'false')) === 'true';
 
@@ -189,8 +169,8 @@ export async function buildApp(ctx: Ctx, opts: { logger?: PinoLogger } = {}): Pr
   app.addHook('onRequest', async (req) => {
     req.staffMfaRequired = staffMfaRequired;
     const header = req.headers.authorization;
-    // /metrics uses its own scrape token, and mk_ keys are merchant API keys.
-    if (header?.startsWith('Bearer ') && !header.startsWith('Bearer mk_') && req.url !== '/metrics') {
+    // /metrics uses its own scrape token.
+    if (header?.startsWith('Bearer ') && req.url !== '/metrics') {
       req.user = await userFromToken(ctx, header.slice(7));
       if (req.user) touchPresence(ctx, req.user.id);
     }
@@ -246,20 +226,11 @@ export async function buildApp(ctx: Ctx, opts: { logger?: PinoLogger } = {}): Pr
     return { ok: true };
   });
 
-  // Seller API docs: JSON at /v1/openapi.json, browsable at /v1/docs. Hidden until MERCHANT_API_ENABLED.
-  if (ctx.cfg.MERCHANT_API_ENABLED) {
-    const openapi = buildOpenApi({ serverUrl: ctx.apiBaseUrl, sandbox: ctx.cfg.SANDBOX_MODE });
-    await app.register(swagger, { mode: 'static', specification: { document: openapi as any } });
-    await app.register(swaggerUi, { routePrefix: '/v1/docs', uiConfig: { docExpansion: 'list', defaultModelsExpandDepth: 0 } });
-    app.get('/v1/openapi.json', async () => openapi);
-  }
-
   await app.register(async (v1) => {
     await publicRoutes(v1, ctx);
     await orderRoutes(v1, ctx);
     await sellerRoutes(v1, ctx);
     await requestRoutes(v1, ctx);
-    await merchantRoutes(v1, ctx);
     await integrationRoutes(v1, ctx);
     await adminRoutes(v1, ctx);
     if (ctx.cfg.SANDBOX_MODE) await sandboxRoutes(v1, ctx);

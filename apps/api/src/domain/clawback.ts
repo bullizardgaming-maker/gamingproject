@@ -5,9 +5,8 @@ import { appendMessage } from './chat.js';
 import { withScope } from './events.js';
 import { accountId, post, type Posting } from './ledger.js';
 import { notify } from './notifications.js';
-import { RESERVE_SHARE_BPS, emailData, lockOrder, orderSummary, roomOf, transition } from './orders.js';
+import { RESERVE_SHARE_BPS, emailData, lockOrder, roomOf, transition } from './orders.js';
 import { sellerLeg, toSellerCurrency } from './sellerfx.js';
-import { enqueueWebhook } from './webhooks.js';
 
 /**
  * Refund after release. The protection window is over and the seller was paid, but staff decide
@@ -118,16 +117,6 @@ export async function refundAfterRelease(
         credit_note: credited.number,
       }, `post_release_refund:${refund.id}:seller`);
     }
-    await enqueueWebhook(s.tx, order.seller_id, 'order.clawback', {
-      ...orderSummary(order),
-      refund_id: refund.id,
-      refund_cents: amount,
-      paid_by: input.paidBy,
-      seller_debited_cents: input.paidBy === 'seller' ? toSellerCurrency(order, sellerPart) : 0,
-      seller_currency: order.seller_currency ?? cur,
-      credit_note: credited.number,
-      fully_refunded: full,
-    });
     return { refund: { ...refund, provider_ref: providerRef }, creditNote: credited, fullyRefunded: full };
   });
 }

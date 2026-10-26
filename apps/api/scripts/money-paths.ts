@@ -2,39 +2,25 @@
  * Staging money-path smoke test. Runs the launch money paths end to end over HTTP against a
  * running API in sandbox mode (SANDBOX_MODE=true, PAYMENT_PROVIDER=mock|nowpayments-sandbox):
  *
- *   API_URL=https://api-staging.example.com STAFF_EMAIL=... STAFF_PASSWORD=... npx tsx scripts/money-paths.ts
+ *   API_URL=https://api-staging.bullizard.com STAGING_TEST_TOKEN=... \
+ *   BUYER_EMAIL=... BUYER_PASSWORD=... SELLER_EMAIL=... SELLER_PASSWORD=... \
+ *   STAFF_EMAIL=... STAFF_PASSWORD=... STAFF_TOTP_SECRET=... npx tsx scripts/money-paths.ts
  *
  * Paths: pay · confirm · early confirm · staff release (24h rule) · dispute · withdraw (fee quote +
  * request) · double-click (same idempotency key twice, confirm twice) · duplicate webhook (mock
  * capture replayed) · chat filter (outside contact never delivered) · underpay (NOWPayments sandbox
  * only — reported as skipped on the mock provider; crypto-payments.test.ts covers it in CI).
  *
- * STAFF_EMAIL/STAFF_PASSWORD: a support or admin account on the target; without it the staff-release
- * step is skipped. Creates throwaway users and orders; run it against staging, never production.
+ * BUYER_* / SELLER_*: existing test accounts on the target (the GitHub workflow staging-money-paths.yml passes them
+ * from secrets). Without them the script registers throwaway accounts (local runs; on staging that would send
+ * welcome emails to nowhere). STAFF_*: a support or admin account (2FA: STAFF_TOTP_SECRET); without it the
+ * staff-release step is skipped. STAGING_TEST_TOKEN: see scripts/staging-client.ts (Turnstile on staging).
+ * Creates orders and listings; run it against staging, never production.
  */
-const API = (process.env.API_URL ?? 'http://127.0.0.1:4000').replace(/\/$/, '');
+import { api, call, deliver as deliverOrder, payMock, signIn } from './staging-client.js';
+
 const PASSWORD = 'correct horse battery staple';
 const run = Date.now().toString(36);
-
-type Res = { status: number; body: any };
-async function call(method: string, path: string, body?: unknown, token?: string | null, headers: Record<string, string> = {}): Promise<Res> {
-  const res = await fetch(`${API}/v1${path}`, {
-    method,
-    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...headers },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  let parsed: any = null;
-  try {
-    parsed = await res.json();
-  } catch {
-    /* no body */
-  }
-  return { status: res.status, body: parsed };
-}
-const api = (token: string | null, extra: Record<string, string> = {}) => ({
-  get: (p: string) => call('GET', p, undefined, token, extra),
-  post: (p: string, b: unknown = {}) => call('POST', p, b, token, extra),
-});
 
 const results: Array<{ path: string; ok: boolean; note: string }> = [];
 function report(path: string, ok: boolean, note = '') {
@@ -45,19 +31,21 @@ function expect(cond: unknown, path: string, note: string) {
   if (!cond) throw new Error(`${path}: ${note}`);
 }
 
-async function user(name: string, device: string) {
-  const email = `mp-${run}-${name}@example.com`;
-  const reg = await call('POST', '/auth/register', { email, password: PASSWORD, displayName: `MP ${name}` }, null, { 'x-device-fingerprint': device });
-  if (reg.status !== 201) throw new Error(`register ${name}: ${JSON.stringify(reg.body)}`);
-  const token: string = reg.body.token;
+async function user(name: 'seller' | 'buyer', device: string) {
+  const prefix = name.toUpperCase();
+  let token: string;
+  if (process.env[`${prefix}_EMAIL`]) {
+    token = await signIn(name, process.env[`${prefix}_EMAIL`]!, process.env[`${prefix}_PASSWORD`] ?? '');
+  } else {
+    const email = `mp-${run}-${name}@example.com`;
+    const reg = await call('POST', '/auth/register', { email, password: PASSWORD, displayName: `MP ${name}`, acceptTerms: true }, null, { 'x-device-fingerprint': device });
+    if (reg.status !== 201) throw new Error(`register ${name}: ${reg.status} ${reg.body?.error?.code ?? ''}`);
+    token = reg.body.token;
+  }
   const v = await call('POST', '/sandbox/verify-me', {}, token, { 'x-device-fingerprint': device });
-  if (v.status !== 200) throw new Error(`verify-me ${name} (is SANDBOX_MODE on?): ${JSON.stringify(v.body)}`);
-  return { id: reg.body.user.id as string, token, api: api(token, { 'x-device-fingerprint': device }) };
-}
-
-async function payMock(order: { payment_ref: string }) {
-  const r = await fetch(`${API}/v1/payments/mock/checkout/${encodeURIComponent(order.payment_ref)}/pay`, { method: 'POST', headers: { accept: 'application/json' } });
-  return r.status;
+  if (v.status !== 200) throw new Error(`verify-me ${name} (is SANDBOX_MODE on?): ${v.status} ${v.body?.error?.code ?? ''}`);
+  const me = (await call('GET', '/me', undefined, token)).body;
+  return { id: me.user.id as string, token, api: api(token, { 'x-device-fingerprint': device }) };
 }
 
 async function main() {
@@ -66,11 +54,7 @@ async function main() {
   const seller = await user('seller', `dev-seller-${run}`);
   const buyer = await user('buyer', `dev-buyer-${run}`);
   const staff = process.env.STAFF_EMAIL
-    ? await (async () => {
-        const r = await call('POST', '/auth/login', { email: process.env.STAFF_EMAIL, password: process.env.STAFF_PASSWORD });
-        if (r.status !== 200) throw new Error(`staff login: ${JSON.stringify(r.body)}`);
-        return api(r.body.token);
-      })()
+    ? api(await signIn('staff', process.env.STAFF_EMAIL, process.env.STAFF_PASSWORD ?? '', process.env.STAFF_TOTP_SECRET || undefined))
     : null;
 
   const offer = (await seller.api.post('/offers', { categorySlug: 'currency', game: 'Albion Online', title: `Silver ${run}`, priceCents: 10_00, deliveryMode: 'manual', stock: 100, unitLabel: 'M', unitSize: 1_000_000, minQty: 1, attributes: { server: 'Europe' } })).body;
@@ -94,8 +78,8 @@ async function main() {
     report('duplicate webhook', true, `replay answered ${again}, one paid event`);
 
     // 3. seller delivers, buyer confirms → released
-    const d = await seller.api.post(`/orders/${o.id}/deliver`, { payload: 'sent in-game' });
-    expect(d.status === 200, 'confirm', `deliver: ${JSON.stringify(d.body)} (DELIVERY_PROOF_REQUIRED should be false on staging smoke, or attach a proof)`);
+    const d = await deliverOrder(seller.api, o.id);
+    expect(d.status === 200, 'confirm', `deliver: ${d.status} ${d.body?.error?.code ?? ''}`);
     const c = await buyer.api.post(`/orders/${o.id}/confirm`, {});
     expect(c.status === 200, 'confirm', JSON.stringify(c.body));
     const dash = (await seller.api.get('/seller/dashboard')).body;
@@ -135,7 +119,7 @@ async function main() {
     try {
       const o = (await order()).body.order;
       await payMock(o);
-      await seller.api.post(`/orders/${o.id}/deliver`, { payload: 'sent' });
+      await deliverOrder(seller.api, o.id, 'sent');
       const early = await staff.post(`/admin/orders/${o.id}/release`, { note: 'smoke: too early' });
       expect(early.status === 409, 'staff release', `release before 24h must be refused, got ${early.status}`);
       const ff = await seller.api.post(`/sandbox/orders/${o.id}/age-delivery`, { hours: 25 });
@@ -145,13 +129,13 @@ async function main() {
     } catch (e: any) {
       report('staff release', false, e.message);
     }
-  } else report('staff release', true, 'skipped: set STAFF_EMAIL/STAFF_PASSWORD to run');
+  } else report('staff release', true, 'skipped: set STAFF_EMAIL/STAFF_PASSWORD (and STAFF_TOTP_SECRET) to run');
 
   // 8. dispute: escrow frozen, order disputed
   try {
     const o = (await order()).body.order;
     await payMock(o);
-    await seller.api.post(`/orders/${o.id}/deliver`, { payload: 'sent' });
+    await deliverOrder(seller.api, o.id, 'sent');
     const d = await buyer.api.post(`/orders/${o.id}/dispute`, { reason: 'Nothing arrived in my mailbox', category: 'not_delivered' });
     const after = (await buyer.api.get(`/orders/${o.id}`)).body;
     report('dispute', d.status === 200 && after.status === 'disputed', `escrow frozen, dispute ${after.dispute?.id ?? ''}`);
@@ -175,11 +159,12 @@ async function main() {
     report('withdraw', false, e.message);
   }
 
-  // 10. chat filter: outside contact is never delivered
+  // 10. chat filter: outside contact is never delivered. No handle in it: a message with a handle bans the account at
+  //     once (Round 22), which would end the reusable staging buyer; this one is blocked and queued for staff instead.
   try {
     const o = (await order()).body.order;
     const detail = (await buyer.api.get(`/orders/${o.id}`)).body;
-    const blocked = await buyer.api.post(`/chat/rooms/${detail.room_id}/messages`, { body: 'add me on discord: trader#1234' });
+    const blocked = await buyer.api.post(`/chat/rooms/${detail.room_id}/messages`, { body: 'can we finish this on discord instead?' });
     const msgs = (await seller.api.get(`/chat/rooms/${detail.room_id}/messages`)).body;
     const leaked = msgs.some((m: any) => /discord/i.test(m.body ?? ''));
     report('chat filter', blocked.status === 422 && blocked.body?.error?.code === 'offplatform_blocked' && !leaked, `sender got 422 ${blocked.body?.error?.code}; seller sees nothing`);
@@ -188,7 +173,8 @@ async function main() {
   }
 
   // 11. underpay: NOWPayments sandbox only
-  const coins = await buyer.api.get(`/orders/${(await order()).body.order.id}/crypto/coins`);
+  const last = (await order()).body?.order;
+  const coins = last ? await buyer.api.get(`/orders/${last.id}/crypto/coins`) : { status: 0, body: null };
   if (coins.status === 503) report('underpay', true, 'skipped on the mock provider: set NOWPAYMENTS_* sandbox keys with NOWPAYMENTS_SANDBOX_CASE=partially_paid (crypto-payments.test.ts covers it in CI)');
   else report('underpay', coins.status === 200, `coins listed (${coins.body?.coins?.length}); use NOWPAYMENTS_SANDBOX_CASE=partially_paid to force a short payment, then check /me/wallet for the kept credit`);
 
@@ -198,6 +184,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error(e);
+  console.error(e instanceof Error ? e.message : e);
   process.exit(1);
 });

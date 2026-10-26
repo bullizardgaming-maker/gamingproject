@@ -1,0 +1,52 @@
+# League-start load test (apps/api/scripts/loadtest-staging.ts) against staging, through Cloudflare: search, checkout and
+# chat at ≤ 4.5 requests/s from the runner (under the API's 300/min per IP; sign-in only twice, so Cloudflare's rate rule
+# on the auth paths never fires). Any 429, Cloudflare block or 5xx fails it. Manual: Actions → "staging load test".
+name: staging load test
+on:
+  workflow_dispatch:
+    inputs:
+      duration_seconds:
+        description: 'How long to run (max 600)'
+        default: '120'
+      rps:
+        description: 'Requests per second (max 4.5: the API allows 300/min per IP)'
+        default: '4'
+  # Off for now. To run it weekly, uncomment:
+  # schedule:
+  #   - cron: '53 5 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-tests
+  cancel-in-progress: false
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults: { run: { working-directory: apps/api } }
+    env:
+      API_URL: https://api-staging.bullizard.com
+      DURATION_SECONDS: ${{ inputs.duration_seconds || '120' }}
+      RPS: ${{ inputs.rps || '4' }}
+      STAGING_TEST_TOKEN: ${{ secrets.STAGING_TEST_TOKEN }}
+      BUYER_EMAIL: ${{ secrets.STAGING_BUYER_EMAIL }}
+      BUYER_PASSWORD: ${{ secrets.STAGING_BUYER_PASSWORD }}
+      SELLER_EMAIL: ${{ secrets.STAGING_SELLER_EMAIL }}
+      SELLER_PASSWORD: ${{ secrets.STAGING_SELLER_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+        working-directory: .
+      - name: Check the secrets are set (names only)
+        run: |
+          missing=0
+          for v in STAGING_TEST_TOKEN BUYER_EMAIL BUYER_PASSWORD SELLER_EMAIL SELLER_PASSWORD; do
+            if [ -z "${!v}" ]; then echo "::error::secret for $v is not set"; missing=1; fi
+          done
+          exit $missing
+      - run: npx tsx scripts/loadtest-staging.ts

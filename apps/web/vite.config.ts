@@ -10,21 +10,38 @@ import { seed } from './src/demo/seed';
  * ship a strict CSP that only allows first-party scripts. Violations are reported
  * to the API. Dev mode is exempt because Vite injects inline HMR scripts.
  */
+/**
+ * The origin of a URL taken from a build variable (follow-up 13). A value that is not an https URL (e.g. "false" left
+ * in Vercel) stops the build with a message naming the variable, not a bare "TypeError: Invalid URL". Plain http is
+ * accepted only for localhost (local builds against a local API).
+ */
+export function originOf(name: string, value: string) {
+  let u: URL | null = null;
+  try {
+    u = new URL(value);
+  } catch {
+    /* reported below */
+  }
+  const local = !!u && u.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname);
+  if (!u || !(u.protocol === 'https:' || local)) throw new Error(`${name} must be an https URL, got '${value}'`);
+  return u.origin;
+}
+
 export function csp(apiUrl?: string, opts: { turnstile?: boolean; uploadOrigin?: string } = {}) {
   // A separately hosted API (VITE_API_URL) must be allowed for fetch and the WebSocket.
   let api = '';
   let apiImg = ''; // shop banners are served by the API
   if (apiUrl) {
-    const u = new URL(apiUrl);
-    api = ` ${u.origin} ${u.origin.replace(/^http/, 'ws')}`;
-    apiImg = ` ${u.origin}`;
+    const origin = originOf('VITE_API_URL', apiUrl);
+    api = ` ${origin} ${origin.replace(/^http/, 'ws')}`;
+    apiImg = ` ${origin}`;
   }
   // Cloudflare Turnstile (VITE_TURNSTILE_SITE_KEY): its script is injected only by the sign-in, sign-up and
   // password-reset forms (components/Turnstile.tsx), never by index.html, so the payment-page script inventory stays
   // first-party; the origin is allowed here so those forms can load it and its challenge frame.
   const cf = opts.turnstile ? ' https://challenges.cloudflare.com' : '';
   // Large proof videos are PUT straight to the upload bucket (VITE_UPLOAD_ORIGIN, e.g. the R2/S3 endpoint).
-  const upload = opts.uploadOrigin ? ` ${new URL(opts.uploadOrigin).origin}` : '';
+  const upload = opts.uploadOrigin ? ` ${originOf('VITE_UPLOAD_ORIGIN', opts.uploadOrigin)}` : '';
   return [
   "default-src 'self'",
   `script-src 'self'${cf}`,
@@ -106,7 +123,7 @@ function seoFilesPlugin(siteUrl: string): Plugin {
       const offers = seed().offers;
       const games = new Map<string, Set<string>>();
       for (const o of offers) games.set(o.game, (games.get(o.game) ?? new Set()).add(o.category_slug));
-      const paths = ['/', '/games', '/market', '/sell', '/developers', '/status'];
+      const paths = ['/', '/games', '/market', '/sell', '/status'];
       for (const [game, cats] of [...games].sort(([a], [b]) => a.localeCompare(b))) {
         paths.push(`/games/${slug(game)}`);
         for (const c of [...cats].sort()) paths.push(`/games/${slug(game)}/${c}`);

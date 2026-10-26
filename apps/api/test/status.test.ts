@@ -20,7 +20,7 @@ describe('public status page', () => {
   it('reports measured health without signing in', async () => {
     const s = await status();
     expect(s.status).toBe('operational');
-    expect(s.components.map((c: any) => c.id)).toEqual(['website', 'api', 'checkout', 'delivery', 'chat', 'payouts', 'notifications']);
+    expect(s.components.map((c: any) => c.id)).toEqual(['website', 'checkout', 'delivery', 'chat', 'payouts', 'notifications']);
 
     // A worker job that stopped beating takes its component down.
     await h.ctx.db.query(`INSERT INTO worker_heartbeats (job, last_ok_at) VALUES ('auto_release', now() - interval '20 minutes') ON CONFLICT (job) DO UPDATE SET last_ok_at = EXCLUDED.last_ok_at`);

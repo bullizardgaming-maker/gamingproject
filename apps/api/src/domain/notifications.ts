@@ -522,18 +522,30 @@ export async function setPreferences(q: Queryable, userId: string, changes: Reco
 // ---------------------------------------------------------------------------
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
+/**
+ * The HTML part of every customer email (follow-up 12): one layout for all languages, right-to-left with lang="ar" for
+ * Arabic. The plain-text part is always sent next to it.
+ */
+export function emailHtml(text: string, locale: Locale = 'en', title = 'Bullizard') {
+  const dir = locale === 'ar' ? 'rtl' : 'ltr';
+  const body = escapeHtml(text)
+    .split('\n')
+    .map((l) => l.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" style="color:#2f6fed">$1</a>'))
+    .join('<br>');
+  return (
+    `<!doctype html><html lang="${locale}" dir="${dir}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
+    `<title>${escapeHtml(title)}</title></head><body style="margin:0;padding:24px;background:#f5f7fa">` +
+    `<div dir="${dir}" style="font:15px/1.55 system-ui,sans-serif;color:#16202e;max-width:560px;margin:0 auto;background:#ffffff;padding:24px;border-radius:8px;text-align:${dir === 'rtl' ? 'right' : 'left'}">` +
+    `${body}</div></body></html>`
+  );
+}
+
 export function render(ctx: Ctx, name: TemplateName, data: Data, locale: Locale = 'en') {
   const t = templateFor(name, locale);
   const link = (path: string) => `${ctx.cfg.PUBLIC_WEB_URL}${path}`;
   const pack = locale === 'en' ? null : PACKS[locale];
   const text = `${t.body(data, link)}\n\n${pack?.signoff ?? '— Bullizard'}\n${pack?.manage ?? 'Manage emails'}: ${link('/account')}`;
-  const html =
-    `<div dir="${locale === 'ar' ? 'rtl' : 'ltr'}" style="font:15px/1.55 system-ui,sans-serif;color:#16202e;max-width:560px">` +
-    escapeHtml(text)
-      .split('\n')
-      .map((l) => l.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1">$1</a>'))
-      .join('<br>') +
-    `</div>`;
+  const html = emailHtml(text, locale, t.subject(data));
   return { subject: t.subject(data), text, html, category: t.category };
 }
 

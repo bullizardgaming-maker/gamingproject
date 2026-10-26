@@ -15,7 +15,7 @@ import { enqueueEmail, enqueueMailboxEmail } from './notifications.js';
  *
  * Warnings (reported, not alerted): negative seller balances, withdrawals stuck
  * in "pending", paid auto-delivery orders not delivered after an hour (and not
- * under review), dead webhooks and failed emails in the last 24h.
+ * under review) and failed emails in the last 24h.
  */
 export interface ReconReport {
   currency: string;
@@ -126,8 +126,6 @@ async function buildReport(ctx: Ctx, currency: string): Promise<ReconReport> {
   );
   if (undelivered.length) warnings.push({ check: 'auto_delivery_not_delivered', detail: undelivered });
 
-  const dead = await one<{ n: number }>(ctx.db, `SELECT count(*)::int AS n FROM webhook_deliveries WHERE status = 'dead' AND created_at > now() - interval '24 hours'`);
-  if (dead.n) warnings.push({ check: 'dead_webhooks_24h', detail: dead.n });
   const failedEmails = await one<{ n: number }>(ctx.db, `SELECT count(*)::int AS n FROM notifications WHERE status = 'failed' AND created_at > now() - interval '24 hours'`);
   if (failedEmails.n) warnings.push({ check: 'failed_emails_24h', detail: failedEmails.n });
 

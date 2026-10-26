@@ -40,7 +40,7 @@ groups:
         expr: max by (job) (bullizard_worker_job_last_success_age_seconds{job!~"reconciliation_scheduler|db_backup|restore_drill"}) > 300
         for: 5m
         labels: { severity: page }
-        annotations: { summary: "Background job {{ $labels.job }} hasn't succeeded for 5 minutes (escrow release, webhooks or emails are stuck)" }
+        annotations: { summary: "Background job {{ $labels.job }} hasn't succeeded for 5 minutes (escrow release or emails are stuck)" }
 
       - alert: DatabaseBackupStale
         expr: max(bullizard_worker_job_last_success_age_seconds{job="db_backup"}) > 26 * 3600 or absent(bullizard_worker_job_last_success_age_seconds{job="db_backup"})
@@ -70,11 +70,6 @@ groups:
         for: 30m
         labels: { severity: ticket }
         annotations: { summary: "More than 10 paid orders are waiting for delivery for over an hour" }
-
-      - alert: WebhooksDeadLettered
-        expr: max(bullizard_webhook_deliveries{status="dead"}) > 0
-        labels: { severity: ticket }
-        annotations: { summary: "Webhook deliveries to sellers gave up in the last 24h" }
 
       - alert: EmailsFailing
         expr: max(bullizard_emails{status="failed"}) > 5

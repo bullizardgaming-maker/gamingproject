@@ -96,10 +96,6 @@ export function createMetrics(ctx: Ctx) {
     ['chargebacks_due_within_7d', 'Chargebacks not yet submitted with a deadline within 7 days', async () => [{ value: await scalar(`SELECT count(*)::int AS v FROM chargebacks WHERE status IN ('received', 'packet_ready') AND respond_by < now() + interval '7 days'`) }]],
     ['risk_flags_open', 'Fraud flags awaiting review', async () => [{ value: await scalar(`SELECT count(*)::int AS v FROM risk_flags WHERE status = 'open'`) }]],
     ['orders_paid_undelivered_1h', 'Paid orders not delivered after 1h (not under review)', async () => [{ value: await scalar(`SELECT count(*)::int AS v FROM orders WHERE status = 'paid' AND NOT escrow_frozen AND paid_at < now() - interval '1 hour'`) }]],
-    ['webhook_deliveries', 'Webhook deliveries by status (dead: last 24h)', async () => {
-      const rows = await many<{ status: string; v: number }>(ctx.dbRead, `SELECT status, count(*)::int AS v FROM webhook_deliveries WHERE status = 'pending' OR (status = 'dead' AND created_at > now() - interval '24 hours') GROUP BY status`);
-      return ['pending', 'dead'].map((s) => ({ labels: { status: s }, value: rows.find((r) => r.status === s)?.v ?? 0 }));
-    }],
     ['emails', 'Emails by status (failed: last 24h)', async () => {
       const rows = await many<{ status: string; v: number }>(ctx.dbRead, `SELECT status, count(*)::int AS v FROM notifications WHERE status = 'pending' OR (status = 'failed' AND created_at > now() - interval '24 hours') GROUP BY status`);
       return ['pending', 'failed'].map((s) => ({ labels: { status: s }, value: rows.find((r) => r.status === s)?.v ?? 0 }));

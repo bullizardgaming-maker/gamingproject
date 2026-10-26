@@ -1,0 +1,53 @@
+# OWASP ZAP scan of staging (security/zap/zap-staging.yaml): web app + API, signed in as the buyer test account.
+# Fails on any High alert; Medium alerts are listed in the report (artifact "zap-reports") for triage.
+# Manual: Actions → "staging ZAP scan" → Run workflow. Setup: docs/STAGING.md → "Staging test workflows".
+name: staging ZAP scan
+on:
+  workflow_dispatch:
+  # Off for now. To run it weekly, uncomment:
+  # schedule:
+  #   - cron: '11 6 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-tests
+  cancel-in-progress: false
+
+jobs:
+  zap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      STAGING_WEB: https://staging.bullizard.com
+      STAGING_API: https://api-staging.bullizard.com
+      STAGING_TEST_TOKEN: ${{ secrets.STAGING_TEST_TOKEN }}
+      ZAP_USER: ${{ secrets.STAGING_BUYER_EMAIL }}
+      ZAP_PASS: ${{ secrets.STAGING_BUYER_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the secrets are set (names only)
+        run: |
+          missing=0
+          for v in STAGING_TEST_TOKEN ZAP_USER ZAP_PASS; do
+            if [ -z "${!v}" ]; then echo "::error::secret for $v is not set"; missing=1; fi
+          done
+          exit $missing
+      - name: ZAP automation plan
+        run: |
+          mkdir -p security/zap/reports && chmod -R a+rwX security/zap
+          set +e
+          docker run --rm -v "$PWD/security/zap:/zap/wrk:rw" -e STAGING_WEB -e STAGING_API -e ZAP_USER -e ZAP_PASS -e STAGING_TEST_TOKEN \
+            ghcr.io/zaproxy/zaproxy:stable zap.sh -cmd -autorun /zap/wrk/zap-staging.yaml
+          code=$?
+          set -e
+          # 0 clean, 2 Medium alerts only (triage, not a failure), 1 High alert or plan error, anything else: ZAP failed.
+          if [ "$code" -eq 2 ]; then echo "::warning::Medium alerts to triage: see the zap-reports artifact"; exit 0; fi
+          exit $code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zap-reports
+          path: security/zap/reports/
+          if-no-files-found: ignore

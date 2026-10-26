@@ -2,17 +2,15 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { Ctx } from '../context.js';
 import { maybeOne, one } from '../db.js';
-import { authenticateApiKey } from '../domain/apikeys.js';
 import { receiveChargeback } from '../domain/chargebacks.js';
 import { autoCompleteExpired, confirmOrder, createOrder, handlePaymentCaptured, openDispute } from '../domain/orders.js';
 import type { User } from '../domain/users.js';
 import { PUBLIC_USER_COLUMNS } from '../domain/users.js';
-import { dispatchDueWebhooks } from '../domain/webhooks.js';
 import { hashPassword, randomToken } from '../lib/crypto.js';
 import { forbidden, notFound, unauthorized } from '../lib/errors.js';
 
 /**
- * Sandbox helpers for sellers testing bots and webhook handlers. Only mounted
+ * Sandbox helpers for testing order flows (staging scripts, sellers trying the site). Only mounted
  * when SANDBOX_MODE=true, which also requires the mock payment provider, so no
  * real money or identity checks are involved. Each seller gets their own
  * simulated buyer account.
@@ -24,11 +22,9 @@ export const SandboxChargebackBody = z.object({
 });
 
 export async function sandboxRoutes(app: FastifyInstance, ctx: Ctx) {
-  /** Accepts a session token or an API key (any scope). */
+  /** A signed-in seller (session token). */
   const caller = async (req: FastifyRequest): Promise<User> => {
     if (req.user) return req.user;
-    const h = req.headers.authorization ?? '';
-    if (h.startsWith('Bearer mk_')) return (await authenticateApiKey(ctx, h.slice(7))).user;
     throw unauthorized();
   };
 
@@ -59,7 +55,7 @@ export async function sandboxRoutes(app: FastifyInstance, ctx: Ctx) {
     return { kyc_tier: 2, payouts_enabled: true };
   });
 
-  /** A simulated buyer buys one of your listings and pays. Fires order.created (and order.delivered for instant delivery). */
+  /** A simulated buyer buys one of your listings and pays. Instant-delivery listings deliver at once. */
   app.post('/sandbox/orders', async (req, reply) => {
     const seller = await caller(req);
     const body = SandboxOrderBody.parse(req.body);
@@ -109,12 +105,6 @@ export async function sandboxRoutes(app: FastifyInstance, ctx: Ctx) {
     const o = await ownOrder(Id.parse(req.params).id, seller.id);
     const body = SandboxChargebackBody.parse(req.body ?? {});
     return reply.status(201).send(await receiveChargeback(ctx, { orderId: o.id, network: body.network, reasonCode: body.reasonCode, amountCents: o.amount_cents }));
-  });
-
-  /** Deliver queued webhooks now instead of waiting for the worker. */
-  app.post('/sandbox/webhooks/flush', async (req) => {
-    await caller(req);
-    return { attempted: await dispatchDueWebhooks(ctx) };
   });
 
 }

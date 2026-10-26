@@ -4,7 +4,7 @@ import { classify } from '../src/domain/chargebacks.js';
 import { detectOffPlatform } from '../src/domain/chat.js';
 import { subnetOf } from '../src/domain/fraud.js';
 import { parseBulkUpload } from '../src/domain/inventory.js';
-import { backoffSeconds, isPrivateAddress, signPayload } from '../src/domain/webhooks.js';
+import { isPrivateAddress } from '../src/lib/netguard.js';
 import { Keyring, hashPassword, verifyPassword } from '../src/lib/crypto.js';
 import { createHmac } from 'node:crypto';
 import { describeUserAgent } from '../src/domain/sessions.js';
@@ -67,21 +67,7 @@ describe('crypto', () => {
   });
 });
 
-describe('webhooks', () => {
-  it('signs the raw body with HMAC-SHA256 (merchant-side verification)', () => {
-    const body = JSON.stringify({ id: 'evt_1', type: 'order.created' });
-    const sig = signPayload('whsec_test', body);
-    expect(sig).toBe(createHmac('sha256', 'whsec_test').update(body).digest('hex'));
-  });
-
-  it('backs off exponentially with a cap', () => {
-    const mid = () => 0.5;
-    expect(backoffSeconds(1, mid)).toBe(30);
-    expect(backoffSeconds(2, mid)).toBe(60);
-    expect(backoffSeconds(5, mid)).toBe(480);
-    expect(backoffSeconds(20, mid)).toBe(6 * 3600);
-  });
-
+describe('network guard', () => {
   it('blocks private destinations (SSRF)', () => {
     for (const ip of ['127.0.0.1', '10.1.2.3', '192.168.0.1', '172.16.5.4', '169.254.169.254', '::1', 'fd00::1', '::ffff:10.0.0.1']) {
       expect(isPrivateAddress(ip)).toBe(true);

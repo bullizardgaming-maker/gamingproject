@@ -21,7 +21,7 @@ const gameAllowed = (game: string) => {
   return list.some((g) => g.toLowerCase() === game.trim().toLowerCase());
 };
 
-const KEY = DEMO_FULL ? 'bz.demo.v26' : 'bz.demo.launch.v2';
+const KEY = DEMO_FULL ? 'bz.demo.v27' : 'bz.demo.launch.v3';
 const day = 86_400_000;
 const now = () => new Date().toISOString();
 const rid = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2) + Date.now().toString(16));
@@ -850,9 +850,9 @@ route('PATCH', '/admin/affiliates/:id', ({ me, params, body }) => {
   save();
   return affiliateView(a);
 });
-// Feature switches: the Merchant API is hidden at launch (the full test catalogue turns it on so its flows still run).
+// Feature switches.
 route('GET', '/features', () => ({
-  merchantApi: DEMO_FULL, sandbox: true, legal: { tosVersion: TOS_VERSION, notice: null },
+  sandbox: true, legal: { tosVersion: TOS_VERSION, notice: null },
   paused: { withdrawals: state.controls.pause_withdrawals, orders: state.controls.pause_orders, chat: state.controls.pause_chat, signups: state.controls.pause_signups, message: state.controls.pause_message },
   limits: { maxOrderCents: state.controls.max_order_cents, maxWithdrawalDayCents: state.controls.max_withdrawal_day_cents, newAccountDays: state.controls.new_account_days, newAccountMaxOrderCents: state.controls.new_account_max_order_cents },
 }));
@@ -2661,33 +2661,6 @@ route('PATCH', '/me/push-preferences', ({ me, body }) => {
   return PUSH_CATS.map(([category, label]) => ({ category, label, enabled: state.pushPrefs[u.id]![category] !== false }));
 });
 
-// --- Developers --------------------------------------------------------------------------
-route('GET', '/developer/api-keys', ({ me }) => state.apiKeys.filter((k) => k.user_id === needSeller(me).id));
-route('POST', '/developer/api-keys', ({ me, body }) => {
-  const u = needSeller(me);
-  const prefix = rid().slice(0, 8);
-  const k = { id: rid(), user_id: u.id, name: body.name, prefix, scopes: body.scopes, created_at: now(), revoked_at: null };
-  state.apiKeys.push(k);
-  return { ...k, key: `mk_${prefix}_demo${rid().replace(/-/g, '')}` };
-});
-route('DELETE', '/developer/api-keys/:id', ({ params }) => {
-  const k = state.apiKeys.find((x) => x.id === params[0]);
-  if (k) k.revoked_at = now();
-});
-route('GET', '/developer/webhooks', ({ me }) => state.webhooks.filter((h) => h.user_id === needSeller(me).id));
-route('POST', '/developer/webhooks', ({ me, body }) => {
-  const u = needSeller(me);
-  if (!/^https:\/\//.test(body.url ?? '')) fail(400, 'invalid_url', 'Webhook URL must use https');
-  const h = { id: rid(), user_id: u.id, url: body.url, events: body.events, active: true, created_at: now() };
-  state.webhooks.push(h);
-  return { ...h, secret: `whsec_demo${rid().replace(/-/g, '')}` };
-});
-route('DELETE', '/developer/webhooks/:id', ({ params }) => {
-  const h = state.webhooks.find((x) => x.id === params[0]);
-  if (h) h.active = false;
-});
-route('POST', '/developer/webhooks/:id/test', () => ({ queued: true }));
-
 // --- Operations console --------------------------------------------------------------------
 route('GET', '/admin/disputes', ({ me }) => {
   needStaff(me);
@@ -2799,7 +2772,7 @@ route('GET', '/admin/audit', ({ me }) => (needStaff(me), state.audit));
 
 // --- Status page ------------------------------------------------------------------------------
 const COMPONENTS: Array<[string, string]> = [
-  ['website', 'Website and app'], ['api', 'Seller API and webhooks'], ['checkout', 'Card and crypto checkout'], ['delivery', 'Instant delivery and escrow release'],
+  ['website', 'Website and app'], ['checkout', 'Card and crypto checkout'], ['delivery', 'Instant delivery and escrow release'],
   ['chat', 'Order chat and live updates'], ['payouts', 'Seller payouts'], ['notifications', 'Email and push notifications'],
 ];
 const RANK: Record<string, number> = { operational: 0, maintenance: 1, degraded: 2, partial_outage: 3, major_outage: 4 };
@@ -3460,7 +3433,7 @@ export async function demoFetch(method: string, pathWithQuery: string, body: unk
     try {
       const data = h({ me, body: body ?? {}, query: new URLSearchParams(qs ?? ''), params: match.slice(1).map(decodeURIComponent) });
       save();
-      return { status: data === undefined ? 204 : method === 'POST' && /\/(orders|offers|developer\/api-keys|developer\/webhooks)$/.test(path) ? 201 : 200, data };
+      return { status: data === undefined ? 204 : method === 'POST' && /\/(orders|offers)$/.test(path) ? 201 : 200, data };
     } catch (err) {
       if (err instanceof HttpError) return { status: err.status, data: { error: { code: err.code, message: err.message } } };
       console.error(err);

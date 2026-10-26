@@ -1,7 +1,5 @@
-import { createHmac } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { accountId, balance, sellerAvailable } from '../src/domain/ledger.js';
-import { dispatchDueWebhooks } from '../src/domain/webhooks.js';
 import { runJobsOnce } from '../src/worker.js';
 import { grossUp } from '../src/domain/commission.js';
 import { endWindowAndRelease, buyAndPay, client, makeOffer, makeUser, mockKyc, setup, type Harness } from './helpers.js';
@@ -55,11 +53,6 @@ describe('auto-delivery with escrow held until confirmation', () => {
     const seller = await makeUser(h, { tier: 2 });
     const buyer = await makeUser(h, { tier: 1 });
 
-    // Webhook endpoint for the seller.
-    const ep = await seller.api.post('/v1/developer/webhooks', { url: 'https://merchant.example/hooks', events: ['order.created', 'order.delivered', 'order.completed', 'offer.low_stock'] });
-    expect(ep.status).toBe(201);
-    const secret: string = ep.body.secret;
-
     const offer = await makeOffer(seller, { priceCents: 25_00, lowStockThreshold: 1 });
     const upload = await seller.api.post(`/v1/offers/${offer.id}/inventory`, { format: 'txt', content: 'KEY-AAA\nKEY-BBB\nKEY-AAA\nKEY-CCC\n' });
     expect(upload.body).toEqual({ added: 3, duplicates: 1, available: 3 });
@@ -94,20 +87,6 @@ describe('auto-delivery with escrow held until confirmation', () => {
     expect((await platformBalance('treasury')) + (await platformBalance('reserve')) + (await platformBalance('tax_payable'))).toBe(2_64);
     expect(await platformBalance('reserve')).toBe(26);
     expect(await platformBalance('tax_payable')).toBe(49);
-
-    // Webhooks: signed, idempotency key, delivered.
-    const received: Array<{ headers: Record<string, string>; body: string }> = [];
-    const fakeFetch = (async (_url: string, init: any) => {
-      received.push({ headers: init.headers, body: init.body });
-      return new Response('ok', { status: 200 });
-    }) as typeof fetch;
-    await dispatchDueWebhooks(h.ctx, { fetchImpl: fakeFetch });
-    const types = received.map((r) => JSON.parse(r.body).type).sort();
-    expect(types).toEqual(['offer.low_stock', 'order.completed', 'order.created', 'order.delivered']);
-    for (const r of received) {
-      expect(r.headers['X-Hook-Signature']).toBe(createHmac('sha256', secret).update(r.body).digest('hex'));
-      expect(r.headers['Idempotency-Key']).toBe(JSON.parse(r.body).id);
-    }
   });
 
   it('releases escrow automatically when the inspection window lapses', async () => {

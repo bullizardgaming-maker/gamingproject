@@ -36,7 +36,6 @@ describe('data key rotation', () => {
     const offer = await makeOffer(seller);
     await seller.api.post(`/v1/offers/${offer.id}/inventory`, { format: 'txt', content: 'ROTATE-ME-1' });
     const order = await buyAndPay(h, buyer, offer.id);
-    await seller.api.post('/v1/developer/webhooks', { url: 'https://merchant.example/hook', events: ['order.created'] });
     await seller.api.post('/v1/me/2fa/setup');
     const account = await makeOffer(seller, { categorySlug: 'accounts', deliveryMode: 'manual', stock: 1 });
     await seller.api.post(`/v1/offers/${account.id}/owner-proof`, { registrationEmail: 'orig@example.com', registrationDate: '2019-01-01', evidence: { answer: 'blue' } });
@@ -49,11 +48,11 @@ describe('data key rotation', () => {
     const both = ctxWith(`${v1},${v2}`);
     const before = await keyStatus(both);
     expect(before.current).toBe('v2');
-    expect(before.remaining).toBeGreaterThanOrEqual(5);
+    expect(before.remaining).toBeGreaterThanOrEqual(4);
     expect(before.safeToRemove).toEqual([]);
 
     const done = await rotateAll(both);
-    expect(done).toMatchObject({ inventory_items: 1, webhook_secrets: 1, totp_secrets: 1, owner_proof_evidence: 1, chat_files: 1 });
+    expect(done).toMatchObject({ inventory_items: 1, totp_secrets: 1, owner_proof_evidence: 1, chat_files: 1 });
     const after = await keyStatus(both);
     expect(after.remaining).toBe(0);
     expect(after.safeToRemove).toEqual(['v1']);
@@ -61,8 +60,6 @@ describe('data key rotation', () => {
     // With v1 gone entirely, everything still decrypts.
     const onlyV2 = ctxWith(v2);
     expect((await revealDelivered(onlyV2, order.id))[0]!.content).toBe('ROTATE-ME-1');
-    const { rows: [ep] } = await h.ctx.db.query('SELECT secret_ciphertext FROM webhook_endpoints WHERE user_id = $1', [seller.id]);
-    expect(onlyV2.keyring.decrypt(ep.secret_ciphertext, 'webhook')).toMatch(/^whsec_/);
     const { rows: [u] } = await h.ctx.db.query('SELECT totp_secret_ciphertext FROM users WHERE id = $1', [seller.id]);
     expect(onlyV2.keyring.decrypt(u.totp_secret_ciphertext, `totp:${seller.id}`)).toMatch(/^[A-Z2-7]+$/);
     const { rows: [p] } = await h.ctx.db.query(`SELECT evidence->>'sealed' AS s FROM owner_proofs WHERE offer_id = $1`, [account.id]);

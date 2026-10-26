@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { buy, signIn, signOut } from './helpers';
 
-/** CEO decisions of Oct 23: terms line instead of a checkbox, recurring referral, hidden Merchant API, translated chat notices. */
+/** CEO decisions of Oct 23: terms line instead of a checkbox, recurring referral, no seller API, translated chat notices. */
 test.describe('launch decisions', () => {
   test('buy box has no checkbox: one line under Buy now linking to the Terms page', async ({ page }) => {
     await signIn(page, 'Buyer');
@@ -47,14 +47,14 @@ test.describe('launch decisions', () => {
     await expect(page.getByText('أضاف المشتري إفادة إلى النزاع. يقرأ المحكّم إفادات الطرفين مع هذه المحادثة.')).toBeVisible();
   });
 
-  test('the Merchant API is hidden at launch and on with the full catalogue', async ({ page }) => {
-    await page.goto('/');
-    await page.evaluate(() => localStorage.removeItem('bz-demo-full'));
-    await page.goto('/developers');
-    await expect(page.getByRole('heading', { name: /not found/i })).toBeVisible();
-    await page.evaluate(() => localStorage.setItem('bz-demo-full', '1'));
-    await page.goto('/developers');
-    await expect(page.getByText(/API/).first()).toBeVisible();
+  test('there is no seller API: no Developers page, with or without the full catalogue (Round 23c)', async ({ page }) => {
+    for (const full of [false, true]) {
+      await page.goto('/');
+      await page.evaluate((on) => (on ? localStorage.setItem('bz-demo-full', '1') : localStorage.removeItem('bz-demo-full')), full);
+      await page.goto('/developers');
+      await expect(page.getByRole('heading', { name: /not found/i })).toBeVisible();
+      await expect(page.getByRole('link', { name: /developers|seller api/i })).toHaveCount(0);
+    }
   });
 
   test('sign-up needs the 18+ / Terms / Privacy box; legal pages are linked from the footer and help centre', async ({ page }) => {

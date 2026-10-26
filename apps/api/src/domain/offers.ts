@@ -281,22 +281,6 @@ export async function updateOffer(
   return getOffer(ctx.db, offerId);
 }
 
-/** Bulk price update for merchant bots. Each entry may carry an expected version. */
-export async function bulkUpdatePrices(ctx: Ctx, sellerId: string, updates: Array<{ offerId: string; priceCents: number; version?: number }>) {
-  return withTx(ctx.db, async (tx) => {
-    const results = [];
-    for (const u of updates) {
-      const res = await tx.query(
-        `UPDATE offers SET price_cents = $3, version = version + 1, updated_at = now()
-          WHERE id = $1 AND seller_id = $2 AND ($4::int IS NULL OR version = $4) RETURNING id, price_cents, version`,
-        [u.offerId, sellerId, u.priceCents, u.version ?? null],
-      );
-      results.push(res.rowCount ? { ...res.rows[0], ok: true } : { id: u.offerId, ok: false, error: 'not_found_or_version_conflict' });
-    }
-    return results;
-  });
-}
-
 export async function uploadInventory(ctx: Ctx, sellerId: string, offerId: string, format: 'txt' | 'json', content: string) {
   const offer = await maybeOne(ctx.db, 'SELECT seller_id, delivery_mode, is_bundle FROM offers WHERE id = $1', [offerId]);
   if (!offer || offer.seller_id !== sellerId) throw notFound('Offer');

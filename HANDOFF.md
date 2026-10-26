@@ -3,9 +3,9 @@
 State of the project for whoever picks it up next (a person or another Claude session). Read this first, then
 `README.md` (how to run) and `docs/ARCHITECTURE.md` (how each feature works).
 
-## Where things stand (Oct 25, 2026, after Round 23b)
+## Where things stand (Oct 26, 2026, after Round 23c)
 
-- All work is on `main`. CI (api, web, e2e, load, contracts, fraud-gnn, sdk-python) is green.
+- All work is on `main`. CI (api, web, e2e, load, contracts, fraud-gnn) is green. Staging tests: four manual workflows (Round 23c).
 - 14 rounds of features are built: 84 of 92 suggestions. The tracker lives in the Claude report doc
   ("Bullizard report"), which has the full list with statuses.
 - Tests: 70 API test files (multinode excluded), 110+ browser tests (31 files), 14 contract tests. See Round 16.
@@ -14,11 +14,10 @@ State of the project for whoever picks it up next (a person or another Claude se
 
 | Path | What |
 |---|---|
-| `apps/api` | Fastify 5 + Postgres API and worker. Migrations in `migrations/` (latest 054), business logic in `src/domain/`, routes in `src/routes/`, providers (payments, KYC, email, Steam/Riot…) in `src/providers/` |
+| `apps/api` | Fastify 5 + Postgres API and worker. Migrations in `migrations/` (latest 074), business logic in `src/domain/`, routes in `src/routes/`, providers (payments, KYC, email, Steam/Riot…) in `src/providers/` |
 | `apps/web` | React 19 + Vite + Tailwind v4 web app. `src/demo/` is an in-browser mock of the API used for previews and browser tests |
 | `contracts` | `MarketEscrow.sol` (Hardhat) |
 | `services/fraud-gnn` | Python fraud model service |
-| `sdks/` | TypeScript and Python SDKs |
 | `mobile/` | Android (TWA) and iOS (Capacitor) shells, see `docs/MOBILE.md` |
 | `docs/` | Architecture, staging, runbook, mobile |
 
@@ -233,7 +232,7 @@ Tests: `frontend-requests.test.ts` (one case per item), coin order/fields in `cr
 5. **Buy box.** No checkbox. One line under Buy now — "By buying you agree to the Terms" — in six languages, "Terms"
    linking to the new `/terms` page (`terms.*` keys; Legal's text replaces `terms.body`). The API still receives
    `acceptTos: true` from the app, so the acceptance timestamp on the order is unchanged.
-6. **Merchant API hidden.** `MERCHANT_API_ENABLED=false` by default: `/v1/developer/*` answer 404, API keys fail with
+6. **Merchant API hidden** (removed entirely in Round 23c). `MERCHANT_API_ENABLED=false` by default: `/v1/developer/*` answer 404, API keys fail with
    `merchant_api_disabled`, `/v1/docs` and `/v1/openapi.json` are not mounted. `GET /v1/features` tells the app;
    `/developers` shows "Page not found" until it is on. Tests run with it on (`vitest.config.ts`);
    `merchant-api-switch.test.ts` covers off.
@@ -620,6 +619,28 @@ test tokens carry their action). New ClamAV image `services/clamav/` (CI builds 
 
 Render production now needs `ORIGIN_SHARED_SECRET` set (already `sync: false` in `render.production.yaml`) and the ClamAV service
 rebuilt from `services/clamav` (a blueprint sync recreates it as a Docker service).
+
+## Round 23c (Oct 26, 2026) — follow-ups 11–13, no seller API, staging test workflows
+
+Migration **074** (`074_round23c.sql`): drops `api_keys`, `webhook_endpoints`, `webhook_deliveries`. New test file
+`round23c.test.ts` (11 cases); shared template fixture `test/fixtures/template-data.ts`.
+
+| # | What changed |
+|---|---|
+| 11 | `loadConfig` treats a blank (or whitespace) value of any optional key as unset, numbers and defaults included (Render sends `""` for an empty `sync: false` key; `BREVO_LIST_ID_EN=""` used to become 0 and stop the start). Tested by booting staging and production with every optional `sync: false` key of both blueprints set to `""`. |
+| 12 | One HTML layout for every customer email (`emailHtml` in `notifications.ts`): a full document with `lang`/`dir` (`dir="rtl" lang="ar"` for Arabic), always next to the plain-text part. The verification-code email now has it too (it had text only). Tested for every template × all 6 locales. |
+| 13 | `vite.config.ts`: `VITE_API_URL` / `VITE_UPLOAD_ORIGIN` that are not https URLs (http only for localhost) stop the build with `VITE_API_URL must be an https URL, got 'false'` (`originOf`). |
+| CEO | **No seller API.** Removed: `routes/merchant.ts`, `domain/apikeys.ts`, `domain/webhooks.ts` (outbox, dispatcher, worker job `webhooks`, every `enqueueWebhook` call, the `webhook_deliveries` metric/alert/recon warning/retention purge, key-rotation target), `openapi.ts`, `api-schemas.ts` (`ExportQuery` moved into `routes/seller.ts`), `/v1/docs`, `/v1/openapi.json`, `@fastify/swagger(-ui)`, `/v1/sandbox/webhooks/flush`, API-key auth on the sandbox (session only now), `MERCHANT_API_ENABLED` (config, Render, `/features.merchantApi`), `RETENTION_WEBHOOK_DELIVERIES_DAYS`, `bulkUpdatePrices`, the status component "Seller API and webhooks", `sdks/` and the `sdk-python` CI job, `sdk.test.ts`, `merchant-api*.test.ts`; web: `Developers.tsx`, the `/developers` route and sitemap entry, the demo mock routes and seed keys (storage keys bumped to `bz.demo.v27` / `bz.demo.launch.v3`). Kept: the NOWPayments IPN `/v1/payments/webhook/nowpayments` and the other provider callbacks, `/v1/sandbox/*`, `offers.low_stock_threshold` (an offer field the API still accepts; nothing reads it now). Tests that went through API keys now use the session routes (`/v1/seller/exports/*`, `/v1/seller/invoices`). |
+| Staging | `STAGING_TEST_TOKEN` (staging only: `loadConfig` refuses it unless `APP_ENV=staging`, ≥ 32 chars; the route checks `APP_ENV` again): a sign-in, sign-up or reset request carrying `X-Staging-Test-Token` with that value (SHA-256 digests compared in constant time) skips Turnstile. Workflows `staging-money-paths.yml`, `staging-zap.yml`, `staging-load.yml`, `staging-kill-switch.yml` (manual, schedule commented out, one concurrency group). Scripts: `scripts/staging-client.ts` (shared client, TOTP for the staff 2FA, delivery proof upload), `money-paths.ts` (signs in with the test accounts; registers throwaway ones only without them), `kill-switch.ts` (pause → check the four 503s → always resume; `--resume-only`), `loadtest-staging.ts` (≤ 4.5 req/s, fails on any 429/Cloudflare block/5xx). ZAP plan: no OpenAPI import (a `requestor` job seeds the API), a `replacer` job adds the test-token header, email-sending and sandbox paths excluded; passes on Medium-only (exit 2), fails on High. |
+
+**What the CEO sets for the staging workflows** (details: `docs/STAGING.md` §5):
+- Render, staging env group `bullizard-staging`: `STAGING_TEST_TOKEN` = `openssl rand -hex 32` (new `sync: false` key). Keep
+  `SANDBOX_MODE=true`, `RATE_LIMIT_PER_MINUTE=300`. Nothing on production.
+- GitHub → Settings → Secrets and variables → Actions: `STAGING_TEST_TOKEN` (same value), `STAGING_STAFF_EMAIL`,
+  `STAGING_STAFF_PASSWORD`, `STAGING_STAFF_TOTP_SECRET` (base32 key of the staff account's 2FA), `STAGING_BUYER_EMAIL`,
+  `STAGING_BUYER_PASSWORD`, `STAGING_SELLER_EMAIL`, `STAGING_SELLER_PASSWORD`.
+- Accounts on staging: buyer, seller, and a staff account with role `admin` and 2FA on (older than the new-account window).
+- Run: GitHub → Actions → "staging money paths" / "staging ZAP scan" / "staging load test" / "staging kill switches" → Run workflow.
 
 ## Suggested next round
 

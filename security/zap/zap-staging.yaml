@@ -1,10 +1,10 @@
 # OWASP ZAP automation plan for staging (launch gate §2: dynamic scan — auth, headers, CSP, CORS, rate limits, uploads).
-# Run from the repo root once staging is up:
+# Runs from GitHub Actions (workflow staging-zap.yml, manual) or from the repo root once staging is up:
 #   STAGING_WEB=https://staging.bullizard.com STAGING_API=https://api-staging.bullizard.com \
-#   ZAP_USER=zap-buyer@bullizard.test ZAP_PASS='...' \
-#   docker run --rm -v "$PWD/security/zap:/zap/wrk:rw" -e STAGING_WEB -e STAGING_API -e ZAP_USER -e ZAP_PASS \
+#   ZAP_USER=<buyer test account> ZAP_PASS='...' STAGING_TEST_TOKEN='...' \
+#   docker run --rm -v "$PWD/security/zap:/zap/wrk:rw" -e STAGING_WEB -e STAGING_API -e ZAP_USER -e ZAP_PASS -e STAGING_TEST_TOKEN \
 #     ghcr.io/zaproxy/zaproxy:stable zap.sh -cmd -autorun /zap/wrk/zap-staging.yaml
-# Reports land in security/zap/reports/. The job fails (exit 1) on any High alert; Medium alerts are listed for triage.
+# Reports land in security/zap/reports/. Exit code 1 on any High alert; 2 when only Medium alerts are left (for triage).
 env:
   contexts:
     - name: bullizard-staging
@@ -20,6 +20,11 @@ env:
         - ${STAGING_API}/v1/admin/.*
         - ${STAGING_API}/v1/me/data/delete.*
         - ${STAGING_API}/v1/auth/logout
+        # Paths that send email or SMS (sign-up, reset, codes) or rewrite test data (sandbox helpers).
+        - ${STAGING_API}/v1/auth/register
+        - ${STAGING_API}/v1/auth/password/.*
+        - ${STAGING_API}/v1/verify/.*
+        - ${STAGING_API}/v1/sandbox/.*
       authentication:
         method: json
         parameters:
@@ -47,13 +52,37 @@ env:
     progressToStdout: true
 
 jobs:
-  - type: openapi
+  # Sign-in on staging needs Turnstile; the staging-only STAGING_TEST_TOKEN header skips it (apps/api config.ts refuses
+  # the variable outside APP_ENV=staging). Only requests to the staging API carry it.
+  - type: replacer
+    rules:
+      - description: staging test token (Turnstile skip)
+        url: ${STAGING_API}/.*
+        matchType: req_header
+        matchString: X-Staging-Test-Token
+        matchRegex: false
+        replacementString: ${STAGING_TEST_TOKEN}
+
+  # Seed the API endpoints (there is no public OpenAPI document: Bullizard has no seller API, Round 23c). The web app
+  # spiders below find the rest from the pages.
+  - type: requestor
     parameters:
-      # The API's OpenAPI document (only mounted when MERCHANT_API_ENABLED=true; on staging set it on for the scan).
-      apiUrl: ${STAGING_API}/v1/openapi.json
-      targetUrl: ${STAGING_API}
-      context: bullizard-staging
       user: buyer
+    requests:
+      - url: ${STAGING_API}/v1/features
+      - url: ${STAGING_API}/v1/auth/config
+      - url: ${STAGING_API}/v1/categories
+      - url: ${STAGING_API}/v1/games?q=path
+      - url: ${STAGING_API}/v1/offers?q=divine&sort=price_asc
+      - url: ${STAGING_API}/v1/offers?game=path-of-exile-2&category=currency
+      - url: ${STAGING_API}/v1/requests
+      - url: ${STAGING_API}/v1/status
+      - url: ${STAGING_API}/v1/legal/terms
+      - url: ${STAGING_API}/v1/me
+      - url: ${STAGING_API}/v1/me/notifications
+      - url: ${STAGING_API}/v1/me/wallet
+      - url: ${STAGING_API}/v1/orders
+      - url: ${STAGING_API}/v1/chat/rooms
 
   - type: spider
     parameters:

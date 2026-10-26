@@ -7,7 +7,6 @@ import { bodyMac, seal, systemMac, unseal, userChatKey } from './chatkeys.js';
 import { AppError, forbidden, notFound } from '../lib/errors.js';
 import type { TxScope } from './events.js';
 import { withScope } from './events.js';
-import { enqueueWebhook } from './webhooks.js';
 
 export interface ChatRoom {
   id: string;
@@ -281,9 +280,6 @@ export async function postUserMessage(ctx: Ctx, roomId: string, user: { id: stri
 
     const counterpart = room.buyer_id === user.id ? room.seller_id : room.buyer_id;
     s.notifyUser(counterpart, 'chat.message', { roomId, seq: msg.seq });
-    if (room.order_id && counterpart === room.seller_id) {
-      await enqueueWebhook(s.tx, room.seller_id, 'chat.message', { room_id: roomId, order_id: room.order_id, seq: msg.seq, body: msg.body });
-    }
     return msg;
   });
 }

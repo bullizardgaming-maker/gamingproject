@@ -487,7 +487,6 @@ export function seed() {
     affiliateOf: {} as Record<string, string>,
     affiliateEarnings: [] as Array<{ id: string; affiliate_id: string; order_id: string; commission_cents: number; earned_cents: number; currency: string; created_at: string }>,
     rulesQuestions: RULES_QUESTIONS.map((q, i) => ({ id: `rq-${i + 1}`, ...q, question_ar: q.question_ar as string | null, options_ar: q.options_ar as string[] | null, explanation_ar: q.explanation_ar as string | null, active: true })),
-    apiKeys: [] as any[],
     watches: [] as any[],
     tickets: [] as any[],
     savedSearches: [] as any[],
@@ -537,7 +536,6 @@ export function seed() {
       { id: 'prop-2', request_id: 'req-1', seller_id: users[5]!.id, price_cents: 98_00, delivery_hours: 12, message: 'Ascendant 1 with Reaver Vandal and Karambit. Owner-verified seller.', status: 'pending', offer_id: null, created_at: ago(20 * 3_600_000), updated_at: ago(20 * 3_600_000) },
       { id: 'prop-3', request_id: 'req-3', seller_id: users[6]!.id, price_cents: 28_50, delivery_hours: 1, message: '', status: 'pending', offer_id: null, created_at: ago(3 * day), updated_at: ago(3 * day) },
     ] as any[],
-    webhooks: [] as any[],
     emailPrefs: {} as Record<string, Record<string, boolean>>,
     ownerProofs: [
       {

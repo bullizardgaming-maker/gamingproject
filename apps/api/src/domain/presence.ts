@@ -4,7 +4,7 @@ import { many, one, withTx } from '../db.js';
 
 /**
  * "Online now" and "usually replies within …". Presence is the last signed-in activity (API
- * request, merchant API call or socket frame), written at most once a minute per user. Response
+ * request or socket frame), written at most once a minute per user. Response
  * time is the median wait between a buyer's message and the seller's next reply in chat over
  * 90 days, recomputed hourly for sellers with recent chats.
  */

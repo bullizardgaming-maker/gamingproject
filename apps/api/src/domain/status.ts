@@ -13,7 +13,6 @@ import { badRequest, notFound } from '../lib/errors.js';
  */
 export const COMPONENTS = {
   website: { name: 'Website and app', jobs: [] },
-  api: { name: 'Seller API and webhooks', jobs: ['webhooks'] },
   checkout: { name: 'Card and crypto checkout', jobs: ['expire_unpaid'] },
   delivery: { name: 'Instant delivery and escrow release', jobs: ['auto_release', 'late_deliveries'] },
   chat: { name: 'Order chat and live updates', jobs: [] },

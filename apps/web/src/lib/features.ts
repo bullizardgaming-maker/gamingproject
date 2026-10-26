@@ -2,12 +2,9 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 
 /**
- * Feature switches from `GET /features`. The Merchant API (Developers page, API keys, SDK links)
- * is hidden at launch and switched on server-side later (MERCHANT_API_ENABLED); until the answer
- * arrives the app assumes "off", so nothing flashes in.
+ * Feature switches from `GET /features`. Until the answer arrives the app assumes "off", so nothing flashes in.
  */
 export interface Features {
-  merchantApi: boolean;
   sandbox: boolean;
   /** Legal (Oct 24): the Terms version in force and, during the 14-day notice, the change that is coming. */
   legal: { tosVersion: string | null; notice: { version: string; effective_at?: string; effectiveAt?: string } | null };
@@ -16,13 +13,13 @@ export interface Features {
   limits: { maxOrderCents: number; maxWithdrawalDayCents: number; newAccountDays: number; newAccountMaxOrderCents: number } | null;
 }
 const NO_PAUSE = { withdrawals: false, orders: false, chat: false, signups: false, message: null };
-let features: Features = { merchantApi: false, sandbox: false, legal: { tosVersion: null, notice: null }, paused: NO_PAUSE, limits: null };
+let features: Features = { sandbox: false, legal: { tosVersion: null, notice: null }, paused: NO_PAUSE, limits: null };
 let loading: Promise<void> | null = null;
 const listeners = new Set<() => void>();
 export function loadFeatures() {
   loading ??= api<Features>('/features')
     .then((f) => {
-      features = { merchantApi: !!f.merchantApi, sandbox: !!f.sandbox, legal: f.legal ?? { tosVersion: null, notice: null }, paused: f.paused ?? NO_PAUSE, limits: f.limits ?? null };
+      features = { sandbox: !!f.sandbox, legal: f.legal ?? { tosVersion: null, notice: null }, paused: f.paused ?? NO_PAUSE, limits: f.limits ?? null };
       listeners.forEach((l) => l());
     })
     .catch(() => {

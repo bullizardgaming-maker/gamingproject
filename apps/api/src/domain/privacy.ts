@@ -98,8 +98,6 @@ export async function deleteAccount(ctx: Ctx, user: User, password: string, code
       [user.id, scrambled],
     );
     await revokeOtherSessions(s.tx, user.id, null, 'account_deleted');
-    await s.tx.query(`UPDATE api_keys SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, [user.id]);
-    await s.tx.query(`UPDATE webhook_endpoints SET active = false WHERE user_id = $1`, [user.id]);
     await s.tx.query(`UPDATE offers SET status = 'removed', updated_at = now(), version = version + 1 WHERE seller_id = $1`, [user.id]);
     // Undelivered stock (codes, credentials) is personal/commercial data with no retention need.
     await s.tx.query(`DELETE FROM inventory_items WHERE seller_id = $1 AND status = 'available'`, [user.id]);

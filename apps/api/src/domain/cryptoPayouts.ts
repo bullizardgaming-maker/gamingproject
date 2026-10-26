@@ -12,7 +12,6 @@ import { NowPaymentsError, NowPaymentsProvider, type NowPayout } from '../provid
 import { accountId, post } from './ledger.js';
 import { availableCredit } from './referrals.js';
 import { enqueueEmail, enqueueMailboxEmail } from './notifications.js';
-import { enqueueWebhook } from './webhooks.js';
 import { withScope } from './events.js';
 import { checkSecondFactor } from './mfa.js';
 import { withdrawable } from './payoutholds.js';
@@ -273,7 +272,6 @@ export async function decideWithdrawal(ctx: Ctx, id: string, staff: { id: string
         `withdrawal_rejected:${id}`,
       );
       await enqueueEmail(s.tx, w.user_id, 'withdrawal_failed', { amount_cents: amount, currency: w.currency, reason: unsupported ? UNSUPPORTED_COIN_REASON : note || 'not approved' });
-      await enqueueWebhook(s.tx, w.user_id, 'payout.failed', { withdrawal_id: id, amount_cents: amount, currency: w.currency, status: 'rejected', provider_ref: null, failure_reason: note ?? 'not approved' });
       return { ...w, status: 'rejected', decision_note: note ?? null, ...(unsupported ? { refused: 'unsupported_coin' } : {}) };
     }
     await s.tx.query(`UPDATE withdrawals SET status = 'processing', decided_by = $2, decided_at = now(), decision_note = $3, updated_at = now() WHERE id = $1`, [id, staffId, note ?? null]);
@@ -486,7 +484,6 @@ async function failWithdrawal(ctx: Ctx, id: string, reason: string, emailReason 
       `withdrawal_failed:${id}`,
     );
     await enqueueEmail(s.tx, w.user_id, 'withdrawal_failed', { amount_cents: Number(w.amount_cents), currency: w.currency, reason: emailReason });
-    await enqueueWebhook(s.tx, w.user_id, 'payout.failed', { withdrawal_id: id, amount_cents: Number(w.amount_cents), currency: w.currency, status: 'failed', provider_ref: w.provider_ref, failure_reason: reason });
   });
 }
 
@@ -534,7 +531,6 @@ export async function applyCryptoPayout(ctx: Ctx, ev: Extract<PaymentEvent, { ty
       }
       const paid = await one<any>(s.tx, `UPDATE withdrawals SET status = 'paid', tx_hash = $2, network_fee_cents = $3, conversion_fee_cents = $4, payout_id = COALESCE(payout_id, $5), provider_ref = COALESCE(provider_ref, $6), verify_pending = false, failure_reason = NULL, updated_at = now() WHERE id = $1 RETURNING *`, [w.id, ev.hash, networkFee, conversionFee, ev.payoutId, ev.batchId]);
       await enqueueEmail(s.tx, w.user_id, 'withdrawal_paid', { amount_cents: Number(w.net_cents), currency: w.currency, provider_ref: ev.hash ?? w.provider_ref });
-      await enqueueWebhook(s.tx, w.user_id, 'payout.paid', { withdrawal_id: w.id, amount_cents: Number(w.net_cents), currency: w.currency, status: 'paid', provider_ref: ev.hash ?? w.provider_ref });
       s.notifyUser(w.user_id, 'withdrawal.paid', { withdrawalId: w.id });
       return paid;
     });

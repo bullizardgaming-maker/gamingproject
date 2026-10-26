@@ -54,12 +54,12 @@ Re-run the drill after infrastructure changes, and at least every quarter.
 ### Payment provider (PSP) outage
 - **Checkout:** buyers can't pay. Unpaid orders expire after `ORDER_PAYMENT_TTL_MINUTES` and stock returns automatically. Payments that arrive late are recorded and refunded.
 - **PSP webhooks:** if our side fails, the PSP retries delivery. Webhook processing is idempotent.
-- **Payouts:** each fails with `payout_failed` (502). The money goes straight back to the seller's balance, and they get an email, an inbox item and a `payout.failed` webhook. Nothing to clean up: they can retry later.
+- **Payouts:** each fails with `payout_failed` (502). The money goes straight back to the seller's balance, and they get an email and an inbox item. Nothing to clean up: they can retry later.
 - **Refunds after release:** fail with `refund_failed`, and nothing is booked (the transaction rolls back).
 - **Do:** check the PSP status page. When it's back, run reconciliation to confirm the PSP balance matches.
 
 ### Worker stopped
-- **Symptoms:** escrow doesn't auto-release; emails, webhooks and notifications queue; unpaid orders don't expire. `WorkerJobStalled` fires after 5 minutes.
+- **Symptoms:** escrow doesn't auto-release; emails and notifications queue; unpaid orders don't expire. `WorkerJobStalled` fires after 5 minutes.
 - **Do:** restart it. Every job resumes from database state; nothing is lost, only delayed.
 
 ### Sanctions match or AML case
@@ -71,7 +71,6 @@ Re-run the drill after infrastructure changes, and at least every quarter.
 - **Data key:** append a new key to `DATA_ENCRYPTION_KEYS`, deploy, and watch `GET /v1/admin/keys` until nothing is left under the old key. Then remove it.
 - **Escrow signer:** disable the KMS key, create a new one, update the contract's signer and set `ESCROW_KMS_KEY_ID`.
 - **JWT secret:** rotating it signs everyone out.
-- **API keys and webhook secrets:** sellers rotate their own; staff can revoke them.
 
 ## Escalation
 1. **On-call engineer:** alerts marked `severity: page`.

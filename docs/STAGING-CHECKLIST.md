@@ -66,12 +66,12 @@ Vercel production environment: `VITE_DEMO=false`, `VITE_API_URL=https://api.<dom
 5. Staff accounts: sign up in the app with your real email, then API service → **Shell** →
    `node dist/scripts/make-staff.js --email <you> --role admin` (roles: arbiter, support, lead, finance, compliance,
    admin). Every staff account turns on 2FA at once (Account → Two-factor). Sample catalogue (optional): `node dist/seed.js`.
-6. Money paths, from your machine:
-   `API_URL=https://api-staging.<domain> STAFF_EMAIL=<support login> STAFF_PASSWORD=... npx tsx apps/api/scripts/money-paths.ts`
-   → every line `ok` (underpay `skipped` until the NOWPayments sandbox is set).
-7. Kill switches: Ops → Controls → pause each switch, confirm the banner and the 503, resume. Alerts: Ops → Controls
+6. Money paths: GitHub → Actions → **staging money paths** → Run workflow (setup: `docs/STAGING.md` §5)
+   → every line `PASS` (underpay `skipped` until the NOWPayments sandbox is set).
+7. Kill switches: Actions → **staging kill switches** (or by hand: Ops → Controls → pause each switch, confirm the banner
+   and the 503, resume). Load: Actions → **staging load test**. Alerts: Ops → Controls
    thresholds; the `ops_alerts` job runs every 15 minutes and emails admins + finance (on staging emails go to the log).
-8. Security scan: `security/zap/README.md` (needs a throwaway buyer account on staging). Fix every High, re-run.
+8. Security scan: Actions → **staging ZAP scan** (`security/zap/README.md`). Fix every High, re-run.
 9. Backup drill (gate §4): Neon → Branches → "Restore" the staging branch to a point in time an hour back, confirm the
    app still answers; note the date in the launch gate's Results table.
 

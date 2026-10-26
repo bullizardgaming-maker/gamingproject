@@ -70,10 +70,11 @@ KYC (per verification).
 
 ## Staging money-path check
 
-Once the staging API answers on `/readyz`, run from the repo:
+Once the staging API answers on `/readyz`, run GitHub → Actions → **staging money paths** (`docs/STAGING.md` §5), or from the repo:
 
 ```
-API_URL=https://api-staging.<domain> STAFF_EMAIL=<support login> STAFF_PASSWORD=... npx tsx apps/api/scripts/money-paths.ts
+API_URL=https://api-staging.<domain> STAGING_TEST_TOKEN=... BUYER_EMAIL=... BUYER_PASSWORD=... SELLER_EMAIL=... SELLER_PASSWORD=... \
+  STAFF_EMAIL=<admin login> STAFF_PASSWORD=... STAFF_TOTP_SECRET=... npx tsx apps/api/scripts/money-paths.ts
 ```
 
 It exercises pay, duplicate webhook, confirm, double-click confirm, double-click buy, early confirm, staff release

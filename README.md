@@ -11,7 +11,7 @@ A peer-to-peer marketplace for game accounts, keys, in-game currency, items and 
 
 | Path | What it is | Stack |
 |---|---|---|
-| `apps/api` | Marketplace backend: escrow, ledger, orders, auto-delivery, chat, merchant API, webhooks, fraud scoring, chargebacks, eKYC | Node 22, Fastify 5, PostgreSQL 16, Redis |
+| `apps/api` | Marketplace backend: escrow, ledger, orders, auto-delivery, chat, fraud scoring, chargebacks, eKYC | Node 22, Fastify 5, PostgreSQL 16, Redis |
 | `apps/web` | Buyer, seller and staff web app (market, checkout, order chat, seller hub, API console, operations console) | React 19, Vite |
 | `contracts` | `MarketEscrow.sol`: stablecoin escrow with milestones and a bonded validator panel for disputes | Solidity 0.8.24, OpenZeppelin 5, Hardhat |
 | `services/fraud-gnn` | Heterogeneous Graph Transformer (HGT) syndicate-risk model + scoring service | PyTorch, PyTorch Geometric, FastAPI |
@@ -95,7 +95,7 @@ npm run loadtest -w apps/api && npm run loadtest:search -w apps/api   # load che
 
 The browser tests cover browsing and filters, buying and chatting (with the official order card and the safety panel), in-game delivery with character names and proof, seller onboarding (rules test, ID deadline), ranks and the sell-form preview, leagues, founding sellers, game voting, creator codes, price alerts, support requests, buyer requests, quantity prices, the cart, sales and shop codes, bundles, trust badges, saved searches, dispute case files, listing moderation, staff tools, accessibility (axe), keyboard use, price history, account warranty claims, languages (including Arabic right-to-left), the installable app and phone layouts. CI runs them on every push and uploads the report when one fails.
 
-Highlights of what the tests prove: exactly one of 25 simultaneous buyers gets a single-stock item; chat sequence numbers stay gapless under 30 concurrent writers; a message sent to one API node reaches a socket on another node through Redis; webhook signatures verify with the merchant's secret and retries keep the same idempotency key; a buyer cluster sharing one device freezes a new seller's escrows and withdrawals; chargebacks produce reason-code-specific PDF packets and move money through the ledger correctly; the escrow contract rejects buyer-tampered terms and executes a commit-reveal validator verdict.
+Highlights of what the tests prove: exactly one of 25 simultaneous buyers gets a single-stock item; chat sequence numbers stay gapless under 30 concurrent writers; a message sent to one API node reaches a socket on another node through Redis; a buyer cluster sharing one device freezes a new seller's escrows and withdrawals; chargebacks produce reason-code-specific PDF packets and move money through the ledger correctly; the escrow contract rejects buyer-tampered terms and executes a commit-reveal validator verdict.
 
 ## Key API surfaces
 
@@ -139,12 +139,10 @@ Highlights of what the tests prove: exactly one of 25 simultaneous buyers gets a
 - Seller debts: `GET /v1/seller/debts`, `POST /v1/seller/debts/:id/pay` (card repayment); staff `GET /v1/admin/debts`
 - Seller money: `GET /v1/seller/dashboard` (per-currency balances, payout hold), `PUT /v1/seller/payout-currency`, `PUT /v1/seller/tax-profile`, `GET /v1/seller/invoices[/:id/pdf]`
 - `GET /v1/ws` WebSocket chat and notifications (protocol documented in `apps/api/src/ws/gateway.ts`)
-- Merchant API (API-key auth): `GET /v1/merchant/orders`, `POST /v1/merchant/inventory`, `PATCH /v1/merchant/prices`, `POST /v1/merchant/orders/:id/deliver`, `GET /v1/merchant/webhooks/deliveries`, `POST /v1/merchant/webhooks/deliveries/:id/redeliver`
-- Webhooks: `order.created` (funded), `order.delivered`, `order.completed`, `order.disputed`, `order.refunded`, `order.cancelled`, `offer.low_stock`, `chat.message`, `chargeback.created`, signed with `X-Hook-Signature` = hex HMAC-SHA256 of the raw body
 
-Seller SDKs: `sdks/typescript` (`@bullizard/sdk`) and `sdks/python` (`bullizard`). Both cover orders (with a polling helper), inventory, prices, chat, invoices, reports and webhook deliveries, and both verify webhook signatures. The TypeScript SDK's tests run against the real API in the API suite, and a test checks every path either SDK calls is in the API reference.
-
-Seller API reference: `/v1/docs` (OpenAPI JSON at `/v1/openapi.json`). Run a sandbox with `SANDBOX_MODE=true` (mock payments and KYC only) to get `/v1/sandbox/*` test helpers.
+Bullizard has no public seller API, API keys, seller webhooks or SDKs (CEO decision, Round 23c): the API serves the web and
+mobile apps only. Run a sandbox with `SANDBOX_MODE=true` (mock payments and KYC only) to get the `/v1/sandbox/*` test helpers the
+staging test workflows use (`docs/STAGING.md` → "Staging test workflows").
 
 Monitoring: Prometheus metrics at `/metrics` (set `METRICS_TOKEN`), health at `/healthz` and `/readyz`, alert rules in `deploy/monitoring/alerts.yml`, errors to Sentry with `SENTRY_DSN`.
 

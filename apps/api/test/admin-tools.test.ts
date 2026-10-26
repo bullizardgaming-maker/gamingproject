@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { sellerAvailable } from '../src/domain/ledger.js';
 import { runReconciliation } from '../src/domain/reconciliation.js';
-import { MAX_ATTEMPTS, dispatchDueWebhooks } from '../src/domain/webhooks.js';
 import { buyAndPay, client, makeOffer, makeUser, setup, type Harness } from './helpers.js';
 
 let h: Harness;
@@ -53,49 +52,5 @@ describe('manual ledger adjustments', () => {
     expect(JSON.stringify(audit)).toContain(req.body.id);
     const recon = await runReconciliation(h.ctx);
     expect(recon.report.issues).toEqual([]);
-  });
-});
-
-describe('webhook self-service', () => {
-  it('lets a merchant find dead deliveries and redeliver them with the same event id', async () => {
-    const seller = await makeUser(h, { tier: 2 });
-    const ep = (await seller.api.post('/v1/developer/webhooks', { url: 'https://merchant.example/hook', events: ['order.created'] })).body;
-    await seller.api.post(`/v1/developer/webhooks/${ep.id}/test`);
-    await seller.api.post(`/v1/developer/webhooks/${ep.id}/test`);
-
-    const failing = async () => new Response('down', { status: 500 });
-    for (let i = 0; i < MAX_ATTEMPTS; i++) {
-      await h.ctx.db.query(`UPDATE webhook_deliveries SET next_attempt_at = now() WHERE endpoint_id = $1`, [ep.id]);
-      await dispatchDueWebhooks(h.ctx, { fetchImpl: failing as any });
-    }
-    const key = (await seller.api.post('/v1/developer/api-keys', { name: 'ops', scopes: ['webhooks:manage'] })).body.key;
-    const bot = client(h.app, key);
-    const dead = (await bot.get('/v1/merchant/webhooks/deliveries?status=dead')).body;
-    expect(dead).toHaveLength(2);
-
-    const seen: string[] = [];
-    const ok = async (_url: string, init: any) => {
-      seen.push(JSON.parse(init.body).id);
-      return new Response('', { status: 200 });
-    };
-    expect((await bot.post(`/v1/merchant/webhooks/deliveries/${dead[0].id}/redeliver`)).body).toMatchObject({ status: 'pending' });
-    await dispatchDueWebhooks(h.ctx, { fetchImpl: ok as any });
-    expect(seen).toEqual([dead[0].payload.id]);
-
-    expect((await bot.post(`/v1/merchant/webhooks/${ep.id}/replay`, {})).body).toEqual({ requeued: 1 });
-    await dispatchDueWebhooks(h.ctx, { fetchImpl: ok as any });
-    expect(seen).toHaveLength(2);
-    expect((await bot.get('/v1/merchant/webhooks/deliveries?status=succeeded')).body).toHaveLength(2);
-
-    // Someone else's delivery is invisible.
-    const other = await makeUser(h, { tier: 2 });
-    expect((await other.api.post(`/v1/developer/webhooks/deliveries/${dead[0].id}/redeliver`)).status).toBe(404);
-    // Disabled endpoints can't be redelivered to until re-enabled; rotation returns a new secret once.
-    await seller.api.del(`/v1/developer/webhooks/${ep.id}`);
-    expect((await bot.post(`/v1/merchant/webhooks/deliveries/${dead[0].id}/redeliver`)).status).toBe(404);
-    expect((await seller.api.post(`/v1/developer/webhooks/${ep.id}/enable`)).body.active).toBe(true);
-    const rotated = (await seller.api.post(`/v1/developer/webhooks/${ep.id}/rotate-secret`)).body;
-    expect(rotated.secret).toMatch(/^whsec_/);
-    expect(rotated.secret).not.toBe(ep.secret);
   });
 });

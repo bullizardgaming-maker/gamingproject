@@ -70,6 +70,48 @@ build time, so redeploy after changing it.
 - `curl https://<service>.onrender.com/v1/games` answers 403 (`origin_forbidden`) once `ORIGIN_SHARED_SECRET` is set:
   only Cloudflare (which adds `X-Origin-Auth`) reaches the API; `/readyz` and `/healthz` stay open for Render.
 
+## 5. Staging test workflows (GitHub Actions)
+
+Four manual workflows test staging through Cloudflare, like any client (no origin secret in GitHub). Run them from
+GitHub → **Actions** → pick the workflow → **Run workflow**. They share one concurrency group, so they never overlap.
+Each has a `schedule:` block commented out; uncomment it to run on a timer.
+
+| Workflow | File | What it does |
+|---|---|---|
+| staging money paths | `staging-money-paths.yml` | `apps/api/scripts/money-paths.ts`: pay, duplicate capture, confirm, double clicks, early confirm, staff release (24 h rule), dispute, withdrawal quote, chat filter |
+| staging ZAP scan | `staging-zap.yml` | OWASP ZAP (`security/zap/zap-staging.yaml`) on the web app and API as the buyer; fails on any High, Mediums go to the `zap-reports` artifact |
+| staging load test | `staging-load.yml` | `apps/api/scripts/loadtest-staging.ts`: league-start search, checkout and chat for 120 s at ≤ 4 req/s (inputs: duration, rate) |
+| staging kill switches | `staging-kill-switch.yml` | `apps/api/scripts/kill-switch.ts`: pauses orders, withdrawals, chat and sign-ups, checks the 503s, always resumes (a last `always()` step resumes again) |
+
+**What to set up once**
+
+1. Render, staging API (env group `bullizard-staging`): `STAGING_TEST_TOKEN` = `openssl rand -hex 32`. With it, a sign-in
+   that sends the header `X-Staging-Test-Token: <value>` skips Turnstile (compared in constant time). The API refuses to
+   start with this variable unless `APP_ENV=staging`, so it can never work in production. Leave `SANDBOX_MODE=true` (the
+   scripts use `/v1/sandbox/*`) and `RATE_LIMIT_PER_MINUTE` at 300.
+2. Three staging accounts with mailboxes you control (sign up on `https://staging.bullizard.com`): a **buyer**, a **seller**
+   (both are made verified by the scripts through `/v1/sandbox/verify-me`) and a **staff** account made `admin`
+   (`node dist/scripts/make-staff.js --email <it> --role admin`; admin has `controls.manage` and can release orders). Turn
+   on 2FA for the staff account and keep the base32 secret shown at setup ("enter the key manually"). Use accounts older
+   than the new-account window (Ops → Controls → `new_account_days`) or raise its open-order limit, or checkouts are capped.
+3. GitHub → Settings → Secrets and variables → **Actions** → New repository secret, for each of:
+   `STAGING_TEST_TOKEN` (same value as on Render), `STAGING_STAFF_EMAIL`, `STAGING_STAFF_PASSWORD`,
+   `STAGING_STAFF_TOTP_SECRET`, `STAGING_BUYER_EMAIL`, `STAGING_BUYER_PASSWORD`, `STAGING_SELLER_EMAIL`,
+   `STAGING_SELLER_PASSWORD`. The workflows read them only as environment variables and never print them (GitHub also
+   masks them in logs); a first step names any that are missing.
+
+**Cloudflare, what to expect.** The scripts send `User-Agent: bullizard-staging-tests` and the test-token header; nothing
+else differs from a browser's API calls.
+- Rate-limit rule (auth and withdrawal paths, Round 23a): each workflow signs in at most three times (staff, seller, buyer)
+  and the kill-switch test sends one refused withdrawal and one refused sign-up, so the rule should never fire. If it does,
+  the job fails with a 429 whose body is not JSON (Cloudflare's page) — raise the rule's threshold or wait 10 minutes.
+- The load test paces every request through one limiter: at most 4.5 req/s (270/min) from the runner's one IP, under the
+  API's own 300/min per IP. Any 429 fails the run and says whether the API (JSON body) or Cloudflare (HTML page)
+  answered. To test higher rates, raise `RATE_LIMIT_PER_MINUTE` on staging first and the cap in the script.
+- Bot Fight Mode / managed challenges must not challenge `api-staging.bullizard.com` (an API client cannot solve them):
+  a 403 without a JSON body fails the load test as a Cloudflare block. ZAP is noisier (an active scan); if
+  Cloudflare blocks it, add a WAF skip rule for the runner while it runs, or pause the zone's security level for staging.
+
 ## Moving to production
 
 Staging leaves out what production needs: Stripe (`PAYMENT_PROVIDER=stripe` and its keys), Sumsub KYC, Postmark email,

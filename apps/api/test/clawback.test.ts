@@ -26,7 +26,6 @@ describe('refunds after release', () => {
     const arbiter = await makeUser(h, { role: 'arbiter' });
     const seller = await makeUser(h, { tier: 2 });
     await h.ctx.db.query(`UPDATE users SET stripe_account_id = 'acct_c', payouts_enabled = true, payout_hold_days = 0 WHERE id = $1`, [seller.id]);
-    await seller.api.post('/v1/developer/webhooks', { url: 'https://merchant.example/hook', events: ['order.clawback'] });
     const { buyer, order } = await completedSale(seller);
     // The seller already withdrew everything.
     expect((await seller.api.post('/v1/seller/withdrawals', { amountCents: Number(order.seller_net_cents) })).status).toBe(201);
@@ -54,8 +53,6 @@ describe('refunds after release', () => {
     expect(Number(cn.net_cents) + Number(cn.tax_cents)).toBe(Number(cn.gross_cents));
     expect((await seller.api.get('/v1/seller/credit-notes')).body.map((c: any) => c.number)).toEqual([cn.number]);
     expect((await seller.api.get('/v1/me/notifications')).body.items.map((i: any) => i.template)).toContain('clawback');
-    const hook = (await h.ctx.db.query(`SELECT payload FROM webhook_deliveries WHERE event_type = 'order.clawback' ORDER BY created_at DESC LIMIT 1`)).rows[0].payload.data;
-    expect(hook).toMatchObject({ paid_by: 'seller', seller_debited_cents: Number(order.seller_net_cents), credit_note: cn.number, fully_refunded: true });
 
     // Statement shows it; tax report nets it out.
     const st = (await seller.api.get('/v1/seller/exports/statement?format=json')).body.rows;

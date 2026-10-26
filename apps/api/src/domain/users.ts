@@ -1,6 +1,6 @@
 import { SignJWT, jwtVerify } from 'jose';
 import { assertUsdWithdrawal } from './cryptoPayouts.js';
-import { PACKS, isLocale } from './locales/index.js';
+import { PACKS, isLocale, type Locale } from './locales/index.js';
 import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { maybeOne, one, withTx } from '../db.js';
@@ -17,8 +17,7 @@ import { withdrawable } from './payoutholds.js';
 import { ensureScreenedForPayout, screenUser } from './aml.js';
 import { tosVersion } from './legal.js';
 import { referrerForCode } from './referrals.js';
-import { enqueueEmail } from './notifications.js';
-import { enqueueWebhook } from './webhooks.js';
+import { emailHtml, enqueueEmail } from './notifications.js';
 import { activeSession, createSession, revokeOtherSessions, type IssuedSession } from './sessions.js';
 
 export interface User {
@@ -309,7 +308,8 @@ export async function sendVerificationCode(ctx: Ctx, user: User, channel: 'email
   );
   const pack = isLocale(user.locale) && user.locale !== 'en' ? PACKS[user.locale] : null;
   const body = pack ? pack.verifyCode(code, CODE_TTL_MINUTES) : `Your verification code is ${code}. It expires in ${CODE_TTL_MINUTES} minutes.`;
-  await ctx.messenger.send({ channel, to: target, body });
+  const locale = pack ? (user.locale as Locale) : 'en';
+  await ctx.messenger.send(channel === 'email' ? { channel, to: target, subject: 'Bullizard', body, html: emailHtml(body, locale) } : { channel, to: target, body });
   return { sent: true, target };
 }
 
@@ -432,7 +432,6 @@ export async function requestWithdrawal(ctx: Ctx, userId: string, amountCents: n
     return await withTx(ctx.db, async (tx) => {
       const paid = await one(tx, `UPDATE withdrawals SET status = 'paid', provider_ref = $2 WHERE id = $1 RETURNING *`, [w.id, ref]);
       await enqueueEmail(tx, userId, 'withdrawal_paid', { amount_cents: amountCents, currency, provider_ref: ref });
-      await enqueueWebhook(tx, userId, 'payout.paid', { withdrawal_id: w.id, amount_cents: amountCents, currency, status: 'paid', provider_ref: ref });
       return paid;
     });
   } catch (err) {
@@ -449,7 +448,6 @@ export async function requestWithdrawal(ctx: Ctx, userId: string, amountCents: n
       );
       const reason = (err as Error).message.slice(0, 200);
       await enqueueEmail(s.tx, userId, 'withdrawal_failed', { amount_cents: amountCents, currency, reason });
-      await enqueueWebhook(s.tx, userId, 'payout.failed', { withdrawal_id: w.id, amount_cents: amountCents, currency, status: 'failed', provider_ref: null, failure_reason: reason });
     });
     throw new AppError(502, 'payout_failed', 'The payment provider rejected this payout; the amount is back in your balance', { reason: (err as Error).message.slice(0, 200) });
   }

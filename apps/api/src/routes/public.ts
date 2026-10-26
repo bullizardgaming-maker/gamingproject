@@ -13,6 +13,7 @@ import { changePassword, requestPasswordReset, resetPassword, completeMfaLogin, 
 import { REFRESH_TTL_DAYS, issueAccessToken, listSessions, refreshSession, revokeByRefreshToken, revokeFamily, revokeOtherSessions, revokeSessionById } from '../domain/sessions.js';
 import { enqueueEmail, getPreferences, setPreferences } from '../domain/notifications.js';
 import { AppError, badRequest, notFound, unauthorized } from '../lib/errors.js';
+import { safeEqual, sha256 } from '../lib/crypto.js';
 import { ATTR_KEY, ATTR_VALUE_MAX, CATEGORY_DEFAULTS, GAME_SETS, attributesFor, handoverFieldFor, LEAGUES } from '../domain/attributeSets.js';
 import { listLeagues } from '../domain/leagues.js';
 import { affiliateSummary } from '../domain/affiliates.js';
@@ -63,8 +64,15 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
 
   /** Throws unless the request carries a valid CAPTCHA token (no-op when CAPTCHA is off). */
   const webHost = ctx.cfg.TURNSTILE_HOSTNAME ?? new URL(ctx.cfg.PUBLIC_WEB_URL).hostname;
+  // Staging only (Round 23c): the staging test workflows send X-Staging-Test-Token = STAGING_TEST_TOKEN instead of solving
+  // Turnstile. The config refuses the variable outside APP_ENV=staging, and it is checked here again.
+  const stagingTestToken = ctx.cfg.APP_ENV === 'staging' ? ctx.cfg.STAGING_TEST_TOKEN : undefined;
+  const isStagingTest = (req: FastifyRequest) => {
+    const h = req.headers['x-staging-test-token'];
+    return !!stagingTestToken && typeof h === 'string' && safeEqual(sha256(h), sha256(stagingTestToken));
+  };
   const requireCaptcha = async (req: FastifyRequest, token: string | undefined, action: 'signin' | 'signup' | 'reset') => {
-    if (!ctx.captcha.enabled) return;
+    if (!ctx.captcha.enabled || isStagingTest(req)) return;
     if (!(await ctx.captcha.verify(token, req.ip, { action, hostname: webHost }))) {
       throw new AppError(400, token ? 'captcha_failed' : 'captcha_required', token ? 'The bot check failed. Please try again.' : 'Please complete the bot check.');
     }
@@ -481,7 +489,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     const [version, notice] = await Promise.all([tosVersion(ctx.dbRead).catch(() => null), pendingNotice(ctx.dbRead)]); // null: no Terms in force (sign-up and orders are closed)
     const c = await controls(ctx.dbRead);
     return {
-      merchantApi: ctx.cfg.MERCHANT_API_ENABLED, sandbox: ctx.cfg.SANDBOX_MODE,
+      sandbox: ctx.cfg.SANDBOX_MODE,
       legal: { tosVersion: version, notice: notice ? { doc: notice.doc, version: notice.version, effectiveAt: notice.effective_at } : null },
       // Kill switches (Ops → Controls): the app shows a banner and disables the paused action before the API refuses it.
       paused: { withdrawals: c.pause_withdrawals, orders: c.pause_orders, chat: c.pause_chat, signups: c.pause_signups, message: c.pause_message },

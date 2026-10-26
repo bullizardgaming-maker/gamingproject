@@ -1,0 +1,49 @@
+# Kill-switch test (apps/api/scripts/kill-switch.ts): pauses orders, withdrawals, chat and sign-ups on staging through the
+# staff API, checks each is refused, and always resumes them (in the script, and again in the last step even if the job
+# failed or was cancelled). Manual: Actions → "staging kill switches" → Run workflow. Setup: docs/STAGING.md.
+name: staging kill switches
+on:
+  workflow_dispatch:
+  # Off for now. To run it weekly, uncomment:
+  # schedule:
+  #   - cron: '41 5 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-tests
+  cancel-in-progress: false
+
+jobs:
+  kill-switch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults: { run: { working-directory: apps/api } }
+    env:
+      API_URL: https://api-staging.bullizard.com
+      STAGING_TEST_TOKEN: ${{ secrets.STAGING_TEST_TOKEN }}
+      BUYER_EMAIL: ${{ secrets.STAGING_BUYER_EMAIL }}
+      BUYER_PASSWORD: ${{ secrets.STAGING_BUYER_PASSWORD }}
+      SELLER_EMAIL: ${{ secrets.STAGING_SELLER_EMAIL }}
+      SELLER_PASSWORD: ${{ secrets.STAGING_SELLER_PASSWORD }}
+      STAFF_EMAIL: ${{ secrets.STAGING_STAFF_EMAIL }}
+      STAFF_PASSWORD: ${{ secrets.STAGING_STAFF_PASSWORD }}
+      STAFF_TOTP_SECRET: ${{ secrets.STAGING_STAFF_TOTP_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+        working-directory: .
+      - name: Check the secrets are set (names only)
+        run: |
+          missing=0
+          for v in STAGING_TEST_TOKEN BUYER_EMAIL BUYER_PASSWORD SELLER_EMAIL SELLER_PASSWORD STAFF_EMAIL STAFF_PASSWORD STAFF_TOTP_SECRET; do
+            if [ -z "${!v}" ]; then echo "::error::secret for $v is not set"; missing=1; fi
+          done
+          exit $missing
+      - run: npx tsx scripts/kill-switch.ts
+      - name: Resume every switch (always)
+        if: always()
+        run: npx tsx scripts/kill-switch.ts --resume-only

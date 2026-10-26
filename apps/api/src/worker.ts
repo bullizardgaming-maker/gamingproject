@@ -1,6 +1,5 @@
 import type { Ctx } from './context.js';
 import { autoCompleteExpired, cancelUnpaidExpired, handleLateDeliveries } from './domain/orders.js';
-import { dispatchDueWebhooks } from './domain/webhooks.js';
 import { dispatchEmails, queueProtectionReminders } from './domain/notifications.js';
 import { maybeRunScheduledReconciliation } from './domain/reconciliation.js';
 import { heartbeat } from './observability.js';
@@ -62,10 +61,9 @@ async function every<T>(name: string, ms: number, fn: () => Promise<T>): Promise
 const HOUR = 60 * 60_000;
 
 export async function runJobsOnce(ctx: Ctx) {
-  const [released, expired, webhooks, reminders, late] = await Promise.all([
+  const [released, expired, reminders, late] = await Promise.all([
     job(ctx, 'auto_release', () => autoCompleteExpired(ctx), 0), // no longer releases: marks the window as ended (Round 20)
     job(ctx, 'expire_unpaid', () => cancelUnpaidExpired(ctx), 0),
-    job(ctx, 'webhooks', () => dispatchDueWebhooks(ctx), 0),
     job(ctx, 'protection_reminders', () => queueProtectionReminders(ctx), 0),
     job(ctx, 'late_deliveries', () => handleLateDeliveries(ctx), { notified: 0, refunded: 0 }),
     job(ctx, 'fx_rates', () => maybeRefreshRates(ctx), 0),
@@ -102,7 +100,7 @@ export async function runJobsOnce(ctx: Ctx) {
   await job(ctx, 'inbox', () => dispatchInbox(ctx), 0);
   await job(ctx, 'status_emails', () => dispatchStatusEmails(ctx), 0);
   await job(ctx, 'aml', () => maybeRunAml(ctx), null);
-  return { released, expired, webhooks, reminders, late, reconciled, emails };
+  return { released, expired, reminders, late, reconciled, emails };
 }
 
 export function startWorker(ctx: Ctx, intervalMs = 2_000) {
@@ -113,7 +111,7 @@ export function startWorker(ctx: Ctx, intervalMs = 2_000) {
     running = true;
     try {
       const r = await runJobsOnce(ctx);
-      if (r.released || r.expired || r.webhooks || r.emails) ctx.log.info(r, 'worker tick');
+      if (r.released || r.expired || r.emails) ctx.log.info(r, 'worker tick');
     } catch (err) {
       ctx.log.error({ err: (err as Error).message }, 'worker tick failed');
     } finally {

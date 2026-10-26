@@ -3,7 +3,6 @@ import { verifyMessage } from 'ethers';
 import { z } from 'zod';
 import type { Ctx } from '../context.js';
 import { many, maybeOne, one } from '../db.js';
-import { createApiKey, listApiKeys, revokeApiKey } from '../domain/apikeys.js';
 import { featureListing, foundingStatus, listRanks, pricePreview, sellerTier, unfeatureListing } from '../domain/commission.js';
 import { relistExpired } from '../domain/leagues.js';
 import { MAX_SHOWN_BADGES, earnedBadges, setShownBadges, shownBadges } from '../domain/badges.js';
@@ -22,7 +21,6 @@ import { payoutStatus, startPayoutOnboarding } from '../domain/payouts.js';
 import { confirmPayoutAddress, payoutAddressOf, removePayoutAddress, requestCryptoWithdrawal, requestPayoutAddress, withdrawalFee } from '../domain/cryptoPayouts.js';
 import { NowPaymentsProvider } from '../providers/payments/nowpayments.js';
 import { withdrawable } from '../domain/payoutholds.js';
-import { ExportQuery } from '../api-schemas.js';
 import { EXPORT_KINDS, buildExport, exportRange, toCsv, type ExportKind } from '../domain/exports.js';
 import { screenUser } from '../domain/aml.js';
 import { payoutCurrency, sellerBalances, setPayoutCurrency } from '../domain/sellerfx.js';
@@ -31,9 +29,16 @@ import { getInvoice, invoicePdf, listInvoices } from '../domain/invoices.js';
 import { listCreditNotes } from '../domain/clawback.js';
 import { sellerAnalytics } from '../domain/analytics.js';
 import { sellerDebts, shopHeldForDebt, startDebtPayment } from '../domain/debts.js';
-import { DELIVERY_FILTERS, WEBHOOK_EVENTS, createEndpoint, listDeliveries, redeliver, replayDead, rotateSecret, setEndpointActive } from '../domain/webhooks.js';
 import { AppError, badRequest, notFound } from '../lib/errors.js';
 import { me } from '../server.js';
+
+/** Query of the seller exports (statement, orders, payouts…). */
+const ExportQuery = z.object({
+  from: z.string().date().optional(), // default: first day of this month
+  to: z.string().date().optional(), // exclusive; default tomorrow; at most one year after from
+  currency: z.string().length(3).toUpperCase().optional(), // statement only: which balance (default: the payout currency)
+  format: z.enum(['csv', 'json']).default('csv'),
+});
 
 const Id = z.object({ id: z.string().uuid() });
 
@@ -421,54 +426,5 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     await recordSignals(ctx.db, user.id, { wallet: address.toLowerCase() });
     await screenUser(ctx, user.id);
     return { wallet: address.toLowerCase() };
-  });
-
-  // --- Developer: API keys & webhooks --------------------------------------------------
-  // The Merchant API is hidden at launch (MERCHANT_API_ENABLED); these answer 404 until it opens.
-  app.addHook('onRequest', async (req) => {
-    if (req.url.includes('/developer/') && !ctx.cfg.MERCHANT_API_ENABLED) throw notFound('Route');
-  });
-  app.get('/developer/api-keys', async (req) => listApiKeys(ctx, me(req).id));
-  app.post('/developer/api-keys', async (req, reply) => {
-    const body = z.object({ name: z.string().trim().min(1).max(60), scopes: z.array(z.string()).min(1) }).parse(req.body);
-    return reply.status(201).send(await createApiKey(ctx, me(req), body.name, body.scopes));
-  });
-  app.delete('/developer/api-keys/:id', async (req, reply) => {
-    await revokeApiKey(ctx, me(req).id, Id.parse(req.params).id);
-    return reply.status(204).send();
-  });
-
-  app.get('/developer/webhooks', async (req) =>
-    many(ctx.db, 'SELECT id, url, events, active, created_at FROM webhook_endpoints WHERE user_id = $1 ORDER BY created_at DESC', [me(req).id]),
-  );
-  app.post('/developer/webhooks', async (req, reply) => {
-    const user = me(req);
-    requireSeller(user);
-    const body = z.object({ url: z.string().url().max(2_000), events: z.array(z.enum(WEBHOOK_EVENTS)).min(1) }).parse(req.body);
-    return reply.status(201).send(await createEndpoint(ctx, user.id, body.url, body.events));
-  });
-  app.delete('/developer/webhooks/:id', async (req, reply) => {
-    await ctx.db.query('UPDATE webhook_endpoints SET active = false WHERE id = $1 AND user_id = $2', [Id.parse(req.params).id, me(req).id]);
-    return reply.status(204).send();
-  });
-  app.get('/developer/webhooks/:id/deliveries', async (req) => {
-    const { status } = z.object({ status: z.enum(DELIVERY_FILTERS).default('all') }).parse(req.query);
-    return listDeliveries(ctx, me(req).id, { endpointId: Id.parse(req.params).id, status });
-  });
-  app.post('/developer/webhooks/deliveries/:id/redeliver', async (req) => redeliver(ctx, me(req).id, Id.parse(req.params).id));
-  app.post('/developer/webhooks/:id/replay', async (req) => {
-    const { since } = z.object({ since: z.string().datetime().optional() }).parse(req.body ?? {});
-    return replayDead(ctx, me(req).id, Id.parse(req.params).id, since);
-  });
-  app.post('/developer/webhooks/:id/enable', async (req) => setEndpointActive(ctx, me(req).id, Id.parse(req.params).id, true));
-  app.post('/developer/webhooks/:id/rotate-secret', async (req) => rotateSecret(ctx, me(req).id, Id.parse(req.params).id));
-  app.post('/developer/webhooks/:id/test', async (req) => {
-    const { id } = Id.parse(req.params);
-    const user = me(req);
-    const ep = await maybeOne(ctx.db, 'SELECT id FROM webhook_endpoints WHERE id = $1 AND user_id = $2', [id, user.id]);
-    if (!ep) throw notFound('Webhook endpoint');
-    const payload = { id: `evt_test_${Date.now()}`, type: 'order.created', created_at: new Date().toISOString(), data: { test: true } };
-    await ctx.db.query('INSERT INTO webhook_deliveries (endpoint_id, event_type, payload) VALUES ($1, $2, $3)', [id, 'order.created', payload]);
-    return { queued: true };
   });
 }

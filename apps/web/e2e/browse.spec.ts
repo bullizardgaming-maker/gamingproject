@@ -61,8 +61,6 @@ test.describe('browsing', () => {
     await page.getByLabel('Search help articles').fill('refund');
     await page.getByText('When will I see my refund?').click();
     await expect(page.getByRole('heading', { name: 'When will I see my refund?' })).toBeVisible();
-    await page.goto('/developers');
-    await expect(page.getByText(/API/).first()).toBeVisible();
   });
 
   test('dark mode and display currency persist', async ({ page }) => {

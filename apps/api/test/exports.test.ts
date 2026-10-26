@@ -50,11 +50,7 @@ describe('accounting exports', () => {
 
     expect((await seller.api.get('/v1/seller/exports/payouts?format=json')).body.rows).toHaveLength(1);
     expect((await seller.api.get('/v1/seller/exports/statement?from=2026-01-01&to=2028-01-01')).body.error.code).toBe('range_too_long');
-
-    // Same reports for bookkeeping integrations, via an API key.
-    const key = (await seller.api.post('/v1/developer/api-keys', { name: 'xero-sync', scopes: ['reports:read'] })).body.key;
-    const viaApi = await client(h.app, key).get('/v1/merchant/reports/sales?format=json');
-    expect(viaApi.body.rows.map((r: any) => r.order_id).sort()).toEqual(orders.map((o) => o.id).sort());
-    expect((await client(h.app, key).get('/v1/merchant/orders')).status).toBe(403); // scope is reports only
+    const salesJson = (await seller.api.get('/v1/seller/exports/sales?format=json')).body;
+    expect(salesJson.rows.map((r: any) => r.order_id).sort()).toEqual(orders.map((o) => o.id).sort());
   });
 });
