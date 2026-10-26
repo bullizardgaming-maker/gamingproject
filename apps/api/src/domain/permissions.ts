@@ -40,6 +40,7 @@ export const PERMISSIONS = [
   'analytics.view', // business dashboard: GMV, take rate, dispute and chargeback rates
   'controls.manage', // kill switches and beta limits (Ops → Controls): admin, and finance for the money ones
   'newsletter.export', // newsletter subscriber list (CSV, personal data): admin and marketing only (Round 23b)
+  'legal.publish', // publish terms/privacy/… versions: admin and compliance only (Round 23d)
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -55,7 +56,7 @@ export const ROLE_PERMISSIONS: Record<StaffRole, readonly Permission[]> = {
     'chargebacks.manage', 'orders.refund_after_release', 'reconciliation.run', 'promos.manage', 'treasury.request', 'treasury.approve', 'ledger.view', 'ledger.adjust',
     'payout_holds.set', 'fx.manage', 'tax.manage', 'invoices.manage', 'analytics.view', 'controls.manage',
   ],
-  compliance: ['orders.view_any', 'risk.review', 'users.suspend', 'aml.review', 'aml.sar', 'payout_holds.set', 'ledger.view', 'audit.view', 'retention.manage', 'analytics.view'],
+  compliance: ['orders.view_any', 'risk.review', 'users.suspend', 'aml.review', 'aml.sar', 'payout_holds.set', 'ledger.view', 'audit.view', 'retention.manage', 'analytics.view', 'legal.publish'],
   // Marketing / community: the newsletter list, nothing else.
   marketing: ['newsletter.export'],
   admin: PERMISSIONS,
@@ -64,6 +65,19 @@ export const ROLE_PERMISSIONS: Record<StaffRole, readonly Permission[]> = {
 export interface HasRoles {
   role: string;
   staff_roles?: string[] | null;
+}
+
+/**
+ * Round 23d: who may suspend or ban whom. A staff member can only act on accounts whose highest rank is below
+ * their own; admins outrank everyone, finance and compliance sit above lead/support/arbiter/marketing.
+ */
+const ROLE_RANK: Record<StaffRole, number> = { admin: 100, finance: 80, compliance: 80, lead: 60, support: 40, arbiter: 40, marketing: 40 };
+export function rankOf(u: HasRoles): number {
+  return Math.max(0, ...rolesOf(u).map((r) => ROLE_RANK[r]));
+}
+export function outranks(actor: HasRoles, target: HasRoles): boolean {
+  const t = rankOf(target);
+  return t === 0 || rankOf(actor) > t;
 }
 
 export function rolesOf(u: HasRoles): StaffRole[] {

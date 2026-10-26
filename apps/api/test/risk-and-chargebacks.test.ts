@@ -23,11 +23,13 @@ describe('syndicate risk scoring (graph fraud engine)', () => {
     const orders = [];
     for (const b of buyers) orders.push(await buyAndPay(h, b, offer.id));
 
-    const first = (await buyers[0]!.api.get(`/v1/orders/${orders[0]!.id}`)).body;
-    const last = (await buyers[4]!.api.get(`/v1/orders/${orders[4]!.id}`)).body;
-    expect(first.risk_score).toBeLessThan(0.5);
+    // Round 23d: the risk score never reaches buyers or sellers, so it is read from the row here.
+    const row = async (id: string) => (await h.ctx.db.query('SELECT status, risk_score, escrow_frozen FROM orders WHERE id = $1', [id])).rows[0];
+    const first = { ...(await buyers[0]!.api.get(`/v1/orders/${orders[0]!.id}`)).body, ...(await row(orders[0]!.id)) };
+    const last = { ...(await buyers[4]!.api.get(`/v1/orders/${orders[4]!.id}`)).body, ...(await row(orders[4]!.id)) };
+    expect(Number(first.risk_score)).toBeLessThan(0.5);
     expect(first.status).toBe('delivered');
-    expect(last.risk_score).toBeGreaterThanOrEqual(0.8);
+    expect(Number(last.risk_score)).toBeGreaterThanOrEqual(0.8);
     expect(last.status).toBe('paid'); // auto-delivery withheld pending review
     expect(last.escrow_frozen).toBe(true);
     // All of the seller's open escrows are frozen, not just the triggering one.
@@ -47,8 +49,8 @@ describe('syndicate risk scoring (graph fraud engine)', () => {
     const offer = await makeOffer(seller);
     await seller.api.post(`/v1/offers/${offer.id}/inventory`, { format: 'txt', content: 'X1' });
     const order = await buyAndPay(h, buyer, offer.id);
-    const o = (await buyer.api.get(`/v1/orders/${order.id}`)).body;
-    expect(o.risk_score).toBeGreaterThanOrEqual(0.5);
+    const o = { ...(await buyer.api.get(`/v1/orders/${order.id}`)).body, ...(await h.ctx.db.query('SELECT risk_score, escrow_frozen FROM orders WHERE id = $1', [order.id])).rows[0] };
+    expect(Number(o.risk_score)).toBeGreaterThanOrEqual(0.5);
     expect(o.escrow_frozen).toBe(true);
   });
 

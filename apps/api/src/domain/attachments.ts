@@ -1,13 +1,14 @@
+import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Transform, pipeline as pipelineCb, type Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import sharp, { type OutputInfo } from 'sharp';
 import type { Ctx } from '../context.js';
-import { maybeOne, one } from '../db.js';
+import { maybeOne, one, withTx } from '../db.js';
 import { sha256 } from '../lib/crypto.js';
 import { AppError, badRequest, forbidden, notFound } from '../lib/errors.js';
 import { appendMessage, roomForParticipant } from './chat.js';
@@ -67,17 +68,39 @@ async function scanFileOrPause(ctx: Ctx, file: string, size: number) {
  * Round 23b: write an incoming stream to a private temp file in chunks, hashing and counting as it goes, and stop
  * as soon as it passes `max`. Memory stays at one chunk whatever the size. Call `cleanup` when done.
  */
+/** Round 23d (item 8): a spool stops when the client goes quiet or drags on; temp space for spools is capped. */
+export const spoolLimits = { idleMs: 30_000, totalMs: 10 * 60_000 }; // mutable so tests can shorten them
+export const SPOOL_MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024; // temp space all in-flight spools may claim together
+let spoolReserved = 0;
+export const spoolReservedBytes = () => spoolReserved;
+
 export async function spool(source: Readable, max: number, tooLarge: () => Error) {
+  if (spoolReserved + max > SPOOL_MAX_TOTAL_BYTES) throw new AppError(503, 'uploads_busy', 'Too many uploads in progress; try again in a minute');
+  spoolReserved += max;
+  let released = false;
+  const release = () => {
+    if (!released) spoolReserved -= max;
+    released = true;
+  };
   const dir = await mkdtemp(path.join(tmpdir(), 'bz-upload-'));
   const file = path.join(dir, 'upload');
   const hash = createHash('sha256');
   let size = 0;
   const head: Buffer[] = [];
   let headLen = 0;
-  const meter = new Transform({
+  const startedAt = Date.now();
+  let idle: NodeJS.Timeout | null = null;
+  // The meter (not the request) is failed: the 408 still gets written before the connection closes.
+  const armIdle = () => {
+    if (idle) clearTimeout(idle);
+    idle = setTimeout(() => meter.destroy(new AppError(408, 'upload_stalled', 'The upload stalled; try again')), spoolLimits.idleMs);
+  };
+  const meter: Transform = new Transform({
     transform(chunk: Buffer, _enc, cb) {
       size += chunk.length;
       if (size > max) return cb(tooLarge());
+      if (Date.now() - startedAt > spoolLimits.totalMs) return cb(new AppError(408, 'upload_too_slow', 'The upload took too long; try again on a faster connection'));
+      armIdle();
       hash.update(chunk);
       if (headLen < 16) {
         const part = Buffer.from(chunk.subarray(0, 16 - headLen));
@@ -87,14 +110,45 @@ export async function spool(source: Readable, max: number, tooLarge: () => Error
       cb(null, chunk);
     },
   });
-  const cleanup = () => rm(dir, { recursive: true, force: true });
+  const cleanup = async () => {
+    release();
+    await rm(dir, { recursive: true, force: true });
+  };
+  armIdle();
   try {
     await pipeline(source, meter, createWriteStream(file, { mode: 0o600 }));
   } catch (err) {
     await cleanup();
     throw err;
+  } finally {
+    if (idle) clearTimeout(idle);
   }
   return { file, size, sha256: hash.digest('hex'), head: Buffer.concat(head), cleanup };
+}
+
+/**
+ * Round 23d (item 7): a proof video is re-muxed with every metadata atom dropped (GPS, device, creation time,
+ * chapters), streams copied as they are. ffmpeg is in the API image; if it is missing or fails the upload is refused
+ * (fail closed) rather than stored with the location of the person who filmed it.
+ */
+export async function stripVideoMetadata(src: string, kind: 'mp4' | 'webm'): Promise<{ file: string; size: number; sha256: string; cleanup: () => Promise<void> }> {
+  const dir = await mkdtemp(path.join(tmpdir(), 'bz-video-'));
+  const out = path.join(dir, `clean.${kind}`);
+  const cleanup = () => rm(dir, { recursive: true, force: true });
+  const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-i', src, '-map', '0', '-map_metadata', '-1', '-map_chapters', '-1', '-c', 'copy', ...(kind === 'mp4' ? ['-movflags', '+faststart'] : []), '-f', kind === 'mp4' ? 'mp4' : 'webm', out];
+  try {
+    await new Promise<void>((resolve, reject) => {
+      execFile('ffmpeg', args, { timeout: 120_000, maxBuffer: 1 << 20 }, (err, _stdout, stderr) => (err ? reject(new Error(`ffmpeg: ${String(stderr || err.message).slice(0, 500)}`)) : resolve()));
+    });
+    const size = (await stat(out)).size;
+    if (size === 0) throw new Error('ffmpeg produced an empty file');
+    const hash = createHash('sha256');
+    await pipeline(createReadStream(out), new Transform({ transform(c: Buffer, _e, cb) { hash.update(c); cb(); } }));
+    return { file: out, size, sha256: hash.digest('hex'), cleanup };
+  } catch (err) {
+    await cleanup();
+    throw new AppError(422, 'video_not_processable', 'This video could not be processed. Export it again as MP4 (H.264) or WebM and retry', { reason: String((err as Error).message).slice(0, 200) });
+  }
 }
 
 /** What acceptUpload stores: bytes in memory (images, ≤ 8 MB) or a spooled file (videos). */
@@ -142,15 +196,19 @@ export async function uploadVideoStream(
   const room = await roomForParticipant(ctx.db, roomId, user);
   if (room.buyer_id !== user.id && room.seller_id !== user.id) throw forbidden('not_participant', 'Only the buyer and seller can add evidence');
   if (declaredBytes && declaredBytes > MAX_VIDEO_BYTES) throw videoTooLarge(ctx);
-  await checkUploadRate(ctx, user.id);
-  const spooled = await spool(stream, MAX_VIDEO_BYTES, () => videoTooLarge(ctx));
+  const releaseSlot = await reserveUploadSlot(ctx, user.id);
   try {
-    if (spooled.size === 0) throw badRequest('empty_file', 'The file is empty');
-    const kind = sniffImage(spooled.head);
-    if (!kind || !VIDEO.has(kind)) throw badRequest('unsupported_file', 'Only PNG, JPEG and WebP images or MP4/WebM videos can be attached');
-    return await acceptUpload(ctx, room, user, cleanName(fileName), kind, { file: spooled.file, size: spooled.size, sha256: spooled.sha256 });
+    const spooled = await spool(stream, MAX_VIDEO_BYTES, () => videoTooLarge(ctx));
+    try {
+      if (spooled.size === 0) throw badRequest('empty_file', 'The file is empty');
+      const kind = sniffImage(spooled.head);
+      if (!kind || !VIDEO.has(kind)) throw badRequest('unsupported_file', 'Only PNG, JPEG and WebP images or MP4/WebM videos can be attached');
+      return await acceptUpload(ctx, room, user, cleanName(fileName), kind, { file: spooled.file, size: spooled.size, sha256: spooled.sha256 });
+    } finally {
+      await spooled.cleanup();
+    }
   } finally {
-    await spooled.cleanup();
+    await releaseSlot();
   }
 }
 
@@ -164,13 +222,37 @@ function videoTooLarge(ctx: Ctx) {
   });
 }
 
+const CONCURRENT_UPLOADS = 2;
+/**
+ * Round 23d (item 8): the upload slot is reserved *before* any byte is spooled, so parallel requests cannot slip past
+ * the hourly limit, and a user holds at most CONCURRENT_UPLOADS spools at once. Release the slot when done.
+ */
+async function reserveUploadSlot(ctx: Ctx, userId: string, opts: { spool: boolean } = { spool: true }): Promise<() => Promise<void>> {
+  const slot = await withTx(ctx.db, async (tx) => {
+    await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`upload:${userId}`]); // one reservation at a time per user
+    return one<{ id: string | null; recent: number; active: number }>(
+      tx,
+      `WITH counts AS (
+       SELECT count(*) FILTER (WHERE started_at > now() - interval '1 hour')::int AS recent,
+              count(*) FILTER (WHERE finished_at IS NULL AND started_at > now() - interval '15 minutes')::int AS active
+         FROM upload_slots WHERE user_id = $1
+     ), ins AS (
+       INSERT INTO upload_slots (user_id, finished_at) SELECT $1, CASE WHEN $4::boolean THEN NULL ELSE now() END FROM counts WHERE recent < $2 AND (NOT $4::boolean OR active < $3) RETURNING id
+     )
+     SELECT (SELECT id FROM ins) AS id, recent, active FROM counts`,
+      [userId, UPLOADS_PER_HOUR, CONCURRENT_UPLOADS, opts.spool],
+    );
+  });
+  if (!slot.id) {
+    if (opts.spool && slot.active >= CONCURRENT_UPLOADS) throw new AppError(429, 'upload_in_progress', 'Finish your current uploads first');
+    throw new AppError(429, 'too_many_uploads', 'Upload limit reached; try again later');
+  }
+  const id = slot.id;
+  return async () => void (await ctx.db.query('UPDATE upload_slots SET finished_at = now() WHERE id = $1', [id]).catch(() => {}));
+}
+/** Images arrive already buffered (≤ 8 MB): only the hourly count applies, the slot is closed at once. */
 async function checkUploadRate(ctx: Ctx, userId: string) {
-  const recent = await one<{ n: number }>(
-    ctx.db,
-    `SELECT count(*)::int AS n FROM chat_attachments WHERE uploader_id = $1 AND created_at > now() - interval '1 hour'`,
-    [userId],
-  );
-  if (recent.n >= UPLOADS_PER_HOUR) throw new AppError(429, 'too_many_uploads', 'Upload limit reached; try again later');
+  await reserveUploadSlot(ctx, userId, { spool: false });
 }
 
 /** Scan, re-encode (images), store and post the chat message. `pending`: a direct upload already stored at its key. */
@@ -206,11 +288,25 @@ async function acceptUpload(
     throw new AppError(422, 'malware_detected', 'This file was blocked by our malware scan');
   }
 
-  // Images are re-encoded (strips metadata and anything smuggled after the image data); videos are
-  // stored as scanned, since they cannot be re-encoded here.
+  // Images are re-encoded (strips metadata and anything smuggled after the image data); videos are re-muxed
+  // with their metadata dropped (Round 23d) — never stored as uploaded.
   let out: { data: Buffer | null; info: Pick<OutputInfo, 'width' | 'height'> };
-  if (!('data' in input)) out = { data: null, info: { width: 0, height: 0 } };
-  else if (isVideo) out = { data: input.data, info: { width: 0, height: 0 } };
+  let video: Awaited<ReturnType<typeof stripVideoMetadata>> | null = null;
+  if (isVideo && ctx.cfg.VIDEO_METADATA_STRIP === 'ffmpeg') {
+    let src = 'data' in input ? '' : input.file;
+    let srcDir: string | null = null;
+    if ('data' in input) {
+      srcDir = await mkdtemp(path.join(tmpdir(), 'bz-video-in-'));
+      src = path.join(srcDir, 'in');
+      await writeFile(src, input.data, { mode: 0o600 });
+    }
+    try {
+      video = await stripVideoMetadata(src, kind as 'mp4' | 'webm');
+    } finally {
+      if (srcDir) await rm(srcDir, { recursive: true, force: true });
+    }
+    out = { data: null, info: { width: 0, height: 0 } };
+  } else if (!('data' in input) || isVideo) out = { data: isVideo && 'data' in input ? input.data : null, info: { width: 0, height: 0 } };
   else {
     try {
       const img = sharp(input.data, { limitInputPixels: MAX_PIXELS, failOn: 'error' })
@@ -223,13 +319,17 @@ async function acceptUpload(
     }
   }
 
-  const hash = out.data ? sha256(out.data) : (input as { sha256: string }).sha256;
-  const storedBytes = out.data ? out.data.length : size;
+  const hash = video ? video.sha256 : out.data ? sha256(out.data) : (input as { sha256: string }).sha256;
+  const storedBytes = video ? video.size : out.data ? out.data.length : size;
   const id = pending?.id ?? randomUUID();
   const key = pending?.key ?? `chat/${roomId}/${id}`;
-  if (!pending) {
-    if (out.data) await ctx.storage.put(key, out.data, MIME[kind]);
+  // Everything stored is what was checked here: a direct upload's object was already moved off the signed key (Round 23d).
+  try {
+    if (video) await ctx.storage.putFile(key, video.file, MIME[kind], video.size);
+    else if (out.data) await ctx.storage.put(key, out.data, MIME[kind]);
     else await ctx.storage.putFile(key, (input as { file: string }).file, MIME[kind], size);
+  } finally {
+    if (video) await video.cleanup();
   }
 
   return withScope(ctx, async (s) => {
@@ -245,10 +345,10 @@ async function acceptUpload(
     const att = pending
       ? await one(
           s.tx,
-          `UPDATE chat_attachments SET message_id = $2, mime = $3, bytes = $4, sha256 = $5, status = 'clean', scan_result = $6, key_version = $7
+          `UPDATE chat_attachments SET message_id = $2, mime = $3, bytes = $4, sha256 = $5, status = 'clean', scan_result = $6, key_version = $7, storage_key = $8
             WHERE id = $1 AND status = 'uploading'
             RETURNING id, message_id, original_name, mime, bytes, width, height, sha256, created_at`,
-          [id, msg.id, MIME[kind], storedBytes, hash, `${ctx.scanner.name}: clean`, ctx.storage.keyVersion],
+          [id, msg.id, MIME[kind], storedBytes, hash, `${ctx.scanner.name}: clean`, ctx.storage.keyVersion, key],
         )
       : await one(
           s.tx,
@@ -313,43 +413,58 @@ export async function completeDirectVideoUpload(ctx: Ctx, attachmentId: string, 
     await ctx.db.query(`DELETE FROM chat_attachments WHERE id = $1 AND status = 'uploading'`, [att.id]);
     return badRequest('unsupported_file', 'Only MP4/WebM videos can be uploaded this way');
   };
+  const releaseSlot = await reserveUploadSlot(ctx, user.id);
   let spooled: Awaited<ReturnType<typeof spool>>;
   try {
     spooled = await spool(source, Number(att.bytes), () => new AppError(413, 'file_too_large', 'Larger than announced'));
   } catch (err) {
+    await releaseSlot();
     if (err instanceof AppError && err.code === 'file_too_large') throw await reject();
     throw badRequest('upload_missing', 'The upload has not arrived yet. Try again.');
   }
   try {
     const kind = sniffImage(spooled.head);
     if (spooled.size !== Number(att.bytes) || !kind || !VIDEO.has(kind)) throw await reject();
-    return await acceptUpload(ctx, room, user, att.original_name, kind, { file: spooled.file, size: spooled.size, sha256: spooled.sha256 }, { id: att.id, key: att.storage_key });
+    // Round 23d: the signed PUT stays valid for a while, so the scanned bytes are written to a key the client was
+    // never given and the upload key is removed. What is served is exactly what was checked and scanned.
+    const finalKey = `${att.storage_key}/v`;
+    await ctx.storage.delete(att.storage_key);
+    try {
+      return await acceptUpload(ctx, room, user, att.original_name, kind, { file: spooled.file, size: spooled.size, sha256: spooled.sha256 }, { id: att.id, key: finalKey });
+    } catch (err) {
+      await ctx.storage.delete(finalKey).catch(() => {});
+      if (!(err instanceof AppError && err.code === 'malware_detected')) await ctx.db.query(`DELETE FROM chat_attachments WHERE id = $1 AND status = 'uploading'`, [att.id]);
+      throw err;
+    }
   } finally {
     await spooled.cleanup();
+    await releaseSlot();
   }
 }
 
 /**
- * Round 23b: an attachment as a stream (videos), hashed on the way out. A stored file that no longer matches its
- * SHA-256 ends the response with an error instead of completing it (the check needs the last byte).
+ * Round 23b/23d: an attachment as a stream (videos). The stored file is first spooled to a temp file and hashed;
+ * only a file that matches its SHA-256 is streamed back (from the verified copy), so a tampered or truncated object
+ * never reaches the client as a 200 with a body. The temp file goes when the stream ends.
  */
 export async function openAttachment(ctx: Ctx, id: string, user: { id: string; role: string }) {
   const att = await maybeOne(ctx.db, `SELECT * FROM chat_attachments WHERE id = $1 AND status = 'clean'`, [id]);
   if (!att) throw notFound('Attachment');
   const room = await roomForParticipant(ctx.db, att.room_id, user);
-  const hash = createHash('sha256');
-  const verify = new Transform({
-    transform(chunk: Buffer, _e, cb) {
-      hash.update(chunk);
-      cb(null, chunk);
-    },
-    flush(cb) {
-      if (hash.digest('hex') === att.sha256) return cb();
-      ctx.log.error({ attachmentId: att.id }, 'stored attachment failed its integrity check');
-      cb(new AppError(500, 'integrity_error', 'Stored file failed its integrity check'));
-    },
-  });
-  const stream = pipelineCb(await ctx.storage.getStream(att.storage_key), verify, () => {});
+  let spooled: Awaited<ReturnType<typeof spool>>;
+  try {
+    spooled = await spool(await ctx.storage.getStream(att.storage_key), Number(att.bytes), () => new Error('larger than recorded'));
+  } catch (err) {
+    ctx.log.error({ attachmentId: att.id, err }, 'stored attachment could not be read back');
+    throw new AppError(500, 'integrity_error', 'Stored file failed its integrity check');
+  }
+  if (spooled.size !== Number(att.bytes) || spooled.sha256 !== att.sha256) {
+    await spooled.cleanup();
+    ctx.log.error({ attachmentId: att.id }, 'stored attachment failed its integrity check');
+    throw new AppError(500, 'integrity_error', 'Stored file failed its integrity check');
+  }
+  const stream = createReadStream(spooled.file);
+  stream.once('close', () => void spooled.cleanup());
   return { att, stream, isParticipant: room.buyer_id === user.id || room.seller_id === user.id };
 }
 

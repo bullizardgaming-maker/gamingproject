@@ -642,6 +642,48 @@ Migration **074** (`074_round23c.sql`): drops `api_keys`, `webhook_endpoints`, `
 - Accounts on staging: buyer, seller, and a staff account with role `admin` and 2FA on (older than the new-account window).
 - Run: GitHub → Actions → "staging money paths" / "staging ZAP scan" / "staging load test" / "staging kill switches" → Run workflow.
 
+## Round 23d (Oct 26, 2026) — fixes from the independent reviews (`claude/round-23d-fixes.md`)
+
+Migration **075** (`075_round23d.sql`): legal-document immutability trigger, `kyc_deletion_requests`, `upload_slots`,
+newsletter backfill + `news_sync_attempts` / `news_sync_next_at` / `news_opt_out_at` + `newsletter_forget_queue`,
+`terms_acceptances` (backfilled from `users.tos_version`), `mfa_challenges`. New test file `round23d.test.ts` — one
+test per item, each written to fail on d24a0a0 and pass now. The API image now installs **ffmpeg** (item 7); the
+CI `image.env` origin secret was lengthened to pass the new 32-character rule (item 12). Items that mentioned
+`routes/merchant.ts` are void: Round 23c removed the seller API.
+
+| # | What changed |
+|---|---|
+| 1 | A `preSerialization` hook in `server.ts` strips staff-only columns (`buyer_ip`, `buyer_ip_country`, `buyer_device`, `risk_score`) from every response to a non-staff caller, however deep the row sits; `payment_ref` / `idempotency_key` only reach the order's own buyer; `seller_rate_bps` only the listing's seller (item 13). Covers every `SELECT *` at once. |
+| 2 | Direct video upload: on complete the scanned bytes are written under `<key>/v` (a key the signed PUT cannot reach) and the upload key is deleted, so a replayed PUT after complete changes nothing. Video downloads are spooled and hashed first; only a file matching its SHA-256 and size is streamed (from the verified temp copy) — a tampered object is a clean 500 `integrity_error`, never a 200 with bytes. |
+| 3 | `requirePermission` refuses any non-active account (`account_restricted`); banned accounts cannot sign in, refresh or use an existing token; suspended accounts with staff roles cannot sign in or refresh until the suspension ends. Suspend/ban check rank (`outranks` in `permissions.ts`: admin 100 > finance/compliance 80 > lead 60 > support/arbiter/marketing 40): a lead cannot touch an admin or finance, nobody can act on themselves (`rank`). |
+| 4 | New permission `legal.publish` (admin, compliance) for `PUT /admin/legal/:doc`; `effectiveAt` cannot be in the past (`backdated`); adding a language to a version already in force is refused (`version_in_force`: publish a new version); a DB trigger blocks UPDATE/DELETE of any in-force row, whoever asks. |
+| 5 | Account deletion also refuses while store credit > 0 (`credit_remaining`) and now clears payout address + currency, `payout_address_changes`, linked accounts (external id, name, URL), push subscriptions, saved searches, watches, support ticket subjects and the user's messages, and the raw KYC payload (`result = {}`; provider, applicant id, level, status and dates stay for AML retention). The provider-side applicant deletion is queued in `kyc_deletion_requests` — Ops → `GET /admin/privacy/kyc-deletions`, `POST …/:id/done` (permission `retention.manage`), since that call is irreversible. Chat erasure (`erase-chat` and the retention shred) now also deletes the user's `chat_attachments` rows, names and stored objects (`eraseUserAttachments`). |
+| 6 | Every staff read of a chat they are not part of is audited (`chat.viewed`, with `afterSeq` and `via: rest|ws`): REST at any offset, WebSocket `subscribe` and `sync` (`auditAs` in `audit.ts`). |
+| 7 | Proof videos are re-muxed with ffmpeg (`-map_metadata -1 -map_chapters -1 -c copy`) before scanning results are stored: GPS, device and title atoms are gone; the stored hash is the clean file's. Fail closed: an unreadable video is 422 `video_not_processable`. `VIDEO_METADATA_STRIP=off` exists for tests only and is refused in production. |
+| 8 | Upload slots (`upload_slots`) are reserved under a per-user advisory lock *before* a byte is spooled: 20 per hour counting in-flight ones (parallel requests cannot slip past), at most 2 spools at once (`upload_in_progress`); a spool with no bytes for 30 s or longer than 10 min is dropped with a 408 and its temp dir removed; all spools together may claim 2 GB of temp space (`uploads_busy`); `LocalEncryptedStorage.putFile` removes its `.part` on failure. |
+| 9 | Migration 075 marks every row with `news_synced_at` (opted-out too) so the sync pushes pending opt-outs. |
+| 10 | Newsletter sync: a failing row retries once at once, then backs off 2^n minutes (≤ 6 h) and is parked after 10 attempts with an error log — the queue never blocks. Brevo unsubscribes set `news_opt_out_at` and leave the consent time alone. A failed Brevo deletion at account deletion is queued (`newsletter_forget_queue`) with the address Brevo had (`news_synced_email`) and retried by every sync. |
+| 11 | `terms_acceptances` keeps every acceptance (sign-up, settings, each order). `createOrder` (and the cart) refuse with 409 `terms_reacceptance_required` while a material change awaits acceptance; the client sends `tosVersion` (the web does, from `/legal/terms`) and a stale one is 409 `terms_stale`. |
+| 12 | MFA challenge tokens carry a `jti` stored in `mfa_challenges`: exchanged once, and all open ones die on password reset. Wrong codes on `/me/2fa/disable` and wrong passwords on `/me/delete` count towards the sign-in lockout. `ORIGIN_SHARED_SECRET` must be ≥ 32 characters; `STAFF_MFA_REQUIRED=false` is refused in production. `createOrder` checks the seller's 30-day ID deadline live (`seller_id_overdue`). |
+| 13 | **Web:** the access token lives in memory only (`api.ts`); what persists is the httpOnly refresh cookie plus a `mkt.signed-in` flag so a reload exchanges the cookie first. The demo build keeps the token in localStorage (no cookie there). The device id (`mkt.device`, localStorage) stays — see "For Legal" below. Public offers no longer carry `seller_rate_bps`; seller-profile reviews show the buyer as an initial ("J.") with a "Verified buyer" label. |
+| 14 | Logs: `redactUrl` blanks the query string of OAuth callbacks and any URL carrying `code`/`state`/`token`; `deepRedact` (pino `formatters.log`) censors secret keys at any depth; the `req` serializer logs only id, method, redacted url and address. |
+| 15 | The tax CSV goes through `toCsv`/`csvCell` (quoting, formula neutralising). |
+
+Suites on this commit: API 79 files / 708 tests green (2 skipped), typecheck clean; web typecheck + demo build green,
+browser 127 passed / 5 skipped; `npm audit` 0 in root, api, web; image start check (build, runtime imports, migrate
+through 075, `/readyz` + `/healthz`) passed locally. Adjusted existing tests: `cart.test.ts` (checkout view now carries
+`buyer_id` so the buyer keeps `payment_ref`), `risk-and-chargebacks.test.ts` (risk score read from the row, not the
+API), `round19.test.ts` (trigger disabled for the scratch move), `tax.test.ts` (CRLF rows), `round23a/b/c` (32-char
+origin secret), `mfa.test.ts` unchanged (a wrong code no longer spends the challenge).
+
+**For Legal — Privacy Policy wording (item 13).** The policy's "one essential cookie for sign-in" line now matches the
+code: the sign-in session is an httpOnly cookie and the short-lived access token is held in memory only. Two things the
+policy must still state: (1) the site stores a random **device identifier** in the browser's local storage
+(`mkt.device`, not a cookie, not shared with advertisers) and sends it with requests as a fraud and account-abuse
+signal; (2) on account deletion the identity-check **result** is kept for the AML retention period (provider,
+applicant id, level, status, dates — no document data), and the deletion of the applicant at the KYC provider is
+carried out by compliance within [N] days of the request.
+
 ## Suggested next round
 
 1. Handover check for Riot/Steam games without a linked listing: let the buyer link any account of the game's

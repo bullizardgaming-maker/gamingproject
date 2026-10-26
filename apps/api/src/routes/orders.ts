@@ -37,6 +37,7 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
         quantity: z.number().int().positive().max(1_000_000).default(1),
         rail: z.enum(['fiat', 'crypto']).default('fiat'),
         acceptTos: z.literal(true),
+        tosVersion: z.string().trim().min(1).max(40).optional(),
         walletAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional(),
         promoCode: z.string().trim().min(1).max(40).optional(),
         sellerCode: z.string().trim().min(1).max(40).optional(),
@@ -64,6 +65,7 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
       .object({
         items: z.array(z.object({ offerId: z.string().uuid(), quantity: z.number().int().positive().max(1_000_000).default(1), characterName: z.string().trim().min(1).max(60).optional() })).min(1).max(MAX_CART_ITEMS),
         acceptTos: z.literal(true),
+        tosVersion: z.string().trim().min(1).max(40).optional(),
         currency: z.string().length(3).toUpperCase().optional(),
         useCredit: z.boolean().optional(),
       })
@@ -298,7 +300,8 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
     const { afterSeq, limit } = z.object({ afterSeq: z.coerce.number().int().min(0).default(0), limit: z.coerce.number().int().positive().max(500).default(200) }).parse(req.query);
     const user = me(req);
     const room = await roomForParticipant(ctx.db, id, user);
-    if (room.buyer_id !== user.id && room.seller_id !== user.id && afterSeq === 0) await audit(ctx.db, req, 'chat.viewed', { type: 'chat_room', id });
+    // Round 23d: every staff read of a chat they are not part of is on the record, whatever the offset.
+    if (room.buyer_id !== user.id && room.seller_id !== user.id) await audit(ctx.db, req, 'chat.viewed', { type: 'chat_room', id }, { afterSeq, via: 'rest' });
     return listMessages(ctx.keyring, ctx.db, id, afterSeq, limit);
   });
 

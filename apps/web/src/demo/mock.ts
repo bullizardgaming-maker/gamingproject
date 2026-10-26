@@ -994,7 +994,9 @@ route('GET', '/sellers/:id', ({ params, query }) => {
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
     .map((r) => {
       const o = state.orders.find((x) => x.id === r.order_id);
-      return { ...r, buyer_name: o ? userById(o.buyer_id)?.display_name : ['Mira_K', 'zed.plays', 'Hollowfang', 'nyx', 'BaguetteBandit', 'TomTheTank'][r.id.length % 6], offer_title: o?.offer_title ?? r.game ?? null };
+      // Round 23d: reviewers are shown by initial only ("M.") — the API does the same.
+      const full = o ? userById(o.buyer_id)?.display_name : ['Mira_K', 'zed.plays', 'Hollowfang', 'nyx', 'BaguetteBandit', 'TomTheTank'][r.id.length % 6];
+      return { ...r, buyer_name: `${(full ?? 'B').slice(0, 1)}.`, offer_title: o?.offer_title ?? r.game ?? null };
     });
   const before = state.reviewsBefore[u.id];
   return {

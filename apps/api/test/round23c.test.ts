@@ -29,7 +29,7 @@ const prodEnv = (extra: Record<string, string> = {}) =>
     RESEND_API_KEY: 're_test',
     SMS_PROVIDER: 'twilio',
     TURNSTILE_SECRET: '1x0000000000000000000000000000000AA',
-    ORIGIN_SHARED_SECRET: 'origin',
+    ORIGIN_SHARED_SECRET: 'origin-secret-of-at-least-32-characters!',
     ...extra,
   }) as any;
 const stagingEnv = (extra: Record<string, string> = {}) =>

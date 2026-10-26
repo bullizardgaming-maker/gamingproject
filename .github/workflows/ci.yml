@@ -62,7 +62,7 @@ jobs:
           CAPTCHA_PROVIDER=turnstile
           TURNSTILE_SITE_KEY=1x00000000000000000000AA
           TURNSTILE_SECRET=1x0000000000000000000000000000000AA
-          ORIGIN_SHARED_SECRET=ci-only-origin-secret
+          ORIGIN_SHARED_SECRET=ci-only-origin-secret-at-least-32-chars-long
           RUN_WORKER_IN_PROCESS=false
           ENV
           docker run --rm --network host --env-file image.env bullizard-api:ci node dist/migrate.js

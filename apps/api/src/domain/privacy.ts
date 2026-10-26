@@ -6,7 +6,7 @@ import { openMessages } from './chat.js';
 import { hashPassword, randomToken, verifyPassword } from '../lib/crypto.js';
 import { AppError, unauthorized } from '../lib/errors.js';
 import { withScope } from './events.js';
-import { sellerAvailable } from './ledger.js';
+import { sellerAvailable, userCredit } from './ledger.js';
 import { checkSecondFactor } from './mfa.js';
 import { revokeOtherSessions } from './sessions.js';
 import type { User } from './users.js';
@@ -82,16 +82,18 @@ export async function deleteAccount(ctx: Ctx, user: User, password: string, code
   const balances = (await sellerBalances(ctx.db, user.id)).map((b) => Number(b.cents));
   if (balances.some((b) => b > 0)) throw new AppError(409, 'balance_remaining', 'Withdraw your remaining balance first');
   if (balances.some((b) => b < 0)) throw new AppError(409, 'balance_owed', 'Your balance is negative after a chargeback. Contact support to settle it first.');
+  // Round 23d: store credit is money too; it is not silently written off with the account.
+  if ((await userCredit(ctx.db, user.id)) > 0) throw new AppError(409, 'credit_remaining', 'Spend your store credit first, or ask support to pay it out');
 
   const scrambled = await hashPassword(randomToken(32));
   // A newsletter contact that reached Brevo is deleted there before the address is scrubbed here.
-  const news = await maybeOne<{ email: string; news_synced_at: string | null }>(ctx.db, 'SELECT email, news_synced_at FROM users WHERE id = $1', [user.id]);
-  if (news?.news_synced_at) await forgetNewsletterContact(ctx, news.email); // (the address scrubbed below is the one Brevo had)
+  const news = await maybeOne<{ email: string; news_synced_email: string | null; news_synced_at: string | null }>(ctx.db, 'SELECT email, news_synced_email, news_synced_at FROM users WHERE id = $1', [user.id]);
+  if (news?.news_synced_at) await forgetNewsletterContact(ctx, news.news_synced_email ?? news.email); // the address Brevo actually has (Round 23d)
   return withScope(ctx, async (s) => {
     await s.tx.query(
       `UPDATE users SET
           email = 'deleted-' || id || '@deleted.invalid', display_name = 'Deleted user', password_hash = $2,
-          phone = NULL, legal_name = NULL, wallet_address = NULL,
+          phone = NULL, legal_name = NULL, wallet_address = NULL, payout_address = NULL, payout_address_currency = NULL,
           totp_secret_ciphertext = NULL, totp_enabled_at = NULL, email_preferences = '{}', news_opt_in = false, news_opt_in_at = NULL, news_synced_email = NULL, news_synced_list = NULL,
           status = 'suspended', suspension_reason = 'account_deleted', deleted_at = now()
         WHERE id = $1`,
@@ -111,6 +113,43 @@ export async function deleteAccount(ctx: Ctx, user: User, password: string, code
     await s.tx.query(`UPDATE users SET shop_intro = '', shop_pinned = '{}' WHERE id = $1`, [user.id]);
     const banner = await s.tx.query<{ storage_key: string }>('DELETE FROM shop_banners WHERE seller_id = $1 RETURNING storage_key', [user.id]);
     for (const b of banner.rows) s.afterCommit.push(() => ctx.storage.delete(b.storage_key));
+    // Round 23d (item 5): everything else that names, locates or reaches the person.
+    await s.tx.query(`UPDATE payout_address_changes SET address = 'redacted', token_hash = 'redacted:' || id WHERE user_id = $1`, [user.id]);
+    await s.tx.query(
+      `UPDATE linked_accounts SET external_id = 'redacted:' || id, display_name = 'redacted', profile_url = NULL, unlinked_at = COALESCE(unlinked_at, now()), unlink_reason = COALESCE(unlink_reason, 'account_deleted') WHERE user_id = $1`,
+      [user.id],
+    );
+    await s.tx.query(`DELETE FROM push_subscriptions WHERE user_id = $1`, [user.id]);
+    await s.tx.query(`DELETE FROM saved_searches WHERE user_id = $1`, [user.id]);
+    await s.tx.query(`DELETE FROM watches WHERE user_id = $1`, [user.id]);
+    await s.tx.query(`UPDATE support_tickets SET subject = 'Deleted user' WHERE user_id = $1`, [user.id]);
+    await s.tx.query(`UPDATE support_messages SET body = '[deleted with the account]' WHERE author_id = $1 AND NOT staff`, [user.id]);
+    // KYC: the raw provider payload (document data, addresses, photos' metadata) goes. What AML retention needs stays:
+    // provider, applicant id, level, status and dates (5 years, docs/RUNBOOK.md "Retention"). The provider is asked to
+    // delete the applicant through the compliance queue (Ops → Privacy), since that call is irreversible.
+    const kyc = await s.tx.query<{ provider: string; external_id: string | null }>(
+      `UPDATE kyc_verifications SET result = '{}'::jsonb, updated_at = now() WHERE user_id = $1 RETURNING provider, external_id`,
+      [user.id],
+    );
+    for (const k of kyc.rows) {
+      if (!k.external_id) continue;
+      await s.tx.query(
+        `INSERT INTO kyc_deletion_requests (user_id, provider, external_id) VALUES ($1, $2, $3) ON CONFLICT (provider, external_id) DO NOTHING`,
+        [user.id, k.provider, k.external_id],
+      );
+    }
     return { deleted: true };
   });
+}
+
+/**
+ * Round 23d (item 5): when a user's chat is erased (key shredded), the files they uploaded go too — rows, names and
+ * stored objects (S3 included). Objects are deleted first so a crash never leaves a file nobody can find.
+ */
+export async function eraseUserAttachments(ctx: Ctx, userId: string) {
+  const atts = await many<{ id: string; storage_key: string | null }>(ctx.db, 'SELECT id, storage_key FROM chat_attachments WHERE uploader_id = $1', [userId]);
+  for (const a of atts) if (a.storage_key) await ctx.storage.delete(a.storage_key).catch(() => {});
+  await ctx.db.query(`UPDATE orders SET delivery_proof_id = NULL WHERE delivery_proof_id = ANY($1::uuid[])`, [atts.map((a) => a.id)]);
+  await ctx.db.query('DELETE FROM chat_attachments WHERE uploader_id = $1', [userId]);
+  return atts.length;
 }

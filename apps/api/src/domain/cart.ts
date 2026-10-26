@@ -102,7 +102,7 @@ export async function createCartCheckout(ctx: Ctx, input: CartInput) {
 }
 
 export async function cartView(q: Queryable, checkoutId: string) {
-  const checkout = await one<any>(q, 'SELECT id, status, presentment_amount_cents, presentment_currency, payment_ref, created_at, paid_at FROM checkouts WHERE id = $1', [checkoutId]);
+  const checkout = await one<any>(q, 'SELECT id, buyer_id, status, presentment_amount_cents, presentment_currency, payment_ref, created_at, paid_at FROM checkouts WHERE id = $1', [checkoutId]);
   const orders = await many<any>(
     q,
     `SELECT o.id, o.status, o.seller_id, o.offer_id, o.quantity, o.amount_cents, o.credit_cents, o.charged_cents, o.currency, o.presentment_amount_cents, o.presentment_currency,

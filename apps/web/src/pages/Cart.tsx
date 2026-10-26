@@ -56,15 +56,16 @@ export function CartPage() {
     setBusy(true);
     setError('');
     try {
+      const terms = await api<{ version: string }>('/legal/terms').catch(() => null);
       const res = await api<{ checkoutUrl: string | null }>('/orders/cart', {
-        body: { items: payable.map((l) => ({ offerId: l.offerId, quantity: l.quantity, ...(needsName(l) ? { characterName: names[l.offerId]!.value.trim() } : {}) })), acceptTos: true, currency: [...currencies][0], useCredit: true },
+        body: { items: payable.map((l) => ({ offerId: l.offerId, quantity: l.quantity, ...(needsName(l) ? { characterName: names[l.offerId]!.value.trim() } : {}) })), acceptTos: true, currency: [...currencies][0], useCredit: true, ...(terms ? { tosVersion: terms.version } : {}) },
         headers: { 'Idempotency-Key': `cart:${payable.map((l) => `${l.offerId}x${l.quantity}`).join(',')}:${Math.floor(Date.now() / 60_000)}` },
       });
       for (const l of payable) removeFromCart(l.offerId);
       if (res.checkoutUrl) window.location.assign(res.checkoutUrl);
       else nav('/orders?checkout=success');
     } catch (e: any) {
-      setError(e.code === 'kyc_required' ? t('offer.verifyFirst') : e.message);
+      setError(e.code === 'kyc_required' ? t('offer.verifyFirst') : e.code === 'terms_reacceptance_required' ? t('legal.acceptToContinue') : e.code === 'terms_stale' ? t('legal.reloadTerms') : e.message);
       setBusy(false);
     }
   };

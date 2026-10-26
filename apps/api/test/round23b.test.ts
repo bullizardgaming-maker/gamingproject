@@ -38,7 +38,7 @@ const prodEnv = (extra: Record<string, string> = {}) =>
     RESEND_API_KEY: 're_test',
     SMS_PROVIDER: 'twilio',
     TURNSTILE_SECRET: '1x0000000000000000000000000000000AA',
-    ORIGIN_SHARED_SECRET: 'origin',
+    ORIGIN_SHARED_SECRET: 'origin-secret-of-at-least-32-characters!',
     ...extra,
   }) as any;
 
@@ -189,7 +189,10 @@ describe('2. videos are streamed, never buffered whole', () => {
       get: async () => {
         throw new Error('get() must not be used for videos');
       },
-      putFile: async () => void putFileCalls++,
+      putFile: async (k) => {
+        putFileCalls++;
+        objects.add(k);
+      },
       getStream: async (k) => {
         if (!objects.has(k)) throw new Error('NoSuchKey');
         return videoStream(size);
@@ -209,7 +212,7 @@ describe('2. videos are streamed, never buffered whole', () => {
       const { result: done, largest } = await largestAllocation(() => api.post(`/v1/chat/attachments/${start.body.id}/complete`));
       expect(done.status, JSON.stringify(done.body)).toBe(201);
       expect(largest).toBeLessThan(8 * MB);
-      expect(putFileCalls).toBe(0); // already in the bucket
+      expect(putFileCalls).toBe(1); // Round 23d: the verified copy is written under a key the client cannot reach
     } finally {
       await s3.close();
     }

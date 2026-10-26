@@ -145,7 +145,7 @@ export function SellerPage() {
                     <span className={good ? 'sp-thumb good' : 'sp-thumb bad'} role="img" aria-label={`${rv.rating} of 5`}>
                       {good ? <ThumbsUp className="size-4" weight="fill" aria-hidden /> : <ThumbsDown className="size-4" weight="fill" aria-hidden />}
                     </span>
-                    <b className="text-sm">{rv.buyer_name}</b>
+                    <b className="text-sm">{rv.buyer_name} <span className="muted font-normal">· {t('reviews.verifiedBuyer')}</span></b>
                     <span className="small muted">{ago(rv.created_at)}</span>
                   </div>
                   {rv.offer_title && <span className="small muted" dir="auto">{rv.offer_title}</span>}

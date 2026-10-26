@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { SignJWT, jwtVerify } from 'jose';
 import { assertUsdWithdrawal } from './cryptoPayouts.js';
 import { PACKS, isLocale, type Locale } from './locales/index.js';
@@ -5,7 +6,8 @@ import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { maybeOne, one, withTx } from '../db.js';
 import { hashPassword, hmacSha256, randomDigits, randomToken, safeEqual, verifyPassword } from '../lib/crypto.js';
-import { AppError, badRequest, conflict, unauthorized } from '../lib/errors.js';
+import { AppError, badRequest, conflict, forbidden, unauthorized } from '../lib/errors.js';
+import { rolesOf } from './permissions.js';
 import { liftIdRestriction } from './onboarding.js';
 import { attributeBuyer, isAffiliateCode } from './affiliates.js';
 import { assertNotPaused, assertWithdrawalWithinLimits } from './controls.js';
@@ -15,7 +17,7 @@ import { accountId, post, sellerAvailable } from './ledger.js';
 import { checkSecondFactor } from './mfa.js';
 import { withdrawable } from './payoutholds.js';
 import { ensureScreenedForPayout, screenUser } from './aml.js';
-import { tosVersion } from './legal.js';
+import { recordAcceptance, tosVersion } from './legal.js';
 import { referrerForCode } from './referrals.js';
 import { emailHtml, enqueueEmail } from './notifications.js';
 import { activeSession, createSession, revokeOtherSessions, type IssuedSession } from './sessions.js';
@@ -66,18 +68,44 @@ export const PUBLIC_USER_COLUMNS =
 
 /** Short-lived token proving the password step passed; only exchangeable for a session via /auth/mfa. */
 async function issueChallenge(ctx: Ctx, userId: string): Promise<string> {
+  const jti = randomUUID();
+  await ctx.db.query(`INSERT INTO mfa_challenges (id, user_id, expires_at) VALUES ($1, $2, now() + interval '5 minutes')`, [jti, userId]);
   return new SignJWT({ purpose: 'mfa_challenge' })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(userId)
+    .setJti(jti)
     .setIssuedAt()
     .setExpirationTime('5m')
     .sign(new TextEncoder().encode(ctx.cfg.JWT_SECRET));
+}
+
+/**
+ * Round 23d (item 12): a challenge token is exchanged once, and not at all after a password reset issued later
+ * (the row is deleted on use; resetPassword deletes every open challenge of the account).
+ */
+async function checkChallenge(ctx: Ctx, payload: { sub?: string; jti?: string }) {
+  if (!payload.jti || !payload.sub) throw new Error('challenge without id');
+  const r = await ctx.db.query(`SELECT 1 FROM mfa_challenges WHERE id = $1 AND user_id = $2 AND expires_at > now()`, [payload.jti, payload.sub]);
+  if (!r.rowCount) throw new Error('challenge used or revoked');
+  return { userId: payload.sub, jti: payload.jti };
 }
 
 async function verifyJwt(ctx: Ctx, token: string, purpose: string) {
   const { payload } = await jwtVerify(token, new TextEncoder().encode(ctx.cfg.JWT_SECRET), { algorithms: ['HS256'] });
   if (payload.purpose !== purpose) throw new Error('wrong token purpose');
   return payload;
+}
+
+/**
+ * Round 23d: a banned account cannot sign in or refresh; a suspended account with staff roles cannot either
+ * (an ordinary suspended user still signs in to read their orders — every action checks `status`).
+ */
+export function assertMaySignIn(user: { status: string; suspended_until?: string | null; role: string; staff_roles?: string[] | null }) {
+  if (user.status === 'banned') throw forbidden('banned', 'This account is banned');
+  if (user.status === 'suspended' && rolesOf(user).length > 0) {
+    const until = user.suspended_until ? new Date(user.suspended_until) : null;
+    if (!until || until > new Date()) throw forbidden('suspended', 'This account is suspended');
+  }
 }
 
 export async function userFromToken(ctx: Ctx, token: string): Promise<User> {
@@ -87,6 +115,7 @@ export async function userFromToken(ctx: Ctx, token: string): Promise<User> {
     if (!session || session.user_id !== payload.sub) throw new Error('session revoked');
     const user = await maybeOne<User>(ctx.db, `SELECT ${PUBLIC_USER_COLUMNS} FROM users WHERE id = $1`, [payload.sub]);
     if (!user) throw new Error('unknown user');
+    if (user.status === 'banned') throw new Error('banned');
     // A timed suspension lifts itself the moment it is over (the hourly job catches the rest).
     if (user.status === 'suspended' && user.suspended_until && new Date(user.suspended_until) <= new Date()) {
       await ctx.db.query(`UPDATE users SET status = 'active', suspended_until = NULL, suspension_reason = NULL WHERE id = $1 AND status = 'suspended' AND suspended_until <= now()`, [user.id]);
@@ -119,13 +148,15 @@ export async function register(ctx: Ctx, input: { email: string; password: strin
   const code = codes[0]?.trim().toUpperCase();
   const creator = code ? await isAffiliateCode(ctx.db, code) : false;
   const referrer = code && !creator ? await referrerForCode(ctx.db, code) : null;
+  const termsVersion = await tosVersion(ctx.db);
   try {
     const user = await one<User>(
       ctx.db,
       `INSERT INTO users (email, password_hash, display_name, referred_by, locale, tos_version, tos_accepted_at, news_opt_in, news_opt_in_at)
        VALUES ($1, $2, $3, $4, $5, $6, now(), $7, CASE WHEN $7 THEN now() END) RETURNING ${PUBLIC_USER_COLUMNS}`,
-      [input.email, hash, input.displayName, referrer, isLocale(input.locale) ? input.locale : 'en', await tosVersion(ctx.db), input.newsOptIn === true],
+      [input.email, hash, input.displayName, referrer, isLocale(input.locale) ? input.locale : 'en', termsVersion, input.newsOptIn === true],
     );
+    await recordAcceptance(ctx.db, user.id, termsVersion, 'signup', input.ip ?? null); // Round 23d
     await recordSignals(ctx.db, user.id, { device: input.device, ip_subnet: subnetOf(input.ip) });
     await enqueueEmail(ctx.db, user.id, 'welcome', { name: input.displayName }, `welcome:${user.id}`);
     // A creator's code at signup (a wrong one is ignored rather than failing the signup).
@@ -152,12 +183,12 @@ async function noteSignIn(ctx: Ctx, userId: string, meta: AuthMeta) {
 // LOGIN_LOCK_MINUTES, doubling with each lock (capped at a day). Per-IP limits alone
 // can be dodged by spreading guesses across many addresses.
 // ---------------------------------------------------------------------------
-async function assertNotLocked(ctx: Ctx, userId: string) {
+export async function assertNotLocked(ctx: Ctx, userId: string) {
   const row = await maybeOne<{ until: string | null }>(ctx.db, 'SELECT login_locked_until AS until FROM users WHERE id = $1 AND login_locked_until > now()', [userId]);
   if (row) throw new AppError(429, 'account_locked', 'Too many failed sign-in attempts. Try again later or reset your password.', { retryAfter: row.until });
 }
 
-async function noteFailedLogin(ctx: Ctx, userId: string) {
+export async function noteFailedLogin(ctx: Ctx, userId: string) {
   const max = ctx.cfg.LOGIN_MAX_FAILURES;
   const row = await maybeOne<{ locked_minutes: number | null }>(
     ctx.db,
@@ -173,7 +204,7 @@ async function noteFailedLogin(ctx: Ctx, userId: string) {
   if (row?.locked_minutes) await enqueueEmail(ctx.db, userId, 'account_locked', { failures: max, minutes: row.locked_minutes });
 }
 
-async function clearFailedLogins(q: Queryable, userId: string) {
+export async function clearFailedLogins(q: Queryable, userId: string) {
   await q.query('UPDATE users SET failed_logins = 0, login_lock_count = 0, login_locked_until = NULL WHERE id = $1 AND (failed_logins > 0 OR login_lock_count > 0)', [userId]);
 }
 
@@ -185,6 +216,7 @@ export async function login(ctx: Ctx, input: { email: string; password: string }
   if (row && !ok) await noteFailedLogin(ctx, row.id);
   if (!row || !ok) throw unauthorized('Invalid email or password');
   const { password_hash: _, ...user } = row;
+  assertMaySignIn(user);
   if (user.totp_enabled) return { mfaRequired: true as const, mfaToken: await issueChallenge(ctx, user.id) };
   await clearFailedLogins(ctx.db, user.id);
   await noteSignIn(ctx, user.id, input);
@@ -194,8 +226,9 @@ export async function login(ctx: Ctx, input: { email: string; password: string }
 /** Second login step: exchange the challenge token plus a TOTP or recovery code for a session. */
 export async function completeMfaLogin(ctx: Ctx, mfaToken: string, code: string, meta: AuthMeta = {}) {
   let userId: string;
+  let jti: string;
   try {
-    userId = String((await verifyJwt(ctx, mfaToken, 'mfa_challenge')).sub);
+    ({ userId, jti } = await checkChallenge(ctx, await verifyJwt(ctx, mfaToken, 'mfa_challenge')));
   } catch {
     throw unauthorized('Sign-in expired. Enter your password again.');
   }
@@ -207,6 +240,9 @@ export async function completeMfaLogin(ctx: Ctx, mfaToken: string, code: string,
     if (err instanceof AppError && err.status === 401) await noteFailedLogin(ctx, userId);
     throw err;
   }
+  // The challenge is spent only by a successful exchange (a wrong code keeps the 5-minute window open).
+  const spent = await ctx.db.query('DELETE FROM mfa_challenges WHERE id = $1 AND user_id = $2', [jti, userId]);
+  if (!spent.rowCount) throw unauthorized('Sign-in expired. Enter your password again.');
   await clearFailedLogins(ctx.db, userId);
   await noteSignIn(ctx, userId, meta);
   const user = await one<User>(ctx.db, `SELECT ${PUBLIC_USER_COLUMNS} FROM users WHERE id = $1`, [userId]);
@@ -253,6 +289,7 @@ export async function resetPassword(ctx: Ctx, token: string, newPassword: string
     if (!row) throw badRequest('invalid_reset_link', 'This reset link has expired or was already used. Request a new one.');
     await s.tx.query('UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL', [row.user_id]);
     await s.tx.query('UPDATE users SET password_hash = $2, failed_logins = 0, login_lock_count = 0, login_locked_until = NULL WHERE id = $1', [row.user_id, hash]);
+    await s.tx.query('DELETE FROM mfa_challenges WHERE user_id = $1', [row.user_id]); // Round 23d: a half-done sign-in dies with the old password
     await revokeOtherSessions(s.tx, row.user_id, null, 'password_reset');
     await enqueueEmail(s.tx, row.user_id, 'password_changed', {});
     return { reset: true };

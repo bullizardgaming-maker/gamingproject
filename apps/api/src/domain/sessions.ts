@@ -6,6 +6,7 @@ import { many, maybeOne, withTx } from '../db.js';
 import { hmacSha256, randomToken } from '../lib/crypto.js';
 import { AppError, notFound, unauthorized } from '../lib/errors.js';
 import { enqueueEmail } from './notifications.js';
+import { assertMaySignIn } from './users.js';
 
 /**
  * Sessions = short-lived access tokens + rotating refresh tokens.
@@ -72,8 +73,13 @@ export async function refreshSession(ctx: Ctx, refreshToken: string, meta: Sessi
       return { kind: 'reuse' as const };
     }
     await tx.query('UPDATE sessions SET rotated_at = now(), last_used_at = now() WHERE id = $1', [s.id]);
-    const user = await maybeOne(tx, `SELECT status FROM users WHERE id = $1`, [s.user_id]);
+    const user = await maybeOne<{ status: string; suspended_until: string | null; role: string; staff_roles: string[] | null }>(tx, `SELECT status, suspended_until, role, staff_roles FROM users WHERE id = $1`, [s.user_id]);
     if (!user) return { kind: 'invalid' as const };
+    try {
+      assertMaySignIn(user); // Round 23d
+    } catch {
+      return { kind: 'invalid' as const };
+    }
     const issued = await insertSession(ctx, tx, s.user_id, s.family_id, s.mfa, { userAgent: meta.userAgent ?? s.user_agent, ip: meta.ip });
     return { kind: 'ok' as const, issued: { ...issued, userId: s.user_id as string } };
   });

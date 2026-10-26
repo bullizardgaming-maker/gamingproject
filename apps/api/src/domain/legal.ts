@@ -87,10 +87,24 @@ export async function acceptanceStatus(q: Queryable, userId: string) {
   return { tosVersion: u.tos_version, acceptedAt: u.tos_accepted_at, currentVersion: current, reacceptanceRequired: !!material && u.tos_version !== current };
 }
 
-export async function acceptTerms(q: Queryable, userId: string) {
+/** Round 23d (item 11): every acceptance is kept — who accepted which version, when, and where it happened. */
+export async function recordAcceptance(q: Queryable, userId: string, version: string, via: 'signup' | 'settings' | 'order', ip?: string | null) {
+  await q.query(`INSERT INTO terms_acceptances (user_id, doc, version, via, ip) VALUES ($1, 'terms', $2, $3, $4)`, [userId, version, via, ip ?? null]);
+}
+
+export async function acceptTerms(q: Queryable, userId: string, ip?: string | null) {
   const version = await tosVersion(q);
   await q.query('UPDATE users SET tos_version = $2, tos_accepted_at = now() WHERE id = $1', [userId, version]);
+  await recordAcceptance(q, userId, version, 'settings', ip);
   return { tosVersion: version, acceptedAt: new Date().toISOString() };
+}
+
+/** Round 23d (item 11): an order cannot be placed while a material change is waiting to be accepted. */
+export async function assertTermsCurrent(q: Queryable, userId: string, sawVersion?: string) {
+  const status = await acceptanceStatus(q, userId);
+  if (status.reacceptanceRequired) throw new AppError(409, 'terms_reacceptance_required', 'Our Terms changed. Read and accept the new version to continue', { currentVersion: status.currentVersion });
+  if (sawVersion && sawVersion !== status.currentVersion) throw new AppError(409, 'terms_stale', 'The Terms were updated while you were on this page. Reload to see the current version', { currentVersion: status.currentVersion });
+  return status.currentVersion;
 }
 
 export interface PublishInput {
@@ -109,6 +123,8 @@ export async function publishDocument(ctx: Ctx, staffId: string, input: PublishI
   const locale = lang(input.lang);
   const effective = input.effectiveAt ? new Date(input.effectiveAt) : new Date();
   if (Number.isNaN(effective.getTime())) throw badRequest('invalid_date', 'effectiveAt must be a date');
+  // Round 23d: nothing is backdated. A version takes effect now or later, never before it was published.
+  if (effective.getTime() < Date.now() - 60_000) throw badRequest('backdated', 'effectiveAt cannot be in the past');
   // Notice period: a material change takes effect no sooner than exactly NOTICE_DAYS from now.
   if (input.material && effective.getTime() < Date.now() + NOTICE_DAYS * 86_400_000 - 60_000) {
     throw badRequest('notice_required', `A material change takes effect at least ${NOTICE_DAYS} days after it is published`);
@@ -118,6 +134,11 @@ export async function publishDocument(ctx: Ctx, staffId: string, input: PublishI
   // A version that is already in force is immutable: the hash users accepted must stay checkable. Changes are a new version.
   const existing = await maybeOne<{ effective_at: string; material: boolean }>(ctx.db, 'SELECT effective_at, material FROM legal_documents WHERE doc = $1 AND locale = $2 AND version = $3', [input.doc, locale, input.version]);
   if (existing && new Date(existing.effective_at) <= new Date()) throw conflict('version_in_force', 'This version is already in force and cannot be edited; publish a new version');
+  // Round 23d: a version already in force in any language is closed; a translation added later is a new version.
+  if (!existing) {
+    const inForce = await maybeOne(ctx.db, 'SELECT 1 FROM legal_documents WHERE doc = $1 AND version = $2 AND effective_at <= now()', [input.doc, input.version]);
+    if (inForce) throw conflict('version_in_force', 'This version is already in force in another language; publish the translation as a new version');
+  }
   // Round 22 (22): a draft announced as material can't be re-published as non-material to skip the 14-day notice. If the
   // change really is not material, publish it under a new version (staff mark it explicitly; the route audits it).
   if (existing?.material && !input.material) {

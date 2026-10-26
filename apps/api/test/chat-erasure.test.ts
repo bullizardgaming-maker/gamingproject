@@ -35,7 +35,7 @@ describe('per-user chat erasure', () => {
     await h.ctx.db.query(`UPDATE orders SET status = 'completed' WHERE id = $1`, [order.id]);
 
     expect((await support.api.post(`/v1/admin/users/${buyer.id}/erase-chat`, { reason: 'GDPR erasure request' })).status).toBe(403);
-    expect((await compliance.api.post(`/v1/admin/users/${buyer.id}/erase-chat`, { reason: 'GDPR erasure request' })).body).toEqual({ erased: true, alreadyErased: false });
+    expect((await compliance.api.post(`/v1/admin/users/${buyer.id}/erase-chat`, { reason: 'GDPR erasure request' })).body).toMatchObject({ erased: true, alreadyErased: false });
 
     const msgs = (await seller.api.get(`/v1/chat/rooms/${roomId}/messages`)).body;
     const fromBuyer = msgs.filter((m: any) => m.sender_id === buyer.id);

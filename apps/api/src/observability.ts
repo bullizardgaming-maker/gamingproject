@@ -21,11 +21,42 @@ export const REDACT_PATHS = [
   '*.payload',
 ];
 
+/** Keys that are secrets wherever they sit in a log object (Round 23d, item 14: nested too). */
+export const SENSITIVE_KEYS = new Set(['password', 'newpassword', 'currentpassword', 'token', 'refreshtoken', 'mfatoken', 'secret', 'payload', 'authorization', 'cookie', 'set-cookie', 'code', 'state', 'api-key', 'apikey', 'otp', 'totp', 'recoverycode', 'card', 'pan', 'ssn']);
+/** Query strings that carry credentials: OAuth callbacks (code, state), reset and confirm links (token). */
+const SECRET_QUERY = /[?&](code|state|token|access_token|id_token|refresh_token)=/i;
+export function redactUrl(url: string): string {
+  const i = url.indexOf('?');
+  if (i < 0) return url;
+  return SECRET_QUERY.test(url) || /\/callback(\/|$)/.test(url.slice(0, i)) ? `${url.slice(0, i)}?[redacted]` : url;
+}
+export function deepRedact<T>(v: T, depth = 0): T {
+  if (depth > 10 || v === null || typeof v !== 'object') return v;
+  if (v instanceof Error || v instanceof Date || Buffer.isBuffer(v)) return v;
+  if (Array.isArray(v)) return v.map((x) => deepRedact(x, depth + 1)) as T;
+  const out: Record<string, unknown> = {};
+  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+    if (SENSITIVE_KEYS.has(k.toLowerCase())) out[k] = '[redacted]';
+    else if (k === 'url' && typeof val === 'string') out[k] = redactUrl(val);
+    else out[k] = deepRedact(val, depth + 1);
+  }
+  return out as T;
+}
+
 export function createLogger(cfg: Config): PinoLogger {
   return pino({
     level: cfg.LOG_LEVEL,
     base: { service: 'bullizard-api', env: cfg.APP_ENV },
     redact: { paths: REDACT_PATHS, censor: '[redacted]' },
+    formatters: { log: (obj) => deepRedact(obj) },
+    serializers: {
+      req: (req: { method?: string; url?: string; id?: unknown; headers?: Record<string, unknown>; remoteAddress?: string }) => ({
+        id: req.id,
+        method: req.method,
+        url: redactUrl(req.url ?? ''),
+        remoteAddress: req.remoteAddress,
+      }),
+    },
   });
 }
 

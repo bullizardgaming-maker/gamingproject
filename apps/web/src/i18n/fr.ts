@@ -15,6 +15,7 @@ const fr: Messages = {
   'brand.home': 'Accueil Bullizard',
   'nav.main': 'Principal',
   'nav.categories': 'Catégories',
+  'reviews.verifiedBuyer': 'Acheteur vérifié',
   'prefs.currency': 'Afficher les prix en',
   'prefs.currencyApprox': 'EUR et EGP sont approximatifs ; vous payez et êtes payé en USD.',
   'prefs.language': 'Langue',

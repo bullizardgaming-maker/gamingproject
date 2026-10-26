@@ -7,6 +7,7 @@ import { getUser, userFromToken, type User } from '../domain/users.js';
 import { activeSession } from '../domain/sessions.js';
 import { AppError } from '../lib/errors.js';
 import { touchPresence } from '../domain/presence.js';
+import { auditAs } from '../domain/audit.js';
 
 /**
  * WebSocket chat + notification gateway.
@@ -56,7 +57,7 @@ export function registerGateway(app: FastifyInstance, ctx: Ctx) {
     targets?.forEach((ws) => send(ws, payload));
   });
 
-  app.get('/ws', { websocket: true }, (ws: WebSocket) => {
+  app.get('/ws', { websocket: true }, (ws: WebSocket, req) => {
     let user: User | null = null;
     const joined = new Set<string>();
     // Simple token bucket: 10 messages per 10 seconds.
@@ -103,14 +104,18 @@ export function registerGateway(app: FastifyInstance, ctx: Ctx) {
 
         switch (frame.type) {
           case 'subscribe': {
-            await roomForParticipant(ctx.db, frame.roomId, user);
+            const room = await roomForParticipant(ctx.db, frame.roomId, user);
             joined.add(frame.roomId);
             add(rooms, frame.roomId, ws);
+            // Round 23d: a staff read over the socket is audited like the REST one.
+            if (room.buyer_id !== user.id && room.seller_id !== user.id) await auditAs(ctx.db, user, req.ip, 'chat.viewed', { type: 'chat_room', id: frame.roomId }, { afterSeq: frame.afterSeq ?? 0, via: 'ws' });
             const messages = await listMessages(ctx.keyring, ctx.db, frame.roomId, frame.afterSeq ?? 0, 500);
             return send(ws, { type: 'history', roomId: frame.roomId, messages });
           }
           case 'sync': {
             if (!joined.has(frame.roomId)) throw new AppError(403, 'not_subscribed', 'Subscribe to the room first');
+            const room = await roomForParticipant(ctx.db, frame.roomId, user);
+            if (room.buyer_id !== user.id && room.seller_id !== user.id) await auditAs(ctx.db, user, req.ip, 'chat.viewed', { type: 'chat_room', id: frame.roomId }, { afterSeq: frame.afterSeq, via: 'ws' });
             const messages = await listMessages(ctx.keyring, ctx.db, frame.roomId, frame.afterSeq, 500);
             return send(ws, { type: 'history', roomId: frame.roomId, messages });
           }

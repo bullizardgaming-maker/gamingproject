@@ -15,6 +15,7 @@ const de: Messages = {
   'brand.home': 'Bullizard Startseite',
   'nav.main': 'Hauptmenü',
   'nav.categories': 'Kategorien',
+  'reviews.verifiedBuyer': 'Verifizierter Käufer',
   'prefs.currency': 'Preise anzeigen in',
   'prefs.currencyApprox': 'EUR und EGP sind Näherungswerte; bezahlt wird in USD.',
   'prefs.language': 'Sprache',

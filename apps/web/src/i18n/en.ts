@@ -15,6 +15,7 @@ const en = {
   'brand.home': 'Bullizard home',
   'nav.main': 'Main',
   'nav.categories': 'Categories',
+  'reviews.verifiedBuyer': 'Verified buyer',
   'prefs.currency': 'Show prices in',
   'prefs.currencyApprox': 'EUR and EGP are approximate; you pay and get paid in USD.',
   'prefs.language': 'Language',
@@ -1235,6 +1236,8 @@ const en = {
   "auth.accept.and": " and ",
   "auth.accept.privacy": "Privacy Policy",
   // Legal pages (Legal pack, Oct 24)
+  "legal.acceptToContinue": 'Our Terms changed. Accept the new version (the notice at the top of the page) to continue.',
+  "legal.reloadTerms": 'The Terms were updated while you were on this page. Reload and try again.',
   "legal.title.terms": "Terms of Service",
   "legal.title.privacy": "Privacy Policy",
   "legal.title.seller-agreement": "Seller Agreement",

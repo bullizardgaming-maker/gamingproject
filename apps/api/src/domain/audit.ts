@@ -8,6 +8,21 @@ import { many } from '../db.js';
  * orders and chats). Rows can't be updated, deleted or truncated (DB triggers),
  * so an admin can't cover their own tracks.
  */
+/** Round 23d: the same audit row without a request (WebSocket reads, jobs acting for a person). */
+export async function auditAs(
+  q: Queryable,
+  actor: { id: string; role: string; staff_roles?: string[] | null },
+  ip: string | null,
+  action: string,
+  target: { type: string; id?: string | null },
+  details: Record<string, unknown> = {},
+) {
+  await q.query(
+    `INSERT INTO admin_audit_log (actor_id, actor_role, action, target_type, target_id, details, ip) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [actor.id, [actor.role, ...(actor.staff_roles ?? [])].filter((r) => r !== 'user').join(',') || actor.role, action, target.type, target.id ?? null, JSON.stringify(details), ip],
+  );
+}
+
 export async function audit(
   q: Queryable,
   req: FastifyRequest,

@@ -113,7 +113,7 @@ export async function sellerProfile(q: Queryable, sellerId: string, limit = 20, 
     storefront(q, sellerId),
     many(
       q,
-      `SELECT r.id, r.rating, r.comment, r.seller_reply, r.replied_at, r.created_at, b.display_name AS buyer_name, f.title AS offer_title
+      `SELECT r.id, r.rating, r.comment, r.seller_reply, r.replied_at, r.created_at, left(b.display_name, 1) || '.' AS buyer_name, f.title AS offer_title
          FROM reviews r JOIN users b ON b.id = r.buyer_id JOIN orders o ON o.id = r.order_id JOIN offers f ON f.id = o.offer_id
         WHERE r.seller_id = $1 AND NOT r.hidden ORDER BY r.created_at DESC LIMIT $2 OFFSET $3`,
       [sellerId, Math.min(limit, 50), offset],

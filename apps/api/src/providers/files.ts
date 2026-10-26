@@ -59,15 +59,20 @@ export class LocalEncryptedStorage implements FileStorage {
     await mkdir(path.dirname(f), { recursive: true });
     const { header, tagOffset, cipher } = this.keyring.encryptStream(`file:${key}`);
     const part = `${f}.part`;
-    await writeFile(part, header, { mode: 0o600 });
-    await pipeline(createReadStream(src), cipher, createWriteStream(part, { flags: 'r+', start: header.length }));
-    const fh = await open(part, 'r+');
     try {
-      await fh.write(cipher.getAuthTag(), 0, 16, tagOffset);
-    } finally {
-      await fh.close();
+      await writeFile(part, header, { mode: 0o600 });
+      await pipeline(createReadStream(src), cipher, createWriteStream(part, { flags: 'r+', start: header.length }));
+      const fh = await open(part, 'r+');
+      try {
+        await fh.write(cipher.getAuthTag(), 0, 16, tagOffset);
+      } finally {
+        await fh.close();
+      }
+      await rename(part, f);
+    } catch (err) {
+      await rm(part, { force: true }).catch(() => {}); // Round 23d: no half-written .part left behind
+      throw err;
     }
-    await rename(part, f);
   }
   async getStream(key: string): Promise<Readable> {
     const f = this.file(key);

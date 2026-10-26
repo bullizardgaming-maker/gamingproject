@@ -16,6 +16,7 @@ const ar: Messages = {
   'brand.home': 'الصفحة الرئيسية لـ Bullizard',
   'nav.main': 'القائمة الرئيسية',
   'nav.categories': 'الفئات',
+  'reviews.verifiedBuyer': 'مشترٍ موثّق',
   'prefs.currency': 'عرض الأسعار بـ',
   'prefs.currencyApprox': 'اليورو والجنيه تقريبيان؛ الدفع والتحصيل بالدولار.',
   'prefs.language': 'اللغة',
@@ -1039,6 +1040,8 @@ const ar: Messages = {
   "auth.accept.and": " و",
   "auth.accept.privacy": "سياسة الخصوصية",
   // Legal pages (Legal pack, Oct 24)
+  "legal.acceptToContinue": 'تغيّرت الشروط. اقبل النسخة الجديدة (الإشعار أعلى الصفحة) للمتابعة.',
+  "legal.reloadTerms": 'تم تحديث الشروط أثناء وجودك في هذه الصفحة. أعد التحميل وحاول مجددًا.',
   "legal.title.terms": "شروط الخدمة",
   "legal.title.privacy": "سياسة الخصوصية",
   "legal.title.seller-agreement": "اتفاقية البائع",

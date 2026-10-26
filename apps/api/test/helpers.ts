@@ -19,7 +19,8 @@ const silent = { info() {}, warn() {}, error: (o: unknown, m?: string) => consol
 
 export async function setup(overrides: Record<string, string> = {}, ctxOverrides: Partial<Ctx> = {}): Promise<Harness> {
   // Tests simulate clients on different IPs through X-Forwarded-For, as if behind a trusted proxy.
-  const cfg = loadConfig({ TRUST_PROXY: 'true', RATE_LIMIT_PER_MINUTE: '100000', AUTH_RATE_LIMIT_PER_MINUTE: '100000', ...overrides } as any);
+  // VIDEO_METADATA_STRIP off: the streaming tests use synthetic MP4 bytes; round23d.test.ts turns ffmpeg on.
+  const cfg = loadConfig({ TRUST_PROXY: 'true', RATE_LIMIT_PER_MINUTE: '100000', AUTH_RATE_LIMIT_PER_MINUTE: '100000', VIDEO_METADATA_STRIP: 'off', ...overrides } as any);
   const db = createPool(cfg.DATABASE_URL);
   await db.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
   await migrate(db);

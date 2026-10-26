@@ -225,6 +225,7 @@ const Env = z.object({
   ORDER_PAYMENT_TTL_MINUTES: z.coerce.number().default(30),
   // Admin/arbiter actions need a session signed in with a second factor (PCI DSS 8.4). Defaults to on in production.
   STAFF_MFA_REQUIRED: z.enum(['true', 'false']).optional(),
+  VIDEO_METADATA_STRIP: z.enum(['ffmpeg', 'off']).default('ffmpeg'), // Round 23d: proof videos are re-muxed without metadata (GPS); 'off' is for tests only
   // WebSocket keep-alive: a ping frame this often, well under Cloudflare's 100-second idle timeout.
   WS_PING_SECONDS: z.coerce.number().min(1).max(90).default(30),
   RUN_WORKER_IN_PROCESS: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
@@ -316,7 +317,11 @@ export function loadConfig(overrides: Partial<Record<keyof Config, string>> = {}
     // Round 23b. Production proper: the origin only answers Cloudflare, and SMS must really be sent. Staging may run
     // without the secret until the Cloudflare proxy is on (the API logs a warning at start: originWarning()).
     if (cfg.APP_ENV === 'production' && !cfg.ORIGIN_SHARED_SECRET) throw new Error('ORIGIN_SHARED_SECRET is required in production (the X-Origin-Auth value Cloudflare adds)');
+    if (cfg.ORIGIN_SHARED_SECRET && cfg.ORIGIN_SHARED_SECRET.length < 32) throw new Error('ORIGIN_SHARED_SECRET must be at least 32 characters (openssl rand -base64 32)'); // Round 23d
     if (cfg.APP_ENV === 'production' && cfg.SMS_PROVIDER === 'console') throw new Error('SMS_PROVIDER=console is not allowed in production: use twilio');
+    // Round 23d (item 12): staff two-factor cannot be switched off in production; proof videos always lose their metadata.
+    if (cfg.STAFF_MFA_REQUIRED === 'false') throw new Error('STAFF_MFA_REQUIRED=false is not allowed in production');
+    if (cfg.VIDEO_METADATA_STRIP === 'off') throw new Error('VIDEO_METADATA_STRIP=off is not allowed in production');
   }
   return cfg;
 }

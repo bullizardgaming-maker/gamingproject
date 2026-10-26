@@ -62,11 +62,41 @@ export function me(req: FastifyRequest): User {
 /** Staff routes: the signed-in user must hold `permission` through one of their roles, with a 2FA session. */
 export function requirePermission(req: FastifyRequest, permission: Permission): User {
   const user = me(req);
+  // Round 23d: a suspended or banned account keeps no staff powers, whatever roles it still carries.
+  if (user.status !== 'active') throw forbidden('account_restricted', 'This account is suspended or banned');
   if (!hasPermission(user, permission)) throw forbidden('insufficient_permission', `Missing permission ${permission}`);
   if (req.staffMfaRequired && !user.session_mfa) {
     throw forbidden('mfa_required', 'Staff actions need two-factor login. Turn it on in Account, then sign in again.');
   }
   return user;
+}
+
+/**
+ * Columns that describe the buyer's device or risk are staff-only; the payment reference and idempotency key
+ * belong to the buyer who created the order and nobody else (Round 23d, item 1).
+ */
+export const STAFF_ONLY_FIELDS = new Set(['buyer_ip', 'buyer_ip_country', 'buyer_device', 'risk_score']);
+export const BUYER_ONLY_FIELDS = new Set(['payment_ref', 'idempotency_key']);
+/** A seller's commission rate is their business, not the catalogue's (item 13). */
+export const SELLER_ONLY_FIELDS = new Set(['seller_rate_bps']);
+export function stripInternalFields(v: unknown, viewerId: string | null, depth = 0): unknown {
+  if (depth > 8 || v === null || typeof v !== 'object') return v;
+  if (Array.isArray(v)) return v.map((x) => stripInternalFields(x, viewerId, depth + 1));
+  if (v instanceof Date || Buffer.isBuffer(v)) return v;
+  const row = v as Record<string, unknown>;
+  const ownRow = viewerId != null && row.buyer_id === viewerId;
+  const ownListing = viewerId != null && row.seller_id === viewerId;
+  let out: Record<string, unknown> | null = null;
+  for (const [k, val] of Object.entries(row)) {
+    const hidden = STAFF_ONLY_FIELDS.has(k) || (BUYER_ONLY_FIELDS.has(k) && !ownRow) || (SELLER_ONLY_FIELDS.has(k) && !ownListing);
+    const next = hidden ? undefined : stripInternalFields(val, viewerId, depth + 1);
+    if (next !== val) {
+      out ??= { ...(v as Record<string, unknown>) };
+      if (next === undefined) delete out[k];
+      else out[k] = next;
+    }
+  }
+  return out ?? v;
 }
 
 export function parseTrustProxy(v: string): boolean | number | string[] {
@@ -174,6 +204,13 @@ export async function buildApp(ctx: Ctx, opts: { logger?: PinoLogger } = {}): Pr
       req.user = await userFromToken(ctx, header.slice(7));
       if (req.user) touchPresence(ctx, req.user.id);
     }
+  });
+
+  // Round 23d: rows are often sent as `SELECT *`. Fields that only staff may see are stripped from every
+  // response to a non-staff caller, however deep they sit (an order inside a cart, a list of orders).
+  app.addHook('preSerialization', async (req, _reply, payload) => {
+    if (req.user && hasPermission(req.user, 'orders.view_any')) return payload;
+    return stripInternalFields(payload, req.user?.id ?? null);
   });
 
   // Request ids are echoed so users/support can quote them and logs can be correlated.

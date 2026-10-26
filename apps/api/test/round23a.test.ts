@@ -36,7 +36,7 @@ const prodEnv = (extra: Record<string, string> = {}) =>
     EMAIL_PROVIDER: 'resend',
     RESEND_API_KEY: 're_test',
     TURNSTILE_SECRET: '1x0000000000000000000000000000000AA',
-    ORIGIN_SHARED_SECRET: 'origin', // required in production since Round 23b
+    ORIGIN_SHARED_SECRET: 'origin-secret-of-at-least-32-characters!', // required in production since Round 23b
     SMS_PROVIDER: 'twilio',
     ...extra,
   }) as any;
@@ -117,7 +117,7 @@ describe('8. render.yaml (staging blueprint)', () => {
       if (v.value !== undefined) env[v.key] = String(v.value);
       else if (v.generateValue) env[v.key] = 'g'.repeat(40);
     }
-    Object.assign(env, { DATA_ENCRYPTION_KEYS: 'v1:Y2ktb25seS1kYXRhLWtleS0zMi1ieXRlcy0tLS0tLS0=', RESEND_API_KEY: 're_x', TURNSTILE_SECRET: '1x0000000000000000000000000000000AA', ORIGIN_SHARED_SECRET: 's' });
+    Object.assign(env, { DATA_ENCRYPTION_KEYS: 'v1:Y2ktb25seS1kYXRhLWtleS0zMi1ieXRlcy0tLS0tLS0=', RESEND_API_KEY: 're_x', TURNSTILE_SECRET: '1x0000000000000000000000000000000AA', ORIGIN_SHARED_SECRET: 'origin-secret-of-at-least-32-characters!' });
     const cfg = loadConfig(env as any);
     expect(cfg.APP_ENV).toBe('staging');
     expect(cfg.EMAIL_PROVIDER).toBe('resend');

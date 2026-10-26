@@ -1,5 +1,6 @@
 import type { Ctx } from '../context.js';
 import { chatLegalHold, shredUserChatKey } from './chatkeys.js';
+import { eraseUserAttachments } from './privacy.js';
 import { many, maybeOne, one, withTx } from '../db.js';
 
 /**
@@ -88,7 +89,10 @@ export async function runRetention(ctx: Ctx, existingRunId?: string) {
     );
     counts.chatKeysDestroyed = 0;
     for (const u of toShred) {
-      if (!(await chatLegalHold(ctx.db, u.id)) && (await shredUserChatKey(ctx.db, u.id, 'account deleted; retention period over'))) counts.chatKeysDestroyed++;
+      if (!(await chatLegalHold(ctx.db, u.id)) && (await shredUserChatKey(ctx.db, u.id, 'account deleted; retention period over'))) {
+        counts.chatKeysDestroyed++;
+        await eraseUserAttachments(ctx, u.id); // Round 23d
+      }
     }
     counts.orderIps = await count(ctx, `UPDATE orders SET buyer_ip = NULL WHERE buyer_ip IS NOT NULL AND created_at < now() - make_interval(days => $1)`, [c.RETENTION_ORDER_IP_DAYS]);
     counts.sessions = await count(
@@ -108,6 +112,7 @@ export async function runRetention(ctx: Ctx, existingRunId?: string) {
       await ctx.db.query(`DELETE FROM chat_attachments WHERE id = $1 AND status = 'uploading'`, [a.id]);
     }
     counts.abandonedUploads = abandoned.length;
+    counts.uploadSlots = await count(ctx, `DELETE FROM upload_slots WHERE started_at < now() - interval '1 day'`, []); // Round 23d
     // Only needed for the 15-minute CAPTCHA window.
     counts.loginFailures = await count(ctx, `DELETE FROM login_failures WHERE created_at < now() - interval '1 day'`, []);
     await ctx.db.query(`UPDATE retention_runs SET status = 'ok', counts = $2, finished_at = now() WHERE id = $1`, [run.id, JSON.stringify(counts)]);

@@ -24,8 +24,9 @@ import { enqueueEmail } from './notifications.js';
 import { assertSupported, getRate } from './fx.js';
 import { quotePromo, reserveRedemption, setRedemptionStatus } from './promos.js';
 import { availableCredit, maybeGrantReferral } from './referrals.js';
-import { tosVersion } from './legal.js';
-import { unitPriceFor, type PriceTier } from './offers.js';
+import { assertTermsCurrent, recordAcceptance } from './legal.js';
+import { idDeadlinePassed, unitPriceFor, type PriceTier } from './offers.js';
+import { rulesSettings } from './onboarding.js';
 import { effectivePrice, quoteSellerCode, type SaleFields } from './discounts.js';
 import { listStatements, type DisputeCategory } from './disputes.js';
 import { claimsForOrder } from './warranty.js';
@@ -192,6 +193,8 @@ export interface CreateOrderInput {
   rail: 'fiat' | 'crypto';
   idempotencyKey?: string;
   acceptTos: boolean;
+  /** The Terms version the buyer saw at checkout (Round 23d): refused if it is no longer the current one. */
+  tosVersion?: string;
   ip?: string;
   ipCountry?: string;
   device?: string;
@@ -331,6 +334,7 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
   if (buyer.status !== 'active') throw forbidden('suspended', 'Account suspended');
   if (buyer.kyc_tier < 1) throw forbidden('kyc_required', 'Verify your email and phone (Tier 1) before purchasing');
   if (!input.acceptTos) throw badRequest('tos_required', 'You must accept the Terms of Service');
+  await assertTermsCurrent(ctx.db, buyer.id, input.tosVersion); // Round 23d: no orders on stale or unaccepted Terms
   await assertNotPaused(ctx.db, 'orders'); // kill switch (Ops → Controls)
   if (input.rail === 'crypto' && !ctx.cfg.ONCHAIN_ESCROW_ENABLED) throw badRequest('rail_unavailable', 'On-chain escrow is not available; pay with crypto at checkout instead');
   if (input.rail === 'crypto' && !input.walletAddress) throw badRequest('wallet_required', 'walletAddress is required for crypto escrow');
@@ -355,12 +359,17 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
     const offer = await maybeOne(
       s.tx,
       `SELECT f.*, c.kind AS category_kind, c.risk_class, c.promo_rate_bps, c.name AS category_name, category_open(c.slug) AS category_open, u.status AS seller_status,
+              u.kyc_tier AS seller_kyc_tier, u.seller_since, u.selling_restricted_at,
               (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now())) AS shop_paused, u.shop_pause_message
          FROM offers f JOIN categories c ON c.slug = f.category_slug JOIN users u ON u.id = f.seller_id
         WHERE f.id = $1`,
       [input.offerId],
     );
     if (!offer || offer.status !== 'active' || offer.seller_status !== 'active') throw notFound('Offer');
+    // Round 23d (item 12): the seller's 30-day ID deadline is checked live, not only by the hourly job that pauses listings.
+    if (idDeadlinePassed({ kyc_tier: offer.seller_kyc_tier, seller_since: offer.seller_since, selling_restricted_at: offer.selling_restricted_at }, (await rulesSettings(s.tx)).idDueDays)) {
+      throw conflict('seller_id_overdue', 'This seller has to verify their identity before selling again');
+    }
     // A category closed by the launch phase can't be bought from, even through a direct link to an older listing.
     if (offer.category_open === false) throw conflict('category_not_open', `${offer.category_name} opens in a later launch phase`);
     // Listings made from an accepted buyer request can only be bought by that buyer.
@@ -388,7 +397,7 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
     await assertOrderWithinLimits(s.tx, { id: buyer.id, created_at: created }, amount);
     const { rank } = await sellerTier(s.tx, offer.seller_id);
     const protection = offer.risk_class === 'high' ? 'insurance_14d' : 'until_confirmed';
-    const termsVersion = await tosVersion(s.tx);
+    const termsVersion = await assertTermsCurrent(s.tx, buyer.id, input.tosVersion);
     // "High Risk - Secondary Market": account listings without verified Original Owner Proof.
     const sellerProtected = offer.category_kind !== 'account' || offer.owner_proof_status === 'verified';
 
@@ -419,6 +428,7 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
         sellerFx.currency, sellerFx.rate, newOrderRef(),
       ],
     );
+    await recordAcceptance(s.tx, buyer.id, termsVersion, 'order', input.ip ?? null); // Round 23d: the version this order was placed under
     if (price.promoId) await reserveRedemption(s.tx, price.promoId, order.id, buyer.id, price.discountCents);
     if (handover && characterName) {
       await s.tx.query('UPDATE orders SET character_name = $2 WHERE id = $1', [order.id, characterName]);

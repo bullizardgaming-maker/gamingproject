@@ -1,4 +1,5 @@
 # Build from the repository root: docker build -f apps/api/Dockerfile .
+# ffmpeg (Round 23d): proof videos are re-muxed without metadata before they are stored.
 FROM node:22-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -11,6 +12,7 @@ RUN npm run build -w apps/api && npm prune --omit=dev --workspace apps/api && mk
 
 FROM node:22-slim
 ENV NODE_ENV=production
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /app/node_modules node_modules
 COPY --from=build /app/apps/api/node_modules apps/api/node_modules

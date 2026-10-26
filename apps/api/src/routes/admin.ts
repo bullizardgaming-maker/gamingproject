@@ -11,7 +11,7 @@ import { controls, updateControls } from '../domain/controls.js';
 import { setReviewHidden } from '../domain/reviews.js';
 import { reconciliationSnapshots, runReconciliation } from '../domain/reconciliation.js';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
-import { ROLE_PERMISSIONS, STAFF_ROLES, hasPermission, permissionsOf, rolesOf } from '../domain/permissions.js';
+import { ROLE_PERMISSIONS, STAFF_ROLES, hasPermission, outranks, permissionsOf, rolesOf } from '../domain/permissions.js';
 import { notify } from '../domain/notifications.js';
 import { refundAfterRelease } from '../domain/clawback.js';
 import { addNote, decideCase, getCase, listCases, openCase, refreshLists, rescreenSellers, runMonitoring, screenUser } from '../domain/aml.js';
@@ -20,6 +20,8 @@ import { fraudModelReport } from '../domain/fraud.js';
 import { COMPONENTS, COMPONENT_IDS, createIncident, listIncidents, updateIncident } from '../domain/status.js';
 import { decideTopUp, listTopUps, planTopUps } from '../domain/fxtopups.js';
 import { chatLegalHold, shredUserChatKey } from '../domain/chatkeys.js';
+import { eraseUserAttachments } from '../domain/privacy.js';
+import { toCsv } from '../domain/exports.js';
 import { businessMetrics } from '../domain/analytics.js';
 import { getTicket, staffReply, ticketQueue, updateTicket } from '../domain/support.js';
 import { caseFile } from '../domain/disputes.js';
@@ -242,11 +244,18 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return res;
   });
 
+  /** Round 23d: staff can only suspend or ban accounts below their own rank (a lead cannot touch an admin). */
+  const assertOutranks = async (actor: { id: string; role: string; staff_roles?: string[] | null }, targetId: string) => {
+    const target = await maybeOne<{ role: string; staff_roles: string[] | null }>(ctx.db, 'SELECT role, staff_roles FROM users WHERE id = $1', [targetId]);
+    if (!target) throw notFound('User');
+    if (targetId === actor.id || !outranks(actor, target)) throw forbidden('rank', 'You cannot suspend or ban an account at or above your own rank');
+  };
   /** Suspend for a number of days (lifts itself) or until staff lift it (no days). */
   app.post('/admin/users/:id/suspend', async (req) => {
-    requirePermission(req, 'users.suspend');
+    const actor = requirePermission(req, 'users.suspend');
     const { reason, days } = z.object({ reason: z.string().min(3).max(500), days: z.number().int().min(1).max(365).optional() }).parse(req.body);
     const { id } = Id.parse(req.params);
+    await assertOutranks(actor, id);
     const r = await ctx.db.query(
       `UPDATE users SET status = 'suspended', suspension_reason = $2, suspended_until = CASE WHEN $3::int IS NULL THEN NULL ELSE now() + make_interval(days => $3::int) END WHERE id = $1 AND status <> 'banned' RETURNING suspended_until`,
       [id, reason, days ?? null],
@@ -257,9 +266,10 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
   /** Ban: permanent, never lifted automatically. Lifting it is a Lead/admin decision (reinstate). */
   app.post('/admin/users/:id/ban', async (req) => {
-    requirePermission(req, 'users.suspend');
+    const actor = requirePermission(req, 'users.suspend');
     const { reason } = z.object({ reason: z.string().min(3).max(500) }).parse(req.body);
     const { id } = Id.parse(req.params);
+    await assertOutranks(actor, id);
     await ctx.db.query(`UPDATE users SET status = 'banned', banned_at = now(), suspension_reason = $2, suspended_until = NULL WHERE id = $1`, [id, reason]);
     await ctx.db.query(`UPDATE sessions SET revoked_at = now(), revoke_reason = 'banned' WHERE user_id = $1 AND revoked_at IS NULL`, [id]);
     await audit(ctx.db, req, 'user.ban', { type: 'user', id }, { reason });
@@ -299,7 +309,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return many(ctx.db, 'SELECT doc, locale, version, effective_at, title, sha256, material, created_at FROM legal_documents ORDER BY doc, effective_at DESC, locale');
   });
   app.put('/admin/legal/:doc', async (req) => {
-    const staff = requirePermission(req, 'support.manage');
+    const staff = requirePermission(req, 'legal.publish'); // Round 23d: admin and compliance only
     const { doc } = z.object({ doc: z.enum(LEGAL_DOCS) }).parse(req.params);
     const body = z
       .object({
@@ -879,7 +889,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     if (q.format === 'json') return rows;
     const cols = ['country', 'treatment', 'rate_bps', 'currency', 'orders', 'credit_notes', 'commission_gross_cents', 'tax_cents', 'commission_net_cents'];
     reply.header('Content-Type', 'text/csv').header('Content-Disposition', `attachment; filename="tax-${q.from}-${q.to}.csv"`);
-    return [cols.join(','), ...rows.map((r: any) => cols.map((c) => r[c] ?? '').join(','))].join('\n');
+    return toCsv(cols, rows as any); // Round 23d (item 15): cells go through csvCell (quoting, formula neutralising)
   });
   app.get('/admin/tax/rates', async (req) => {
     requirePermission(req, 'tax.manage');
@@ -921,8 +931,23 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const hold = await chatLegalHold(ctx.db, id);
     if (hold) throw new AppError(409, 'legal_hold', `Can't erase while there is ${hold}; the messages are evidence`);
     const shredded = await shredUserChatKey(ctx.db, id, reason);
-    await audit(ctx.db, req, 'chat.erased', { type: 'user', id }, { reason });
-    return { erased: true, alreadyErased: !shredded };
+    const files = await eraseUserAttachments(ctx, id); // Round 23d: their uploads go with their words
+    await audit(ctx.db, req, 'chat.erased', { type: 'user', id }, { reason, files });
+    return { erased: true, alreadyErased: !shredded, files };
+  });
+
+  /** Round 23d: KYC applicants of deleted accounts, to be deleted at the provider by compliance (irreversible, so a person does it). */
+  app.get('/admin/privacy/kyc-deletions', async (req) => {
+    requirePermission(req, 'retention.manage');
+    return many(ctx.db, `SELECT id, user_id, provider, external_id, created_at, done_at, done_by FROM kyc_deletion_requests WHERE done_at IS NULL ORDER BY created_at LIMIT 200`);
+  });
+  app.post('/admin/privacy/kyc-deletions/:id/done', async (req) => {
+    const staff = requirePermission(req, 'retention.manage');
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const r = await ctx.db.query(`UPDATE kyc_deletion_requests SET done_at = now(), done_by = $2 WHERE id = $1 AND done_at IS NULL`, [id, staff.id]);
+    if (!r.rowCount) throw notFound('Request');
+    await audit(ctx.db, req, 'kyc.deleted_at_provider', { type: 'kyc_deletion_request', id }, {});
+    return { done: true };
   });
 
   app.post('/admin/retention/run', async (req) => {

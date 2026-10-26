@@ -30,7 +30,7 @@ envVarGroups:
       - key: TURNSTILE_SECRET
         sync: false # Cloudflare Turnstile; the site key is VITE_TURNSTILE_SITE_KEY on Vercel
       - key: ORIGIN_SHARED_SECRET
-        sync: false # = the X-Origin-Auth value Cloudflare adds; requests without it are refused
+        sync: false # = the X-Origin-Auth value Cloudflare adds (at least 32 chars: openssl rand -base64 32); requests without it are refused
       - key: BREVO_API_KEY
         sync: false # newsletter sync; blank = CSV export in Ops
       - key: BREVO_LIST_ID_EN

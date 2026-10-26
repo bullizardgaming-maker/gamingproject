@@ -45,11 +45,12 @@ describe('legal documents', () => {
     expect(history.map((v: any) => v.version)).toEqual(['2026-11-08', '2026-10-24']);
     expect((await client(h.app).get('/v1/legal/terms/versions/2026-11-08')).body.content_md).toBe('# Terms v2\n\nLonger body text.');
     // Fail closed: with no Terms in force, sign-up answers 503 (checked on a scratch copy of the table).
-    await h.ctx.db.query(`UPDATE legal_documents SET effective_at = effective_at + interval '10 years' WHERE doc = 'terms'`);
+    // Round 23d: in-force documents are immutable at the database level, so the scratch move needs the trigger off.
+    await h.ctx.db.query(`ALTER TABLE legal_documents DISABLE TRIGGER legal_documents_immutable; UPDATE legal_documents SET effective_at = effective_at + interval '10 years' WHERE doc = 'terms'; ALTER TABLE legal_documents ENABLE TRIGGER legal_documents_immutable`);
     const closed = await client(h.app).post('/v1/auth/register', { email: `closed_${Date.now()}@example.com`, password: 'correct horse battery', displayName: 'Closed', acceptTerms: true });
     expect(closed.status).toBe(503);
     expect(closed.body.error.code).toBe('terms_unavailable');
-    await h.ctx.db.query(`UPDATE legal_documents SET effective_at = effective_at - interval '10 years' WHERE doc = 'terms'`);
+    await h.ctx.db.query(`UPDATE legal_documents SET effective_at = effective_at - interval '10 years' WHERE doc = 'terms'`); // future rows: allowed
     const emails = await h.ctx.db.query(`SELECT count(*)::int AS n FROM notifications WHERE template = 'legal_change' AND user_id = $1`, [u.id]);
     expect(emails.rows[0].n).toBe(1);
 

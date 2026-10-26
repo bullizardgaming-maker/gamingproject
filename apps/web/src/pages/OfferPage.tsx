@@ -63,14 +63,16 @@ export function OfferPage() {
     setBusy(true);
     setError('');
     try {
+      // The Terms version shown on this page goes with the order; the API refuses it if it changed meanwhile (Round 23d).
+      const terms = await api<{ version: string }>('/legal/terms').catch(() => null);
       const res = await api<{ order: { id: string }; checkoutUrl: string | null }>('/orders', {
-        body: { offerId: offer.id, quantity: qty, rail: 'fiat', acceptTos: true, useCredit: true, ...(needsCharacter ? { characterName: character.value.trim() } : {}) },
+        body: { offerId: offer.id, quantity: qty, rail: 'fiat', acceptTos: true, useCredit: true, ...(terms ? { tosVersion: terms.version } : {}), ...(needsCharacter ? { characterName: character.value.trim() } : {}) },
         headers: { 'Idempotency-Key': `${offer.id}:${qty}:${Math.floor(Date.now() / 60_000)}` },
       });
       if (res.checkoutUrl) window.location.assign(res.checkoutUrl);
       else nav(`/orders/${res.order.id}`);
     } catch (e: any) {
-      setError(e.code === 'kyc_required' ? t('offer.verifyFirst') : e.message);
+      setError(e.code === 'kyc_required' ? t('offer.verifyFirst') : e.code === 'terms_reacceptance_required' ? t('legal.acceptToContinue') : e.code === 'terms_stale' ? t('legal.reloadTerms') : e.message);
       setBusy(false);
     }
   };

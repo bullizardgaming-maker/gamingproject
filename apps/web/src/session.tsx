@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
-import { api, session, signOut, type User } from './api';
+import { api, refreshAccessToken, session, signOut, type User } from './api';
 import { chosenLocale, currentLocale, isLocale, setLocale } from './i18n';
 
 interface SessionState {
@@ -20,6 +20,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
+    // Round 23d: the access token is not persisted; a reload exchanges the refresh cookie for a new one first.
+    if (!session.token && session.maybeSignedIn) {
+      const ok = await refreshAccessToken(); // on success session.set() fires 'session' and this runs again with a token
+      if (!ok) {
+        setUser(null);
+        setLoading(false);
+      }
+      return;
+    }
     if (!session.token) {
       setUser(null);
       setLoading(false);

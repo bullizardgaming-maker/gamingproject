@@ -63,18 +63,40 @@ export class ApiError extends Error {
 }
 
 const TOKEN_KEY = 'mkt.token';
+/**
+ * Round 23d (privacy, item 13): the access token lives in memory only; what persists is the httpOnly refresh cookie.
+ * A new tab or a reload gets a token by exchanging the cookie (see SessionProvider). The demo build has no cookie, so
+ * it keeps the token in localStorage — demo data only.
+ */
+let memoryToken: string | null = null;
+/** Set while a reload/new tab is still exchanging the refresh cookie, so the app does not flash "signed out". */
+const BOOT_KEY = 'mkt.signed-in';
 export const session = {
   get token() {
+    if (!DEMO) return memoryToken;
     try {
       return localStorage.getItem(TOKEN_KEY);
     } catch {
       return null;
     }
   },
-  set(token: string | null) {
+  /** True when this browser signed in before and may still hold a refresh cookie. */
+  get maybeSignedIn() {
     try {
-      if (token) localStorage.setItem(TOKEN_KEY, token);
-      else localStorage.removeItem(TOKEN_KEY);
+      return localStorage.getItem(BOOT_KEY) === '1';
+    } catch {
+      return false;
+    }
+  },
+  set(token: string | null) {
+    memoryToken = token;
+    try {
+      if (DEMO) {
+        if (token) localStorage.setItem(TOKEN_KEY, token);
+        else localStorage.removeItem(TOKEN_KEY);
+      }
+      if (token) localStorage.setItem(BOOT_KEY, '1');
+      else localStorage.removeItem(BOOT_KEY);
     } catch {
       /* storage unavailable */
     }

@@ -9,7 +9,7 @@ import { currentRates, getRate } from '../domain/fx.js';
 import { availableCredit, referralSummary } from '../domain/referrals.js';
 import { userCredit } from '../domain/ledger.js';
 import { beginSetup, disable, enable, remainingRecoveryCodes } from '../domain/mfa.js';
-import { changePassword, requestPasswordReset, resetPassword, completeMfaLogin, confirmVerificationCode, login, register, sendVerificationCode, startKyc } from '../domain/users.js';
+import { assertNotLocked, clearFailedLogins, noteFailedLogin, changePassword, requestPasswordReset, resetPassword, completeMfaLogin, confirmVerificationCode, login, register, sendVerificationCode, startKyc } from '../domain/users.js';
 import { REFRESH_TTL_DAYS, issueAccessToken, listSessions, refreshSession, revokeByRefreshToken, revokeFamily, revokeOtherSessions, revokeSessionById } from '../domain/sessions.js';
 import { enqueueEmail, getPreferences, setPreferences } from '../domain/notifications.js';
 import { AppError, badRequest, notFound, unauthorized } from '../lib/errors.js';
@@ -175,7 +175,14 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   });
   app.post('/me/delete', strict, async (req, reply) => {
     const body = z.object({ password: z.string(), code: z.string().trim().optional() }).parse(req.body);
-    const res = await deleteAccount(ctx, me(req), body.password, body.code);
+    await assertNotLocked(ctx, me(req).id); // Round 23d: wrong password/code here counts like a failed sign-in
+    let res: Awaited<ReturnType<typeof deleteAccount>>;
+    try {
+      res = await deleteAccount(ctx, me(req), body.password, body.code);
+    } catch (err) {
+      if (err instanceof AppError && err.status === 401) await noteFailedLogin(ctx, me(req).id);
+      throw err;
+    }
     reply.clearCookie(COOKIE, { path: '/v1/auth' });
     return res;
   });
@@ -262,7 +269,15 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/me/2fa/disable', strict, async (req) => {
     const { code } = z.object({ code: z.string().trim() }).parse(req.body);
     const user = me(req);
-    await disable(ctx, user.id, code);
+    // Round 23d (item 12): wrong codes count against the account like failed sign-ins (lockout after LOGIN_MAX_FAILURES).
+    await assertNotLocked(ctx, user.id);
+    try {
+      await disable(ctx, user.id, code);
+    } catch (err) {
+      if (err instanceof AppError && err.status === 401) await noteFailedLogin(ctx, user.id);
+      throw err;
+    }
+    await clearFailedLogins(ctx.db, user.id);
     await ctx.db.query('UPDATE sessions SET mfa = false WHERE family_id = $1', [user.session_family]);
     await revokeOtherSessions(ctx.db, user.id, user.session_family ?? null, 'mfa_disabled');
     await enqueueEmail(ctx.db, user.id, 'mfa_changed', { enabled: false });
@@ -509,7 +524,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     return documentVersion(ctx.dbRead, p.doc, p.version, Lang.parse(req.query).lang);
   });
   app.get('/me/legal', async (req) => acceptanceStatus(ctx.db, me(req).id));
-  app.post('/me/legal/accept', async (req) => acceptTerms(ctx.db, me(req).id));
+  app.post('/me/legal/accept', async (req) => acceptTerms(ctx.db, me(req).id, req.ip));
   /** Staff-managed texts shown in the product (the "Stay safe" panel in order chats). */
   app.get('/texts/:key', async (req, reply) => {
     const { key } = z.object({ key: z.enum(['chat_safety']) }).parse(req.params);
