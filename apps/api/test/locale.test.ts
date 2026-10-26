@@ -39,7 +39,7 @@ describe('messages in the user’s language', () => {
     await dispatchEmails(h.ctx);
     const mail = sent.find((m) => m.to === u.email && !/جاهز/.test(m.subject ?? ''))!; // the welcome email comes first
     expect(mail.subject).toBe('وصل الدفع. Elden Ring key عند البائع');
-    expect(mail.body).toContain('— فريق Bullizard');
+    expect(mail.body).toContain('\n\nفريق Bullizard\n\n'); // plain sign-off (copy deck §9.7)
     expect(mail.html).toContain('dir="rtl"');
 
     const fr = render(h.ctx, 'clawback', { title: 'Clé', amount_cents: 10_00, currency: 'EUR', order_id: 'x', reason: 'r', credit_note: 'CN-1' }, 'fr');
@@ -52,7 +52,8 @@ describe('messages in the user’s language', () => {
     const u = await makeUser(h, { tier: 0 });
     await u.api.put('/v1/me/locale', { locale: 'es' });
     await u.api.post('/v1/verify/email/send');
-    expect(sent.at(-1)!.body).toMatch(/^Tu código de verificación es \d{6}/);
+    expect(sent.at(-1)!.subject).toMatch(/^Tu código de Bullizard: \d{6}$/);
+    expect(sent.at(-1)!.body).toMatch(/Tu código es \d{6}\. Sirve durante 10 minutos\./); // after the greeting (§9.7)
   });
 
   it('every translated template renders with realistic data in every language', () => {

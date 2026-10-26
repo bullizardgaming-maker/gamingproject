@@ -1,9 +1,13 @@
-import type { LocalePack } from './types.js';
+import { simpleDuration, type LocalePack } from './types.js';
+
+const U = { minute: 'minuto', minutes: 'minutos', hour: 'hora', hours: 'horas' };
 
 const es: LocalePack = {
-  signoff: '— El equipo de Bullizard',
-  manage: 'Gestionar correos',
-  verifyCode: (code, minutes) => `Tu código de verificación es ${code}. Caduca en ${minutes} minutos.`,
+  layout: { greeting: "Hola, {name}:", greetingNoName: "Hola:", signoff: "El equipo de Bullizard", why: "Recibes este correo porque tienes una cuenta en Bullizard.", safety: "Nunca te pediremos tu contraseña ni tus códigos por correo.", manage: "Ajustes de correo", legal: "Bullizard · Solo mayores de 18 · Sin relación con ningún editor de juegos", button: "Abrir Bullizard" },
+  verifySubject: (code) => `Tu código de Bullizard: ${code}`,
+  verifyCode: (code, minutes) => `Tu código es ${code}. Sirve durante ${simpleDuration(minutes, U)}. Si no lo pediste, ignora este correo.`,
+  duration: (minutes) => simpleDuration(minutes, U),
+  withdrawalReasons: { unsupported_coin: "Los pagos se envían solo en USDT. Añade una dirección USDT (TRC-20 o BEP-20) y vuelve a intentarlo.", not_approved: "No se aprobó. Contacta con soporte si necesitas los detalles.", provider_failed: "La red de pago lo rechazó. Revisa tu dirección y vuelve a intentarlo." },
   templates: {
     protection_ending: {
       subject: (d) => `Quedan 24 horas para comprobar ${d.title}`,
@@ -70,8 +74,10 @@ const es: LocalePack = {
         `Tras revisar el pedido «${d.title}», hemos reembolsado al comprador (${d.reason}). Tu parte, ${h.money(d.amount_cents, d.currency)}, se descontó de tu saldo; si queda por debajo de cero, se recupera de tus próximas ventas. También se devolvió la comisión (nota de crédito ${d.credit_note}).\n\n${link(`/orders/${d.order_id}`)}`,
     },
     withdrawal_failed: {
-      subject: (d, h) => `Falló el retiro de ${h.money(d.amount_cents, d.currency)}`,
-      body: (d, link, h) => `No se pudo enviar tu retiro de ${h.money(d.amount_cents, d.currency)} (${d.reason}). El dinero ha vuelto a tu saldo. Revisa tu cuenta de cobro: ${link('/sell')}`,
+      subject: (d, h) => `Retiro de ${h.money(d.amount_cents, d.currency)} no enviado`,
+      body: (d, link, h) => `No pudimos enviar tu retiro de ${h.money(d.amount_cents, d.currency)}. ${h.reason(d.reason)} El dinero ha vuelto a tu saldo.
+
+Abrir cartera: ${link('/sell/money')}`,
     },
     invoice_issued: {
       subject: (d) => `Tu factura de comisiones ${d.number}`,
@@ -150,8 +156,10 @@ const es: LocalePack = {
       body: (d, link) => `No hemos sabido nada sobre «${d.subject}» en ${d.days} días, así que la marcamos como resuelta. Responde cuando quieras para reabrirla.\n\n${link(`/support/${d.ticket_id}`)}`,
     },
     account_locked: {
-      subject: () => 'Inicio de sesión en pausa tras varios intentos fallidos',
-      body: (d, link) => `Hubo ${d.failures} intentos fallidos de iniciar sesión en tu cuenta, así que el acceso queda en pausa ${d.minutes} minutos. Si no fuiste tú, tu cuenta está a salvo, pero te recomendamos activar la verificación en dos pasos. También puedes restablecer la contraseña ahora: ${link('/forgot-password')}`,
+      subject: () => 'Inicio de sesión en pausa tras intentos fallidos',
+      body: (d, link, h) => `Alguien intentó entrar en tu cuenta y falló la contraseña ${d.failures} veces, así que el acceso queda en pausa ${h.duration(Number(d.minutes))}. Si fuiste tú, espera o restablece tu contraseña. Si no, tu cuenta sigue a salvo. Activa la verificación en dos pasos para que siga así.
+
+Restablecer contraseña: ${link('/forgot-password')}`,
     },
   },
 };

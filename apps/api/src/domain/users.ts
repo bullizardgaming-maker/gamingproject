@@ -6,7 +6,7 @@ import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { maybeOne, one, withTx } from '../db.js';
 import { hashPassword, hmacSha256, randomDigits, randomToken, safeEqual, verifyPassword } from '../lib/crypto.js';
-import { AppError, badRequest, conflict, forbidden, unauthorized } from '../lib/errors.js';
+import { AppError, badRequest, conflict, forbidden } from '../lib/errors.js';
 import { outranks, rolesOf } from './permissions.js';
 import { liftIdRestriction } from './onboarding.js';
 import { attributeBuyer, isAffiliateCode } from './affiliates.js';
@@ -19,7 +19,7 @@ import { withdrawable } from './payoutholds.js';
 import { ensureScreenedForPayout, screenUser } from './aml.js';
 import { recordAcceptance, tosVersion } from './legal.js';
 import { referrerForCode } from './referrals.js';
-import { emailHtml, enqueueEmail } from './notifications.js';
+import { renderCodeEmail, enqueueEmail } from './notifications.js';
 import { activeSession, createSession, revokeOtherSessions, type IssuedSession } from './sessions.js';
 
 export interface User {
@@ -136,7 +136,7 @@ export async function userFromToken(ctx: Ctx, token: string): Promise<User> {
     }
     return { ...user, session_mfa: session.mfa, session_id: session.id, session_family: session.family_id };
   } catch {
-    throw unauthorized('Invalid or expired session');
+    throw new AppError(401, 'session_expired', 'You were signed out. Sign in again.'); // Round 23f (§9.2)
   }
 }
 
@@ -226,7 +226,7 @@ export async function login(ctx: Ctx, input: { email: string; password: string }
   const ok = await verifyPassword(input.password, row?.password_hash ?? 'scrypt$32768$AAAAAAAAAAAAAAAAAAAAAA==$AAAA');
   if (row) await assertNotLocked(ctx, row.id);
   if (row && !ok) await noteFailedLogin(ctx, row.id);
-  if (!row || !ok) throw unauthorized('Invalid email or password');
+  if (!row || !ok) throw new AppError(401, 'invalid_credentials', 'Wrong email or password.'); // one message: never says which accounts exist
   const { password_hash: _, ...user } = row;
   assertMaySignIn(user);
   if (user.totp_enabled) return { mfaRequired: true as const, mfaToken: await issueChallenge(ctx, user.id) };
@@ -242,7 +242,7 @@ export async function completeMfaLogin(ctx: Ctx, mfaToken: string, code: string,
   try {
     ({ userId, jti } = await checkChallenge(ctx, await verifyJwt(ctx, mfaToken, 'mfa_challenge')));
   } catch {
-    throw unauthorized('Sign-in expired. Enter your password again.');
+    throw new AppError(401, 'reauth_required', 'Enter your password again to continue.');
   }
   await assertNotLocked(ctx, userId);
   let method: Awaited<ReturnType<typeof checkSecondFactor>>;
@@ -254,7 +254,7 @@ export async function completeMfaLogin(ctx: Ctx, mfaToken: string, code: string,
   }
   // The challenge is spent only by a successful exchange (a wrong code keeps the 5-minute window open).
   const spent = await ctx.db.query('DELETE FROM mfa_challenges WHERE id = $1 AND user_id = $2', [jti, userId]);
-  if (!spent.rowCount) throw unauthorized('Sign-in expired. Enter your password again.');
+  if (!spent.rowCount) throw new AppError(401, 'reauth_required', 'Enter your password again to continue.');
   await clearFailedLogins(ctx.db, userId);
   await noteSignIn(ctx, userId, meta);
   const user = await one<User>(ctx.db, `SELECT ${PUBLIC_USER_COLUMNS} FROM users WHERE id = $1`, [userId]);
@@ -311,7 +311,8 @@ export async function resetPassword(ctx: Ctx, token: string, newPassword: string
 /** Change password: signs out every other device and emails the user. */
 export async function changePassword(ctx: Ctx, user: User, current: string, next: string) {
   const row = await one<{ password_hash: string }>(ctx.db, 'SELECT password_hash FROM users WHERE id = $1', [user.id]);
-  if (!(await verifyPassword(current, row.password_hash))) throw unauthorized('Current password is incorrect');
+  // 403, not 401: a 401 would make the web client refresh and retry (Round 23e/23f).
+  if (!(await verifyPassword(current, row.password_hash))) throw new AppError(403, 'wrong_current_password', "Your current password isn't right.");
   if (current === next) throw badRequest('same_password', 'Choose a password you have not used here before');
   const hash = await hashPassword(next);
   return withScope(ctx, async (s) => {
@@ -356,9 +357,15 @@ export async function sendVerificationCode(ctx: Ctx, user: User, channel: 'email
     [user.id, channel, target, hmacSha256(ctx.cfg.FINGERPRINT_KEY, `${user.id}:${channel}:${code}`), CODE_TTL_MINUTES],
   );
   const pack = isLocale(user.locale) && user.locale !== 'en' ? PACKS[user.locale] : null;
-  const body = pack ? pack.verifyCode(code, CODE_TTL_MINUTES) : `Your verification code is ${code}. It expires in ${CODE_TTL_MINUTES} minutes.`;
   const locale = pack ? (user.locale as Locale) : 'en';
-  await ctx.messenger.send(channel === 'email' ? { channel, to: target, subject: 'Bullizard', body, html: emailHtml(body, locale) } : { channel, to: target, body });
+  if (channel === 'email') {
+    // Round 23f (§9.7): the code is in the subject and shown large in the layout.
+    const mail = renderCodeEmail(ctx, code, CODE_TTL_MINUTES, locale, user.display_name);
+    await ctx.messenger.send({ channel, to: target, subject: mail.subject, body: mail.text, html: mail.html });
+  } else {
+    const body = pack ? pack.verifyCode(code, CODE_TTL_MINUTES) : `Your Bullizard code is ${code}. It works for ${CODE_TTL_MINUTES} minutes.`;
+    await ctx.messenger.send({ channel, to: target, body });
+  }
   return { sent: true, target };
 }
 
@@ -495,8 +502,9 @@ export async function requestWithdrawal(ctx: Ctx, userId: string, amountCents: n
         ],
         `withdrawal_failed:${w.id}`,
       );
-      const reason = (err as Error).message.slice(0, 200);
-      await enqueueEmail(s.tx, userId, 'withdrawal_failed', { amount_cents: amountCents, currency, reason });
+      // Round 23f (§9.6): a reason code, worded in the reader's language (the provider's text stays in the logs).
+      ctx.log.warn({ withdrawalId: w.id, err: (err as Error).message.slice(0, 200) }, 'payout failed');
+      await enqueueEmail(s.tx, userId, 'withdrawal_failed', { amount_cents: amountCents, currency, reason: 'provider_failed' });
     });
     throw new AppError(502, 'payout_failed', 'The payment provider rejected this payout; the amount is back in your balance', { reason: (err as Error).message.slice(0, 200) });
   }

@@ -2,7 +2,7 @@ import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { many, maybeOne, withTx } from '../db.js';
 import { badRequest } from '../lib/errors.js';
-import { PACKS, helpers, isLocale, type Locale } from './locales/index.js';
+import { PACKS, helpers, isLocale, withdrawalReason, type EmailLayout, type Locale, type WithdrawalReason } from './locales/index.js';
 
 /**
  * Notifications. Business code calls notify() (alias enqueueEmail) inside its own transaction
@@ -35,8 +35,30 @@ interface Template {
   body: (d: Data, link: (path: string) => string) => string;
 }
 
-const money = (cents: number, currency = 'USD') => new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(cents / 100);
-const when = (iso: string) => new Date(iso).toUTCString().replace(' GMT', ' UTC');
+// Round 23f (§9.7 item 3): while the HTML part is rendered, amounts are marked left-to-right (see emailParts).
+let markAmounts = false;
+const money = (cents: number, currency = 'USD') => {
+  const s = new Intl.NumberFormat('en-US', { style: 'currency', currency: unmark(currency) }).format(Number(unmark(cents)) / 100);
+  return markAmounts ? `${LTR_OPEN}${s}${LTR_CLOSE}` : s;
+};
+const when = (iso: string) => new Date(unmark(iso)).toUTCString().replace(' GMT', ' UTC');
+const enDuration = (minutes: number) => (minutes >= 60 ? `${Math.round(minutes / 60)} hour${Math.round(minutes / 60) === 1 ? '' : 's'}` : `${minutes} minute${minutes === 1 ? '' : 's'}`);
+const EN_WITHDRAWAL_REASONS: Record<WithdrawalReason, string> = {
+  unsupported_coin: 'Payouts go out in USDT only. Add a USDT (TRC-20 or BEP-20) address and try again.',
+  not_approved: "It wasn't approved. Contact support if you need the details.",
+  provider_failed: 'The payment network refused it. Check your address and try again.',
+};
+/** Round 23f (§9.7): the layout strings in English. */
+export const EN_LAYOUT: EmailLayout = {
+  greeting: 'Hey {name},',
+  greetingNoName: 'Hey,',
+  signoff: 'The Bullizard team',
+  why: "You're getting this because you have a Bullizard account.",
+  safety: 'We never ask for your password or codes by email.',
+  manage: 'Email settings',
+  legal: 'Bullizard · 18+ only · Not affiliated with any game publisher',
+  button: 'Open Bullizard',
+};
 
 export const TEMPLATES = {
   order_paid: {
@@ -44,7 +66,7 @@ export const TEMPLATES = {
     subject: (d) => `Payment in. ${d.order_ref ?? d.title} is with the seller`,
     body: (d, link) =>
       `We have your ${money(d.amount_cents, d.currency)} for ${d.title}, and we're holding it. The seller trades with ${d.character ?? 'your character'} in-game and uploads the video. Nothing reaches them until that video is checked.\n\n` +
-      `Track your order: ${link(`/orders/${d.order_id}`)}\n\nTerms v${d.tos_version ?? ''} accepted for this order: ${link('/terms')}`,
+      `Track your order: ${link(`/orders/${d.order_id}`)}\n\n${d.tos_version ? `Terms v${d.tos_version} accepted for this order` : 'Terms accepted for this order'}: ${link('/terms')}`,
   },
   welcome: {
     category: 'account',
@@ -127,7 +149,7 @@ export const TEMPLATES = {
     category: 'selling',
     subject: (d) => `New order: deliver to ${d.character ?? 'the buyer'}`,
     body: (d, link) =>
-      `${d.title} ×${d.quantity} is paid and waiting. Trade with ${d.character ?? 'the buyer'} in-game, record the trade with the name and amount on screen, then upload it to the order. You're paid when the order is confirmed.\n\nOpen the order: ${link(`/orders/${d.order_id}`)}`,
+      `${d.title}${d.quantity ? ` ×${d.quantity}` : ''} is paid and waiting. Trade with ${d.character ?? 'the buyer'} in-game, record the trade with the name and amount on screen, then upload it to the order. You're paid when the order is confirmed.\n\nOpen the order: ${link(`/orders/${d.order_id}`)}`,
   },
   seller_paid: {
     category: 'selling',
@@ -291,8 +313,9 @@ export const TEMPLATES = {
   },
   withdrawal_failed: {
     category: 'selling',
-    subject: (d) => `Payout of ${money(d.amount_cents, d.currency)} failed`,
-    body: (d, link) => `Your payout of ${money(d.amount_cents, d.currency)} could not be sent (${d.reason}). The money is back in your balance. Check your payout account: ${link('/sell')}`,
+    subject: (d) => `Withdrawal of ${money(d.amount_cents, d.currency)} not sent`,
+    // Round 23f (§9.6): `reason` is a code (WITHDRAWAL_REASONS); each language words it.
+    body: (d, link) => `We couldn't send your withdrawal of ${money(d.amount_cents, d.currency)}. ${EN_WITHDRAWAL_REASONS[withdrawalReason(d.reason)]} The money is back in your balance.\n\nOpen wallet: ${link('/sell/money')}`,
   },
   invoice_issued: {
     category: 'selling',
@@ -429,7 +452,8 @@ export const TEMPLATES = {
   account_locked: {
     category: 'security',
     subject: () => 'Sign-in paused after failed attempts',
-    body: (d, link) => `There were ${d.failures} failed sign-in attempts on your account, so sign-in is paused for ${d.minutes} minutes. If this wasn't you, your account is safe, but consider turning on two-factor login. You can also reset your password now: ${link('/forgot-password')}`,
+    body: (d, link) =>
+      `Someone tried to sign in to your account and got the password wrong ${d.failures} times, so sign-in is paused for ${enDuration(Number(d.minutes))}. If it was you, wait or reset your password. If it wasn't, your account is still safe. Turn on two-factor login to keep it that way.\n\nReset password: ${link('/forgot-password')}`,
   },
 } satisfies Record<string, Template>;
 
@@ -441,9 +465,19 @@ export type TemplateName = keyof typeof TEMPLATES;
  */
 export function templateFor(name: TemplateName, locale: Locale = 'en'): Template {
   const base = TEMPLATES[name] as Template;
-  const t = locale === 'en' ? undefined : PACKS[locale].templates[name];
-  if (!t) return base;
-  const h = helpers(locale);
+  const pack = locale === 'en' ? undefined : PACKS[locale];
+  const t = pack?.templates[name];
+  if (!pack || !t) return base;
+  const plain = helpers(locale);
+  const h = {
+    money: (cents: number, currency?: string) => {
+      const out = plain.money(Number(unmark(cents)), currency === undefined ? undefined : unmark(currency));
+      return markAmounts ? `${LTR_OPEN}${out}${LTR_CLOSE}` : out;
+    },
+    when: (iso: string) => plain.when(unmark(iso)),
+    duration: (minutes: number) => pack.duration(Number(unmark(minutes))),
+    reason: (code: unknown) => pack.withdrawalReasons[withdrawalReason(unmark(code))],
+  };
   return { ...base, subject: (d) => t.subject(d, h), body: (d, link) => t.body(d, link, h) };
 }
 
@@ -520,33 +554,152 @@ export async function setPreferences(q: Queryable, userId: string, changes: Reco
 // ---------------------------------------------------------------------------
 // Rendering & dispatch
 // ---------------------------------------------------------------------------
-const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 /**
- * The HTML part of every customer email (follow-up 12): one layout for all languages, right-to-left with lang="ar" for
- * Arabic. The plain-text part is always sent next to it.
+ * Round 23f (copy deck §9.7): one layout for every email and language — greeting, body, one button, sign-off, a thin
+ * rule and the footer (why you get it, safety line, "Email settings" except on security emails, legal line). The
+ * plain-text part keeps "Label: URL"; the HTML part turns the body's last link into the button. Every variable is
+ * isolated in the HTML part (<bdi>), amounts and IDs run left-to-right (<span dir="ltr">), so English names, refs,
+ * addresses and hashes don't break Arabic sentences.
+ *
+ * How the variables are found: the body is rendered a second time with every string value wrapped in private-use
+ * markers (BDI_* / LTR_*); escaping keeps them, and they become the tags. Values used in logic (role, via, reason,
+ * currency, doc) and numbers are not wrapped; links and helpers strip the markers.
  */
-export function emailHtml(text: string, locale: Locale = 'en', title = 'Bullizard') {
-  const dir = locale === 'ar' ? 'rtl' : 'ltr';
-  const body = escapeHtml(text)
-    .split('\n')
-    .map((l) => l.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" style="color:#2f6fed">$1</a>'))
-    .join('<br>');
+const BDI_OPEN = '';
+const BDI_CLOSE = '';
+const LTR_OPEN = '';
+const LTR_CLOSE = '';
+const MARKERS = /[-]/g;
+function unmark<T>(v: T): T {
+  return (typeof v === 'string' ? v.replace(MARKERS, '') : v) as T;
+}
+/** Kept as they are: used in comparisons, lookups, links or Intl, not shown as free text. */
+const LOGIC_KEYS = new Set(['role', 'via', 'reason', 'reason_code', 'currency', 'doc', 'protection', 'delivery_mode', 'outcome', 'status', 'path', 'url', 'for_you']);
+/** Shown left-to-right in the HTML part: references, IDs, addresses, hashes, codes, versions. */
+const LTR_KEY = /(^|_)(ref|id|tx|hash|address|code|number|version|ip|credit_note)$/;
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}T/;
+function markData(d: Data): Data {
+  const out: Data = {};
+  for (const [k, v] of Object.entries(d)) {
+    if (typeof v !== 'string' || LOGIC_KEYS.has(k) || v === '' || ISO_DATE.test(v) || /^-?\d+(\.\d+)?$/.test(v)) out[k] = v;
+    else out[k] = LTR_KEY.test(k) ? `${LTR_OPEN}${v}${LTR_CLOSE}` : `${BDI_OPEN}${v}${BDI_CLOSE}`;
+  }
+  return out;
+}
+
+const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const isolate = (escaped: string) => escaped.replaceAll(BDI_OPEN, '<bdi>').replaceAll(BDI_CLOSE, '</bdi>').replaceAll(LTR_OPEN, '<span dir="ltr">').replaceAll(LTR_CLOSE, '</span>');
+const GREEN = '#4bae24';
+const INK = '#0d131c';
+const FONT = 'system-ui, &quot;Segoe UI&quot;, Tahoma, Arial, sans-serif';
+const URL_RE = /https?:\/\/[^\s<]+/g;
+/** A body line that ends in a link: "Label: https://…" or just the URL. */
+const LINK_LINE = /^(.*?)[:：]?\s*(https?:\/\/\S+)\s*$/;
+
+function layoutFor(locale: Locale): EmailLayout {
+  return locale === 'en' ? EN_LAYOUT : PACKS[locale].layout;
+}
+export function greetingFor(locale: Locale, name?: string | null) {
+  const L = layoutFor(locale);
+  const n = name?.trim();
+  return n && n !== 'Deleted user' ? L.greeting.replace('{name}', n) : L.greetingNoName;
+}
+
+interface EmailParts {
+  locale: Locale;
+  title: string;
+  greeting: string;
+  /** Body text with markers (HTML pass); markers are stripped for the text part. */
+  body: string;
+  security: boolean;
+  manageUrl: string;
+  /** Shown large in its own LTR block (verification codes). */
+  code?: string;
+}
+
+/** The plain-text part: greeting, body (links stay "Label: URL"), sign-off, footer. */
+function emailText(p: EmailParts) {
+  const L = layoutFor(p.locale);
+  const footer = [L.why, L.safety, ...(p.security ? [] : [`${L.manage}: ${p.manageUrl}`]), L.legal];
+  return `${p.greeting}\n\n${unmark(p.body)}\n\n${L.signoff}\n\n${footer.join('\n')}`;
+}
+
+/** The HTML part (copy deck §9.7). */
+export function emailLayoutHtml(p: EmailParts) {
+  const L = layoutFor(p.locale);
+  const rtl = p.locale === 'ar';
+  const dir = rtl ? 'rtl' : 'ltr';
+  const lines = p.body.split('\n');
+  // The last line that ends in a link becomes the button.
+  let buttonAt = -1;
+  for (let i = lines.length - 1; i >= 0; i--) if (LINK_LINE.test(unmark(lines[i]!))) { buttonAt = i; break; }
+  let button = '';
+  if (buttonAt >= 0) {
+    const m = unmark(lines[buttonAt]!).match(LINK_LINE)!;
+    const label = m[1]!.trim() || L.button;
+    button = `<p style="margin:24px 0"><a href="${escapeHtml(m[2]!)}" style="display:inline-block;background:${GREEN};color:${INK};text-decoration:none;font-weight:600;padding:12px 22px;border-radius:8px;box-shadow:none">${escapeHtml(label)}</a></p>`;
+    lines.splice(buttonAt, 1);
+  }
+  const link = (url: string) => {
+    const href = unmark(url);
+    return `<a href="${escapeHtml(href)}" style="color:#2f8a1a"><span dir="ltr">${escapeHtml(href)}</span></a>`;
+  };
+  const paragraphs = lines
+    .join('\n')
+    .split(/\n{2,}/)
+    .map((para) => para.trim())
+    .filter(Boolean)
+    .map((para) => {
+      const parts: string[] = [];
+      let last = 0;
+      for (const m of para.matchAll(URL_RE)) {
+        parts.push(isolate(escapeHtml(para.slice(last, m.index))), link(m[0]));
+        last = m.index! + m[0].length;
+      }
+      parts.push(isolate(escapeHtml(para.slice(last))));
+      return `<p style="margin:0 0 16px">${parts.join('').replace(/\n/g, '<br>')}</p>`;
+    })
+    .join('');
+  const code = p.code
+    ? `<div dir="ltr" style="font:700 30px/1.2 ui-monospace,Menlo,Consolas,monospace;letter-spacing:6px;text-align:center;background:#f1f4ef;border-radius:8px;padding:16px;margin:8px 0 20px;color:${INK}">${escapeHtml(p.code)}</div>`
+    : '';
+  const footer = [escapeHtml(L.why), escapeHtml(L.safety), ...(p.security ? [] : [`<a href="${escapeHtml(p.manageUrl)}" style="color:#6b7686">${escapeHtml(L.manage)}</a>`]), escapeHtml(L.legal)].join('<br>');
   return (
-    `<!doctype html><html lang="${locale}" dir="${dir}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
-    `<title>${escapeHtml(title)}</title></head><body style="margin:0;padding:24px;background:#f5f7fa">` +
-    `<div dir="${dir}" style="font:15px/1.55 system-ui,sans-serif;color:#16202e;max-width:560px;margin:0 auto;background:#ffffff;padding:24px;border-radius:8px;text-align:${dir === 'rtl' ? 'right' : 'left'}">` +
-    `${body}</div></body></html>`
+    `<!doctype html><html lang="${p.locale}" dir="${dir}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
+    `<title>${escapeHtml(unmark(p.title))}</title></head><body style="margin:0;padding:24px;background:#f5f7fa">` +
+    `<div dir="${dir}" style="font-family:${FONT};font-size:15px;line-height:${rtl ? '1.7' : '1.55'};color:${INK};max-width:560px;margin:0 auto;background:#ffffff;padding:24px;border-radius:8px;text-align:${rtl ? 'right' : 'left'}">` +
+    `<p style="margin:0 0 16px">${isolate(escapeHtml(p.greeting))}</p>${code}${paragraphs}${button}` +
+    `<p style="margin:0 0 16px">${escapeHtml(L.signoff)}</p>` +
+    `<hr style="border:0;border-top:1px solid #e3e7ee;margin:24px 0 12px"><p style="margin:0;font-size:12px;line-height:1.6;color:#6b7686">${footer}</p>` +
+    `</div></body></html>`
   );
 }
 
-export function render(ctx: Ctx, name: TemplateName, data: Data, locale: Locale = 'en') {
+export function render(ctx: Ctx, name: TemplateName, data: Data, locale: Locale = 'en', opts: { name?: string | null } = {}) {
   const t = templateFor(name, locale);
-  const link = (path: string) => `${ctx.cfg.PUBLIC_WEB_URL}${path}`;
+  const link = (path: string) => `${ctx.cfg.PUBLIC_WEB_URL}${unmark(path)}`;
+  const subject = t.subject(data);
+  const base = { locale, title: subject, greeting: greetingFor(locale, opts.name), security: t.category === 'security', manageUrl: link('/account') };
+  const text = emailText({ ...base, body: t.body(data, link) });
+  let marked: string;
+  markAmounts = true;
+  try {
+    marked = t.body(markData(data), link);
+  } finally {
+    markAmounts = false;
+  }
+  const html = emailLayoutHtml({ ...base, body: marked });
+  return { subject, text, html, category: t.category };
+}
+
+/** Round 23f (§9.7): the verification-code email — subject with the code, the code large in its own LTR block. */
+export function renderCodeEmail(ctx: Ctx, code: string, minutes: number, locale: Locale = 'en', name?: string | null) {
   const pack = locale === 'en' ? null : PACKS[locale];
-  const text = `${t.body(data, link)}\n\n${pack?.signoff ?? '— Bullizard'}\n${pack?.manage ?? 'Manage emails'}: ${link('/account')}`;
-  const html = emailHtml(text, locale, t.subject(data));
-  return { subject: t.subject(data), text, html, category: t.category };
+  const subject = pack ? pack.verifySubject(code) : `Your Bullizard code: ${code}`;
+  const body = pack ? pack.verifyCode(code, minutes) : `Your code is ${code}. It works for ${enDuration(minutes)}. If you didn't ask for it, ignore this email.`;
+  const parts = { locale, title: subject, greeting: greetingFor(locale, name), body, security: true, manageUrl: `${ctx.cfg.PUBLIC_WEB_URL}/account`, code };
+  return { subject, text: emailText(parts), html: emailLayoutHtml(parts) };
 }
 
 const MAX_ATTEMPTS = 6;
@@ -562,7 +715,8 @@ export async function dispatchEmails(ctx: Ctx, limit = 50): Promise<number> {
         RETURNING n.id, n.template, n.data, n.attempts,
           COALESCE(n.to_email, (SELECT u.email FROM users u WHERE u.id = n.user_id)) AS email,
           (SELECT u.email_preferences FROM users u WHERE u.id = n.user_id) AS email_preferences,
-          (SELECT u.locale FROM users u WHERE u.id = n.user_id) AS locale`,
+          (SELECT u.locale FROM users u WHERE u.id = n.user_id) AS locale,
+          (SELECT u.display_name FROM users u WHERE u.id = n.user_id) AS display_name`,
       [limit],
     ),
   );
@@ -577,7 +731,7 @@ export async function dispatchEmails(ctx: Ctx, limit = 50): Promise<number> {
       continue;
     }
     try {
-      const msg = render(ctx, n.template as TemplateName, n.data, isLocale(n.locale) ? n.locale : 'en');
+      const msg = render(ctx, n.template as TemplateName, n.data, isLocale(n.locale) ? n.locale : 'en', { name: n.display_name });
       // The notification id is the idempotency key: a retry after a timeout is the same message, sent once.
       await ctx.messenger.send({ channel: 'email', to: n.email, subject: msg.subject, body: msg.text, html: msg.html, idempotencyKey: `notification-${n.id}` });
       await ctx.db.query(`UPDATE notifications SET status = 'sent', sent_at = now(), last_error = NULL WHERE id = $1`, [n.id]);

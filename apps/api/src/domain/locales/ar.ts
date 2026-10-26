@@ -1,13 +1,15 @@
-import type { LocalePack } from './types.js';
+import { arDuration, type LocalePack } from './types.js';
 
 const ar: LocalePack = {
-  signoff: '— فريق Bullizard',
-  manage: 'إدارة رسائل البريد',
-  verifyCode: (code, minutes) => `رمز التحقق الخاص بك هو ${code}. ينتهي خلال ${minutes} دقيقة.`,
+  layout: { greeting: "أهلًا {name}،", greetingNoName: "أهلًا،", signoff: "فريق Bullizard", why: "تصلك هذه الرسالة لأن لديك حسابًا في Bullizard.", safety: "لن نطلب منك كلمة المرور أو الرموز عبر البريد أبدًا.", manage: "إعدادات البريد", legal: "Bullizard · للبالغين 18+ فقط · غير تابع لأي ناشر ألعاب", button: "افتح Bullizard" },
+  verifySubject: (code) => `رمز Bullizard الخاص بك: ${code}`,
+  verifyCode: (code, minutes) => `رمزك هو ${code}، وهو صالح لمدة ${arDuration(minutes)}. إن لم تطلبه فتجاهل هذه الرسالة.`,
+  duration: (minutes) => arDuration(minutes),
+  withdrawalReasons: { unsupported_coin: "السحب بعملة USDT فقط. أضف عنوان USDT (TRC-20 أو BEP-20) وحاول مجددًا.", not_approved: "لم تتم الموافقة عليه. تواصل مع الدعم إن احتجت التفاصيل.", provider_failed: "رفضته شبكة الدفع. راجع عنوانك وحاول مجددًا." },
   templates: {
     order_paid: {
       subject: (d) => `وصل الدفع. ${d.order_ref ?? d.title} عند البائع`,
-      body: (d, link, h) => `استلمنا ${h.money(d.amount_cents, d.currency)} مقابل ${d.title} وهو محجوز لدينا. يسلّم البائع إلى ${d.character ?? 'شخصيتك'} داخل اللعبة ويرفع الفيديو، ولا يصله شيء قبل مراجعة هذا الفيديو.\n\nتابع طلبك: ${link(`/orders/${d.order_id}`)}\n\nالشروط (الإصدار ${d.tos_version ?? ''}) المقبولة لهذا الطلب: ${link('/terms')}`,
+      body: (d, link, h) => `استلمنا ${h.money(d.amount_cents, d.currency)} مقابل ${d.title} وهو محجوز لدينا. يسلّم البائع إلى ${d.character ?? 'شخصيتك'} داخل اللعبة ويرفع الفيديو، ولا يصله شيء قبل مراجعة هذا الفيديو.\n\nتابع طلبك: ${link(`/orders/${d.order_id}`)}\n\n${d.tos_version ? `الشروط (الإصدار ${d.tos_version}) المقبولة لهذا الطلب` : 'الشروط المقبولة لهذا الطلب'}: ${link('/terms')}`,
     },
     welcome: {
       subject: () => 'حسابك في Bullizard جاهز',
@@ -15,7 +17,7 @@ const ar: LocalePack = {
     },
     seller_new_order: {
       subject: (d) => `طلب جديد: سلّم إلى ${d.character ?? 'المشتري'}`,
-      body: (d, link) => `تم دفع ${d.title} ×${d.quantity} وهو بانتظارك. سلّم إلى ${d.character ?? 'المشتري'} داخل اللعبة، وصوّر التريد بحيث يظهر الاسم والكمية، ثم ارفعه على الطلب. تستلم أموالك عند تأكيد الطلب.\n\nافتح الطلب: ${link(`/orders/${d.order_id}`)}`,
+      body: (d, link) => `تم دفع ${d.title}${d.quantity ? ` ×${d.quantity}` : ''} وهو بانتظارك. سلّم إلى ${d.character ?? 'المشتري'} داخل اللعبة، وصوّر التريد بحيث يظهر الاسم والكمية، ثم ارفعه على الطلب. تستلم أموالك عند تأكيد الطلب.\n\nافتح الطلب: ${link(`/orders/${d.order_id}`)}`,
     },
     order_delivered: {
       subject: () => 'تم التسليم. افحص حقيبتك',
@@ -116,8 +118,8 @@ const ar: LocalePack = {
     },
     password_reset: {
       subject: () => 'إعادة تعيين كلمة مرور Bullizard',
-      body: (d) =>
-        `طلب أحدهم إعادة تعيين كلمة مرور هذا الحساب${d.ip ? ` (من IP ${d.ip})` : ''}. استخدم هذا الرابط خلال ${d.minutes} دقيقة:\n\n${d.url}\n\n` +
+      body: (d, _link, h) =>
+        `طلب أحدهم إعادة تعيين كلمة مرور هذا الحساب${d.ip ? ` (من IP ${d.ip})` : ''}. استخدم هذا الرابط خلال ${h.duration(Number(d.minutes))}:\n\n${d.url}\n\n` +
         `إن لم تطلب ذلك فتجاهل هذه الرسالة؛ كلمة مرورك لن تتغير.`,
     },
     new_review: {
@@ -142,8 +144,8 @@ const ar: LocalePack = {
         `بعد مراجعة الطلب «${d.title}» أعدنا المبلغ للمشتري (${d.reason}). خُصمت حصتك، ${h.money(d.amount_cents, d.currency)}، من رصيدك؛ وإن صار رصيدك أقل من صفر تُسترد من مبيعاتك القادمة. أُعيدت العمولة أيضًا (إشعار دائن ${d.credit_note}).\n\n${link(`/orders/${d.order_id}`)}`,
     },
     withdrawal_failed: {
-      subject: (d, h) => `فشل سحب ${h.money(d.amount_cents, d.currency)}`,
-      body: (d, link, h) => `تعذّر إرسال سحب ${h.money(d.amount_cents, d.currency)} (${d.reason}). عاد المبلغ إلى رصيدك. راجع حساب السحب: ${link('/sell')}`,
+      subject: (d, h) => `لم يُرسَل سحب ${h.money(d.amount_cents, d.currency)}`,
+      body: (d, link, h) => `تعذّر إرسال سحبك بقيمة ${h.money(d.amount_cents, d.currency)}. ${h.reason(d.reason)} عاد المبلغ إلى رصيدك.\n\nافتح المحفظة: ${link('/sell/money')}`,
     },
     invoice_issued: {
       subject: (d) => `فاتورة العمولة ${d.number}`,
@@ -222,8 +224,9 @@ const ar: LocalePack = {
       body: (d, link) => `لم يصلنا رد بخصوص «${d.subject}» منذ ${d.days} أيام، لذا علّمناه كمحلول. رُدّ في أي وقت لإعادة فتحه.\n\n${link(`/support/${d.ticket_id}`)}`,
     },
     account_locked: {
-      subject: () => 'تم إيقاف تسجيل الدخول مؤقتًا بعد محاولات فاشلة',
-      body: (d, link) => `حدثت ${d.failures} محاولات دخول فاشلة إلى حسابك، لذا أُوقف تسجيل الدخول لمدة ${d.minutes} دقيقة. إن لم تكن أنت فحسابك آمن، لكن ننصح بتفعيل المصادقة الثنائية. يمكنك أيضًا إعادة تعيين كلمة المرور الآن: ${link('/forgot-password')}`,
+      subject: () => 'أوقفنا تسجيل الدخول مؤقتًا بعد محاولات فاشلة',
+      body: (d, link, h) =>
+        `حاول أحدهم الدخول إلى حسابك وأخطأ في كلمة المرور، وعدد المحاولات: ${d.failures}، لذا أوقفنا تسجيل الدخول لمدة ${h.duration(Number(d.minutes))}. إن كنت أنت فانتظر أو أعد تعيين كلمة المرور. وإن لم تكن أنت فحسابك ما زال آمنًا، وفعّل المصادقة الثنائية ليبقى كذلك.\n\nإعادة تعيين كلمة المرور: ${link('/forgot-password')}`,
     },
   },
 };

@@ -222,5 +222,7 @@ const m: Messages = {
   'an.col.views': 'المشاهدات',
   'an.col.conv': 'التحويل',
   'an.footnote': 'تُحسب المشاهدة مرة لكل زائر وعرض في الساعة ولا تشمل زياراتك. نسبة التحويل هي الطلبات مقسومة على المشاهدات.',
+  "money.payoutAddress.coinHint": "USDT فقط، على شبكة TRC-20 أو BEP-20.",
+  "money.payoutAddress.cleared": "أصبح السحب بعملة USDT فقط، لذا أزلنا عنوان السحب القديم. أضف عنوان USDT لتسحب.",
 };
 export default m;

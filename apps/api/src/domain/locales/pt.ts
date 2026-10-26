@@ -1,10 +1,14 @@
-import type { LocalePack } from './types.js';
+import { simpleDuration, type LocalePack } from './types.js';
+
+const U = { minute: 'minuto', minutes: 'minutos', hour: 'hora', hours: 'horas' };
 
 /** Português (Brasil). */
 const pt: LocalePack = {
-  signoff: '— Equipe Bullizard',
-  manage: 'Gerenciar e-mails',
-  verifyCode: (code, minutes) => `Seu código de verificação é ${code}. Ele expira em ${minutes} minutos.`,
+  layout: { greeting: "Olá, {name},", greetingNoName: "Olá,", signoff: "Equipe Bullizard", why: "Você recebe este e-mail porque tem uma conta na Bullizard.", safety: "Nunca pedimos sua senha ou seus códigos por e-mail.", manage: "Configurações de e-mail", legal: "Bullizard · Somente maiores de 18 · Sem vínculo com editoras de jogos", button: "Abrir a Bullizard" },
+  verifySubject: (code) => `Seu código da Bullizard: ${code}`,
+  verifyCode: (code, minutes) => `Seu código é ${code}. Ele vale por ${simpleDuration(minutes, U)}. Se você não pediu, ignore este e-mail.`,
+  duration: (minutes) => simpleDuration(minutes, U),
+  withdrawalReasons: { unsupported_coin: "Os saques são enviados só em USDT. Adicione um endereço USDT (TRC-20 ou BEP-20) e tente de novo.", not_approved: "Ele não foi aprovado. Fale com o suporte se precisar dos detalhes.", provider_failed: "A rede de pagamento recusou. Confira seu endereço e tente de novo." },
   templates: {
     protection_ending: {
       subject: (d) => `Faltam 24 horas para conferir ${d.title}`,
@@ -71,8 +75,10 @@ const pt: LocalePack = {
         `Após analisar o pedido “${d.title}”, reembolsamos o comprador (${d.reason}). Sua parte, ${h.money(d.amount_cents, d.currency)}, foi descontada do seu saldo; se ele ficar negativo, o valor é recuperado das próximas vendas. A comissão também foi devolvida (nota de crédito ${d.credit_note}).\n\n${link(`/orders/${d.order_id}`)}`,
     },
     withdrawal_failed: {
-      subject: (d, h) => `Falha no saque de ${h.money(d.amount_cents, d.currency)}`,
-      body: (d, link, h) => `Seu saque de ${h.money(d.amount_cents, d.currency)} não pôde ser enviado (${d.reason}). O dinheiro voltou para o seu saldo. Confira sua conta de recebimento: ${link('/sell')}`,
+      subject: (d, h) => `Saque de ${h.money(d.amount_cents, d.currency)} não enviado`,
+      body: (d, link, h) => `Não conseguimos enviar seu saque de ${h.money(d.amount_cents, d.currency)}. ${h.reason(d.reason)} O dinheiro voltou para o seu saldo.
+
+Abrir carteira: ${link('/sell/money')}`,
     },
     invoice_issued: {
       subject: (d) => `Sua fatura de comissão ${d.number}`,
@@ -152,7 +158,9 @@ const pt: LocalePack = {
     },
     account_locked: {
       subject: () => 'Login pausado após tentativas malsucedidas',
-      body: (d, link) => `Houve ${d.failures} tentativas de login malsucedidas na sua conta, então o acesso está pausado por ${d.minutes} minutos. Se não foi você, sua conta está segura, mas recomendamos ativar a verificação em duas etapas. Você também pode redefinir a senha agora: ${link('/forgot-password')}`,
+      body: (d, link, h) => `Alguém tentou entrar na sua conta e errou a senha ${d.failures} vezes, então o login está pausado por ${h.duration(Number(d.minutes))}. Se foi você, espere ou redefina sua senha. Se não foi, sua conta continua segura. Ative a verificação em duas etapas para continuar assim.
+
+Redefinir senha: ${link('/forgot-password')}`,
     },
   },
 };

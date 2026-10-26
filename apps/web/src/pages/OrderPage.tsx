@@ -207,6 +207,7 @@ export function OrderPage() {
   const [payload, setPayload] = useState('');
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [delivering, setDelivering] = useState(false);
+  const [uploadState, setUploadState] = useState<string | null>(null); // Round 23f: "Uploading 42%" / "Checking the file…"
   const [reason, setReason] = useState('');
   const [category, setCategory] = useState('not_delivered');
   const [statement, setStatement] = useState('');
@@ -505,7 +506,8 @@ export function OrderPage() {
                   setDelivering(true);
                   setError('');
                   try {
-                    const proof = proofFile ? await uploadChatFile<{ id: string }>(order.room_id, proofFile) : null;
+                    const proof = proofFile ? await uploadChatFile<{ id: string }>(order.room_id, proofFile, (p) => setUploadState(p.phase === 'uploading' ? t('upload.uploading', { pct: p.pct }) : t('upload.scanning'))) : null;
+                    setUploadState(null);
                     await api(`/orders/${order.id}/deliver`, { body: { payload: payload || undefined, ...(proof ? { proofAttachmentId: proof.id } : {}) } });
                     setProofFile(null);
                     await load();
@@ -513,10 +515,11 @@ export function OrderPage() {
                     setError(e.message);
                   } finally {
                     setDelivering(false);
+                    setUploadState(null);
                   }
                 }}
               >
-                {delivering ? t('order.delivering') : t('order.markDelivered')}
+                {delivering ? (uploadState ?? t('order.delivering')) : t('order.markDelivered')}
               </button>
             </div>
           )}

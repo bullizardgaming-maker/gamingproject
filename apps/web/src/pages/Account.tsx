@@ -102,8 +102,8 @@ export function Login() {
         {mode === 'register' && (
           <label className="small" style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 13 }}>
             {/* Newsletter consent: optional and unticked (Round 23a). */}
-            <input name="newsOptIn" type="checkbox" value="true" defaultChecked={false} style={{ marginTop: 3 }} />
-            <span>{t('auth.newsOptIn')}</span>
+            <input name="newsOptIn" type="checkbox" value="true" defaultChecked={false} style={{ marginTop: 3 }} aria-describedby="news-opt-in-hint" />
+            <span>{t('auth.newsOptIn')} <span id="news-opt-in-hint" className="muted">{t('auth.newsOptIn.hint')}</span></span>
           </label>
         )}
         <Turnstile action={mode === 'login' ? 'signin' : 'signup'} onToken={setCaptchaToken} resetKey={captchaReset} />
@@ -414,7 +414,7 @@ function Newsletter() {
       <div>
         <label>
           <input type="checkbox" checked={on} onChange={(e) => toggle(e.target.checked)} />
-          <span>{t('auth.newsOptIn')}</span>
+          <span>{t('account.newsletter.toggle')}</span>
         </label>
       </div>
       {saved && <div className="ok small" role="status">{t('account.newsletter.saved')}</div>}
@@ -471,7 +471,7 @@ export function ForgotPassword() {
     <form className="card stack" style={{ maxWidth: 440, margin: '24px auto' }} onSubmit={submit}>
       <h2>Reset your password</h2>
       {sent ? (
-        <div className="ok">If an account uses that email, a reset link is on its way. It works for 30 minutes.</div>
+        <div className="ok" role="status">{t('auth.resetSent')}</div>
       ) : (
         <>
           <label className="field">Email<input name="email" type="email" required autoComplete="email" /></label>
@@ -538,6 +538,7 @@ function PrivacyControls() {
   return (
     <div className="card stack">
       <h3>{t('account.data.title')}</h3>
+      <p className="small muted" style={{ margin: 0 }}>{t('account.data.before')}</p>
       <div className="row">
         <button className="btn ghost" onClick={download}>{t('account.data.download')}</button>
         <button className="btn dispute" onClick={() => setOpen(!open)}>{t('account.data.delete')}</button>

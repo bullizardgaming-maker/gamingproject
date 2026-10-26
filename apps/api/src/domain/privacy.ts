@@ -70,7 +70,7 @@ async function assertNoMoneyLeft(q: Queryable, userId: string) {
   );
   const seller = money.filter((m) => m.kind === 'seller_available').map((m) => Number(m.cents));
   if (seller.some((b) => b > 0)) throw new AppError(409, 'balance_remaining', 'Withdraw your remaining balance first');
-  if (seller.some((b) => b < 0)) throw new AppError(409, 'balance_owed', 'Your balance is negative after a chargeback. Contact support to settle it first.');
+  if (seller.some((b) => b < 0)) throw new AppError(409, 'balance_owed', 'Your balance is below zero. Contact support to settle it before deleting your account.');
   if (money.some((m) => m.kind === 'user_credit' && Number(m.cents) > 0)) throw new AppError(409, 'credit_remaining', 'Spend your store credit first, or ask support to pay it out');
 }
 

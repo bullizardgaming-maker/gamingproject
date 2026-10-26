@@ -199,5 +199,7 @@ const m: Messages = {
   'an.col.views': 'Aufrufe',
   'an.col.conv': 'Konv.',
   'an.footnote': 'Jeder Besucher zählt einmal pro Angebot und Stunde, deine eigenen Besuche nie. Konversion = Bestellungen geteilt durch Aufrufe.',
+  "money.payoutAddress.coinHint": "Nur USDT, über TRC-20 oder BEP-20.",
+  "money.payoutAddress.cleared": "Auszahlungen laufen jetzt nur noch in USDT, deshalb wurde deine alte Auszahlungsadresse entfernt. Füge eine USDT-Adresse hinzu, um auszuzahlen.",
 };
 export default m;

@@ -1,9 +1,13 @@
-import type { LocalePack } from './types.js';
+import { simpleDuration, type LocalePack } from './types.js';
+
+const U = { minute: 'minute', minutes: 'minutes', hour: 'heure', hours: 'heures' };
 
 const fr: LocalePack = {
-  signoff: '— L’équipe Bullizard',
-  manage: 'Gérer les e-mails',
-  verifyCode: (code, minutes) => `Votre code de vérification est ${code}. Il expire dans ${minutes} minutes.`,
+  layout: { greeting: "Bonjour {name},", greetingNoName: "Bonjour,", signoff: "L’équipe Bullizard", why: "Vous recevez cet e-mail parce que vous avez un compte Bullizard.", safety: "Nous ne vous demanderons jamais votre mot de passe ni vos codes par e-mail.", manage: "Paramètres e-mail", legal: "Bullizard · Réservé aux 18 ans et plus · Sans lien avec un éditeur de jeux", button: "Ouvrir Bullizard" },
+  verifySubject: (code) => `Votre code Bullizard : ${code}`,
+  verifyCode: (code, minutes) => `Votre code est ${code}. Il est valable ${simpleDuration(minutes, U)}. Si vous ne l’avez pas demandé, ignorez cet e-mail.`,
+  duration: (minutes) => simpleDuration(minutes, U),
+  withdrawalReasons: { unsupported_coin: "Les paiements partent uniquement en USDT. Ajoutez une adresse USDT (TRC-20 ou BEP-20) et réessayez.", not_approved: "Il n’a pas été approuvé. Contactez le support si vous voulez les détails.", provider_failed: "Le réseau de paiement l’a refusé. Vérifiez votre adresse et réessayez." },
   templates: {
     protection_ending: {
       subject: (d) => `Plus que 24 heures pour vérifier ${d.title}`,
@@ -70,8 +74,10 @@ const fr: LocalePack = {
         `Après examen de la commande « ${d.title} », nous avons remboursé l’acheteur (${d.reason}). Votre part, ${h.money(d.amount_cents, d.currency)}, a été prélevée sur votre solde ; s’il passe sous zéro, elle sera récupérée sur vos prochaines ventes. La commission a aussi été rendue (avoir ${d.credit_note}).\n\n${link(`/orders/${d.order_id}`)}`,
     },
     withdrawal_failed: {
-      subject: (d, h) => `Échec du versement de ${h.money(d.amount_cents, d.currency)}`,
-      body: (d, link, h) => `Votre versement de ${h.money(d.amount_cents, d.currency)} n’a pas pu être envoyé (${d.reason}). L’argent est revenu sur votre solde. Vérifiez votre compte de versement : ${link('/sell')}`,
+      subject: (d, h) => `Retrait de ${h.money(d.amount_cents, d.currency)} non envoyé`,
+      body: (d, link, h) => `Nous n’avons pas pu envoyer votre retrait de ${h.money(d.amount_cents, d.currency)}. ${h.reason(d.reason)} L’argent est revenu sur votre solde.
+
+Ouvrir le portefeuille : ${link('/sell/money')}`,
     },
     invoice_issued: {
       subject: (d) => `Votre facture de commission ${d.number}`,
@@ -150,8 +156,10 @@ const fr: LocalePack = {
       body: (d, link) => `Sans nouvelles de votre part concernant « ${d.subject} » depuis ${d.days} jours, nous l’avons marquée comme résolue. Répondez à tout moment pour la rouvrir.\n\n${link(`/support/${d.ticket_id}`)}`,
     },
     account_locked: {
-      subject: () => 'Connexion suspendue après plusieurs échecs',
-      body: (d, link) => `${d.failures} tentatives de connexion ont échoué sur votre compte : la connexion est suspendue pendant ${d.minutes} minutes. Si ce n’était pas vous, votre compte est en sécurité, mais pensez à activer la double authentification. Vous pouvez aussi réinitialiser votre mot de passe : ${link('/forgot-password')}`,
+      subject: () => 'Connexion suspendue après des tentatives échouées',
+      body: (d, link, h) => `Quelqu’un a essayé de se connecter à votre compte et s’est trompé de mot de passe ${d.failures} fois : la connexion est suspendue pendant ${h.duration(Number(d.minutes))}. Si c’était vous, patientez ou réinitialisez votre mot de passe. Sinon, votre compte reste en sécurité. Activez la double authentification pour qu’il le reste.
+
+Réinitialiser le mot de passe : ${link('/forgot-password')}`,
     },
   },
 };

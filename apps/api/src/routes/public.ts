@@ -12,7 +12,7 @@ import { beginSetup, disable, enable, remainingRecoveryCodes } from '../domain/m
 import { assertNotLocked, clearFailedLogins, noteFailedLogin, changePassword, requestPasswordReset, resetPassword, completeMfaLogin, confirmVerificationCode, login, register, sendVerificationCode, startKyc } from '../domain/users.js';
 import { REFRESH_TTL_DAYS, issueAccessToken, listSessions, refreshSession, revokeByRefreshToken, revokeFamily, revokeOtherSessions, revokeSessionById } from '../domain/sessions.js';
 import { enqueueEmail, getPreferences, setPreferences } from '../domain/notifications.js';
-import { AppError, badRequest, notFound, unauthorized } from '../lib/errors.js';
+import { AppError, badRequest, notFound } from '../lib/errors.js';
 import { safeEqual, sha256 } from '../lib/crypto.js';
 import { ATTR_KEY, ATTR_VALUE_MAX, CATEGORY_DEFAULTS, GAME_SETS, attributesFor, handoverFieldFor, LEAGUES } from '../domain/attributeSets.js';
 import { listLeagues } from '../domain/leagues.js';
@@ -127,7 +127,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/auth/refresh', { config: { rateLimit: { max: ctx.cfg.NODE_ENV === 'test' ? 10_000 : 60, timeWindow: '1 minute' } } }, async (req, reply) => {
     const { refreshToken } = z.object({ refreshToken: z.string().optional() }).parse(req.body ?? {});
     const token = refreshToken ?? req.cookies[COOKIE];
-    if (!token) throw unauthorized('Sign in again');
+    if (!token) throw new AppError(401, 'session_expired', 'You were signed out. Sign in again.');
     try {
       const s = await refreshSession(ctx, token, meta(req));
       return deliver(req, reply, { token: s.accessToken, refreshToken: s.refreshToken, expiresIn: s.expiresIn });

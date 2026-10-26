@@ -46,9 +46,11 @@ export interface User {
  */
 export function errorMessage(status: number, code: string, serverMessage?: string): string {
   if (code === 'network') return t('err.network');
-  if (code === 'too_many_requests' || status === 429) return t('err.too_many');
+  // Round 23f (copy deck §9.2): the code's own text first, so account_locked (429) and scanner_unavailable (503) say
+  // what happened instead of "too many tries" or the generic error.
   const key = `err.${code}`;
   if (code && key in en) return t(key as MessageKey);
+  if (code === 'too_many_requests' || status === 429) return t('err.too_many');
   if (status >= 500 || status === 0 || !serverMessage || code === 'internal') return t('err.generic');
   return serverMessage;
 }
@@ -56,7 +58,7 @@ export function errorMessage(status: number, code: string, serverMessage?: strin
 export class ApiError extends Error {
   /** The API's own message, before localisation. */
   public serverMessage: string;
-  constructor(public status: number, public code: string, message: string) {
+  constructor(public status: number, public code: string, message: string, public details?: any) {
     super(errorMessage(status, code, message));
     this.serverMessage = message;
   }
@@ -204,7 +206,7 @@ export async function api<T = any>(path: string, init: { method?: string; body?:
     const r = await demoFetch(method, path, init.body, session.token);
     if (r.status === 204) return undefined as T;
     const d = r.data as any;
-    if (r.status >= 400) throw new ApiError(r.status, d.error?.code ?? 'error', d.error?.message ?? '');
+    if (r.status >= 400) throw new ApiError(r.status, d.error?.code ?? 'error', d.error?.message ?? '', d.error?.details);
     return d as T;
   }
   const res = await fetch(`${BASE}/v1${path}`, {
@@ -221,13 +223,39 @@ export async function api<T = any>(path: string, init: { method?: string; body?:
     if (res.status === 401 && !retried && session.token && !path.startsWith('/auth/') && (await refreshAccessToken())) {
       return api<T>(path, init, true);
     }
-    throw new ApiError(res.status, data.error?.code ?? 'error', data.error?.message ?? '');
+    throw new ApiError(res.status, data.error?.code ?? 'error', data.error?.message ?? '', data.error?.details);
   }
   return data as T;
 }
 
 /** Upload a file as the raw request body (images); demo mode stores it as a data: URL instead. */
-export async function apiUpload<T = any>(path: string, file: File): Promise<T> {
+/** Round 23f (copy deck §9.3): what an upload is doing, for "Uploading 42%" / "Checking the file…". */
+export type UploadProgress = { phase: 'uploading'; pct: number } | { phase: 'scanning' };
+
+/** A request whose upload progress can be watched (fetch cannot report it). */
+function xhrSend(method: string, url: string, headers: Record<string, string>, body: Blob, onProgress?: (p: UploadProgress) => void, withCredentials = true) {
+  return new Promise<{ status: number; data: any }>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(method, url);
+    xhr.withCredentials = withCredentials;
+    for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
+    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.({ phase: 'uploading', pct: Math.min(100, Math.round((e.loaded / e.total) * 100)) });
+    xhr.upload.onload = () => onProgress?.({ phase: 'scanning' }); // every byte sent: the server scans it now
+    xhr.onload = () => {
+      let data: any = {};
+      try {
+        data = JSON.parse(xhr.responseText || '{}');
+      } catch {
+        /* not JSON */
+      }
+      resolve({ status: xhr.status, data });
+    };
+    xhr.onerror = () => reject(new ApiError(0, 'network', 'Network request failed'));
+    xhr.send(body);
+  });
+}
+
+export async function apiUpload<T = any>(path: string, file: File, onProgress?: (p: UploadProgress) => void): Promise<T> {
   if (DEMO) {
     const dataUrl = await new Promise<string>((resolve, reject) => {
       const r = new FileReader();
@@ -239,11 +267,16 @@ export async function apiUpload<T = any>(path: string, file: File): Promise<T> {
   }
   const headers: Record<string, string> = { 'Content-Type': file.type || 'application/octet-stream', 'X-Device-Fingerprint': deviceFingerprint() };
   if (session.token) headers.Authorization = `Bearer ${session.token}`;
+  if (onProgress) {
+    const r = await xhrSend('POST', `${BASE}/v1${path}`, headers, file, onProgress);
+    if (r.status < 200 || r.status >= 300) throw new ApiError(r.status, r.data.error?.code ?? 'error', r.data.error?.message ?? '', r.data.error?.details);
+    return r.data as T;
+  }
   const res = await fetch(`${BASE}/v1${path}`, { method: 'POST', headers, credentials: 'include', body: file }).catch(() => {
     throw new ApiError(0, 'network', 'Network request failed');
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(res.status, data.error?.code ?? 'error', data.error?.message ?? '');
+  if (!res.ok) throw new ApiError(res.status, data.error?.code ?? 'error', data.error?.message ?? '', data.error?.details);
   return data as T;
 }
 
@@ -255,13 +288,14 @@ export const MAX_VIDEO_BYTES = 95 * 1024 * 1024;
  * PUT straight to object storage with a signed URL (when the API has one) and then confirmed, so it never crosses
  * Cloudflare. Without object storage a larger video gets the translated size message before anything is sent.
  */
-export async function uploadChatFile<T = any>(roomId: string, file: File): Promise<T> {
+export async function uploadChatFile<T = any>(roomId: string, file: File, onProgress?: (p: UploadProgress) => void): Promise<T> {
   const isVideo = file.type.startsWith('video/');
-  const tooLarge = () => new ApiError(413, 'file_too_large', t('upload.videoTooLarge'));
+  // The size message carries the API's limit (95 MB through the API, 100 MB direct) — copy deck §9.3.
+  const tooLarge = (maxMb = MAX_VIDEO_BYTES / 1_048_576) => Object.assign(new ApiError(413, 'file_too_large', ''), { message: t('upload.videoTooLarge', { maxMb }) });
   try {
-    if (!isVideo || file.size <= MAX_VIDEO_BYTES) return await apiUpload<T>(`/chat/rooms/${roomId}/attachments`, file);
+    if (!isVideo || file.size <= MAX_VIDEO_BYTES) return await apiUpload<T>(`/chat/rooms/${roomId}/attachments`, file, onProgress);
   } catch (err) {
-    if (isVideo && !DEMO && err instanceof ApiError && err.code === 'file_too_large') throw tooLarge();
+    if (isVideo && !DEMO && err instanceof ApiError && err.code === 'file_too_large') throw tooLarge(err.details?.maxMb);
     throw err;
   }
   if (DEMO) throw tooLarge();
@@ -269,11 +303,12 @@ export async function uploadChatFile<T = any>(roomId: string, file: File): Promi
   try {
     start = await api(`/chat/rooms/${roomId}/attachments/direct`, { body: { fileName: file.name, contentType: file.type === 'video/webm' ? 'video/webm' : 'video/mp4', bytes: file.size } });
   } catch (err) {
-    if (err instanceof ApiError && (err.code === 'direct_upload_unavailable' || err.code === 'file_too_large')) throw tooLarge();
+    if (err instanceof ApiError && (err.code === 'direct_upload_unavailable' || err.code === 'file_too_large')) throw tooLarge(err.details?.maxMb);
     throw err;
   }
-  const put = await fetch(start.url, { method: start.method, headers: start.headers, body: file }).catch(() => null);
-  if (!put?.ok) throw new ApiError(put?.status ?? 0, 'network', 'Upload failed');
+  const put = await xhrSend(start.method, start.url, start.headers, file, onProgress, false).catch(() => null);
+  if (!put || put.status < 200 || put.status >= 300) throw new ApiError(put?.status ?? 0, 'network', 'Upload failed');
+  onProgress?.({ phase: 'scanning' });
   return api<T>(`/chat/attachments/${start.id}/complete`, { body: {} });
 }
 
@@ -393,7 +428,7 @@ export async function apiBlob(path: string): Promise<Blob> {
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, data.error?.code ?? 'error', data.error?.message ?? '');
+    throw new ApiError(res.status, data.error?.code ?? 'error', data.error?.message ?? '', data.error?.details);
   }
   return res.blob();
 }
