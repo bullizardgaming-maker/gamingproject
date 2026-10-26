@@ -209,6 +209,7 @@ export async function applyOffplatformAction(s: TxScope, userId: string, roomId:
     await s.tx.query(`UPDATE sessions SET revoked_at = now(), revoke_reason = 'banned' WHERE user_id = $1 AND revoked_at IS NULL`, [userId]);
   } else {
     await s.tx.query(`UPDATE users SET status = 'suspended', suspension_reason = 'off_platform_contact', suspended_until = now() + make_interval(days => $2) WHERE id = $1 AND status <> 'banned'`, [userId, SUSPENSION_DAYS]);
+    await s.tx.query(`UPDATE sessions SET revoked_at = now(), revoke_reason = 'suspended' WHERE user_id = $1 AND revoked_at IS NULL`, [userId]); // Round 23e: at once
   }
   await appendMessage(s, roomId, null, 'warning', act === 'ban'
     ? 'This account has been banned for trying to move the deal outside Bullizard. Do not continue this trade anywhere else; staff will review the case.'

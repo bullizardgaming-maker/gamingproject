@@ -8,6 +8,7 @@ import { useSession } from '../session';
 import { clearCart, removeFromCart, setQuantity, useCart } from '@/lib/cart';
 import { unitPriceFor } from '@/lib/tiers';
 import { usePageMeta } from '@/lib/seo';
+import { useTermsVersion } from '@/lib/terms';
 import type { Offer } from './Market';
 import { t } from '../i18n';
 
@@ -21,6 +22,7 @@ export function CartPage() {
   const [offers, setOffers] = useState<Record<string, Offer | null>>({});
   const [names, setNames] = useState<Record<string, { value: string; ok: boolean }>>({});
   const [busy, setBusy] = useState(false);
+  const termsVersion = useTermsVersion(); // Round 23e: the version loaded with the page goes with the order
   const [error, setError] = useState('');
 
   const ids = items.map((i) => i.offerId).join(',');
@@ -56,9 +58,9 @@ export function CartPage() {
     setBusy(true);
     setError('');
     try {
-      const terms = await api<{ version: string }>('/legal/terms').catch(() => null);
+      if (!termsVersion) throw Object.assign(new Error(t('legal.reloadTerms')), { code: 'terms_stale' });
       const res = await api<{ checkoutUrl: string | null }>('/orders/cart', {
-        body: { items: payable.map((l) => ({ offerId: l.offerId, quantity: l.quantity, ...(needsName(l) ? { characterName: names[l.offerId]!.value.trim() } : {}) })), acceptTos: true, currency: [...currencies][0], useCredit: true, ...(terms ? { tosVersion: terms.version } : {}) },
+        body: { items: payable.map((l) => ({ offerId: l.offerId, quantity: l.quantity, ...(needsName(l) ? { characterName: names[l.offerId]!.value.trim() } : {}) })), acceptTos: true, currency: [...currencies][0], useCredit: true, tosVersion: termsVersion },
         headers: { 'Idempotency-Key': `cart:${payable.map((l) => `${l.offerId}x${l.quantity}`).join(',')}:${Math.floor(Date.now() / 60_000)}` },
       });
       for (const l of payable) removeFromCart(l.offerId);

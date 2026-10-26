@@ -12,8 +12,13 @@ import { toCsv } from './exports.js';
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
 export async function setNewsOptIn(q: Queryable, userId: string, optIn: boolean) {
-  await q.query(`UPDATE users SET news_opt_in = $2, news_opt_in_at = now(), news_opt_out_at = CASE WHEN $2 THEN news_opt_out_at ELSE now() END WHERE id = $1 AND news_opt_in IS DISTINCT FROM $2`, [userId, optIn]);
-  return one<{ news_opt_in: boolean; news_opt_in_at: string | null }>(q, `SELECT news_opt_in, news_opt_in_at FROM users WHERE id = $1`, [userId]);
+  // Round 23e (item 8): opting out keeps the consent time (evidence of what was agreed and when); the opt-out has its own.
+  await q.query(
+    `UPDATE users SET news_opt_in = $2, news_opt_in_at = CASE WHEN $2 THEN now() ELSE news_opt_in_at END, news_opt_out_at = CASE WHEN $2 THEN news_opt_out_at ELSE now() END
+      WHERE id = $1 AND news_opt_in IS DISTINCT FROM $2`,
+    [userId, optIn],
+  );
+  return one<{ news_opt_in: boolean; news_opt_in_at: string | null; news_opt_out_at: string | null }>(q, `SELECT news_opt_in, news_opt_in_at, news_opt_out_at FROM users WHERE id = $1`, [userId]);
 }
 
 

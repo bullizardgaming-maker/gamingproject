@@ -14,7 +14,7 @@ State of the project for whoever picks it up next (a person or another Claude se
 
 | Path | What |
 |---|---|
-| `apps/api` | Fastify 5 + Postgres API and worker. Migrations in `migrations/` (latest 074), business logic in `src/domain/`, routes in `src/routes/`, providers (payments, KYC, email, Steam/Riot…) in `src/providers/` |
+| `apps/api` | Fastify 5 + Postgres API and worker. Migrations in `migrations/` (latest 076), business logic in `src/domain/`, routes in `src/routes/`, providers (payments, KYC, email, Steam/Riot…) in `src/providers/` |
 | `apps/web` | React 19 + Vite + Tailwind v4 web app. `src/demo/` is an in-browser mock of the API used for previews and browser tests |
 | `contracts` | `MarketEscrow.sol` (Hardhat) |
 | `services/fraud-gnn` | Python fraud model service |
@@ -683,6 +683,37 @@ policy must still state: (1) the site stores a random **device identifier** in t
 signal; (2) on account deletion the identity-check **result** is kept for the AML retention period (provider,
 applicant id, level, status, dates — no document data), and the deletion of the applicant at the KYC provider is
 carried out by compliance within [N] days of the request.
+
+## Round 23e (Oct 26, 2026) — review fixes (`claude/round-23e-fixes.md`)
+
+Migration **076** (`076_round23e.sql`): `storage_deletions` (retry queue for stored objects), the two foreign keys to
+`chat_attachments` (`order_progress.attachment_id`, `orders.delivery_proof_id`) become `ON DELETE SET NULL`,
+`chat_attachments.chunk_bytes` / `chunk_sha256`. New test file `round23e.test.ts` — one test per item, each written to
+fail on 0123a8c and pass now. Still no seller API, API keys, SDKs or Developers page (permanent CEO decision).
+
+| # | What changed |
+|---|---|
+| 1 | Chat erasure (`eraseUserChat` in `privacy.ts`, used by `erase-chat` and the retention job): key shred, references let go (progress screenshot, delivery proof), attachment rows deleted and their keys queued — one transaction; objects are deleted after commit (`drainStorageDeletions`), a failure backs off 2^n min (≤ 1 day) and every retention run drains the queue. Retention picks up any deleted user who still has a key **or** files (resumable), and one user's failure no longer stops the run (`chatErasureErrors`). Room purges use the same order. |
+| 2 | Account deletion checks seller balance and store credit in **every** currency, again inside the deletion transaction with the user row locked (`assertNoMoneyLeft`). |
+| 3 | `assertMayChangeStatus` (`users.ts`) — the rank rule — on suspend, ban, reinstate, confirming a risk flag (which now also signs the account out) and deciding a chat flag (penalty ladder / lifting an auto-ban). A suspension (admin or ladder) revokes every session at once. |
+| 4 | `crypto_refund` on an order reaches only its buyer and staff. On order rows `released_by`, `release_note`, `tax_country` are staff-only (`ORDER_STAFF_FIELDS` in `server.ts`). |
+| 5 | Video re-mux keeps only `0:v` and `0:a?` (`-sn -dn`): subtitle/data tracks (DJI/GoPro GPS) are dropped. ffmpeg runs single-threaded under `sh -c 'ulimit -t/-v/-f'` (60 s CPU, 1 GB memory, 400 MB output) and is SIGKILLed after 2 min (`ffmpegLimits`). |
+| 6 | Uploads store per-chunk SHA-256 (1 MiB). A video view streams from storage through `verifyingStream`: each chunk is passed on only after it matched; the response starts once the first chunk checked out (a bad file is a clean 500), a bad later chunk ends the stream without its bytes. No spool per view; files stored before 076 are spooled against a separate 512 MB download budget. At most 3 streams per user (`downloads_busy`). Upload budget untouched by views. |
+| 7 | `seller_price_cents`, `seller_price_tiers` only for the listing's seller (and staff); on orders `commission_bps`, `commission_cents`, `commission_tax_cents`, `seller_net_cents`, `seller_received_cents` only for the seller and staff. |
+| 8 | Opting out in the app keeps `news_opt_in_at`; `news_opt_out_at` records the opt-out (also returned as `newsOptOutAt`). |
+| 9 | `POST /orders` and `/orders/cart` refuse a missing `tosVersion` (400 `tos_version_required`); stale stays 409 `terms_stale`. The web sends the version loaded with the page (`useTermsVersion`, `lib/terms.ts`). The demo mock enforces the same. Test harness: `client()` adds the version in force unless a test sets `tosVersion` itself. |
+| 10 | Wrong password / 2FA code on `/me/delete` and `/me/2fa/disable` is **403 `invalid_credentials`** (still counted towards the lockout once); the web client only refreshes on 401. |
+| 11 | **Web:** a legacy `mkt.token` is removed on load and that browser is treated as signed in (cookie exchanged); each browser also tries the exchange once without the flag (`mkt.session-probed`). Refresh is single-flight per tab and, with Web Locks, across tabs (`bz-auth-refresh`); a 409 race is retried with backoff (300/600/1200 ms) and never signs the tab out. |
+| 12 | Staff REST chat reads: a full read (offset 0) is always audited; polling (`afterSeq > 0`) once per staff, room and session every 15 min (`auditOncePerSession`). WebSocket subscribe/sync unchanged. |
+| 13 | Logs: `code` is redacted only inside request `body` / `query` / `params` (OTP, OAuth code) and under explicit names (`otpCode`, `mfaCode`, …); `err.code` and other error codes stay. |
+
+Suites on this commit: API 81 files / 724 tests green, typecheck clean; web typecheck + demo build green, browser
+126 passed / 5 skipped (one `round23a.spec.ts` Arabic-label run was flaky once and passed on rerun); `npm audit` 0 in
+root, api, web; image start check (build, runtime imports, migrate through 076, `/readyz` + `/healthz`, ffmpeg re-mux
+under the ulimits as user `node`) passed locally. Adjusted existing tests: `launch-basics`, `mfa`, `round23d` (wrong
+password/code is 403; a suspension signs out at once), `round20` (signs in again after the suspension), `bulk-listings`,
+`promos-fx`, `requests`, `escrow-flow`, `payout-holds`, `warranty` (seller-only prices and order money read from the
+seller's view); `helpers.ts` (`client()` sends the Terms version in force with orders).
 
 ## Suggested next round
 

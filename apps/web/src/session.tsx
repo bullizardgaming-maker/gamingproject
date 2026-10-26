@@ -21,7 +21,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(async () => {
     // Round 23d: the access token is not persisted; a reload exchanges the refresh cookie for a new one first.
-    if (!session.token && session.maybeSignedIn) {
+    // Round 23e: also once per browser without the flag — a refresh cookie may exist that this browser forgot about.
+    if (!session.token && (session.maybeSignedIn || session.takeProbe())) {
       const ok = await refreshAccessToken(); // on success session.set() fires 'session' and this runs again with a token
       if (!ok) {
         setUser(null);

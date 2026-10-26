@@ -23,11 +23,16 @@ import { BUYER_TAGS, buyerReputation, rateBuyer } from '../domain/buyerReputatio
 import { createReview, replyToReview, sellerProfile } from '../domain/reviews.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { completeDirectVideoUpload, openAttachment, readAttachment, startDirectVideoUpload, uploadAttachment, uploadVideoStream } from '../domain/attachments.js';
-import { audit } from '../domain/audit.js';
+import { audit, auditOncePerSession } from '../domain/audit.js';
 import { readBanner } from '../domain/storefront.js';
 import { me, requestMeta } from '../server.js';
 
 const Id = z.object({ id: z.string().uuid() });
+
+/** Round 23e (item 9): an order names the Terms version the buyer saw on the page; without it, it is refused (stale: 409 terms_stale). */
+function requireTosVersion(v: string | undefined) {
+  if (!v) throw badRequest('tos_version_required', 'Reload the page to see the current Terms, then try again');
+}
 
 export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/orders', async (req, reply) => {
@@ -46,6 +51,7 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
         characterName: z.string().trim().min(1).max(60).optional().describe('In-game character name or UID, for games that deliver in-game'),
       })
       .parse(req.body);
+    requireTosVersion(body.tosVersion);
     const idem = req.headers['idempotency-key'];
     const m = requestMeta(req);
     const res = await createOrder(ctx, {
@@ -70,6 +76,7 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
         useCredit: z.boolean().optional(),
       })
       .parse(req.body);
+    requireTosVersion(body.tosVersion);
     const idem = req.headers['idempotency-key'];
     const m = requestMeta(req);
     const res = await createCartCheckout(ctx, {
@@ -301,7 +308,12 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
     const user = me(req);
     const room = await roomForParticipant(ctx.db, id, user);
     // Round 23d: every staff read of a chat they are not part of is on the record, whatever the offset.
-    if (room.buyer_id !== user.id && room.seller_id !== user.id) await audit(ctx.db, req, 'chat.viewed', { type: 'chat_room', id }, { afterSeq, via: 'rest' });
+    // Round 23e (item 12): a full read (offset 0) always leaves a row; polling for new messages leaves one per session
+    // and room every 15 minutes, not one per poll.
+    if (room.buyer_id !== user.id && room.seller_id !== user.id) {
+      if (afterSeq === 0) await audit(ctx.db, req, 'chat.viewed', { type: 'chat_room', id }, { afterSeq, via: 'rest' });
+      else await auditOncePerSession(ctx.db, req, 'chat.viewed', { type: 'chat_room', id }, { afterSeq, via: 'rest' });
+    }
     return listMessages(ctx.keyring, ctx.db, id, afterSeq, limit);
   });
 

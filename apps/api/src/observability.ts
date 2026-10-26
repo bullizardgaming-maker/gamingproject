@@ -22,7 +22,13 @@ export const REDACT_PATHS = [
 ];
 
 /** Keys that are secrets wherever they sit in a log object (Round 23d, item 14: nested too). */
-export const SENSITIVE_KEYS = new Set(['password', 'newpassword', 'currentpassword', 'token', 'refreshtoken', 'mfatoken', 'secret', 'payload', 'authorization', 'cookie', 'set-cookie', 'code', 'state', 'api-key', 'apikey', 'otp', 'totp', 'recoverycode', 'card', 'pan', 'ssn']);
+export const SENSITIVE_KEYS = new Set(['password', 'newpassword', 'currentpassword', 'token', 'refreshtoken', 'mfatoken', 'secret', 'payload', 'authorization', 'cookie', 'set-cookie', 'state', 'api-key', 'apikey', 'otp', 'totp', 'recoverycode', 'otpcode', 'mfacode', 'verificationcode', 'authcode', 'oauthcode', 'card', 'pan', 'ssn']);
+/**
+ * Round 23e (item 13): `code` is a secret only where a client sent it — a sign-in or 2FA code in a request body, an
+ * OAuth code in a query string. Everywhere else (`err.code`, `error.code`, Postgres SQLSTATEs) it is an error code that
+ * logs need, so it stays.
+ */
+const REQUEST_PARTS = new Set(['body', 'query', 'params']);
 /** Query strings that carry credentials: OAuth callbacks (code, state), reset and confirm links (token). */
 const SECRET_QUERY = /[?&](code|state|token|access_token|id_token|refresh_token)=/i;
 export function redactUrl(url: string): string {
@@ -30,15 +36,16 @@ export function redactUrl(url: string): string {
   if (i < 0) return url;
   return SECRET_QUERY.test(url) || /\/callback(\/|$)/.test(url.slice(0, i)) ? `${url.slice(0, i)}?[redacted]` : url;
 }
-export function deepRedact<T>(v: T, depth = 0): T {
+export function deepRedact<T>(v: T, depth = 0, fromClient = false): T {
   if (depth > 10 || v === null || typeof v !== 'object') return v;
   if (v instanceof Error || v instanceof Date || Buffer.isBuffer(v)) return v;
-  if (Array.isArray(v)) return v.map((x) => deepRedact(x, depth + 1)) as T;
+  if (Array.isArray(v)) return v.map((x) => deepRedact(x, depth + 1, fromClient)) as T;
   const out: Record<string, unknown> = {};
   for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
-    if (SENSITIVE_KEYS.has(k.toLowerCase())) out[k] = '[redacted]';
+    const key = k.toLowerCase();
+    if (SENSITIVE_KEYS.has(key) || (fromClient && key === 'code')) out[k] = '[redacted]';
     else if (k === 'url' && typeof val === 'string') out[k] = redactUrl(val);
-    else out[k] = deepRedact(val, depth + 1);
+    else out[k] = deepRedact(val, depth + 1, fromClient || REQUEST_PARTS.has(key));
   }
   return out as T;
 }

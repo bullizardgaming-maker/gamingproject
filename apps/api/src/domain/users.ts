@@ -7,7 +7,7 @@ import type { Queryable } from '../db.js';
 import { maybeOne, one, withTx } from '../db.js';
 import { hashPassword, hmacSha256, randomDigits, randomToken, safeEqual, verifyPassword } from '../lib/crypto.js';
 import { AppError, badRequest, conflict, forbidden, unauthorized } from '../lib/errors.js';
-import { rolesOf } from './permissions.js';
+import { outranks, rolesOf } from './permissions.js';
 import { liftIdRestriction } from './onboarding.js';
 import { attributeBuyer, isAffiliateCode } from './affiliates.js';
 import { assertNotPaused, assertWithdrawalWithinLimits } from './controls.js';
@@ -94,6 +94,18 @@ async function verifyJwt(ctx: Ctx, token: string, purpose: string) {
   const { payload } = await jwtVerify(token, new TextEncoder().encode(ctx.cfg.JWT_SECRET), { algorithms: ['HS256'] });
   if (payload.purpose !== purpose) throw new Error('wrong token purpose');
   return payload;
+}
+
+/**
+ * Round 23d/23e (item 3): the rank rule for every path that changes an account's status (suspend, ban, reinstate,
+ * a confirmed risk flag, the chat penalty ladder): staff only act on accounts below their own rank, never on themselves.
+ * `actor` may be a user id (loaded here) or a user with roles.
+ */
+export async function assertMayChangeStatus(q: Queryable, actor: string | { id: string; role: string; staff_roles?: string[] | null }, targetId: string) {
+  const a = typeof actor === 'string' ? await maybeOne<{ id: string; role: string; staff_roles: string[] | null }>(q, 'SELECT id, role, staff_roles FROM users WHERE id = $1', [actor]) : actor;
+  const target = await maybeOne<{ role: string; staff_roles: string[] | null }>(q, 'SELECT role, staff_roles FROM users WHERE id = $1', [targetId]);
+  if (!target || !a) throw new AppError(404, 'not_found', 'User not found');
+  if (targetId === a.id || !outranks(a, target)) throw forbidden('rank', 'You cannot suspend or ban an account at or above your own rank');
 }
 
 /**

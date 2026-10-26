@@ -37,6 +37,30 @@ export async function audit(
   );
 }
 
+/**
+ * Round 23e (item 12): the same row at most once per actor, target and session within `minutes` — for reads that repeat
+ * (a staff client polling a chat every few seconds). The first poll of each session and window is on the record.
+ */
+export const AUDIT_POLL_MINUTES = 15;
+export async function auditOncePerSession(
+  q: Queryable,
+  req: FastifyRequest,
+  action: string,
+  target: { type: string; id: string },
+  details: Record<string, unknown> = {},
+  minutes = AUDIT_POLL_MINUTES,
+) {
+  const actor = req.user!;
+  const session = actor.session_id ?? null;
+  await q.query(
+    `INSERT INTO admin_audit_log (actor_id, actor_role, action, target_type, target_id, details, ip)
+     SELECT $1, $2, $3, $4, $5, $6, $7
+      WHERE NOT EXISTS (SELECT 1 FROM admin_audit_log WHERE actor_id = $1 AND action = $3 AND target_id = $5 AND details->>'poll' = 'true'
+                          AND details->>'session' IS NOT DISTINCT FROM $8 AND created_at > now() - make_interval(mins => $9))`,
+    [actor.id, [actor.role, ...(actor.staff_roles ?? [])].filter((r) => r !== 'user').join(',') || actor.role, action, target.type, target.id, JSON.stringify({ ...details, poll: true, session }), req.ip, session, minutes],
+  );
+}
+
 export async function listAudit(ctx: Ctx, f: { actorId?: string; targetType?: string; targetId?: string; action?: string; before?: number; limit?: number }) {
   return many(
     ctx.db,

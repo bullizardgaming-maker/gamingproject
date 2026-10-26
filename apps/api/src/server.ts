@@ -77,8 +77,15 @@ export function requirePermission(req: FastifyRequest, permission: Permission): 
  */
 export const STAFF_ONLY_FIELDS = new Set(['buyer_ip', 'buyer_ip_country', 'buyer_device', 'risk_score']);
 export const BUYER_ONLY_FIELDS = new Set(['payment_ref', 'idempotency_key']);
-/** A seller's commission rate is their business, not the catalogue's (item 13). */
-export const SELLER_ONLY_FIELDS = new Set(['seller_rate_bps']);
+/** Round 23e (item 4): on an order, who released the money and why, and the tax country, are staff's working data. */
+export const ORDER_STAFF_FIELDS = new Set(['released_by', 'release_note', 'tax_country']);
+/**
+ * A seller's commission rate is their business, not the catalogue's (item 13); Round 23e (item 7): so is every price
+ * from which it can be derived (what the seller entered next to what the buyer pays).
+ */
+export const SELLER_ONLY_FIELDS = new Set(['seller_rate_bps', 'seller_price_cents', 'seller_price_tiers']);
+/** On an order (a row with both buyer_id and seller_id) the seller's side of the money is the seller's (item 7). */
+export const ORDER_SELLER_FIELDS = new Set(['commission_bps', 'commission_cents', 'seller_net_cents', 'commission_tax_cents', 'seller_received_cents']);
 export function stripInternalFields(v: unknown, viewerId: string | null, depth = 0): unknown {
   if (depth > 8 || v === null || typeof v !== 'object') return v;
   if (Array.isArray(v)) return v.map((x) => stripInternalFields(x, viewerId, depth + 1));
@@ -86,9 +93,11 @@ export function stripInternalFields(v: unknown, viewerId: string | null, depth =
   const row = v as Record<string, unknown>;
   const ownRow = viewerId != null && row.buyer_id === viewerId;
   const ownListing = viewerId != null && row.seller_id === viewerId;
+  const order = 'buyer_id' in row && 'seller_id' in row;
   let out: Record<string, unknown> | null = null;
   for (const [k, val] of Object.entries(row)) {
-    const hidden = STAFF_ONLY_FIELDS.has(k) || (BUYER_ONLY_FIELDS.has(k) && !ownRow) || (SELLER_ONLY_FIELDS.has(k) && !ownListing);
+    const hidden =
+      STAFF_ONLY_FIELDS.has(k) || (BUYER_ONLY_FIELDS.has(k) && !ownRow) || (SELLER_ONLY_FIELDS.has(k) && !ownListing) || (order && ORDER_SELLER_FIELDS.has(k) && !ownListing) || (order && ORDER_STAFF_FIELDS.has(k));
     const next = hidden ? undefined : stripInternalFields(val, viewerId, depth + 1);
     if (next !== val) {
       out ??= { ...(v as Record<string, unknown>) };

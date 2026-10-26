@@ -221,7 +221,8 @@ describe('multiple currencies', () => {
     const seller = await makeUser(h, { tier: 2 });
     const buyer = await makeUser(h, { tier: 1 });
     const offer = await stockedOffer(seller, { priceCents: 9_20, currency: 'EUR' }); // €9.20 = $10.00 at 0.92
-    expect((await client(h.app).get(`/v1/offers/${offer.id}`)).body).toMatchObject({ currency: 'EUR', price_cents: 9_69, seller_price_cents: 9_20, price_settlement_cents: 10_53 });
+    expect((await client(h.app).get(`/v1/offers/${offer.id}`)).body).toMatchObject({ currency: 'EUR', price_cents: 9_69, price_settlement_cents: 10_53 });
+    expect((await seller.api.get(`/v1/offers/${offer.id}`)).body.seller_price_cents).toBe(9_20); // seller-only (Round 23e)
 
     const q = (await buyer.api.post('/v1/orders/quote', { offerId: offer.id, currency: 'EGP' })).body;
     // $10.00 grossed up to $10.53 × 48.5 EGP/USD, no spread (CFO B12: EUR/EGP are shown as approximate, charged in USD) = EGP 510.71

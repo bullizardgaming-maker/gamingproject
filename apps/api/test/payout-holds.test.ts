@@ -16,7 +16,7 @@ async function sellerWithSale(priceCents = 50_00) {
   const order = await buyAndPay(h, buyer, offer.id);
   await seller.api.post(`/v1/orders/${order.id}/deliver`, { payload: 'done' });
   await buyer.api.post(`/v1/orders/${order.id}/confirm`);
-  return { seller, order };
+  return { seller, order: (await seller.api.get(`/v1/orders/${order.id}`)).body }; // the seller's view carries seller_net_cents (Round 23e)
 }
 
 describe('payout holds', () => {

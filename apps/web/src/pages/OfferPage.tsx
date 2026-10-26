@@ -8,6 +8,7 @@ import { WatchButton } from '../components/WatchButton';
 import { CurrencyTable, DeliveryTag, fmtUnits, OfferTable, PresenceText, Rating, SellerAvatar, SellerBadges } from '../components/CatalogUi';
 import { categoryLabel, slugify } from '@/lib/catalog';
 import { usePageMeta } from '@/lib/seo';
+import { useTermsVersion } from '@/lib/terms';
 import { attributePairs } from '@/lib/attributes';
 import { unitPriceFor } from '@/lib/tiers';
 import { CharacterField, handoverFieldFor } from '../components/CharacterField';
@@ -26,6 +27,7 @@ export function OfferPage() {
   const [params] = useSearchParams();
   const [qtyText, setQtyText] = useState(params.get('qty') ?? '');
   const [busy, setBusy] = useState(false);
+  const termsVersion = useTermsVersion(); // Round 23e: the version loaded with the page goes with the order
   const [error, setError] = useState('');
   const [others, setOthers] = useState<Offer[]>([]);
   const [sort, setSort] = useState<'recommended' | 'price_asc' | 'min_qty_asc'>('recommended');
@@ -63,10 +65,10 @@ export function OfferPage() {
     setBusy(true);
     setError('');
     try {
-      // The Terms version shown on this page goes with the order; the API refuses it if it changed meanwhile (Round 23d).
-      const terms = await api<{ version: string }>('/legal/terms').catch(() => null);
+      // The Terms version loaded with this page goes with the order; the API refuses it if it changed meanwhile (Round 23d/23e).
+      if (!termsVersion) throw Object.assign(new Error(t('legal.reloadTerms')), { code: 'terms_stale' });
       const res = await api<{ order: { id: string }; checkoutUrl: string | null }>('/orders', {
-        body: { offerId: offer.id, quantity: qty, rail: 'fiat', acceptTos: true, useCredit: true, ...(terms ? { tosVersion: terms.version } : {}), ...(needsCharacter ? { characterName: character.value.trim() } : {}) },
+        body: { offerId: offer.id, quantity: qty, rail: 'fiat', acceptTos: true, useCredit: true, tosVersion: termsVersion, ...(needsCharacter ? { characterName: character.value.trim() } : {}) },
         headers: { 'Idempotency-Key': `${offer.id}:${qty}:${Math.floor(Date.now() / 60_000)}` },
       });
       if (res.checkoutUrl) window.location.assign(res.checkoutUrl);

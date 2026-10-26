@@ -19,8 +19,10 @@ import { collectDebts, listDebts } from '../domain/debts.js';
 import { fraudModelReport } from '../domain/fraud.js';
 import { COMPONENTS, COMPONENT_IDS, createIncident, listIncidents, updateIncident } from '../domain/status.js';
 import { decideTopUp, listTopUps, planTopUps } from '../domain/fxtopups.js';
-import { chatLegalHold, shredUserChatKey } from '../domain/chatkeys.js';
-import { eraseUserAttachments } from '../domain/privacy.js';
+import { chatLegalHold } from '../domain/chatkeys.js';
+import { eraseUserChat } from '../domain/privacy.js';
+import { assertMayChangeStatus } from '../domain/users.js';
+import { revokeOtherSessions } from '../domain/sessions.js';
 import { toCsv } from '../domain/exports.js';
 import { businessMetrics } from '../domain/analytics.js';
 import { getTicket, staffReply, ticketQueue, updateTicket } from '../domain/support.js';
@@ -153,6 +155,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return withScope(ctx, async (s) => {
       const flag = await maybeOne(s.tx, 'SELECT * FROM risk_flags WHERE id = $1 FOR UPDATE', [Id.parse(req.params).id]);
       if (!flag) throw notFound('Risk flag');
+      if (decision === 'confirm') await assertMayChangeStatus(s.tx, admin, flag.user_id); // Round 23e: confirming bans
       await s.tx.query(`UPDATE risk_flags SET status = $2, reviewed_by = $3 WHERE user_id = $1 AND status = 'open'`, [
         flag.user_id, decision === 'clear' ? 'cleared' : 'confirmed', admin.id,
       ]);
@@ -167,6 +170,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
         );
       } else {
         await s.tx.query(`UPDATE users SET status = 'banned', banned_at = now(), suspension_reason = 'fraud_confirmed', withdrawals_frozen = true WHERE id = $1`, [flag.user_id]);
+        await revokeOtherSessions(s.tx, flag.user_id, null, 'banned');
       }
       await audit(s.tx, req, `risk_flag.${decision}`, { type: 'user', id: flag.user_id }, { flagId: flag.id, score: flag.score });
       return { userId: flag.user_id, decision };
@@ -245,11 +249,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   /** Round 23d: staff can only suspend or ban accounts below their own rank (a lead cannot touch an admin). */
-  const assertOutranks = async (actor: { id: string; role: string; staff_roles?: string[] | null }, targetId: string) => {
-    const target = await maybeOne<{ role: string; staff_roles: string[] | null }>(ctx.db, 'SELECT role, staff_roles FROM users WHERE id = $1', [targetId]);
-    if (!target) throw notFound('User');
-    if (targetId === actor.id || !outranks(actor, target)) throw forbidden('rank', 'You cannot suspend or ban an account at or above your own rank');
-  };
+  const assertOutranks = (actor: { id: string; role: string; staff_roles?: string[] | null }, targetId: string) => assertMayChangeStatus(ctx.db, actor, targetId);
   /** Suspend for a number of days (lifts itself) or until staff lift it (no days). */
   app.post('/admin/users/:id/suspend', async (req) => {
     const actor = requirePermission(req, 'users.suspend');
@@ -261,6 +261,8 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
       [id, reason, days ?? null],
     );
     if (!r.rowCount) throw conflict('banned', 'This account is banned; a ban is not shortened into a suspension');
+    // Round 23e: a suspension takes effect at once — every session is signed out (an ordinary user may sign in again to read).
+    await revokeOtherSessions(ctx.db, id, null, 'suspended');
     await audit(ctx.db, req, 'user.suspend', { type: 'user', id }, { reason, days: days ?? null });
     return { suspended: true, until: r.rows[0].suspended_until };
   });
@@ -276,8 +278,9 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return { banned: true };
   });
   app.post('/admin/users/:id/reinstate', async (req) => {
-    requirePermission(req, 'users.suspend');
+    const actor = requirePermission(req, 'users.suspend');
     const { id } = Id.parse(req.params);
+    await assertOutranks(actor, id); // Round 23e: reinstating changes the status too
     const { note } = z.object({ note: z.string().min(3).max(500) }).parse(req.body);
     const cur = await maybeOne<{ status: string }>(ctx.db, 'SELECT status FROM users WHERE id = $1', [id]);
     if (!cur) throw notFound('User');
@@ -930,8 +933,8 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!(await maybeOne(ctx.db, 'SELECT 1 FROM users WHERE id = $1', [id]))) throw notFound('User');
     const hold = await chatLegalHold(ctx.db, id);
     if (hold) throw new AppError(409, 'legal_hold', `Can't erase while there is ${hold}; the messages are evidence`);
-    const shredded = await shredUserChatKey(ctx.db, id, reason);
-    const files = await eraseUserAttachments(ctx, id); // Round 23d: their uploads go with their words
+    // Round 23e: key and files in one transaction; the stored objects are deleted after commit (retried if that fails).
+    const { shredded, files } = await eraseUserChat(ctx, id, reason);
     await audit(ctx.db, req, 'chat.erased', { type: 'user', id }, { reason, files });
     return { erased: true, alreadyErased: !shredded, files };
   });

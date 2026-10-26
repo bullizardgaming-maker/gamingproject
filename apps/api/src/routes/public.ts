@@ -41,6 +41,9 @@ import { setNewsOptIn } from '../domain/newsletter.js';
 
 const Credentials = z.object({ email: z.string().email().max(254), password: z.string().min(10).max(200), captchaToken: z.string().max(4096).optional() });
 
+/** Round 23e (item 10): a wrong password or code on a signed-in action is 403 `invalid_credentials`, never 401 (a 401 means "session expired" to the client). */
+const wrongSecret = (err: AppError) => new AppError(403, 'invalid_credentials', err.message);
+
 export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   const strict = { config: { rateLimit: { max: ctx.cfg.AUTH_RATE_LIMIT_PER_MINUTE, timeWindow: '1 minute' } } };
 
@@ -180,7 +183,10 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     try {
       res = await deleteAccount(ctx, me(req), body.password, body.code);
     } catch (err) {
-      if (err instanceof AppError && err.status === 401) await noteFailedLogin(ctx, me(req).id);
+      if (err instanceof AppError && err.status === 401) {
+        await noteFailedLogin(ctx, me(req).id);
+        throw wrongSecret(err); // Round 23e: 403, so the web client does not refresh and retry (counting the mistake twice)
+      }
       throw err;
     }
     reply.clearCookie(COOKIE, { path: '/v1/auth' });
@@ -208,7 +214,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   app.put('/me/newsletter', async (req) => {
     const { optIn } = z.object({ optIn: z.boolean() }).parse(req.body);
     const row = await setNewsOptIn(ctx.db, me(req).id, optIn);
-    return { newsOptIn: row.news_opt_in, newsOptInAt: row.news_opt_in_at };
+    return { newsOptIn: row.news_opt_in, newsOptInAt: row.news_opt_in_at, newsOptOutAt: row.news_opt_out_at };
   });
   app.patch('/me/email-preferences', async (req) => {
     const changes = z.record(z.string(), z.boolean()).parse(req.body);
@@ -274,7 +280,10 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     try {
       await disable(ctx, user.id, code);
     } catch (err) {
-      if (err instanceof AppError && err.status === 401) await noteFailedLogin(ctx, user.id);
+      if (err instanceof AppError && err.status === 401) {
+        await noteFailedLogin(ctx, user.id);
+        throw wrongSecret(err);
+      }
       throw err;
     }
     await clearFailedLogins(ctx.db, user.id);

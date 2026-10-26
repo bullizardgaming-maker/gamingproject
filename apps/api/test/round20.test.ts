@@ -19,14 +19,19 @@ describe('ban vs suspend', () => {
     const sus = await compliance.api.post(`/v1/admin/users/${u.id}/suspend`, { reason: 'Rude in chat', days: 3 });
     expect(sus.status, JSON.stringify(sus.body)).toBe(200);
     expect(sus.body.until).toBeTruthy();
-    expect((await u.api.post('/v1/orders', { offerId: offer.id, quantity: 1, acceptTos: true })).body.error.code).toBe('suspended');
+    // Round 23e: the suspension signs the account out at once; an ordinary user may sign in again to read, not act.
+    expect((await u.api.get('/v1/me')).status).toBe(401);
+    const again = await client(h.app).post('/v1/auth/login', { email: u.email, password: 'correct horse battery' });
+    expect(again.status).toBe(200);
+    const ua = client(h.app, again.body.token);
+    expect((await ua.post('/v1/orders', { offerId: offer.id, quantity: 1, acceptTos: true })).body.error.code).toBe('suspended');
     await h.ctx.db.query(`UPDATE users SET suspended_until = now() - interval '1 minute' WHERE id = $1`, [u.id]);
-    expect((await u.api.get('/v1/me')).body.user.status).toBe('active'); // lifted on the next request
-    expect((await u.api.post('/v1/orders', { offerId: offer.id, quantity: 1, acceptTos: true })).status).toBe(201);
+    expect((await ua.get('/v1/me')).body.user.status).toBe('active'); // lifted on the next request
+    expect((await ua.post('/v1/orders', { offerId: offer.id, quantity: 1, acceptTos: true })).status).toBe(201);
 
     // A ban: no end time, sessions revoked, not softened into a suspension, lifted only by the Lead.
     expect((await compliance.api.post(`/v1/admin/users/${u.id}/ban`, { reason: 'Chargeback fraud' })).body.banned).toBe(true);
-    expect((await u.api.get('/v1/me')).status).toBe(401);
+    expect((await ua.get('/v1/me')).status).toBe(401);
     const row = async () => (await h.ctx.db.query('SELECT status, banned_at, suspended_until FROM users WHERE id = $1', [u.id])).rows[0];
     expect(await row()).toMatchObject({ status: 'banned', suspended_until: null });
     expect((await row()).banned_at).toBeTruthy();

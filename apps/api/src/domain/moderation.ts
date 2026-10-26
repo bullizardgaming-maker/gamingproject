@@ -3,6 +3,7 @@ import type { Queryable } from '../db.js';
 import { many, maybeOne, one, withTx } from '../db.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
 import { applyOffplatformAction, offplatformPolicy, openMessages } from './chat.js';
+import { assertMayChangeStatus } from './users.js';
 import { withScope } from './events.js';
 import { notify } from './notifications.js';
 import { detectOffPlatform, matchTerms, type ModerationTerm } from './safety.js';
@@ -100,6 +101,8 @@ export async function decideChatFlag(ctx: Ctx, flagId: string, staffId: string, 
       [flagId, confirm ? 'confirmed' : 'dismissed', staffId, note?.trim() || null],
     );
     if (!f) throw notFound('Open flag');
+    // Round 23e (item 3): the rank rule applies here too — the ladder may suspend or ban, and dismissing may lift a ban.
+    if (confirm || f.auto_ban) await assertMayChangeStatus(s.tx, staffId, f.user_id);
     // A false alarm shouldn't count towards the automatic suspension.
     if (!confirm && f.strike) await s.tx.query('UPDATE users SET offplatform_strikes = GREATEST(offplatform_strikes - 1, 0) WHERE id = $1', [f.user_id]);
     // Round 22b: dismissing the flag that banned automatically lifts that ban (back to the status before it), unless another

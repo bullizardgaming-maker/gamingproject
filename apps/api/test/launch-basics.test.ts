@@ -166,7 +166,7 @@ describe('GDPR export and deletion', () => {
     const offer = await makeOffer(seller, { categorySlug: 'boosting', deliveryMode: 'manual', stock: 2 });
     const order = await buyAndPay(h, buyer, offer.id);
 
-    expect((await buyer.api.post('/v1/me/delete', { password: 'wrong' })).status).toBe(401);
+    expect((await buyer.api.post('/v1/me/delete', { password: 'wrong' })).status).toBe(403); // not 401: the client would refresh and retry (Round 23e)
     expect((await buyer.api.post('/v1/me/delete', { password: PASSWORD })).body.error.code).toBe('open_orders');
     await seller.api.post(`/v1/orders/${order.id}/deliver`, { payload: 'done' });
     await buyer.api.post(`/v1/orders/${order.id}/confirm`);

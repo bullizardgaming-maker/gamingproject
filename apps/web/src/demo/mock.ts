@@ -631,8 +631,9 @@ route('GET', '/me/email-preferences', ({ me }) => prefsOf(need(me).id));
 route('PUT', '/me/newsletter', ({ me, body }) => {
   const u = need(me);
   if (typeof body.optIn !== 'boolean') fail(400, 'validation_error', 'Invalid request');
-  if (!!u.news_opt_in !== body.optIn) { u.news_opt_in = body.optIn; u.news_opt_in_at = now(); }
-  return { newsOptIn: !!u.news_opt_in, newsOptInAt: u.news_opt_in_at ?? null };
+  // Round 23e: opting out keeps the consent time; the opt-out time is kept apart.
+  if (!!u.news_opt_in !== body.optIn) { u.news_opt_in = body.optIn; if (body.optIn) u.news_opt_in_at = now(); else (u as any).news_opt_out_at = now(); }
+  return { newsOptIn: !!u.news_opt_in, newsOptInAt: u.news_opt_in_at ?? null, newsOptOutAt: (u as any).news_opt_out_at ?? null };
 });
 route('PATCH', '/me/email-preferences', ({ me, body }) => {
   const u = need(me);
@@ -1129,8 +1130,13 @@ route('GET', '/catalog/price-history', ({ query }) => {
 });
 
 // --- Orders ----------------------------------------------------------------------------
+function assertTosVersion(v: unknown) {
+  if (!v) fail(400, 'tos_version_required', 'Reload the page to see the current Terms, then try again');
+  if (v !== TOS_VERSION) fail(409, 'terms_stale', 'The Terms were updated while you were on this page. Reload to see the current version');
+}
 route('POST', '/orders', ({ me, body }) => {
   const u = need(me);
+  assertTosVersion(body.tosVersion); // Round 23e: the Terms version loaded with the page is required
   if (u.kyc_tier < 1) fail(403, 'kyc_required', 'Verify your email and phone before purchasing');
   const offer = state.offers.find((x) => x.id === body.offerId && (!x.reserved_for || x.reserved_for === u.id)) ?? fail(404, 'not_found', 'Listing not found');
   if (offer.seller_id === u.id) fail(400, 'own_listing', 'You can’t buy your own listing');
@@ -1516,6 +1522,7 @@ route('PATCH', '/seller/codes/:id', ({ me, params, body }) => {
 // Cart: one demo payment for several orders (one per listing, each in its own escrow).
 route('POST', '/orders/cart', ({ me, body }) => {
   const u = need(me);
+  assertTosVersion(body.tosVersion); // Round 23e: the Terms version loaded with the page is required
   if (u.kyc_tier < 1) fail(403, 'kyc_required', 'Verify your email and phone before purchasing');
   const items: Array<{ offerId: string; quantity: number; characterName?: string }> = body.items ?? [];
   if (!items.length || items.length > 20) fail(400, 'invalid_cart', 'A cart holds 1 to 20 listings');

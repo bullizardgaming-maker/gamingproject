@@ -71,6 +71,23 @@ const TOKEN_KEY = 'mkt.token';
 let memoryToken: string | null = null;
 /** Set while a reload/new tab is still exchanging the refresh cookie, so the app does not flash "signed out". */
 const BOOT_KEY = 'mkt.signed-in';
+/** Set once this browser has tried the cookie exchange without the flag (the cookie is httpOnly: JS cannot see it). */
+const PROBED_KEY = 'mkt.session-probed';
+/**
+ * Round 23e (item 11): a token stored by an older build (before Round 23d) is removed on load. That browser was signed
+ * in, so it is treated as signed in: the refresh cookie is exchanged as on any reload.
+ */
+let legacySignedIn = false;
+if (!DEMO) {
+  try {
+    if (localStorage.getItem(TOKEN_KEY) !== null) {
+      localStorage.removeItem(TOKEN_KEY);
+      legacySignedIn = true;
+    }
+  } catch {
+    /* storage unavailable */
+  }
+}
 export const session = {
   get token() {
     if (!DEMO) return memoryToken;
@@ -83,13 +100,28 @@ export const session = {
   /** True when this browser signed in before and may still hold a refresh cookie. */
   get maybeSignedIn() {
     try {
-      return localStorage.getItem(BOOT_KEY) === '1';
+      return legacySignedIn || localStorage.getItem(BOOT_KEY) === '1';
+    } catch {
+      return legacySignedIn;
+    }
+  },
+  /**
+   * Round 23e (item 11): a refresh cookie can exist without the flag (storage cleared, a build from before the flag).
+   * Each browser tries the exchange once without it; a cookie found that way counts as signed in.
+   */
+  takeProbe() {
+    if (DEMO) return false;
+    try {
+      if (localStorage.getItem(PROBED_KEY) === '1') return false;
+      localStorage.setItem(PROBED_KEY, '1');
+      return true;
     } catch {
       return false;
     }
   },
   set(token: string | null) {
     memoryToken = token;
+    if (!token) legacySignedIn = false;
     try {
       if (DEMO) {
         if (token) localStorage.setItem(TOKEN_KEY, token);
@@ -120,25 +152,42 @@ function deviceFingerprint(): string {
 }
 
 let refreshing: Promise<boolean> | null = null;
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** One refresh call; 'race' means another tab rotated the cookie a moment ago (409 refresh_superseded). */
+async function refreshOnce(): Promise<'ok' | 'race' | 'failed'> {
+  const res = await fetch(`${BASE}/v1/auth/refresh`, { method: 'POST', credentials: 'include' }).catch(() => null);
+  if (!res) return 'race'; // network blip: retry like a race, never sign out for it
+  if (res.ok) {
+    session.set((await res.json()).token);
+    return 'ok';
+  }
+  return res.status === 409 ? 'race' : 'failed';
+}
 
 /**
- * Exchange the httpOnly refresh cookie for a new access token. Single-flight so
- * parallel 401s trigger one refresh; a 409 means another tab just rotated the
- * cookie, so we retry once with the newer cookie.
+ * Exchange the httpOnly refresh cookie for a new access token. Single-flight in this tab (parallel 401s trigger one
+ * refresh) and, where the browser has Web Locks, across tabs (Round 23e, item 11): tabs take turns, so the second one
+ * uses the cookie the first just received. A 409 (another tab rotated the cookie a moment ago; its Set-Cookie may not
+ * have landed yet) is retried with a short backoff instead of signing this tab out.
  */
 export function refreshAccessToken(): Promise<boolean> {
   if (DEMO) return Promise.resolve(false);
   refreshing ??= (async () => {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const res = await fetch(`${BASE}/v1/auth/refresh`, { method: 'POST', credentials: 'include' });
-      if (res.ok) {
-        session.set((await res.json()).token);
-        return true;
+    const run = async () => {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        if (attempt) await wait(150 * 2 ** attempt);
+        const r = await refreshOnce();
+        if (r === 'ok') return true;
+        if (r === 'failed') {
+          session.set(null);
+          return false;
+        }
       }
-      if (res.status !== 409) break;
-    }
-    session.set(null);
-    return false;
+      return false; // still racing: keep the tab as it is (signed-in flag kept), the next call tries again
+    };
+    const locks = (navigator as Navigator & { locks?: { request: (name: string, cb: () => Promise<boolean>) => Promise<boolean> } }).locks;
+    return locks ? locks.request('bz-auth-refresh', run) : run();
   })().finally(() => {
     refreshing = null;
   });

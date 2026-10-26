@@ -1,6 +1,7 @@
 import type { Ctx } from '../context.js';
-import { chatLegalHold, shredUserChatKey } from './chatkeys.js';
-import { eraseUserAttachments } from './privacy.js';
+import { chatLegalHold } from './chatkeys.js';
+import { drainStorageDeletions, eraseUserChat, queueStorageDeletions } from './privacy.js';
+import { withScope } from './events.js';
 import { many, maybeOne, one, withTx } from '../db.js';
 
 /**
@@ -48,14 +49,20 @@ async function purgeChats(ctx: Ctx) {
   let messages = 0;
   let files = 0;
   for (const room of rooms) {
-    // Delete stored images first: a crash here leaves rows pointing at missing files (harmless,
-    // purged on the next run), never files nobody can find any more.
-    const atts = await many<{ id: string; storage_key: string | null }>(ctx.db, 'SELECT id, storage_key FROM chat_attachments WHERE room_id = $1', [room.id]);
-    for (const a of atts) if (a.storage_key) await ctx.storage.delete(a.storage_key);
-    files += atts.length;
-    await withTx(ctx.db, async (tx) => {
+    // Round 23e: rows first, in one transaction (references to the files let go, attachments and messages deleted); the
+    // stored objects are queued and deleted after commit, a failed delete is retried by the next run.
+    await withScope(ctx, async (s) => {
+      const tx = s.tx;
       await tx.query(`SELECT set_config('bullizard.retention', 'on', true)`);
+      const atts = await tx.query<{ id: string; storage_key: string | null }>('SELECT id, storage_key FROM chat_attachments WHERE room_id = $1 FOR UPDATE', [room.id]);
+      const ids = atts.rows.map((a) => a.id);
+      if (ids.length) {
+        await tx.query('UPDATE order_progress SET attachment_id = NULL WHERE attachment_id = ANY($1::uuid[])', [ids]);
+        await tx.query('UPDATE orders SET delivery_proof_id = NULL WHERE delivery_proof_id = ANY($1::uuid[])', [ids]);
+      }
       await tx.query('DELETE FROM chat_attachments WHERE room_id = $1', [room.id]);
+      await queueStorageDeletions(s, ctx, atts.rows.map((a) => a.storage_key).filter((k): k is string => !!k), 'chat_retention');
+      files += ids.length;
       const res = await tx.query('DELETE FROM chat_messages WHERE room_id = $1', [room.id]);
       messages += res.rowCount ?? 0;
       await tx.query('UPDATE chat_rooms SET purged_at = now(), purged_messages = $2 WHERE id = $1', [room.id, res.rowCount ?? 0]);
@@ -81,19 +88,30 @@ export async function runRetention(ctx: Ctx, existingRunId?: string) {
     );
     counts.fraudSignals = await count(ctx, `DELETE FROM risk_signals WHERE last_seen < now() - make_interval(days => $1)`, [c.RETENTION_FRAUD_SIGNALS_DAYS]);
     // Deleted accounts: chat kept as evidence through the chargeback window, then erased by destroying the author's key.
+    // Round 23e (item 1): resumable per user — a user whose key is gone but whose files are still there is picked up
+    // again, key and files go in one transaction, and one user's failure does not stop the others.
     const toShred = await many<{ id: string }>(
       ctx.db,
-      `SELECT u.id FROM users u JOIN chat_user_keys k ON k.user_id = u.id
-        WHERE u.deleted_at < now() - make_interval(days => $1) AND k.key_ciphertext IS NOT NULL LIMIT 500`,
+      `SELECT u.id FROM users u
+        WHERE u.deleted_at < now() - make_interval(days => $1)
+          AND (EXISTS (SELECT 1 FROM chat_user_keys k WHERE k.user_id = u.id AND k.key_ciphertext IS NOT NULL)
+               OR EXISTS (SELECT 1 FROM chat_attachments a WHERE a.uploader_id = u.id))
+        LIMIT 500`,
       [c.RETENTION_ORDER_IP_DAYS],
     );
     counts.chatKeysDestroyed = 0;
+    counts.chatErasureErrors = 0;
     for (const u of toShred) {
-      if (!(await chatLegalHold(ctx.db, u.id)) && (await shredUserChatKey(ctx.db, u.id, 'account deleted; retention period over'))) {
-        counts.chatKeysDestroyed++;
-        await eraseUserAttachments(ctx, u.id); // Round 23d
+      if (await chatLegalHold(ctx.db, u.id)) continue;
+      try {
+        const r = await eraseUserChat(ctx, u.id, 'account deleted; retention period over');
+        if (r.shredded) counts.chatKeysDestroyed++;
+      } catch (err) {
+        counts.chatErasureErrors++;
+        ctx.log.error({ userId: u.id, err: (err as Error).message }, 'chat erasure failed; retried on the next run');
       }
     }
+    counts.storageDeletions = await drainStorageDeletions(ctx);
     counts.orderIps = await count(ctx, `UPDATE orders SET buyer_ip = NULL WHERE buyer_ip IS NOT NULL AND created_at < now() - make_interval(days => $1)`, [c.RETENTION_ORDER_IP_DAYS]);
     counts.sessions = await count(
       ctx,
