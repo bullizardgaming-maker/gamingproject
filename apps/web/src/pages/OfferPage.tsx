@@ -9,6 +9,7 @@ import { CurrencyTable, DeliveryTag, fmtUnits, OfferTable, PresenceText, Rating,
 import { categoryLabel, slugify } from '@/lib/catalog';
 import { usePageMeta } from '@/lib/seo';
 import { useTermsVersion } from '@/lib/terms';
+import { TermsChanged } from '../components/TermsChanged';
 import { attributePairs } from '@/lib/attributes';
 import { unitPriceFor } from '@/lib/tiers';
 import { CharacterField, handoverFieldFor } from '../components/CharacterField';
@@ -27,7 +28,8 @@ export function OfferPage() {
   const [params] = useSearchParams();
   const [qtyText, setQtyText] = useState(params.get('qty') ?? '');
   const [busy, setBusy] = useState(false);
-  const termsVersion = useTermsVersion(); // Round 23e: the version loaded with the page goes with the order
+  const terms = useTermsVersion(); // Round 23e/23f: the version loaded with the page goes with the order
+  const termsVersion = terms.version;
   const [error, setError] = useState('');
   const [others, setOthers] = useState<Offer[]>([]);
   const [sort, setSort] = useState<'recommended' | 'price_asc' | 'min_qty_asc'>('recommended');
@@ -74,7 +76,13 @@ export function OfferPage() {
       if (res.checkoutUrl) window.location.assign(res.checkoutUrl);
       else nav(`/orders/${res.order.id}`);
     } catch (e: any) {
-      setError(e.code === 'kyc_required' ? t('offer.verifyFirst') : e.code === 'terms_reacceptance_required' ? t('legal.acceptToContinue') : e.code === 'terms_stale' ? t('legal.reloadTerms') : e.message);
+      if (e.code === 'terms_stale') {
+        // Round 23f: fetch the version now in force and ask the buyer to read and accept it.
+        await terms.onStale();
+        setBusy(false);
+        return;
+      }
+      setError(e.code === 'kyc_required' ? t('offer.verifyFirst') : e.code === 'terms_reacceptance_required' ? t('legal.acceptToContinue') : e.message);
       setBusy(false);
     }
   };
@@ -183,6 +191,7 @@ export function OfferPage() {
           )}
           {user && !own && <CharacterField game={offer.game} category={offer.category_slug} value={character.value} onChange={(value, ok) => setCharacter({ value, ok })} />}
           <div className="of-total"><span>{t('offer.total')}</span><b className="num">{money(total, offer.currency)}</b></div>
+          {terms.stale && <TermsChanged busy={busy} onAccept={() => { terms.accepted(); void buy(); }} />}
           {error && <div className="alert small" role="alert">{error} {error === t('offer.verifyFirst') && <Link to="/account">{t('offer.verifyNow')}</Link>}</div>}
           {!user ? (
             <Link className="btn go lg block" to={`/login?next=/offers/${offer.id}`}>{t('offer.signInToBuy')}</Link>

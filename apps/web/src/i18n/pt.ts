@@ -879,5 +879,8 @@ const pt: Messages = {
   "account.newsletter.hint": "E-mails ocasionais sobre jogos novos e ofertas. Você pode desativá-los aqui ou pelo link em qualquer newsletter.",
   "account.newsletter.saved": "Salvo.",
   "upload.videoTooLarge": "Os vídeos podem ter até 95 MB. Corte a gravação ou reduza a qualidade e tente de novo.",
+  "legal.changedNotice": "Os Termos mudaram enquanto você estava nesta página. Leia a nova versão e aceite-a para continuar.",
+  "legal.readNew": "Ler os novos Termos",
+  "legal.acceptAndContinue": "Aceitar e continuar",
 };
 export default pt;

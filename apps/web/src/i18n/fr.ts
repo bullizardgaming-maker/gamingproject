@@ -878,5 +878,8 @@ const fr: Messages = {
   "account.newsletter.hint": "Des e-mails de temps en temps sur les nouveaux jeux et les offres. Désactivez-les ici ou avec le lien de chaque newsletter.",
   "account.newsletter.saved": "Enregistré.",
   "upload.videoTooLarge": "Les vidéos peuvent faire jusqu’à 95 Mo. Raccourcissez l’enregistrement ou baissez sa qualité, puis réessayez.",
+  "legal.changedNotice": "Les Conditions ont changé pendant que vous étiez sur cette page. Lisez la nouvelle version, puis acceptez-la pour continuer.",
+  "legal.readNew": "Lire les nouvelles Conditions",
+  "legal.acceptAndContinue": "Accepter et continuer",
 };
 export default fr;

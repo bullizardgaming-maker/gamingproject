@@ -131,6 +131,7 @@ export async function runRetention(ctx: Ctx, existingRunId?: string) {
     }
     counts.abandonedUploads = abandoned.length;
     counts.uploadSlots = await count(ctx, `DELETE FROM upload_slots WHERE started_at < now() - interval '1 day'`, []); // Round 23d
+    counts.downloadSlots = await count(ctx, `DELETE FROM download_slots WHERE started_at < now() - interval '1 day'`, []); // Round 23f
     // Only needed for the 15-minute CAPTCHA window.
     counts.loginFailures = await count(ctx, `DELETE FROM login_failures WHERE created_at < now() - interval '1 day'`, []);
     await ctx.db.query(`UPDATE retention_runs SET status = 'ok', counts = $2, finished_at = now() WHERE id = $1`, [run.id, JSON.stringify(counts)]);

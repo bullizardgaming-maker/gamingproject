@@ -524,8 +524,10 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   const LegalDocParam = z.object({ doc: z.enum(LEGAL_DOCS) });
   const Lang = z.object({ lang: z.string().regex(/^[A-Za-z]{2}(-[A-Za-z]{2,4})?$/).optional() });
   app.get('/legal/:doc', async (req, reply) => {
-    reply.header('Cache-Control', 'public, max-age=300');
-    return currentDocument(ctx.dbRead, LegalDocParam.parse(req.params).doc, Lang.parse(req.query).lang);
+    // Round 23f (item 3): the version in force is what checkout must send, so it is never cached (browser or
+    // Cloudflare) and read from the primary: right after a publish every page sees the new version.
+    reply.header('Cache-Control', 'no-store').header('CDN-Cache-Control', 'no-store').header('Cloudflare-CDN-Cache-Control', 'no-store');
+    return currentDocument(ctx.db, LegalDocParam.parse(req.params).doc, Lang.parse(req.query).lang);
   });
   app.get('/legal/:doc/history', async (req) => documentHistory(ctx.dbRead, LegalDocParam.parse(req.params).doc));
   app.get('/legal/:doc/versions/:version', async (req) => {

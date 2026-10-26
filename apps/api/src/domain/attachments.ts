@@ -142,7 +142,12 @@ export async function spool(source: Readable, max: number, tooLarge: () => Error
 }
 
 /** Round 23e (item 6): stored files are hashed per chunk at upload, so a download can be verified while it streams. */
-export const downloadLimits = { chunkBytes: 1024 * 1024, perUser: 3 }; // mutable so tests can shrink the chunk
+/**
+ * chunkBytes: hashing unit; perUser: open streams per user across every API node (download_slots, Round 23f);
+ * firstByteMs / idleMs: a storage read that does not start, or stalls, is dropped and its slot freed; totalMs: the
+ * longest a stream may run (also how long an unreleased slot can count). Mutable so tests can shrink them.
+ */
+export const downloadLimits = { chunkBytes: 1024 * 1024, perUser: 3, firstByteMs: 15_000, idleMs: 30_000, totalMs: 15 * 60_000 };
 type Hashed = { sha256: string; chunkBytes: number; chunks: string[] };
 function chunkHasher(chunkBytes: number) {
   const whole = createHash('sha256');
@@ -237,25 +242,48 @@ function verifyingStream(source: Readable, att: { bytes: number | string; sha256
       cb();
     },
   });
-  source.once('error', (err) => t.destroy(err));
   t.once('error', (err) => firstBad(err));
   first.catch(() => {}); // settled either way; a later failure only ends the stream
-  return { stream: source.pipe(t), first };
+  // Round 23f (items 2, 4): pipeline, so a client that goes away (the response destroys `t`) also destroys the storage
+  // read; and a read that never starts or stalls is dropped instead of holding its slot for ever.
+  let timer: NodeJS.Timeout | null = null;
+  const arm = (ms: number) => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => t.destroy(new AppError(504, 'storage_timeout', 'The stored file could not be read in time')), ms);
+  };
+  arm(downloadLimits.firstByteMs);
+  const cap = setTimeout(() => t.destroy(new AppError(504, 'storage_timeout', 'The download took too long')), downloadLimits.totalMs);
+  source.on('data', () => arm(downloadLimits.idleMs));
+  t.once('close', () => {
+    if (timer) clearTimeout(timer);
+    clearTimeout(cap);
+  });
+  pipelineCb(source, t, () => {}); // errors surface on `t`; either side ending tears the other down
+  return { stream: t, first };
 }
 
-/** Round 23e (item 6): at most `downloadLimits.perUser` file streams per user at a time. */
-const activeDownloads = new Map<string, number>();
-function takeDownloadSlot(userId: string) {
-  const n = activeDownloads.get(userId) ?? 0;
-  if (n >= downloadLimits.perUser) throw new AppError(429, 'downloads_busy', 'Finish your current downloads first');
-  activeDownloads.set(userId, n + 1);
+/**
+ * Round 23e (item 6) / 23f (item 4): at most `downloadLimits.perUser` file streams per user at a time, counted in
+ * Postgres (download_slots) so the limit holds across API nodes. A slot that is never released (a node died) stops
+ * counting after `totalMs`, the longest a stream may run.
+ */
+async function takeDownloadSlot(ctx: Ctx, userId: string): Promise<() => void> {
+  const slot = await withTx(ctx.db, async (tx) => {
+    await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`download:${userId}`]);
+    return one<{ id: string | null }>(
+      tx,
+      `WITH active AS (SELECT count(*)::int AS n FROM download_slots WHERE user_id = $1 AND finished_at IS NULL AND started_at > now() - make_interval(secs => $3))
+       , ins AS (INSERT INTO download_slots (user_id) SELECT $1 FROM active WHERE n < $2 RETURNING id)
+       SELECT (SELECT id FROM ins) AS id`,
+      [userId, downloadLimits.perUser, downloadLimits.totalMs / 1000],
+    );
+  });
+  if (!slot.id) throw new AppError(429, 'downloads_busy', 'Finish your current downloads first');
   let done = false;
   return () => {
     if (done) return;
     done = true;
-    const left = (activeDownloads.get(userId) ?? 1) - 1;
-    if (left <= 0) activeDownloads.delete(userId);
-    else activeDownloads.set(userId, left);
+    void ctx.db.query('UPDATE download_slots SET finished_at = now() WHERE id = $1', [slot.id]).catch(() => {});
   };
 }
 
@@ -594,7 +622,7 @@ export async function openAttachment(ctx: Ctx, id: string, user: { id: string; r
   const room = await roomForParticipant(ctx.db, att.room_id, user);
   const isParticipant = room.buyer_id === user.id || room.seller_id === user.id;
   const integrity = () => new AppError(500, 'integrity_error', 'Stored file failed its integrity check');
-  const release = takeDownloadSlot(user.id);
+  const release = await takeDownloadSlot(ctx, user.id);
   try {
     if (att.chunk_sha256?.length && att.chunk_bytes) {
       const source = await ctx.storage.getStream(att.storage_key).catch((err) => {
@@ -607,6 +635,7 @@ export async function openAttachment(ctx: Ctx, id: string, user: { id: string; r
       stream.on('error', (err) => ctx.log.error({ attachmentId: att.id, err: err.message }, 'stored attachment failed its integrity check mid-stream'));
       await first.catch((err) => {
         stream.destroy();
+        if (err instanceof AppError && err.code === 'storage_timeout') throw err; // a stalled store: 504, slot freed
         ctx.log.error({ attachmentId: att.id, err: (err as Error).message }, 'stored attachment failed its integrity check');
         throw integrity();
       });

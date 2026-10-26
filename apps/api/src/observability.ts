@@ -1,5 +1,5 @@
 import * as Sentry from '@sentry/node';
-import { pino, type Logger as PinoLogger } from 'pino';
+import { pino, type DestinationStream, type Logger as PinoLogger } from 'pino';
 import { Counter, Gauge, Histogram, Registry, collectDefaultMetrics } from 'prom-client';
 import type { Config } from './config.js';
 import type { Ctx, Logger } from './context.js';
@@ -40,6 +40,11 @@ export function deepRedact<T>(v: T, depth = 0, fromClient = false): T {
   if (depth > 10 || v === null || typeof v !== 'object') return v;
   if (v instanceof Error || v instanceof Date || Buffer.isBuffer(v)) return v;
   if (Array.isArray(v)) return v.map((x) => deepRedact(x, depth + 1, fromClient)) as T;
+  // Round 23f (item 1): only plain objects are copied. A FastifyRequest/Reply or a raw IncomingMessage is left as it is
+  // for its serializer (copying it by Object.entries drops the prototype getters — method, url, statusCode — and walks
+  // the whole socket on every log line).
+  const proto = Object.getPrototypeOf(v);
+  if (proto !== Object.prototype && proto !== null) return v;
   const out: Record<string, unknown> = {};
   for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
     const key = k.toLowerCase();
@@ -50,21 +55,22 @@ export function deepRedact<T>(v: T, depth = 0, fromClient = false): T {
   return out as T;
 }
 
-export function createLogger(cfg: Config): PinoLogger {
+export function createLogger(cfg: Config, destination?: DestinationStream): PinoLogger {
   return pino({
     level: cfg.LOG_LEVEL,
     base: { service: 'bullizard-api', env: cfg.APP_ENV },
     redact: { paths: REDACT_PATHS, censor: '[redacted]' },
     formatters: { log: (obj) => deepRedact(obj) },
     serializers: {
-      req: (req: { method?: string; url?: string; id?: unknown; headers?: Record<string, unknown>; remoteAddress?: string }) => ({
+      req: (req: { method?: string; url?: string; id?: unknown; headers?: Record<string, unknown>; ip?: string; remoteAddress?: string; socket?: { remoteAddress?: string } }) => ({
         id: req.id,
         method: req.method,
         url: redactUrl(req.url ?? ''),
-        remoteAddress: req.remoteAddress,
+        remoteAddress: req.ip ?? req.remoteAddress ?? req.socket?.remoteAddress,
       }),
+      res: (res: { statusCode?: number }) => ({ statusCode: res.statusCode }),
     },
-  });
+  }, destination);
 }
 
 /** Adapts pino to the (obj, msg) Logger interface domain code uses. */

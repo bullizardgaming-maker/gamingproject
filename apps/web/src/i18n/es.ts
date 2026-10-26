@@ -878,5 +878,8 @@ const es: Messages = {
   "account.newsletter.hint": "Correos ocasionales sobre juegos nuevos y ofertas. Puedes desactivarlos aquí o con el enlace de cualquier boletín.",
   "account.newsletter.saved": "Guardado.",
   "upload.videoTooLarge": "Los vídeos pueden ocupar hasta 95 MB. Recorta la grabación o baja su calidad e inténtalo de nuevo.",
+  "legal.changedNotice": "Los Términos cambiaron mientras estabas en esta página. Lee la nueva versión y acéptala para continuar.",
+  "legal.readNew": "Leer los nuevos Términos",
+  "legal.acceptAndContinue": "Aceptar y continuar",
 };
 export default es;

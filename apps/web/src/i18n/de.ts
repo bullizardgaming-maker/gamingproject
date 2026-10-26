@@ -878,5 +878,8 @@ const de: Messages = {
   "account.newsletter.hint": "Gelegentliche E-Mails zu neuen Spielen und Angeboten. Du kannst sie hier oder über den Link in jedem Newsletter abbestellen.",
   "account.newsletter.saved": "Gespeichert.",
   "upload.videoTooLarge": "Videos dürfen bis zu 95 MB groß sein. Kürze die Aufnahme oder senke die Qualität und versuche es erneut.",
+  "legal.changedNotice": "Die AGB haben sich geändert, während du auf dieser Seite warst. Lies die neue Fassung und akzeptiere sie, um fortzufahren.",
+  "legal.readNew": "Neue AGB lesen",
+  "legal.acceptAndContinue": "Akzeptieren und fortfahren",
 };
 export default de;

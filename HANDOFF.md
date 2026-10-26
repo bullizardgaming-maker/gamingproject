@@ -14,7 +14,7 @@ State of the project for whoever picks it up next (a person or another Claude se
 
 | Path | What |
 |---|---|
-| `apps/api` | Fastify 5 + Postgres API and worker. Migrations in `migrations/` (latest 076), business logic in `src/domain/`, routes in `src/routes/`, providers (payments, KYC, email, Steam/Riot…) in `src/providers/` |
+| `apps/api` | Fastify 5 + Postgres API and worker. Migrations in `migrations/` (latest 077), business logic in `src/domain/`, routes in `src/routes/`, providers (payments, KYC, email, Steam/Riot…) in `src/providers/` |
 | `apps/web` | React 19 + Vite + Tailwind v4 web app. `src/demo/` is an in-browser mock of the API used for previews and browser tests |
 | `contracts` | `MarketEscrow.sol` (Hardhat) |
 | `services/fraud-gnn` | Python fraud model service |
@@ -714,6 +714,24 @@ under the ulimits as user `node`) passed locally. Adjusted existing tests: `laun
 password/code is 403; a suspension signs out at once), `round20` (signs in again after the suspension), `bulk-listings`,
 `promos-fx`, `requests`, `escrow-flow`, `payout-holds`, `warranty` (seller-only prices and order money read from the
 seller's view); `helpers.ts` (`client()` sends the Terms version in force with orders).
+
+## Round 23f part A (Oct 27, 2026) — review fixes (`claude/round-23f-fixes.md`)
+
+Migration **077** (`077_round23f.sql`): `download_slots`. New test file `round23f.test.ts` (part A: one test per item,
+each failing on 0f824b2).
+
+| # | What changed |
+|---|---|
+| 1 | `deepRedact` copies plain objects only; a FastifyRequest/Reply or raw IncomingMessage is left to its serializer, so request logs have `method`, the redacted `url`, `remoteAddress` and `res.statusCode` again (lost since 23d). `createLogger(cfg, destination?)` takes a stream for tests. |
+| 2 | Verified downloads use `pipeline(source, verifier)`: a client that aborts destroys the storage read. |
+| 3 | `GET /legal/:doc` is `Cache-Control: no-store` plus `CDN-Cache-Control` / `Cloudflare-CDN-Cache-Control: no-store`, read from the primary. On 409 `terms_stale` the offer page and cart fetch the version in force and show `TermsChanged` (read the new Terms → "Accept and continue", which re-sends the order with it). Keys `legal.changedNotice`, `legal.readNew`, `legal.acceptAndContinue` in all six locales. **Cloudflare:** no cache rule may override origin headers for `/v1/*` (the API sends `no-store` where it matters). |
+| 4 | A storage read gets 15 s to first byte and 30 s idle (504 `storage_timeout`, slot freed), 15 min at most. The 3-streams-per-user limit is counted in Postgres (`download_slots`, per-user advisory lock), so it holds across nodes; an unreleased slot (node died) stops counting after 15 min; retention deletes rows older than a day. |
+| 5 | `drainStorageDeletions` never deletes a key a `chat_attachments` or `shop_banners` row still references (the queue entry is dropped with a warning). |
+| 6 | Custom not-found handler: logs `{ method, path }` without the query and answers 404 `not_found` (Fastify's default logged the full URL). |
+
+Suites: API 82 files / 730 tests green, typecheck clean; web typecheck + demo build green, affected browser specs
+(cart, buyer, launch-decisions, crypto, games) 21 passed / 2 skipped; `npm audit` 0 in root, api, web; image start
+check (build, runtime imports, migrate through 077, `/readyz` + `/healthz`, 404 log line without the query) passed.
 
 ## Suggested next round
 

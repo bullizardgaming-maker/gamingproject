@@ -192,7 +192,7 @@ export async function queueStorageDeletions(s: TxScope, ctx: Ctx, keys: string[]
   s.defer(async () => void (await drainStorageDeletions(ctx, keys)));
 }
 
-/** Delete queued objects (all due ones, or just `keys`); a failure backs off 2^n minutes (≤ 1 day) and stays queued. */
+/** Delete queued objects (all due ones, or just `keys`), never one a row still references; a failure backs off 2^n minutes (≤ 1 day) and stays queued. */
 export async function drainStorageDeletions(ctx: Ctx, keys?: string[], limit = 500) {
   const due = await many<{ storage_key: string; attempts: number }>(
     ctx.db,
@@ -201,6 +201,18 @@ export async function drainStorageDeletions(ctx: Ctx, keys?: string[], limit = 5
   );
   let deleted = 0;
   for (const d of due) {
+    // Round 23f (item 5): a key some row still points at (an attachment or banner re-using it) is never deleted; the
+    // queue entry is dropped, since the object is not orphaned.
+    const used = await maybeOne(
+      ctx.db,
+      `SELECT 1 WHERE EXISTS (SELECT 1 FROM chat_attachments WHERE storage_key = $1) OR EXISTS (SELECT 1 FROM shop_banners WHERE storage_key = $1)`,
+      [d.storage_key],
+    );
+    if (used) {
+      ctx.log.warn({ key: d.storage_key }, 'queued storage deletion skipped: the object is still referenced');
+      await ctx.db.query('DELETE FROM storage_deletions WHERE storage_key = $1', [d.storage_key]);
+      continue;
+    }
     try {
       await ctx.storage.delete(d.storage_key);
       await ctx.db.query('DELETE FROM storage_deletions WHERE storage_key = $1', [d.storage_key]);

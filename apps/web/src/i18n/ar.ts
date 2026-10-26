@@ -1458,5 +1458,8 @@ const ar: Messages = {
   "account.newsletter.hint": "رسائل من حين لآخر عن الألعاب الجديدة والعروض. يمكنك إيقافها من هنا أو من الرابط في أي رسالة.",
   "account.newsletter.saved": "تم الحفظ.",
   "upload.videoTooLarge": "الحد الأقصى لحجم الفيديو 95 ميغابايت. قصّر التسجيل أو خفّض جودته وحاول مرة أخرى.",
+  "legal.changedNotice": "تغيّرت الشروط أثناء وجودك في هذه الصفحة. اقرأ الإصدار الجديد، ثم اقبله للمتابعة.",
+  "legal.readNew": "اقرأ الشروط الجديدة",
+  "legal.acceptAndContinue": "اقبل وتابع",
 };
 export default ar;

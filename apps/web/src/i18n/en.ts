@@ -1654,6 +1654,9 @@ const en = {
   "account.newsletter.hint": "Occasional emails about new games and offers. You can stop them here or with the link in any newsletter.",
   "account.newsletter.saved": "Saved.",
   "upload.videoTooLarge": "Videos can be up to 95 MB. Trim the recording or lower its quality and try again.",
+  "legal.changedNotice": "The Terms changed while you were on this page. Read the new version, then accept it to continue.",
+  "legal.readNew": "Read the new Terms",
+  "legal.acceptAndContinue": "Accept and continue",
 };
 
 export type MessageKey = keyof typeof en;

@@ -254,6 +254,13 @@ export async function buildApp(ctx: Ctx, opts: { logger?: PinoLogger } = {}): Pr
     return reply.status(ok ? 200 : 503).send({ ok, checks, ...(replica ? { replica } : {}) });
   });
 
+  // Round 23f (item 6): Fastify's own 404 logs "Route GET:<url> not found" with the query string (tokens, codes).
+  // Ours logs the path only.
+  app.setNotFoundHandler((req, reply) => {
+    req.log.info({ method: req.method, path: req.url.split('?')[0] }, 'route not found');
+    return reply.status(404).send({ error: { code: 'not_found', message: 'Route not found' } });
+  });
+
   app.setErrorHandler((err: any, req, reply: FastifyReply) => {
     if (err instanceof AppError) return reply.status(err.status).send({ error: { code: err.code, message: err.message, details: err.details } });
     if (err instanceof ZodError) return reply.status(400).send({ error: { code: 'validation_error', message: 'Invalid request', details: err.issues } });

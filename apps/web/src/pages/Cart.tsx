@@ -9,6 +9,7 @@ import { clearCart, removeFromCart, setQuantity, useCart } from '@/lib/cart';
 import { unitPriceFor } from '@/lib/tiers';
 import { usePageMeta } from '@/lib/seo';
 import { useTermsVersion } from '@/lib/terms';
+import { TermsChanged } from '../components/TermsChanged';
 import type { Offer } from './Market';
 import { t } from '../i18n';
 
@@ -22,7 +23,8 @@ export function CartPage() {
   const [offers, setOffers] = useState<Record<string, Offer | null>>({});
   const [names, setNames] = useState<Record<string, { value: string; ok: boolean }>>({});
   const [busy, setBusy] = useState(false);
-  const termsVersion = useTermsVersion(); // Round 23e: the version loaded with the page goes with the order
+  const terms = useTermsVersion(); // Round 23e/23f: the version loaded with the page goes with the order
+  const termsVersion = terms.version;
   const [error, setError] = useState('');
 
   const ids = items.map((i) => i.offerId).join(',');
@@ -67,7 +69,13 @@ export function CartPage() {
       if (res.checkoutUrl) window.location.assign(res.checkoutUrl);
       else nav('/orders?checkout=success');
     } catch (e: any) {
-      setError(e.code === 'kyc_required' ? t('offer.verifyFirst') : e.code === 'terms_reacceptance_required' ? t('legal.acceptToContinue') : e.code === 'terms_stale' ? t('legal.reloadTerms') : e.message);
+      if (e.code === 'terms_stale') {
+        // Round 23f: fetch the version now in force and ask the buyer to read and accept it.
+        await terms.onStale();
+        setBusy(false);
+        return;
+      }
+      setError(e.code === 'kyc_required' ? t('offer.verifyFirst') : e.code === 'terms_reacceptance_required' ? t('legal.acceptToContinue') : e.message);
       setBusy(false);
     }
   };
@@ -146,7 +154,8 @@ export function CartPage() {
           {t('offer.agree', { terms: '\u0000' }).split('\u0000')[0]}<Link to="/terms">{t('offer.agreeTerms')}</Link>{t('offer.agree', { terms: '\u0000' }).split('\u0000')[1]}
         </p>
         {currencies.size > 1 && <div className="alert small">{t('cart.oneCurrency')}</div>}
-        {error && <div className="alert" role="alert">{error}</div>}
+        {terms.stale && <TermsChanged busy={busy} onAccept={() => { terms.accepted(); void checkout(); }} />}
+          {error && <div className="alert" role="alert">{error}</div>}
         {!user ? (
           <Link className="btn" to="/login?next=/cart">{t('offer.signInToBuy')}</Link>
         ) : (
