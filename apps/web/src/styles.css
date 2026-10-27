@@ -857,7 +857,20 @@ span.num, b.num, code.num, .pg-price, .pg-big, .pg-pay-amount { unicode-bidi: is
 /* RTL: the photo is mirrored so the person sits on the side opposite the text. */
 [dir='rtl'] .home-hero2, [dir='rtl'] .grow-card { background-image: none !important; isolation: isolate; }
 [dir='rtl'] .home-hero2::after, [dir='rtl'] .grow-card::after { content: ''; position: absolute; inset: 0; z-index: -1; background: var(--photo) right top / cover no-repeat; transform: scaleX(-1); }
-.home-hero2 { --photo: url(/img/hero.jpg); }
+.home-hero2 { --photo: url(/img/dragon-hero.webp); }
+
+/* Hero dragon: the photo has its own grey studio backdrop, so it is drawn on a layer whose edges fade
+   into the page black on every side — no visible box at any screen width. */
+.home-hero2 { background: #0a0a0a !important; isolation: isolate; overflow: hidden; }
+.home-hero2::after { content: ''; position: absolute; top: 0; bottom: 0; right: max(0px, calc((100% - 1600px) / 2)); left: auto; aspect-ratio: 1376 / 768; z-index: -1; transform: none;
+  background: url(/img/dragon-hero.webp) center / cover no-repeat;
+  -webkit-mask-image: radial-gradient(ellipse 50% 50% at 50% 50%, #000 55%, transparent 100%); mask-image: radial-gradient(ellipse 50% 50% at 50% 50%, #000 55%, transparent 100%); }
+[dir='rtl'] .home-hero2::after { inset: 0 auto 0 max(0px, calc((100% - 1600px) / 2)); background: url(/img/dragon-hero.webp) center / cover no-repeat; transform: scaleX(-1); }
+.home-hero2::before { background: linear-gradient(90deg, #0a0a0a 0%, #0a0a0a 30%, rgba(10,10,10,0) 55%); }
+@media (max-width: 640px) {
+  .home-hero2::after { right: -25%; opacity: .55; }
+  .home-hero2::before { background: linear-gradient(0deg, #0a0a0a 25%, rgba(10,10,10,.5) 100%); }
+}
 
 /* Order chat: one order card, the safety message (max 15% of the chat), compact signed event lines */
 .chat2 .chat-official { width: 100%; }
