@@ -46,7 +46,7 @@ const PROPOSAL_COLS = `p.id, p.request_id, p.seller_id, ${GROSS_SQL('p.price_cen
 
 export async function createRequest(ctx: Ctx, buyer: { id: string; kyc_tier: number; status: string }, input: RequestInput) {
   if (buyer.status !== 'active') throw forbidden('suspended', 'Account suspended');
-  if (buyer.kyc_tier < 1) throw forbidden('kyc_required', 'Verify your email and phone (Tier 1) before posting a request');
+  if (buyer.kyc_tier < 1) throw forbidden('kyc_required', 'Verify your email first.');
   noContact(input.title, input.description);
   const cat = await maybeOne(ctx.db, 'SELECT slug FROM categories WHERE slug = $1', [input.categorySlug]);
   if (!cat) throw badRequest('unknown_category', 'Unknown category');

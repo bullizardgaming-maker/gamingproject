@@ -14,7 +14,7 @@ State of the project for whoever picks it up next (a person or another Claude se
 
 | Path | What |
 |---|---|
-| `apps/api` | Fastify 5 + Postgres API and worker. Migrations in `migrations/` (latest 078), business logic in `src/domain/`, routes in `src/routes/`, providers (payments, KYC, email, Steam/Riot…) in `src/providers/` |
+| `apps/api` | Fastify 5 + Postgres API and worker. Migrations in `migrations/` (latest 079), business logic in `src/domain/`, routes in `src/routes/`, providers (payments, KYC, email, Steam/Riot…) in `src/providers/` |
 | `apps/web` | React 19 + Vite + Tailwind v4 web app. `src/demo/` is an in-browser mock of the API used for previews and browser tests |
 | `contracts` | `MarketEscrow.sol` (Hardhat) |
 | `services/fraud-gnn` | Python fraud model service |
@@ -755,6 +755,28 @@ image start check (build, runtime imports, migrate through 078, `/readyz` + `/he
 `locale.test.ts` (plain sign-off, code email subject), `sessions-and-email.test.ts` (403 `wrong_current_password`),
 `e2e/round23a.spec.ts` (new newsletter label and captcha text). §9.8 item 7 (looking at one email per template in a
 browser) is for the copy owner: `render(ctx, name, TEMPLATE_DATA, 'ar').html` gives the page.
+
+## Round 24 (Oct 27, 2026) — API side of the Round 24 front end, and no phone anywhere (`claude/round-24-backend-brief.md`)
+
+Migration **079** (`079_round24.sql`). New test files `test/round24.test.ts` (API, one test per item, each failing on
+b5d47b0) and `e2e/round24.spec.ts` (sign-up to level 1 with no phone). Still no seller API, API keys, SDKs or Developers page.
+
+| § | What changed |
+|---|---|
+| 1 Listing fields | `GET /offers`, `GET /offers/:id` (every `OFFER_LIST_SQL` reader) return `seller_level` = 1 + ⌊2·√completed orders⌋, `seller_positive_pct` (4–5 star share of visible reviews, one decimal, null without reviews; `users.positive_review_count`, kept by `seller_rating_refresh`), `sold_count` (completed orders on the listing; `offers.sold_count`, kept by trigger `orders_sold_count`), `public_id` (`BZO` + 12 characters, stored, unique, backfilled, never the DB id) and `delivery_methods`. `repairCounters` also repairs the two new counters. Badges stay in the API for the profile. |
+| 2 Delivery methods | One table: `apps/api/src/domain/delivery.ts` (import-free; the web's `lib/delivery.ts` and the demo mock import it and add icons/labels). Albion `f2f` + `market` (character + city from the 7 cities), PoE 1/2 `f2f`, Aion/Aion 2 `f2f` + `mail`, any other game with a handover field `f2f` (character) or `uid`. A listing has methods only when its game/category has a handover field. `POST /offers` and `PATCH /offers/:id` take `deliveryMethods` (non-empty subset; 400 `invalid_delivery_method`; PATCH `null` = all). The sell form shows the boxes from `methodsForListing(game, category)`. |
+| 3 Orders and cart | `POST /orders` and each `/orders/cart` item take `deliveryMethod`, `deliveryInfo { character?, city?, uid? }`, `saveInfo`. Method must be one the listing offers (default: its first), every field of it is required, city from the list (400 `invalid_delivery_method` / `delivery_info_required` / `delivery_info_invalid`, `details.field`). Stored on `orders.delivery_method` / `delivery_info`; `character_name` keeps the character or UID. `characterName` alone still works; nothing at all is still `character_name_required`. The name is remembered only with `saveInfo: true`. `delivery_method`, `delivery_info`, `character_name` on order rows reach only the buyer, the seller and staff (`ORDER_PARTY_FIELDS` in `server.ts`). |
+| 4 Disputes from support | `POST /admin/support/tickets/:id/dispute` (`disputes.manage`; body `category`, optional `orderId` when the ticket names none, optional `reason`): the order must belong to the ticket's user, be paid/delivered, not disputed (and the usual crypto-escrow / protection-window rules). The customer is the opener, the ticket subject the reason, its first message their statement; `disputes.ticket_id` / `opened_by_staff` and `support_tickets.dispute_id` link both ways; ticket set to high priority with an internal note; audited `dispute.open_from_ticket`; same freeze, emails and $200 Lead rule. Tickets show `dispute`; the dispute list and case file carry `ticket_id`; `opened_by_staff` is hidden from the parties. The thread comes back only for staff with `support.manage`. Web: Operations → Support → ticket → "Open dispute from this ticket". The buyer endpoint `POST /orders/:id/dispute` still works (not called by the web). Chat "Stay safe" text: "If something is wrong, contact support." / «في مشكلة؟ تواصل مع الدعم.» (migration, only that sentence replaced). `GET /seller/withdrawals/quote` with an empty, zero or malformed amount: 400 `amount_required`. |
+| 6 No phone | Level 1 = verified email (`confirmVerificationCode`); migration 079 sets `kyc_tier = 1` for every user with a verified email. All tier-1 errors read "Verify your email first." `SMS_PROVIDER` is `none` \| `console` \| `twilio`; unset = `none` in production (SMS off: `DisabledSms` sends and logs nothing) and `console` in development; the "production needs twilio" guard is gone, `console` stays refused in production. `render.production.yaml` / `render.yaml`: `SMS_PROVIDER=none`, no Twilio keys. `/verify/sms/*` stays dormant (400 `sms_unavailable` with SMS off). Payout-address codes always go by email (never SMS). Web: the Account page has no phone step; strings `err.kyc_required`, new `err.tier1_required`, `offer.verifyFirst`, `sell.tier1.lede`, `sell.tier1.verify`, `account.lede`, `account.level1`, help article `verify-identity` (EN + AR; ES/FR/DE/PT fall back to EN for `sell.tier1.verify`). The new-account cap already exists and is staff-editable (Ops → Controls: `new_account_days`, `new_account_max_order_cents`, `new_account_max_open_orders`). |
+| 5 Browser specs | `disputes.spec` (arbiter flow), `crypto.spec` (refund to balance) and `launch-decisions.spec` (dispute notices) run again through the support ticket (`disputeViaSupport` in `e2e/helpers.ts`). `bulk`, `linked-accounts`, `trust` stay skipped (features removed). Demo storage keys bumped (`bz.demo.v28`, `bz.demo.launch.v4`). |
+
+Suites: API 84 files / 750 tests green, typecheck clean; web `tsc -b` + demo build green; full browser suite 126 passed /
+8 skipped / 0 failed, **a11y 13/13 green** (the contrast failures on the CEO colours were fixed by b5d47b0); `npm audit
+--omit=dev` 0 in root, api, web; image start check (build, runtime imports, migrate through 079, `/readyz` + `/healthz`
+as staging, and `/readyz` as `APP_ENV=production` with no SMS settings at all) passed. Adjusted existing tests:
+`games.test.ts` (remembered name needs `saveInfo: true`), `crypto-payments.test.ts` (payout code by email even with a
+verified phone). Docker Hub was reachable; the build here needed the agent proxy CA in a scratch copy of the Dockerfile
+(the repo Dockerfile is unchanged).
 
 ## Suggested next round
 

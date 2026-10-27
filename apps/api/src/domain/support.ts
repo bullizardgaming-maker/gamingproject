@@ -16,7 +16,7 @@ export const MAX_OPEN_TICKETS = 5;
 export const AUTO_RESOLVE_DAYS = 7;
 
 const TICKET_COLS = `t.id, t.number, t.user_id, t.order_id, t.category, t.subject, t.status, t.priority, t.assigned_to,
-  t.created_at, t.updated_at, t.first_response_at, t.resolved_at`;
+  t.created_at, t.updated_at, t.first_response_at, t.resolved_at, t.dispute_id`;
 
 async function orderSummary(q: Queryable, orderId: string | null) {
   if (!orderId) return null;
@@ -79,6 +79,10 @@ export async function getTicket(q: Queryable, id: string, viewer: { id: string; 
     [id, viewer.staff],
   );
   const order = await orderSummary(q, t.order_id);
+  // Round 24: a dispute staff opened from this ticket.
+  const dispute = t.dispute_id
+    ? await maybeOne(q, 'SELECT id, order_id, status, category, reason, created_at, resolved_at FROM disputes WHERE id = $1', [t.dispute_id])
+    : null;
   if (!viewer.staff) {
     delete t.user_email;
     delete t.assignee_name;
@@ -89,7 +93,7 @@ export async function getTicket(q: Queryable, id: string, viewer: { id: string; 
       delete m.internal;
     }
   }
-  return { ...t, order, messages };
+  return { ...t, order, dispute, messages };
 }
 
 export async function customerReply(ctx: Ctx, userId: string, id: string, body: string) {

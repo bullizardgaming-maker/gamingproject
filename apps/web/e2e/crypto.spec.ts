@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { buy, payCrypto, signIn, fillCharacter, buyNow } from './helpers';
+import { buy, disputeViaSupport, payCrypto, signIn, fillCharacter, buyNow } from './helpers';
 
 test.describe('crypto money paths', () => {
   test('buyer pays with a coin that fits the amount, the order funds, and the seller is held until confirmation', async ({ page }) => {
@@ -103,16 +103,11 @@ test.describe('crypto money paths', () => {
     await expect(page.getByRole('status').filter({ hasText: 'Approved' })).toBeVisible();
   });
 
-  // Round 24: disputes open from support, not the order page; rewrite with a staff-opened dispute.
-  test.skip('a refund on a crypto order lands in the buyer’s balance (no on-chain refund)', async ({ page }) => {
+  // Round 24: disputes open from support (staff open them from the buyer's ticket), not the order page.
+  test('a refund on a crypto order lands in the buyer’s balance (no on-chain refund)', async ({ page }) => {
     await signIn(page, 'Buyer');
     await buy(page, '/offers/offer-7'); // 100k Gold, manual delivery
-    const orderUrl = page.url().replace(/\?.*$/, '');
-    await page.getByText('Open a dispute', { exact: true }).click();
-    await page.getByLabel("What's the problem?").selectOption('not_delivered');
-    await page.getByPlaceholder(/Be specific: what you expected/).fill('No gold arrived and the seller stopped answering in the chat.');
-    await page.getByRole('button', { name: 'Open dispute' }).click();
-    await expect(page.getByText('Buyer statement')).toBeVisible();
+    const orderUrl = await disputeViaSupport(page, 'No gold arrived and the seller stopped answering', 'Paid by crypto, nothing traded, no reply in the chat.');
 
     await signIn(page, 'Admin');
     await page.goto('/admin');

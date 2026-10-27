@@ -4,7 +4,8 @@ import { many, maybeOne, one, withTx } from '../db.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { addInventory, parseBulkUpload } from './inventory.js';
 import { getRate } from './fx.js';
-import { cleanAttributes } from './attributeSets.js';
+import { cleanAttributes, handoverFieldFor } from './attributeSets.js';
+import { cleanDeliveryMethods } from './delivery.js';
 import { checkTiers, type PriceTier } from './priceTiers.js';
 import { listingStatusFor } from './moderation.js';
 import { notify } from './notifications.js';
@@ -42,6 +43,15 @@ export interface OfferInput {
   unitLabel?: string | null;
   unitSize?: number | null;
   minQty?: number;
+  /** Round 24: the delivery methods this listing offers, from the game's fixed list (domain/delivery.ts). Null/absent: all of them. */
+  deliveryMethods?: string[] | null;
+}
+
+/** Round 24: a 400 unless the methods are a non-empty subset of what this game and category allow. */
+export function checkDeliveryMethods(game: string, categorySlug: string, input: string[] | null | undefined) {
+  const r = cleanDeliveryMethods(game, handoverFieldFor(game, categorySlug)?.key ?? null, input);
+  if (!r.ok) throw badRequest('invalid_delivery_method', r.error);
+  return r.value;
 }
 
 export const MAX_BUNDLE_PARTS = 10;
@@ -115,12 +125,15 @@ export const OFFER_LIST_SQL = `
          f.unit_label, f.unit_size, f.min_qty, ${GROSS_SQL(EFFECTIVE_PRICE_SQL)} AS price_per_unit_cents, f.available AS stock_qty,
          u.badges AS seller_badges, CASE WHEN u.show_online THEN u.last_seen_at END AS seller_last_seen_at,
          (c.kind = 'account' AND f.owner_proof_status <> 'verified') AS high_risk_secondary,
-         u.completed_orders AS seller_completed_orders, u.rating_avg AS seller_rating, u.review_count AS seller_review_count
+         u.completed_orders AS seller_completed_orders, u.rating_avg AS seller_rating, u.review_count AS seller_review_count,
+         (1 + floor(2 * sqrt(GREATEST(u.completed_orders, 0))))::int AS seller_level,
+         CASE WHEN u.review_count > 0 THEN round(100.0 * u.positive_review_count / u.review_count, 1)::float8 END AS seller_positive_pct,
+         f.sold_count, f.public_id, f.delivery_methods
     FROM offers f JOIN categories c ON c.slug = f.category_slug JOIN users u ON u.id = f.seller_id
     LEFT JOIN linked_accounts la ON la.id = f.linked_account_id AND la.unlinked_at IS NULL`;
 
 /**
- * Who may list and sell: Tier 1 (email + phone) plus a passed rules test; identity verification
+ * Who may list and sell: Tier 1 (a verified email; no phone, Round 24) plus a passed rules test; identity verification
  * (Tier 2) is due within 30 days of the first listing (domain/onboarding.ts), after which selling
  * is restricted until it is done.
  */
@@ -133,7 +146,7 @@ export const idDeadlinePassed = (user: { kyc_tier: number; seller_since?: string
 export function requireSeller(user: { kyc_tier: number; status: string; rules_passed_at?: string | null; selling_restricted_at?: string | null; listing_banned_at?: string | null; seller_since?: string | null }, idDueDays = ID_DUE_DAYS_DEFAULT) {
   if (user.status !== 'active') throw forbidden('suspended', 'Account suspended');
   if (user.listing_banned_at) throw forbidden('listing_banned', 'Your account can’t list offers right now. Open an appeal from the help centre.');
-  if (user.kyc_tier < 1) throw forbidden('tier1_required', 'Verify your email and phone before selling');
+  if (user.kyc_tier < 1) throw forbidden('tier1_required', 'Verify your email first.');
   if (!user.rules_passed_at) throw forbidden('rules_test_required', 'Pass the seller rules test before your first listing');
   if (idDeadlinePassed(user, idDueDays)) throw forbidden('kyc_overdue', 'Verify your identity to keep selling: the 30-day deadline has passed');
 }
@@ -164,15 +177,16 @@ export async function createOffer(ctx: Ctx, seller: { id: string; kyc_tier: numb
   const stock = input.deliveryMode === 'manual' ? (cat.kind === 'account' ? 1 : input.stock ?? 1) : 0;
   const tiers = cleanTiers(input.priceCents, input.priceTiers, cat.kind);
   const unit = cleanUnit(input, cat.kind, stock);
+  const deliveryMethods = checkDeliveryMethods(input.game, input.categorySlug, input.deliveryMethods);
   const screen = await listingStatusFor(ctx.db, input.title, input.description ?? '');
   const offer = await one(
     ctx.db,
     `INSERT INTO offers (seller_id, category_slug, game, title, description, price_cents, currency, delivery_mode, stock, low_stock_threshold, delivery_hours, attributes, price_tiers,
-                         status, review_reasons, unit_label, unit_size, min_qty)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING id`,
+                         status, review_reasons, unit_label, unit_size, min_qty, delivery_methods)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING id`,
     [seller.id, input.categorySlug, input.game, input.title, input.description ?? '', input.priceCents, (input.currency ?? ctx.cfg.SETTLEMENT_CURRENCY).toUpperCase(),
      input.deliveryMode, stock, input.lowStockThreshold ?? 5, input.deliveryHours ?? 24, JSON.stringify(attrs.value), JSON.stringify(tiers),
-     screen.review ? 'review' : 'active', screen.reasons, unit.label, unit.size, unit.minQty],
+     screen.review ? 'review' : 'active', screen.reasons, unit.label, unit.size, unit.minQty, deliveryMethods],
   );
   if (input.bundle) {
     await ctx.db.query('UPDATE offers SET is_bundle = true WHERE id = $1', [offer.id]);
@@ -205,7 +219,7 @@ export async function updateOffer(
   sellerId: string,
   offerId: string,
   version: number,
-  patch: Partial<Pick<OfferInput, 'title' | 'description' | 'priceCents' | 'stock' | 'lowStockThreshold' | 'deliveryHours' | 'attributes' | 'priceTiers' | 'warrantyDays' | 'linkedAccountId' | 'minBuyerReputation' | 'unitLabel' | 'unitSize' | 'minQty'>> & { status?: 'active' | 'paused' | 'removed' },
+  patch: Partial<Pick<OfferInput, 'title' | 'description' | 'priceCents' | 'stock' | 'lowStockThreshold' | 'deliveryHours' | 'attributes' | 'priceTiers' | 'warrantyDays' | 'linkedAccountId' | 'minBuyerReputation' | 'unitLabel' | 'unitSize' | 'minQty' | 'deliveryMethods'>> & { status?: 'active' | 'paused' | 'removed' },
 ) {
   let attributes: string | null = null;
   if (patch.unitLabel !== undefined || patch.unitSize !== undefined || patch.minQty !== undefined) {
@@ -239,6 +253,13 @@ export async function updateOffer(
     const cur = await maybeOne(ctx.db, 'SELECT f.seller_id, c.kind FROM offers f JOIN categories c ON c.slug = f.category_slug WHERE f.id = $1', [offerId]);
     if (!cur || cur.seller_id !== sellerId) throw notFound('Offer');
     if (cur.kind !== 'account') throw badRequest('invalid_warranty', 'Only account listings can carry a warranty');
+  }
+  if (patch.deliveryMethods !== undefined) {
+    // Round 24: null resets to every method of the game; a list must be a non-empty subset of it.
+    const cur = await maybeOne(ctx.db, 'SELECT seller_id, game, category_slug FROM offers WHERE id = $1', [offerId]);
+    if (!cur || cur.seller_id !== sellerId) throw notFound('Offer');
+    const methods = patch.deliveryMethods === null ? null : checkDeliveryMethods(cur.game, cur.category_slug, patch.deliveryMethods);
+    await ctx.db.query('UPDATE offers SET delivery_methods = $2 WHERE id = $1 AND seller_id = $3', [offerId, methods, sellerId]);
   }
   let tiers: string | null = null;
   if (patch.priceTiers) {

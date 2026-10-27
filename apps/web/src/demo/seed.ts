@@ -474,7 +474,7 @@ export function seed() {
     offplatformActions: ['warn', 'warn', 'ban'] as string[],
     credit: {} as Record<string, number>,
     texts: {
-      chat_safety: { key: 'chat_safety', body: 'Keep the whole trade in this chat. Never pay or deliver anywhere else: deals made outside Bullizard are not in escrow and not protected.\nSharing outside contacts can get your account banned right away.\nThe payment is released only when the buyer confirms delivery. If something is wrong, open a dispute from the order page.', link_label: 'Rules and policies', link_href: '/help/report-a-user', updated_at: ago(10 * day) },
+      chat_safety: { key: 'chat_safety', body: 'Keep the whole trade in this chat. Never pay or deliver anywhere else: deals made outside Bullizard are not in escrow and not protected.\nSharing outside contacts can get your account banned right away.\nThe payment is released only when the buyer confirms delivery. If something is wrong, contact support.', link_label: 'Rules and policies', link_href: '/help/report-a-user', updated_at: ago(10 * day) },
     } as Record<string, { key: string; body: string; link_label: string; link_href: string; updated_at: string }>,
     launch: { foundingUntil: ago(-45 * day), featuredSlots: 2, featuredDays: 7, allowedGames: undefined as string[] | null | undefined },
     gameVotes: [

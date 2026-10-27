@@ -38,13 +38,7 @@ envVarGroups:
       - key: BREVO_LIST_ID_AR
         sync: false
       - key: SMS_PROVIDER
-        value: twilio
-      - key: TWILIO_ACCOUNT_SID
-        sync: false
-      - key: TWILIO_AUTH_TOKEN
-        sync: false
-      - key: TWILIO_FROM
-        sync: false
+        value: none # Round 24: no phone anywhere, so no SMS provider (no Twilio); SMS is off
       - key: MALWARE_SCANNER
         value: clamd
       - key: CLAMD_PORT

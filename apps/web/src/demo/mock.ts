@@ -5,7 +5,8 @@
  * elsewhere in production: the hosted card checkout, auto-delivery, the seller replying in chat,
  * and identity verification. Nothing here talks to a server.
  */
-import { levelFromOrders, methodsOf, METHODS } from '@/lib/delivery';
+import { levelFromOrders, methodsOf } from '@/lib/delivery';
+import { cleanDeliveryChoice, cleanDeliveryMethods } from '../../../api/src/domain/delivery';
 import { CATEGORIES, DEMO_CODE, DEMO_FULL, seed, type DemoState, type DemoUser } from './seed';
 import { CATEGORY_DEFAULTS, GAME_SETS, LEAGUES, PERMANENT_LEAGUES, attributesFor, cleanAttributes, handoverFieldFor, handoverKey, setLeagues } from '../../../api/src/domain/attributeSets';
 import { checkTiers, effectivePrice, unitPriceFor } from '../../../api/src/domain/priceTiers';
@@ -22,7 +23,7 @@ const gameAllowed = (game: string) => {
   return list.some((g) => g.toLowerCase() === game.trim().toLowerCase());
 };
 
-const KEY = DEMO_FULL ? 'bz.demo.v27' : 'bz.demo.launch.v3';
+const KEY = DEMO_FULL ? 'bz.demo.v28' : 'bz.demo.launch.v4';
 const day = 86_400_000;
 const now = () => new Date().toISOString();
 const rid = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2) + Date.now().toString(16));
@@ -459,12 +460,21 @@ function seedOrdersFor(buyer: DemoUser) {
 }
 
 /** Games that deliver in-game need the buyer's character name (or UID), confirmed at checkout. */
-function characterFor(u: DemoUser, offer: any, given: unknown) {
+/** Round 24, as the API: method from the listing's list, every field of it required (city from the list). */
+function deliveryChoiceFor(offer: any, body: any) {
   const field = handoverFieldFor(offer.game, offer.category_slug);
-  const name = String(given ?? '').trim().slice(0, 60);
-  if (field && !name) fail(400, 'character_name_required', `${field.label} is required for ${offer.game}`);
   if (state.controls.pause_orders) fail(503, 'orders_paused', state.controls.pause_message || 'New orders are paused for a short while. Try again later.');
-  return field ? name : null;
+  if (!field) return null;
+  const legacy = String(body.characterName ?? '').trim() || null;
+  if (!body.deliveryMethod && !body.deliveryInfo && !legacy) fail(400, 'character_name_required', `${field.label} is required for ${offer.game}`);
+  const c = cleanDeliveryChoice(methodsOf(offerView(offer)), body.deliveryMethod, body.deliveryInfo, legacy);
+  if (!c.ok) return fail(400, c.code, c.error);
+  return { method: c.method, info: c.info, name: c.info.character ?? c.info.uid ?? null };
+}
+function applyDeliveryChoice(u: DemoUser, offer: any, o: any, choice: ReturnType<typeof deliveryChoiceFor>, saveInfo: unknown) {
+  if (!choice) return;
+  Object.assign(o, { delivery_method: choice.method, delivery_info: choice.info, character_name: choice.name });
+  if (saveInfo === true && choice.name) rememberCharacter(u, offer, o, choice.name);
 }
 function rememberCharacter(u: DemoUser, offer: any, o: any, name: string) {
   o.character_name = name;
@@ -602,12 +612,12 @@ route('POST', '/verify/:channel/confirm', ({ me, params, body }) => {
   if (body.code !== DEMO_CODE) fail(400, 'invalid_code', `Wrong code. In the demo the code is ${DEMO_CODE}.`);
   if (params[0] === 'email') u.email_verified_at = now();
   else u.phone_verified_at = now();
-  if (u.email_verified_at && u.phone_verified_at) u.kyc_tier = Math.max(u.kyc_tier, 1);
+  if (u.email_verified_at) u.kyc_tier = Math.max(u.kyc_tier, 1); // Round 24: a verified email is level 1 (no phone)
   return { user: publicUser(u) };
 });
 route('POST', '/kyc/start', ({ me }) => {
   const u = need(me);
-  if (u.kyc_tier < 1) fail(403, 'kyc_required', 'Verify your email and phone first');
+  if (u.kyc_tier < 1) fail(403, 'kyc_required', 'Verify your email first.');
   // The identity partner approves the demo check a moment later.
   setTimeout(() => {
     u.kyc_tier = 2;
@@ -1148,7 +1158,7 @@ function assertTosVersion(v: unknown) {
 route('POST', '/orders', ({ me, body }) => {
   const u = need(me);
   assertTosVersion(body.tosVersion); // Round 23e: the Terms version loaded with the page is required
-  if (u.kyc_tier < 1) fail(403, 'kyc_required', 'Verify your email and phone before purchasing');
+  if (u.kyc_tier < 1) fail(403, 'kyc_required', 'Verify your email first.');
   const offer = state.offers.find((x) => x.id === body.offerId && (!x.reserved_for || x.reserved_for === u.id)) ?? fail(404, 'not_found', 'Listing not found');
   if (offer.seller_id === u.id) fail(400, 'own_listing', 'You can’t buy your own listing');
   if (offer.min_buyer_reputation) {
@@ -1161,24 +1171,10 @@ route('POST', '/orders', ({ me, body }) => {
   const available = availableOf(offer);
   if (available < qty) fail(409, 'out_of_stock', 'Not enough stock for this order');
   const code = body.sellerCode ? sellerCodeQuote(offer, u, qty, body.sellerCode) : null;
-  // Round 24: the buyer picks one of the listing's delivery methods and fills only its fields.
-  const methods = methodsOf(offerView(offer));
-  const method = body.deliveryMethod ?? methods[0] ?? null;
-  if (methods.length && !methods.includes(method)) fail(400, 'invalid_delivery_method', 'Pick one of the seller’s delivery methods');
-  const info: Record<string, string> = {};
-  for (const f of method ? METHODS[method as keyof typeof METHODS].fields : []) {
-    const v = String(body.deliveryInfo?.[f.key] ?? (f.key === 'character' ? body.characterName ?? '' : '')).trim().slice(0, 60);
-    if (!v) fail(400, 'delivery_info_required', `${f.key} is required`);
-    if (f.options && !f.options.includes(v)) fail(400, 'delivery_info_invalid', `Pick a ${f.key} from the list`);
-    info[f.key] = v;
-  }
-  const characterName = characterFor(u, offer, info.character ?? info.uid ?? body.characterName);
+  // Round 24: the buyer picks one of the listing's delivery methods and fills only its fields (as the API does).
+  const choice = deliveryChoiceFor(offer, body);
   const o = createOrderRecord(u, offer, qty, body.rail ?? 'fiat', code?.discount ?? 0);
-  if (method) Object.assign(o, { delivery_method: method, delivery_info: info });
-  if (characterName) {
-    o.character_name = characterName;
-    if (body.saveInfo !== false) rememberCharacter(u, offer, o, characterName);
-  }
+  applyDeliveryChoice(u, offer, o, choice, body.saveInfo);
   if (code) Object.assign(o, { seller_code_id: code.c.id, seller_discount_cents: code.discount });
   if (body.useCredit && o.rail === 'fiat') applyCredit(u, o);
   return { order: orderDetail(o), checkoutUrl: o.rail === 'fiat' && o.charged_cents > 0 ? `/orders/${o.id}?pay=crypto` : null };
@@ -1400,8 +1396,9 @@ route('POST', '/me/credit/withdraw', ({ me, body }) => {
   return w;
 });
 route('GET', '/seller/withdrawals/quote', ({ query }) => {
-  const amountCents = Number(query.get('amountCents'));
-  if (!(amountCents > 0)) fail(400, 'validation_error', 'amountCents must be positive');
+  const raw = (query.get('amountCents') ?? '').trim();
+  const amountCents = /^\d{1,12}$/.test(raw) ? Number(raw) : NaN;
+  if (!(amountCents > 0)) fail(400, 'amount_required', 'Enter an amount to see the fee'); // Round 24, as the API
   const fee = feeFor(amountCents);
   return { amountCents, feeCents: fee, netCents: amountCents - fee, feeBps: WITHDRAWAL_FEE_BPS, feeMinCents: WITHDRAWAL_FEE_MIN };
 });
@@ -1549,7 +1546,7 @@ route('PATCH', '/seller/codes/:id', ({ me, params, body }) => {
 route('POST', '/orders/cart', ({ me, body }) => {
   const u = need(me);
   assertTosVersion(body.tosVersion); // Round 23e: the Terms version loaded with the page is required
-  if (u.kyc_tier < 1) fail(403, 'kyc_required', 'Verify your email and phone before purchasing');
+  if (u.kyc_tier < 1) fail(403, 'kyc_required', 'Verify your email first.');
   const items: Array<{ offerId: string; quantity: number; characterName?: string }> = body.items ?? [];
   if (!items.length || items.length > 20) fail(400, 'invalid_cart', 'A cart holds 1 to 20 listings');
   if (new Set(items.map((i) => i.offerId)).size !== items.length) fail(400, 'invalid_cart', 'Each listing can appear once; change its quantity instead');
@@ -1559,11 +1556,11 @@ route('POST', '/orders/cart', ({ me, body }) => {
     if (offer.seller_id === u.id) fail(403, 'own_offer', 'You cannot buy your own offer');
     const qty = Number(i.quantity ?? 1);
     if (availableOf(offer) < qty) fail(409, 'out_of_stock', `Not enough stock for "${offer.title}"`);
-    return { offer, qty, characterName: characterFor(u, offer, (i as any).characterName) };
+    return { offer, qty, choice: deliveryChoiceFor(offer, i), saveInfo: (i as any).saveInfo };
   });
-  const checkout = { id: `cart-${rid().slice(0, 8)}`, buyer_id: u.id, order_ids: lines.map(({ offer, qty, characterName }) => {
+  const checkout = { id: `cart-${rid().slice(0, 8)}`, buyer_id: u.id, order_ids: lines.map(({ offer, qty, choice, saveInfo }) => {
     const o = createOrderRecord(u, offer, qty, 'fiat');
-    if (characterName) rememberCharacter(u, offer, o, characterName);
+    applyDeliveryChoice(u, offer, o, choice, saveInfo);
     return o.id;
   }), created_at: now() };
   for (const id of checkout.order_ids) {
@@ -1795,16 +1792,21 @@ route('PATCH', '/orders/:id/checklist', ({ me, params, body }) => {
   o.checklist.completed_at = o.checklist.items.every((i: any) => i.done) ? now() : null;
   return o.checklist;
 });
+/** Opens a dispute for one party (the buyer endpoint, kept for older clients, and staff from a support ticket). */
+function openDisputeRecord(u: DemoUser, o: any, reason: string, category: string, statement: string, extra: Record<string, unknown> = {}) {
+  if (!['paid', 'delivered'].includes(o.status)) fail(409, 'invalid_state', `Cannot dispute an order that is ${o.status}`);
+  if (o.dispute) fail(409, 'already_disputed', 'This order already has a dispute');
+  const role = u.id === o.buyer_id ? 'buyer' : 'seller';
+  o.dispute = { id: rid(), order_id: o.id, reason, category, status: 'open', opened_by: u.id, created_at: now(), ...extra,
+    statements: [{ id: rid(), role, body: statement, author_name: u.display_name, created_at: now() }] };
+  transition(o, 'disputed', 'dispute_opened');
+  live(appendMessage(o.room_id, null, 'system', 'A dispute was opened. Escrow is frozen until an arbiter reviews this chat.', [], { code: 'dispute_opened', params: { reason } }));
+  return o.dispute;
+}
 route('POST', '/orders/:id/dispute', ({ me, params, body }) => {
   const u = need(me);
   const o = orderFor(u, params[0]!);
-  if (!['paid', 'delivered'].includes(o.status)) fail(409, 'invalid_state', `Cannot dispute an order that is ${o.status}`);
-  const role = u.id === o.buyer_id ? 'buyer' : 'seller';
-  o.dispute = { id: rid(), reason: body.reason, category: body.category ?? 'other', status: 'open', opened_by: u.id, created_at: now(),
-    statements: [{ id: rid(), role, body: body.reason, author_name: u.display_name, created_at: now() }] };
-  transition(o, 'disputed', 'dispute_opened');
-  live(appendMessage(o.room_id, null, 'system', 'A dispute was opened. Escrow is frozen until an arbiter reviews this chat.', [], { code: 'dispute_opened', params: { reason: body.reason ?? '' } }));
-  return o.dispute;
+  return openDisputeRecord(u, o, body.reason, body.category ?? 'other', body.reason);
 });
 route('POST', '/orders/:id/dispute/statements', ({ me, params, body }) => {
   const u = need(me);
@@ -1935,7 +1937,7 @@ route('POST', '/chat/rooms/:id/messages', ({ me, params, body }) => {
 /** Who may sell: Tier 1 plus a passed rules test; identity (Tier 2) within 30 days or selling pauses. */
 const needSeller = (me: DemoUser | null) => {
   const u = need(me);
-  if (u.kyc_tier < 1) fail(403, 'tier1_required', 'Verify your email and phone before selling');
+  if (u.kyc_tier < 1) fail(403, 'tier1_required', 'Verify your email first.');
   if (!u.rules_passed_at) fail(403, 'rules_test_required', 'Pass the seller rules test before your first listing');
   if (u.selling_restricted_at && u.kyc_tier < 2) fail(403, 'kyc_overdue', 'Verify your identity to keep selling: the 30-day deadline has passed');
   if (u.listing_banned_at) fail(403, 'listing_banned', 'Your account cannot list items right now. Open an appeal from the help centre if you think this is a mistake.');
@@ -1969,7 +1971,7 @@ route('GET', '/seller/rules-test', ({ me, query }) => {
 });
 route('POST', '/seller/rules-test', ({ me, body }) => {
   const u = need(me);
-  if (u.kyc_tier < 1) fail(403, 'tier1_required', 'Verify your email and phone before taking the rules test');
+  if (u.kyc_tier < 1) fail(403, 'tier1_required', 'Verify your email first.');
   const qs = state.rulesQuestions.filter((q) => q.active);
   const ar = body?.lang === 'ar';
   const results = qs.map((q: any) => ({ id: q.id, correct: body.answers?.[q.id] === q.correct, explanation: body.answers?.[q.id] === q.correct ? null : (ar && q.explanation_ar) || q.explanation }));
@@ -2126,11 +2128,10 @@ route('POST', '/offers', ({ me, body }) => {
     if (min > o.stock) fail(400, 'invalid_min_qty', 'The minimum order can’t be more than your stock');
   }
   // Round 24: delivery methods from the game's fixed list.
-  if (Array.isArray(body.deliveryMethods)) {
-    const allowed = methodsOf({ game: body.game, category_slug: body.categorySlug, delivery_methods: null });
-    const picked = body.deliveryMethods.filter((m: string) => (allowed as string[]).includes(m));
-    if (allowed.length && !picked.length) fail(400, 'invalid_delivery_method', 'Pick at least one delivery method');
-    (o as any).delivery_methods = picked.length ? picked : null;
+  if (body.deliveryMethods !== undefined) {
+    const r = cleanDeliveryMethods(body.game, handoverFieldFor(body.game, body.categorySlug)?.key ?? null, body.deliveryMethods);
+    if (!r.ok) return fail(400, 'invalid_delivery_method', r.error);
+    (o as any).delivery_methods = r.value;
   }
   if (o.min_buyer_reputation && o.price_cents < 100_00) fail(400, 'not_high_value', 'A minimum buyer reputation can only be set on listings of 100 or more');
   if (body.linkedAccountId) {
@@ -2468,7 +2469,7 @@ route('GET', '/requests/proposals/mine', ({ me }) => {
 });
 route('POST', '/requests', ({ me, body }) => {
   const u = need(me);
-  if (u.kyc_tier < 1) fail(403, 'kyc_required', 'Verify your email and phone (Tier 1) before posting a request');
+  if (u.kyc_tier < 1) fail(403, 'kyc_required', 'Verify your email first.');
   if (!CATEGORIES.some((c) => c.slug === body.categorySlug)) fail(400, 'unknown_category', 'Unknown category');
   const game = String(body.game ?? '').trim();
   const title = String(body.title ?? '').trim();
@@ -2708,7 +2709,7 @@ route('GET', '/admin/disputes', ({ me }) => {
   needStaff(me);
   return state.orders
     .filter((o) => o.dispute?.status === 'open')
-    .map((o) => ({ id: o.dispute.id, order_id: o.id, reason: o.dispute.reason, category: o.dispute.category ?? 'other', statements: o.dispute.statements?.length ?? 0, amount_cents: o.amount_cents, currency: o.currency, created_at: o.dispute.created_at, title: o.offer_title, offer_title: o.offer_title }));
+    .map((o) => ({ id: o.dispute.id, order_id: o.id, ticket_id: o.dispute.ticket_id ?? null, reason: o.dispute.reason, category: o.dispute.category ?? 'other', statements: o.dispute.statements?.length ?? 0, amount_cents: o.amount_cents, currency: o.currency, created_at: o.dispute.created_at, title: o.offer_title, offer_title: o.offer_title }));
 });
 route('GET', '/admin/disputes/:id/case', ({ me, params }) => {
   needPerm(me, 'disputes.manage');
@@ -2945,7 +2946,9 @@ function ticketOrder(id: string | null) {
 }
 function ticketView(t: any, staff: boolean) {
   const u = userById(t.user_id);
-  const base = { ...t, messages: undefined, user_name: u?.display_name, order: ticketOrder(t.order_id) };
+  const o = t.dispute_id ? state.orders.find((x) => x.dispute?.id === t.dispute_id) : null;
+  const dispute = o ? { id: o.dispute.id, order_id: o.id, status: o.dispute.status, category: o.dispute.category, reason: o.dispute.reason, created_at: o.dispute.created_at } : null;
+  const base = { ...t, messages: undefined, user_name: u?.display_name, order: ticketOrder(t.order_id), dispute_id: t.dispute_id ?? null, dispute };
   const messages = t.messages
     .filter((m: any) => staff || !m.internal)
     .map((m: any) => ({ ...m, author_name: m.staff && !staff ? 'Bullizard Support' : userById(m.author_id)?.display_name ?? 'Support' }));
@@ -3018,6 +3021,22 @@ route('POST', '/admin/support/tickets/:id/messages', ({ me, params, body }) => {
   t.updated_at = now();
   audit(u, body.internal ? 'support.note' : 'support.reply', 'support_ticket', t.id, {});
   return ticketView(t, true);
+});
+/** Round 24, as the API: staff who decide disputes open one from the ticket (the order page has no dispute form). */
+route('POST', '/admin/support/tickets/:id/dispute', ({ me, params, body }) => {
+  needPerm(me, 'disputes.manage');
+  const t = state.tickets.find((x) => x.id === params[0]) ?? fail(404, 'not_found', 'Ticket not found');
+  if (t.dispute_id) fail(409, 'ticket_has_dispute', 'A dispute was already opened from this ticket');
+  const orderId = t.order_id ?? body.orderId ?? fail(400, 'order_required', 'This ticket names no order; pick the customer’s order first');
+  const o = state.orders.find((x) => x.id === orderId) ?? fail(404, 'not_found', 'Order not found');
+  if (o.buyer_id !== t.user_id && o.seller_id !== t.user_id) fail(403, 'not_ticket_order', 'The order does not belong to the customer who wrote this ticket');
+  const customer = userById(t.user_id)!;
+  const first = t.messages.find((m: any) => !m.staff);
+  const d = openDisputeRecord(customer, o, String(body.reason ?? t.subject), body.category ?? 'other', first?.body ?? t.subject, { ticket_id: t.id });
+  Object.assign(t, { dispute_id: d.id, order_id: o.id, priority: 'high', updated_at: now() });
+  t.messages.push({ id: rid(), author_id: me!.id, staff: true, internal: true, body: `Dispute opened on order ${o.ref ?? o.id} from this ticket.`, created_at: now() });
+  audit(me!, 'dispute.open_from_ticket', 'dispute', d.id, { ticketId: t.id });
+  return { dispute: { ...d, statements: undefined, lead_review: o.amount_cents > 200_00 }, ticket: permsOf(me!).has('support.manage') ? ticketView(t, true) : null };
 });
 route('PATCH', '/admin/support/tickets/:id', ({ me, params, body }) => {
   const t = staffTicket(me, params[0]!);

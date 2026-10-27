@@ -7,7 +7,7 @@ import type { User } from './users.js';
 
 /**
  * Seller onboarding (brief CHANGE 8 / NEW 5):
- *  1. Tier 1 (email + phone) and a passed rules test before the first listing or proposal.
+ *  1. Tier 1 (a verified email; no phone, Round 24) and a passed rules test before the first listing or proposal.
  *  2. Identity verification (Tier 2) within `id_due_days` of starting to sell. Reminders go out
  *     7 days and 1 day before; once overdue, listings pause and selling and withdrawals stop
  *     until the ID is verified, then everything comes back on its own.
@@ -64,7 +64,7 @@ export async function rulesTestFor(q: Queryable, user: Pick<User, 'id' | 'kyc_ti
 export async function submitRulesTest(ctx: Ctx, user: Pick<User, 'id' | 'kyc_tier' | 'status'>, answers: Record<string, number>, lang = 'en') {
   const ar = lang.toLowerCase().startsWith('ar');
   if (user.status !== 'active') throw forbidden('suspended', 'Account suspended');
-  if (user.kyc_tier < 1) throw forbidden('tier1_required', 'Verify your email and phone before taking the rules test');
+  if (user.kyc_tier < 1) throw forbidden('tier1_required', 'Verify your email first.');
   const [questions, settings] = await Promise.all([listQuestions(ctx.db, { activeOnly: true }), rulesSettings(ctx.db)]);
   if (!questions.length) throw conflict('no_test', 'The rules test is not set up yet');
   const results = questions.map((qn) => {

@@ -259,7 +259,7 @@ describe('crypto checkout (NOWPayments)', () => {
     expect((await seller.api.get('/v1/seller/dashboard')).body.balances.availableCents).toBe(dash.balances.availableCents - 2000);
   });
 
-  it('without an authenticator, a payout address needs the emailed link plus a one-time code (SMS when a phone is verified, email otherwise)', async () => {
+  it('without an authenticator, a payout address needs the emailed link plus a one-time code by email (Round 24: never by SMS, even with a verified phone)', async () => {
     const seller = await makeUser(h, { tier: 2 });
     const req = await seller.api.post('/v1/seller/payout-address', { address: 'TNoTotpAddress1234567890', currency: 'usdttrc20' });
     expect(req.status, JSON.stringify(req.body)).toBe(200);
@@ -275,15 +275,14 @@ describe('crypto checkout (NOWPayments)', () => {
     expect(ok.status, JSON.stringify(ok.body)).toBe(200);
     expect(ok.body.address).toBe('TNoTotpAddress1234567890');
 
-    // With a verified phone the code goes by SMS instead.
-    const smsSeller = await makeUser(h, { tier: 2 });
-    await h.ctx.db.query(`UPDATE users SET phone = '+201012345678', phone_verified_at = now() WHERE id = $1`, [smsSeller.id]);
+    // Round 24: a verified phone changes nothing; the code still comes by email.
+    const phoneSeller = await makeUser(h, { tier: 2 });
+    await h.ctx.db.query(`UPDATE users SET phone = '+201012345678', phone_verified_at = now() WHERE id = $1`, [phoneSeller.id]);
     const before = sent.length;
-    await smsSeller.api.post('/v1/seller/payout-address', { address: 'TSmsAddress1234567890xyz', currency: 'usdttrc20' });
+    await phoneSeller.api.post('/v1/seller/payout-address', { address: 'TSmsAddress1234567890xyz', currency: 'usdttrc20' });
     await dispatchEmails(h.ctx);
-    const sms = sent.slice(before).find((m: any) => m.channel === 'sms' && m.to === '+201012345678') as any;
-    expect(sms, JSON.stringify(sent.slice(before).map((m: any) => [m.channel, m.to, m.subject]))).toBeTruthy();
-    expect(sms.body).toMatch(/\d{6}/);
+    expect(sent.slice(before).some((m: any) => m.channel === 'sms')).toBe(false);
+    expect(sent.slice(before).find((m: any) => m.to === phoneSeller.email && /code to confirm the new payout address/.test(m.subject ?? ''))?.body).toMatch(/\d{6}/);
   });
 
   it('four-eyes above $500 (second approval by the Lead), and a platform daily payout cap (CFO B9, B5)', async () => {

@@ -13,16 +13,23 @@ export async function repairCounters(ctx: Ctx) {
     const plain = await tx.query(`UPDATE offers SET available = offer_available(id) WHERE NOT is_bundle AND status <> 'removed' AND available <> offer_available(id)`);
     const bundles = await tx.query(`UPDATE offers SET available = offer_available(id) WHERE is_bundle AND status <> 'removed' AND available <> offer_available(id)`);
     const sellers = await tx.query(
-      `UPDATE users u SET completed_orders = s.completed, rating_avg = s.avg, review_count = s.reviews
+      `UPDATE users u SET completed_orders = s.completed, rating_avg = s.avg, review_count = s.reviews, positive_review_count = s.positive
          FROM (SELECT u2.id,
                       (SELECT count(*)::int FROM orders o WHERE o.seller_id = u2.id AND o.status = 'completed') AS completed,
                       (SELECT round(avg(rating)::numeric, 2) FROM reviews r WHERE r.seller_id = u2.id AND NOT r.hidden) AS avg,
-                      (SELECT count(*)::int FROM reviews r WHERE r.seller_id = u2.id AND NOT r.hidden) AS reviews
+                      (SELECT count(*)::int FROM reviews r WHERE r.seller_id = u2.id AND NOT r.hidden) AS reviews,
+                      (SELECT count(*)::int FROM reviews r WHERE r.seller_id = u2.id AND NOT r.hidden AND r.rating >= 4) AS positive
                  FROM users u2 WHERE EXISTS (SELECT 1 FROM offers f WHERE f.seller_id = u2.id)) s
         WHERE u.id = s.id
-          AND (u.completed_orders, u.rating_avg, u.review_count) IS DISTINCT FROM (s.completed, s.avg, s.reviews)`,
+          AND (u.completed_orders, u.rating_avg, u.review_count, u.positive_review_count) IS DISTINCT FROM (s.completed, s.avg, s.reviews, s.positive)`,
     );
-    const fixed = { listings: (plain.rowCount ?? 0) + (bundles.rowCount ?? 0), sellers: sellers.rowCount ?? 0 };
+    // Round 24: completed orders per listing (offers.sold_count).
+    const sold = await tx.query(
+      `UPDATE offers f SET sold_count = COALESCE(c.n, 0)
+         FROM offers f2 LEFT JOIN (SELECT offer_id, count(*)::int AS n FROM orders WHERE status = 'completed' GROUP BY offer_id) c ON c.offer_id = f2.id
+        WHERE f.id = f2.id AND f.sold_count <> COALESCE(c.n, 0)`,
+    );
+    const fixed = { listings: (plain.rowCount ?? 0) + (bundles.rowCount ?? 0) + (sold.rowCount ?? 0), sellers: sellers.rowCount ?? 0 };
     if (fixed.listings || fixed.sellers) ctx.log.warn({ fixed }, 'search counters drifted and were repaired');
     return fixed;
   });

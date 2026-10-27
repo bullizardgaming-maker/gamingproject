@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { HELP_CENTER } from '@/lib/features';
-import { methodLabel, methodsForGame } from '@/lib/delivery';
+import { methodLabel, methodsForListing } from '@/lib/delivery';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { api, money } from '../api';
 import { FeeLadder, pct } from '../components/FeeLadder';
@@ -186,7 +186,7 @@ export function Sell() {
   }, [user, refresh]);
 
   if (!user) return <p className="muted"><Link to="/login?next=/sell">{t('sell.signIn')}</Link></p>;
-  // Onboarding: Tier 1 (email + phone), then the rules test, then the hub; identity within 30 days.
+  // Onboarding: Tier 1 (a verified email; no phone), then the rules test, then the hub; identity within 30 days.
   if (user.kyc_tier < 1) {
     return (
       <div className="stack" style={{ maxWidth: 720 }}>
@@ -585,7 +585,7 @@ function NewOffer({ onCreated, offers, linked }: { onCreated: () => void; offers
           ...(f.linkedAccountId ? { linkedAccountId: f.linkedAccountId } : {}),
           ...(f.minBuyerReputation === 'on' ? { minBuyerReputation: 'good' } : {}),
           ...(f.categorySlug === 'currency' && unit.trim() ? { unitLabel: unit.trim(), minQty: Number(f.minQty || 1), stock: Number(f.stock || 1) } : {}),
-          ...(category !== 'accounts' && methodsForGame(f.game).length ? { deliveryMethods: new FormData(form).getAll('deliveryMethods') } : {}),
+          ...(methodsForListing(f.game, f.categorySlug).length ? { deliveryMethods: new FormData(form).getAll('deliveryMethods') } : {}),
           ...(bundleOn ? { bundle: Object.entries(parts).map(([offerId, quantity]) => ({ offerId, quantity })) } : {}),
         },
       });
@@ -642,10 +642,10 @@ function NewOffer({ onCreated, offers, linked }: { onCreated: () => void; offers
         )}
         {category !== 'accounts' && <label className="field">{byAmount ? t('sell.f.stockUnits', { unit: unit.trim() }) : t('sell.f.stock')}<input name="stock" type="number" min="1" defaultValue="1" /></label>}
         {byAmount && <label className="field">{t('sell.f.minQty', { unit: unit.trim() })}<input name="minQty" type="number" min="1" defaultValue="1" /></label>}
-        {category !== 'accounts' && methodsForGame(game).length > 0 && (
+        {methodsForListing(game, category).length > 0 && (
           <fieldset className="field sell-methods">
             <legend>{t('of.deliveryMethods')}</legend>
-            {methodsForGame(game).map((m) => (
+            {methodsForListing(game, category).map((m) => (
               <label key={m} className="check-row" style={{ color: 'var(--ink)' }}>
                 <input type="checkbox" name="deliveryMethods" value={m} defaultChecked style={{ width: 'auto' }} /> {methodLabel(m)}
               </label>

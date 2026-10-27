@@ -118,6 +118,13 @@ export class TwilioSmsMessenger implements Messenger {
   }
 }
 
+/** Round 24: SMS switched off (SMS_PROVIDER=none, the production default). Nothing is sent and nothing is logged. */
+export class DisabledSms implements Messenger {
+  async send(msg: OutboundMessage) {
+    throw new Error(`SMS is not configured (SMS_PROVIDER=none); refused a message to channel ${msg.channel}`);
+  }
+}
+
 /** Sends each channel through its own provider. */
 export class RoutingMessenger implements Messenger {
   constructor(private readonly routes: { email: Messenger; sms: Messenger }) {}

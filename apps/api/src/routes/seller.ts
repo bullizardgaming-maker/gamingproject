@@ -71,6 +71,7 @@ export const OfferBody = z.object({
   unitLabel: z.string().trim().max(12).nullable().optional().describe('Currency sold by amount: what one unit of quantity is, e.g. "M", "k", "orbs"'),
   unitSize: z.number().int().min(1).max(1_000_000_000_000).nullable().optional().describe('Game currency per unit, e.g. 1000000 for "M"'),
   minQty: z.number().int().min(1).max(1_000_000).optional().describe('Smallest order, in units (default 1)'),
+  deliveryMethods: z.array(z.string().max(20)).max(10).nullable().optional().describe('Round 24: delivery methods from the game\'s list (f2f, mail, market, uid), at least one; null = all'),
 });
 
 export const InventoryBody = z.object({
@@ -220,7 +221,7 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     return getOffer(ctx.db, Id.parse(req.params).id);
   });
   app.patch('/offers/:id', async (req) => {
-    const body = OfferBody.pick({ title: true, description: true, priceCents: true, stock: true, lowStockThreshold: true, deliveryHours: true, attributes: true, priceTiers: true, warrantyDays: true, linkedAccountId: true, minBuyerReputation: true, unitLabel: true, unitSize: true, minQty: true })
+    const body = OfferBody.pick({ title: true, description: true, priceCents: true, stock: true, lowStockThreshold: true, deliveryHours: true, attributes: true, priceTiers: true, warrantyDays: true, linkedAccountId: true, minBuyerReputation: true, unitLabel: true, unitSize: true, minQty: true, deliveryMethods: true })
       .partial()
       .extend({ version: z.number().int().min(0), status: z.enum(['active', 'paused', 'removed']).optional() })
       .parse(req.body);
@@ -273,7 +274,10 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
 
   /** What a withdrawal of this size costs (6%, at least 1.50) and what arrives. */
   app.get('/seller/withdrawals/quote', async (req) => {
-    const { amountCents } = z.object({ amountCents: z.coerce.number().int().positive() }).parse(req.query);
+    // Round 24: the web asks only once an amount is typed; an empty, zero or malformed amount is a clear 400, never a 500.
+    const raw = (req.query as Record<string, unknown> | undefined)?.amountCents;
+    const amountCents = typeof raw === 'string' && /^\d{1,12}$/.test(raw.trim()) ? Number(raw.trim()) : NaN;
+    if (!(amountCents > 0)) throw badRequest('amount_required', 'Enter an amount to see the fee');
     const fee = withdrawalFee(ctx, amountCents);
     return { amountCents, feeCents: fee, netCents: amountCents - fee, feeBps: ctx.cfg.WITHDRAWAL_FEE_BPS, feeMinCents: ctx.cfg.WITHDRAWAL_FEE_MIN_CENTS };
   });

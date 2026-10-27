@@ -15,7 +15,7 @@ Nothing below goes in chat or in the repo: paste values into Render / Vercel / N
 | 5 | **NOWPayments sandbox** (optional for the first pass) | account.sandbox.nowpayments.io | the underpayment path on staging; without it `money-paths.ts` reports underpay as skipped |
 | 6 | **Sentry** project (optional) | sentry.io | error alerts (`SENTRY_DSN`) |
 
-Production later needs the same plus: Postmark (email), Twilio (SMS), Sumsub (KYC), an S3-compatible bucket (uploads),
+Production later needs the same plus: Postmark (email), Sumsub (KYC), an S3-compatible bucket (uploads),
 and the real NOWPayments keys. They are already named in `render.production.yaml` (`sync: false` = you paste them).
 
 ## B. Values to paste — staging (`render.yaml`)
@@ -51,7 +51,7 @@ Optional on staging: `SENTRY_DSN`; for the NOWPayments underpayment test set `PA
 `DATA_ENCRYPTION_KEYS` (a **new** key, not the staging one), `PUBLIC_WEB_URL` (`https://<domain>`), `PUBLIC_API_URL`
 (`https://api.<domain>`), `DATABASE_URL` (Neon `main`, pooled, `?sslmode=require`), `S3_BUCKET` / `S3_REGION` /
 `S3_ENDPOINT` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`, `NOWPAYMENTS_*` (5 values, real account), `SUMSUB_APP_TOKEN`
-/ `SUMSUB_SECRET_KEY`, `POSTMARK_SERVER_TOKEN`, `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_FROM`, `SENTRY_DSN`.
+/ `SUMSUB_SECRET_KEY`, `POSTMARK_SERVER_TOKEN`, `SENTRY_DSN` (no Twilio: Round 24, no phone anywhere).
 Vercel production environment: `VITE_DEMO=false`, `VITE_API_URL=https://api.<domain>`.
 
 ## D. Deploy steps (staging), in order

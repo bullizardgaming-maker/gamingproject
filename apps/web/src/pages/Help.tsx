@@ -150,6 +150,9 @@ export interface Ticket {
   assignee_name?: string | null;
   messages?: Array<{ id: string; staff: boolean; internal?: boolean; body: string; created_at: string; author_name: string }>;
   order?: { id: string; status: string; amount_cents: number; currency: string; offer_title: string; game: string; buyer_name: string; seller_name: string } | null;
+  /** Round 24: a dispute staff opened from this ticket. */
+  dispute_id?: string | null;
+  dispute?: { id: string; order_id: string; status: string; category: string; reason: string; created_at: string } | null;
 }
 
 export const TICKET_STATUS: Record<Ticket['status'], { label: string; chip: string }> = {

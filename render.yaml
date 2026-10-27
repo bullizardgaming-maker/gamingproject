@@ -29,7 +29,7 @@ envVarGroups:
       - key: FINANCE_EMAIL
         value: finance@bullizard.com
       - key: SMS_PROVIDER
-        value: console
+        value: none # Round 24: no phone anywhere; SMS off (console would print codes to the log)
       - key: MALWARE_SCANNER
         value: dev # no ClamAV on staging (allowed only with APP_ENV=staging); detects the EICAR test file only
       - key: PLATFORM_ACCOUNTS

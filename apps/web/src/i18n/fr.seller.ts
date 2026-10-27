@@ -31,7 +31,6 @@ const m: Messages = {
   'league.ended': '{league} est terminée',
   'league.pick': 'Choisir une ligue',
   'league.relist': 'Remettre en ligne',
-  'sell.tier1.verify': 'Vérifier l’e-mail et le téléphone',
   'rules.title': 'Test des règles vendeur',
   'rules.readRules': 'Lisez d’abord les règles',
   'rules.loading': 'Chargement du test…',

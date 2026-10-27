@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { buy, signIn, signOut } from './helpers';
+import { buy, disputeViaSupport, signIn, signOut } from './helpers';
 
 /** CEO decisions of Oct 23: terms line instead of a checkbox, recurring referral, no seller API, translated chat notices. */
 test.describe('launch decisions', () => {
@@ -28,14 +28,13 @@ test.describe('launch decisions', () => {
     await expect(card.getByText('$0.68', { exact: true })).toBeVisible(); // two paid orders of one friend
   });
 
-  // Round 24: disputes open from support, not the order page; rewrite with a staff-opened dispute.
-  test.skip('chat notices from the server come as codes and read in the chosen language', async ({ page }) => {
+  // Round 24: disputes open from support (staff open them from the buyer's ticket), not the order page.
+  test('chat notices from the server come as codes and read in the chosen language', async ({ page }) => {
     await signIn(page, 'Buyer');
     await buy(page, '/offers/offer-14'); // manual delivery
-    await page.getByText('Open a dispute', { exact: true }).click();
-    await page.getByLabel("What's the problem?").selectOption('not_delivered');
-    await page.getByPlaceholder(/Be specific: what you expected/).fill('Paid an hour ago and nothing was traded yet.');
-    await page.getByRole('button', { name: 'Open dispute' }).click();
+    const orderUrl = await disputeViaSupport(page, 'Paid an hour ago and nothing was traded yet', 'Nothing has arrived since I paid.');
+    await signIn(page, 'Buyer');
+    await page.goto(orderUrl);
     await page.getByPlaceholder(/Your side for the arbiter/).fill('My trade link is in the chat; nothing has arrived.');
     await page.getByRole('button', { name: 'Add statement' }).click();
     await expect(page.getByText('The buyer added a statement to the dispute. The arbiter reads both sides’ statements with this chat.')).toBeVisible();

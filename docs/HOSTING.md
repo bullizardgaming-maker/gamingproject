@@ -47,7 +47,7 @@ money-path testing but not for testing uploads.
 | Uploads | S3-compatible bucket (`STORAGE_PROVIDER=s3`), ~5 GB | ~1 |
 | Database | Neon Launch (10 GB, point-in-time restore 7 days, branches) | 19 |
 | Web | Vercel Pro (custom domain, analytics, team) | 20 |
-| Email (Postmark) + SMS (Twilio) | starter tiers | 15–30 |
+| Email (Postmark); no SMS since Round 24 | starter tiers | 15–30 |
 | **Total** | | **≈ 130–150** (≈ 155–175 with a second API instance) |
 
 Not included: Sentry (free tier works), the domain (~15/yr), NOWPayments (per-transaction, no monthly fee), Sumsub

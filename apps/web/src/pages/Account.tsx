@@ -205,24 +205,22 @@ function TwoFactor() {
   );
 }
 
-function CodeStep({ channel, done, onDone }: { channel: 'email' | 'sms'; done: boolean; onDone: () => void }) {
-  const [phone, setPhone] = useState('');
+/** Level 1 is a verified email only (Round 24: no phone step anywhere). */
+function CodeStep({ done, onDone }: { done: boolean; onDone: () => void }) {
+  const channel = 'email';
   const [sent, setSent] = useState(false);
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
-  if (done) return <div className="ok">{channel === 'email' ? t('account.emailVerified') : t('account.phoneVerified')}</div>;
+  if (done) return <div className="ok">{t('account.emailVerified')}</div>;
   return (
     <div className="stack">
-      {channel === 'sms' && !sent && (
-        <label className="field">{t('account.mobile')}<input className="mono" placeholder="+14155550123" value={phone} onChange={(e) => setPhone(e.target.value)} /></label>
-      )}
       {!sent ? (
         <button
           className="btn ghost"
           onClick={async () => {
             setError('');
             try {
-              await api(`/verify/${channel}/send`, { body: channel === 'sms' ? { phone } : {} });
+              await api(`/verify/${channel}/send`, { body: {} });
               setSent(true);
             } catch (e: any) {
               setError(e.message);
@@ -269,9 +267,7 @@ export function Account() {
       <div className="card stack">
         <div className="eyebrow">{t('account.level1')}</div>
         <h3>{t('account.confirmEmail')}</h3>
-        <CodeStep channel="email" done={!!user.email_verified_at} onDone={refresh} />
-        <h3>{t('account.confirmPhone')}</h3>
-        <CodeStep channel="sms" done={!!user.phone_verified_at} onDone={refresh} />
+        <CodeStep done={!!user.email_verified_at} onDone={refresh} />
       </div>
 
       <div className="card stack">

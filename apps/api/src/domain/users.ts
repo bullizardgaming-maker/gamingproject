@@ -324,12 +324,14 @@ export async function changePassword(ctx: Ctx, user: User, current: string, next
 }
 
 // ---------------------------------------------------------------------------
-// Tier 1: verified email + SMS OTP
+// Tier 1: a verified email (Round 24: no phone; the SMS code path stays, dormant and never required)
 // ---------------------------------------------------------------------------
 const CODE_TTL_MINUTES = 10;
 const MAX_CODE_ATTEMPTS = 5;
 
 export async function sendVerificationCode(ctx: Ctx, user: User, channel: 'email' | 'sms', phone?: string) {
+  // Round 24: with no SMS provider (the production default) SMS verification is off; nothing needs it.
+  if (channel === 'sms' && ctx.cfg.SMS_PROVIDER === 'none') throw badRequest('sms_unavailable', 'Phone verification is not used. Verify your email instead.');
   const target = channel === 'email' ? user.email : phone;
   if (!target) throw badRequest('phone_required', 'Phone number is required');
   if (channel === 'sms') {
@@ -396,7 +398,7 @@ export async function confirmVerificationCode(ctx: Ctx, user: User, channel: 'em
       }
     }
     await s.tx.query(
-      `UPDATE users SET kyc_tier = GREATEST(kyc_tier, 1) WHERE id = $1 AND email_verified_at IS NOT NULL AND phone_verified_at IS NOT NULL`,
+      `UPDATE users SET kyc_tier = GREATEST(kyc_tier, 1) WHERE id = $1 AND email_verified_at IS NOT NULL`, // Round 24: email only
       [user.id],
     );
     return one<User>(s.tx, `SELECT ${PUBLIC_USER_COLUMNS} FROM users WHERE id = $1`, [user.id]);
@@ -407,7 +409,7 @@ export async function confirmVerificationCode(ctx: Ctx, user: User, channel: 'em
 // Tier 2: government ID + biometric liveness via the KYC provider
 // ---------------------------------------------------------------------------
 export async function startKyc(ctx: Ctx, user: User, level: 'tier2_individual' | 'tier2_business') {
-  if (user.kyc_tier < 1) throw badRequest('tier1_required', 'Complete email and phone verification first');
+  if (user.kyc_tier < 1) throw badRequest('tier1_required', 'Verify your email first.');
   if (user.kyc_tier >= 2) throw conflict('already_verified', 'Identity already verified');
   const session = await ctx.kyc.startVerification({ id: user.id, email: user.email }, level);
   await ctx.db.query(

@@ -5,12 +5,13 @@ import { useSession } from '../session';
 import { TICKET_CATEGORY_LABEL } from '@/lib/help';
 import { cn } from '@/lib/utils';
 import { TICKET_STATUS, when, type Ticket } from './Help';
+import { DISPUTE_CATEGORY } from './OrderPage';
 
 const STAFF_STATUS: Record<Ticket['status'], string> = { open: 'Needs reply', pending: 'Waiting on customer', resolved: 'Resolved' };
 
 /** Operations → Support: the help-centre queue and one ticket's thread. */
 export function SupportPanel() {
-  const { user } = useSession();
+  const { user, can } = useSession();
   const [filter, setFilter] = useState<'active' | 'open' | 'pending' | 'resolved'>('active');
   const [mine, setMine] = useState(false);
   const [list, setList] = useState<Ticket[] | null>(null);
@@ -24,7 +25,7 @@ export function SupportPanel() {
   useEffect(load, [load]);
   const show = async (id: string) => setOpen(await api<Ticket>(`/admin/support/tickets/${id}`));
 
-  if (open) return <TicketView t={open} me={user!.id} onChange={setOpen} onBack={() => (setOpen(null), load())} />;
+  if (open) return <TicketView t={open} me={user!.id} canDispute={can('disputes.manage')} onChange={setOpen} onBack={() => (setOpen(null), load())} />;
   return (
     <div className="stack">
       <div className="row spread">
@@ -69,8 +70,9 @@ export function SupportPanel() {
   );
 }
 
-function TicketView({ t, me, onChange, onBack }: { t: Ticket; me: string; onChange: (t: Ticket) => void; onBack: () => void }) {
+function TicketView({ t, me, canDispute, onChange, onBack }: { t: Ticket; me: string; canDispute: boolean; onChange: (t: Ticket) => void; onBack: () => void }) {
   const [body, setBody] = useState('');
+  const [category, setCategory] = useState('not_delivered');
   const [internal, setInternal] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -121,6 +123,33 @@ function TicketView({ t, me, onChange, onBack }: { t: Ticket; me: string; onChan
           <span className="small muted">{t.order.buyer_name} → {t.order.seller_name}</span>
           <span className="mono small">{money(t.order.amount_cents, t.order.currency)} · {t.order.status}</span>
         </div>
+      )}
+      {t.dispute ? (
+        <div className="card row" style={{ padding: 14 }} data-testid="ticket-dispute">
+          <span className="eyebrow" style={{ margin: 0 }}>Dispute</span>
+          <span style={{ flex: 1 }}>{DISPUTE_CATEGORY[t.dispute.category] ?? t.dispute.category} · opened {when(t.dispute.created_at)}</span>
+          <span className={cn('chip', t.dispute.status === 'open' ? 'disputed' : 'released')}>{t.dispute.status.replace('_', ' ')}</span>
+        </div>
+      ) : (
+        canDispute && t.order && ['paid', 'delivered'].includes(t.order.status) && (
+          // Round 24: buyers write to support; staff who decide disputes open one from here (reason and statement from the ticket).
+          <div className="card row" style={{ padding: 14 }}>
+            <span className="eyebrow" style={{ margin: 0 }}>Escrow</span>
+            <label className="small inline-flex items-center gap-2" style={{ flex: 1 }}>
+              Dispute reason
+              <select value={category} onChange={(e) => setCategory(e.target.value)} style={{ width: 'auto', height: 38, padding: '6px 10px' }}>
+                {Object.entries(DISPUTE_CATEGORY).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+            </label>
+            <button
+              className="btn ghost"
+              disabled={busy}
+              onClick={() => run(async () => (await api<{ ticket: Ticket | null }>(`/admin/support/tickets/${t.id}/dispute`, { body: { category } })).ticket ?? (await api<Ticket>(`/admin/support/tickets/${t.id}`)))}
+            >
+              Open dispute from this ticket
+            </button>
+          </div>
+        )
       )}
       <ol className="m-0 grid list-none gap-3 p-0">
         {t.messages!.map((m) => (

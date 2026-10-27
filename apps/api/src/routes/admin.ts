@@ -6,7 +6,7 @@ import { many, maybeOne, one, withTx } from '../db.js';
 import { receiveChargeback } from '../domain/chargebacks.js';
 import { withScope } from '../domain/events.js';
 import { reviewOwnerProof } from '../domain/offers.js';
-import { LEAD_REVIEW_ABOVE_CENTS, releaseByStaff, resolveDispute, unconfirmedDeliveries } from '../domain/orders.js';
+import { LEAD_REVIEW_ABOVE_CENTS, openDisputeFromTicket, releaseByStaff, resolveDispute, unconfirmedDeliveries } from '../domain/orders.js';
 import { controls, updateControls } from '../domain/controls.js';
 import { setReviewHidden } from '../domain/reviews.js';
 import { reconciliationSnapshots, runReconciliation } from '../domain/reconciliation.js';
@@ -26,7 +26,7 @@ import { revokeOtherSessions } from '../domain/sessions.js';
 import { toCsv } from '../domain/exports.js';
 import { businessMetrics } from '../domain/analytics.js';
 import { getTicket, staffReply, ticketQueue, updateTicket } from '../domain/support.js';
-import { caseFile } from '../domain/disputes.js';
+import { DISPUTE_CATEGORIES, caseFile } from '../domain/disputes.js';
 import { addTerm, chatFlagQueue, decideChatFlag, decideListing, listTerms, moderationCounts, removeTerm, reviewQueue } from '../domain/moderation.js';
 import { me, requirePermission } from '../server.js';
 import { audit, listAudit } from '../domain/audit.js';
@@ -817,6 +817,27 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
       await audit(tx, req, body.internal ? 'support.note' : 'support.reply', { type: 'support_ticket', id }, { resolve: body.resolve });
     });
     return getTicket(ctx.db, id, { id: staff.id, staff: true });
+  });
+  /**
+   * Round 24: buyers no longer open disputes on the order page; they write to support. Staff who decide disputes open
+   * one from the ticket: on the ticket's order (or the customer's order named here when the ticket has none), with the
+   * ticket's subject as the reason and its first message as the customer's statement. Same rules as before: paid or
+   * delivered, not already disputed, escrow frozen, orders above $200 decided by the Lead.
+   */
+  app.post('/admin/support/tickets/:id/dispute', async (req, reply) => {
+    const staff = requirePermission(req, 'disputes.manage');
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z
+      .object({ orderId: z.string().uuid().optional(), category: z.enum(DISPUTE_CATEGORIES).default('other'), reason: z.string().trim().min(3).max(2_000).optional() })
+      .parse(req.body ?? {});
+    const dispute = await openDisputeFromTicket(ctx, id, staff.id, body);
+    await audit(ctx.db, req, 'dispute.open_from_ticket', { type: 'dispute', id: dispute.id }, { ticketId: id, orderId: dispute.order_id, category: body.category });
+    const amount = await maybeOne<{ amount_cents: string }>(ctx.db, 'SELECT amount_cents FROM orders WHERE id = $1', [dispute.order_id]);
+    return reply.status(201).send({
+      dispute: { ...dispute, lead_review: Number(amount?.amount_cents ?? 0) > LEAD_REVIEW_ABOVE_CENTS },
+      // The ticket thread (with internal notes) only for staff who work the support queue.
+      ticket: hasPermission(staff, 'support.manage') ? await getTicket(ctx.db, id, { id: staff.id, staff: true }) : null,
+    });
   });
   app.patch('/admin/support/tickets/:id', async (req) => {
     const staff = requirePermission(req, 'support.manage');

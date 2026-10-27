@@ -223,9 +223,9 @@ const BASE_ARTICLES: HelpArticle[] = [
     slug: 'verify-identity',
     topic: 'account',
     title: 'Verifying your identity',
-    summary: 'Level 1 to buy and start selling; level 2 (photo ID) within 30 days of your first offer.',
+    summary: 'Level 1 (a verified email) to buy and start selling; level 2 (photo ID) within 30 days of your first offer.',
     body: [
-      'Level 1 is a verified email and phone. That\'s enough to buy and to start selling. Level 2 is a photo ID and a short selfie video, due within 30 days of your first offer; after that, selling and withdrawals pause until it\'s done.',
+      'Level 1 is a verified email. No phone number is needed. That\'s enough to buy and to start selling. Level 2 is a photo ID and a short selfie video, due within 30 days of your first offer; after that, selling and withdrawals pause until it\'s done.',
       'Verification usually takes a few minutes. If it fails, check the photo is sharp and every corner of the document is visible, then try again.',
     ],
     ticket: 'account',

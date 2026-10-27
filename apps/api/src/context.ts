@@ -26,6 +26,7 @@ import {
   RoutingMessenger,
   TwilioLookupChecker,
   TwilioSmsMessenger,
+  DisabledSms,
   type Messenger,
   type PhoneChecker,
 } from './providers/messaging.js';
@@ -172,7 +173,9 @@ function buildMessenger(cfg: Config, log: Logger): Messenger {
   const sms =
     cfg.SMS_PROVIDER === 'twilio'
       ? new TwilioSmsMessenger(required(cfg.TWILIO_ACCOUNT_SID, 'TWILIO_ACCOUNT_SID'), required(cfg.TWILIO_AUTH_TOKEN, 'TWILIO_AUTH_TOKEN'), required(cfg.TWILIO_FROM, 'TWILIO_FROM'))
-      : consoleOut;
+      : cfg.SMS_PROVIDER === 'none'
+        ? new DisabledSms()
+        : consoleOut;
   return new RoutingMessenger({ email, sms });
 }
 

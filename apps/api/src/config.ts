@@ -116,7 +116,9 @@ const Env = z.object({
   PUSH_ALLOWED_HOSTS: z
     .string()
     .default('fcm.googleapis.com,updates.push.services.mozilla.com,*.push.apple.com,*.notify.windows.com'),
-  SMS_PROVIDER: z.enum(['console', 'twilio']).default('console'),
+  // Round 24: no phone is asked for anywhere, so production needs no SMS provider. Default: none in production (SMS
+  // is simply off: no OTP is ever printed), console in development and tests. console stays refused in production.
+  SMS_PROVIDER: z.enum(['none', 'console', 'twilio']).optional(),
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_FROM: z.string().optional(),
@@ -245,7 +247,7 @@ const Env = z.object({
 });
 
 export type AppEnv = 'development' | 'test' | 'staging' | 'production';
-export type Config = Omit<z.infer<typeof Env>, 'APP_ENV' | 'CAPTCHA_AFTER_FAILED_LOGINS'> & { APP_ENV: AppEnv; CAPTCHA_AFTER_FAILED_LOGINS: number };
+export type Config = Omit<z.infer<typeof Env>, 'APP_ENV' | 'CAPTCHA_AFTER_FAILED_LOGINS' | 'SMS_PROVIDER'> & { APP_ENV: AppEnv; CAPTCHA_AFTER_FAILED_LOGINS: number; SMS_PROVIDER: 'none' | 'console' | 'twilio' };
 
 /**
  * Local development reads `.env` from the repo root (or the current directory). Variables already
@@ -288,6 +290,7 @@ export function loadConfig(overrides: Partial<Record<keyof Config, string>> = {}
     ...parsed,
     APP_ENV: parsed.APP_ENV ?? parsed.NODE_ENV,
     CAPTCHA_AFTER_FAILED_LOGINS: parsed.CAPTCHA_AFTER_FAILED_LOGINS ?? (parsed.TURNSTILE_SECRET ? 0 : 3),
+    SMS_PROVIDER: parsed.SMS_PROVIDER ?? (parsed.NODE_ENV === 'production' ? 'none' : 'console'),
   };
   if (cfg.APP_ENV === 'staging' && cfg.NODE_ENV !== 'production') throw new Error('APP_ENV=staging needs NODE_ENV=production (staging keeps the production checks)');
   if (cfg.APP_ENV === 'production' && cfg.NODE_ENV !== 'production') throw new Error('APP_ENV=production needs NODE_ENV=production');
@@ -314,11 +317,12 @@ export function loadConfig(overrides: Partial<Record<keyof Config, string>> = {}
     if (cfg.EMAIL_PROVIDER === 'console') throw new Error('EMAIL_PROVIDER=console is not allowed in production or staging: use resend');
     if (cfg.EMAIL_PROVIDER === 'resend' && !cfg.RESEND_API_KEY) throw new Error('RESEND_API_KEY is required with EMAIL_PROVIDER=resend');
     if (cfg.CAPTCHA_PROVIDER === 'none') throw new Error('TURNSTILE_SECRET (Cloudflare Turnstile) is required in production and staging');
-    // Round 23b. Production proper: the origin only answers Cloudflare, and SMS must really be sent. Staging may run
-    // without the secret until the Cloudflare proxy is on (the API logs a warning at start: originWarning()).
+    // Round 23b. Production proper: the origin only answers Cloudflare. Staging may run without the secret until the
+    // Cloudflare proxy is on (the API logs a warning at start: originWarning()).
     if (cfg.APP_ENV === 'production' && !cfg.ORIGIN_SHARED_SECRET) throw new Error('ORIGIN_SHARED_SECRET is required in production (the X-Origin-Auth value Cloudflare adds)');
     if (cfg.ORIGIN_SHARED_SECRET && cfg.ORIGIN_SHARED_SECRET.length < 32) throw new Error('ORIGIN_SHARED_SECRET must be at least 32 characters (openssl rand -base64 32)'); // Round 23d
-    if (cfg.APP_ENV === 'production' && cfg.SMS_PROVIDER === 'console') throw new Error('SMS_PROVIDER=console is not allowed in production: use twilio');
+    // Round 24: no SMS provider is required (no phone anywhere); console would print codes to the log, so it stays refused.
+    if (cfg.APP_ENV === 'production' && cfg.SMS_PROVIDER === 'console') throw new Error('SMS_PROVIDER=console is not allowed in production: leave it unset (SMS off) or use twilio');
     // Round 23d (item 12): staff two-factor cannot be switched off in production; proof videos always lose their metadata.
     if (cfg.STAFF_MFA_REQUIRED === 'false') throw new Error('STAFF_MFA_REQUIRED=false is not allowed in production');
     if (cfg.VIDEO_METADATA_STRIP === 'off') throw new Error('VIDEO_METADATA_STRIP=off is not allowed in production');

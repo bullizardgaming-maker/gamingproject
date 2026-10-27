@@ -1,46 +1,46 @@
 import { Envelope, Handshake, IdentificationCard, Storefront, type Icon } from '@phosphor-icons/react';
 import { handoverFieldFor } from '../../../api/src/domain/attributeSets';
+import {
+  DELIVERY_METHODS,
+  allowedMethods,
+  levelFromOrders as levelOf,
+  methodsForGame as gameMethods,
+  offeredMethods,
+  type DeliveryFieldDef,
+  type DeliveryFieldKey,
+  type DeliveryMethod,
+} from '../../../api/src/domain/delivery';
 import { intlLocale, t } from '../i18n';
 
 /**
  * Delivery methods: a fixed list per game. The seller ticks the ones they offer on each listing;
  * the buyer picks one at checkout and gives only what that method needs.
- * (Front-end copy of the list; the API keeps the same table — see the back-end brief, Round 24.)
+ * One source of truth: the table lives in apps/api/src/domain/delivery.ts (the API checks orders against it);
+ * this file adds the icons and labels.
  */
-export type MethodKey = 'f2f' | 'mail' | 'market' | 'uid';
-export type FieldKey = 'character' | 'city' | 'uid';
-export interface DeliveryField { key: FieldKey; options?: readonly string[] }
+export type MethodKey = DeliveryMethod;
+export type FieldKey = DeliveryFieldKey;
+export type DeliveryField = DeliveryFieldDef;
 
-const ALBION_CITIES = ['Caerleon', 'Bridgewatch', 'Fort Sterling', 'Lymhurst', 'Martlock', 'Thetford', 'Brecilien'] as const;
+const ICONS: Record<MethodKey, Icon> = { f2f: Handshake, mail: Envelope, market: Storefront, uid: IdentificationCard };
 
-export const METHODS: Record<MethodKey, { icon: Icon; fields: DeliveryField[] }> = {
-  f2f: { icon: Handshake, fields: [{ key: 'character' }] },
-  mail: { icon: Envelope, fields: [{ key: 'character' }] },
-  market: { icon: Storefront, fields: [{ key: 'character' }, { key: 'city', options: ALBION_CITIES }] },
-  uid: { icon: IdentificationCard, fields: [{ key: 'uid' }] },
-};
+export const METHODS: Record<MethodKey, { icon: Icon; fields: readonly DeliveryField[] }> = Object.fromEntries(
+  (Object.keys(DELIVERY_METHODS) as MethodKey[]).map((m) => [m, { icon: ICONS[m], fields: DELIVERY_METHODS[m].fields }]),
+) as Record<MethodKey, { icon: Icon; fields: readonly DeliveryField[] }>;
 
-const GAME_METHODS: Record<string, MethodKey[]> = {
-  'albion online': ['f2f', 'market'],
-  'path of exile': ['f2f'],
-  'path of exile 2': ['f2f'],
-  aion: ['f2f', 'mail'],
-  'aion 2': ['f2f', 'mail'],
-};
+/** Methods a game lists of its own (empty: none). */
+export const methodsForGame = (game: string): MethodKey[] => gameMethods(game);
 
-/** Methods a game allows (empty: the game needs no in-game handover). */
-export const methodsForGame = (game: string): MethodKey[] => GAME_METHODS[game.trim().toLowerCase()] ?? [];
+/** Every method a new listing of this game and category may offer (empty: not delivered in-game). */
+export const methodsForListing = (game: string, categorySlug: string): MethodKey[] => allowedMethods(game, handoverFieldFor(game, categorySlug)?.key ?? null);
 
 /**
  * The methods this listing offers: what the seller ticked, else every method of the game. Other games
  * that deliver in-game get one method: face to face (character name) or top-up by UID.
  */
 export function methodsOf(offer: { game: string; category_slug?: string; delivery_methods?: string[] | null }): MethodKey[] {
-  const listed = methodsForGame(offer.game);
   const handover = offer.category_slug ? handoverFieldFor(offer.game, offer.category_slug) : null;
-  const all: MethodKey[] = listed.length ? listed : handover ? [handover.key === 'uid' ? 'uid' : 'f2f'] : [];
-  const picked = (offer.delivery_methods ?? []).filter((m): m is MethodKey => (all as string[]).includes(m));
-  return picked.length ? picked : all;
+  return offeredMethods(offer.game, handover?.key ?? null, offer.delivery_methods);
 }
 
 export const methodLabel = (m: MethodKey) => t(`dm.${m}`);
@@ -53,4 +53,4 @@ export const compact = (n: number) => {
 };
 
 /** Seller level from completed orders: 1 + ⌊2·√orders⌋ (1 order → 3, 100 → 21, 3,000 → 110). */
-export const levelFromOrders = (completed: number) => 1 + Math.floor(2 * Math.sqrt(Math.max(0, completed)));
+export const levelFromOrders = levelOf;

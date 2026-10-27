@@ -75,10 +75,10 @@ export async function requestPayoutAddress(ctx: Ctx, user: User, input: { addres
   const recent = await one<{ n: number }>(ctx.db, `SELECT count(*)::int AS n FROM payout_address_changes WHERE user_id = $1 AND created_at > now() - interval '1 hour'`, [user.id]);
   if (recent.n >= 5) throw new AppError(429, 'too_many_requests', 'Too many address changes; try again in an hour');
   const token = randomToken(32);
-  // Second factor (always, Round 20): the authenticator when enabled; otherwise a one-time code by SMS to the
-  // verified phone, or by a separate email when there is no phone.
-  const full = await one<{ totp_enabled_at: string | null; phone: string | null; phone_verified_at: string | null; email: string }>(ctx.db, 'SELECT totp_enabled_at, phone, phone_verified_at, email FROM users WHERE id = $1', [user.id]);
-  const via: 'app' | 'sms' | 'email' = full.totp_enabled_at ? 'app' : full.phone && full.phone_verified_at ? 'sms' : 'email';
+  // Second factor (always, Round 20): the authenticator when enabled; otherwise a one-time code in a separate email
+  // (Round 24: never by SMS; no phone is used anywhere).
+  const full = await one<{ totp_enabled_at: string | null }>(ctx.db, 'SELECT totp_enabled_at FROM users WHERE id = $1', [user.id]);
+  const via: 'app' | 'email' = full.totp_enabled_at ? 'app' : 'email';
   const code = via === 'app' ? null : randomDigits(6);
   await withScope(ctx, async (s) => {
     await s.tx.query(`UPDATE payout_address_changes SET expires_at = now() WHERE user_id = $1 AND confirmed_at IS NULL`, [user.id]);
@@ -92,9 +92,7 @@ export async function requestPayoutAddress(ctx: Ctx, user: User, input: { addres
       mfa: true, via,
     });
     if (code) {
-      const body = `Your Bullizard code to confirm a new payout address is ${code}. It expires in ${CONFIRM_TTL_MINUTES} minutes. If you did not ask for this, change your password now.`;
-      if (via === 'sms') await ctx.messenger.send({ channel: 'sms', to: full.phone!, body });
-      else await enqueueEmail(s.tx, user.id, 'payout_address_code', { code, minutes: CONFIRM_TTL_MINUTES }, `payout_code:${token.slice(0, 16)}`);
+      await enqueueEmail(s.tx, user.id, 'payout_address_code', { code, minutes: CONFIRM_TTL_MINUTES }, `payout_code:${token.slice(0, 16)}`);
     }
   });
   return payoutAddressOf(ctx.db, user.id);

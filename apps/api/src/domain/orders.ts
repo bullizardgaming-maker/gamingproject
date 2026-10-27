@@ -11,6 +11,7 @@ import { withScope } from './events.js';
 import { applyRiskActions, assessOrder, recordSignals, subnetOf } from './fraud.js';
 import { randomBytes } from 'node:crypto';
 import { handoverFieldFor, handoverKey } from './attributeSets.js';
+import { cleanDeliveryChoice, offeredMethods, type DeliveryInfo, type DeliveryMethod } from './delivery.js';
 import { maybePayAffiliate } from './affiliates.js';
 import { markDelivered, releaseReservation, reserveInventory, reserveManualStock, storeManualDelivery } from './inventory.js';
 import { accountId, orderEscrowBalance, post } from './ledger.js';
@@ -205,8 +206,13 @@ export interface CreateOrderInput {
   currency?: string;
   /** A seller's discount code (seller-funded: lowers the order price itself). */
   sellerCode?: string;
-  /** The in-game character name / UID the seller delivers to (games that deliver in-game). */
+  /** The in-game character name / UID the seller delivers to (games that deliver in-game). Older clients; see deliveryInfo. */
   characterName?: string;
+  /** Round 24: one of the listing's delivery methods (domain/delivery.ts) and the fields it needs. */
+  deliveryMethod?: string;
+  deliveryInfo?: { character?: string; city?: string; uid?: string };
+  /** Remember the character name / UID for the next order of this game (only when true). */
+  saveInfo?: boolean;
   /** Part of a cart checkout (domain/cart.ts): the cart creates one payment for all its orders. */
   checkoutId?: string;
 }
@@ -332,7 +338,7 @@ export async function quoteOrder(ctx: Ctx, buyerId: string, input: Pick<CreateOr
 export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
   const { buyer } = input;
   if (buyer.status !== 'active') throw forbidden('suspended', 'Account suspended');
-  if (buyer.kyc_tier < 1) throw forbidden('kyc_required', 'Verify your email and phone (Tier 1) before purchasing');
+  if (buyer.kyc_tier < 1) throw forbidden('kyc_required', 'Verify your email first.');
   if (!input.acceptTos) throw badRequest('tos_required', 'You must accept the Terms of Service');
   await assertTermsCurrent(ctx.db, buyer.id, input.tosVersion); // Round 23d: no orders on stale or unaccepted Terms
   await assertNotPaused(ctx.db, 'orders'); // kill switch (Ops → Controls)
@@ -402,9 +408,18 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
     const sellerProtected = offer.category_kind !== 'account' || offer.owner_proof_status === 'verified';
 
     // Games that deliver in-game need the buyer's character name (or UID), confirmed at checkout.
+    // Round 24: the buyer picks one of the listing's delivery methods and fills only its fields (all required).
     const handover = handoverFieldFor(offer.game, offer.category_slug);
-    const characterName = input.characterName?.trim().slice(0, 60) || null;
-    if (handover && !characterName) throw badRequest('character_name_required', `${handover.label} is required for ${offer.game}`);
+    let characterName: string | null = null;
+    let delivery: { method: DeliveryMethod; info: DeliveryInfo } | null = null;
+    if (handover) {
+      const legacy = input.characterName?.trim() || null;
+      if (!input.deliveryMethod && !input.deliveryInfo && !legacy) throw badRequest('character_name_required', `${handover.label} is required for ${offer.game}`);
+      const choice = cleanDeliveryChoice(offeredMethods(offer.game, handover.key, offer.delivery_methods), input.deliveryMethod, input.deliveryInfo, legacy);
+      if (!choice.ok) throw badRequest(choice.code, choice.error, choice.field ? { field: choice.field } : undefined);
+      delivery = { method: choice.method, info: choice.info };
+      characterName = choice.info.character ?? choice.info.uid ?? null;
+    }
     const sellerFx = await sellerRateFor(ctx, s.tx, offer.seller_id, input.rail);
     const order = await one<Order>(
       s.tx,
@@ -430,11 +445,13 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
     );
     await recordAcceptance(s.tx, buyer.id, termsVersion, 'order', input.ip ?? null); // Round 23d: the version this order was placed under
     if (price.promoId) await reserveRedemption(s.tx, price.promoId, order.id, buyer.id, price.discountCents);
-    if (handover && characterName) {
-      await s.tx.query('UPDATE orders SET character_name = $2 WHERE id = $1', [order.id, characterName]);
-      Object.assign(order, { character_name: characterName });
-      // Remembered for next time: one tap to confirm instead of typing it again.
-      await s.tx.query(`UPDATE users SET handover_names = handover_names || jsonb_build_object($2::text, $3::text) WHERE id = $1`, [buyer.id, handoverKey(offer.game), characterName]);
+    if (delivery) {
+      await s.tx.query('UPDATE orders SET character_name = $2, delivery_method = $3, delivery_info = $4 WHERE id = $1', [order.id, characterName, delivery.method, JSON.stringify(delivery.info)]);
+      Object.assign(order, { character_name: characterName, delivery_method: delivery.method, delivery_info: delivery.info });
+      // Remembered for next time only when the buyer ticked "save for my next purchase" (Round 24).
+      if (input.saveInfo === true && characterName) {
+        await s.tx.query(`UPDATE users SET handover_names = handover_names || jsonb_build_object($2::text, $3::text) WHERE id = $1`, [buyer.id, handoverKey(offer.game), characterName]);
+      }
     }
     if (input.checkoutId) {
       await s.tx.query('UPDATE orders SET checkout_id = $2 WHERE id = $1', [order.id, input.checkoutId]);
@@ -1067,27 +1084,63 @@ export async function cancelUnpaidExpired(ctx: Ctx, limit = 200): Promise<number
 }
 
 export async function openDispute(ctx: Ctx, orderId: string, userId: string, reason: string, category: DisputeCategory = 'other') {
+  return withScope(ctx, (s) => openDisputeIn(s, orderId, userId, reason, category));
+}
+
+/**
+ * Round 24: the order page has no dispute form; the buyer (or seller) writes to support and staff open the dispute
+ * from the ticket. Same checks, freeze, emails and $200 Lead rule as a dispute the party opened; the party is the
+ * opener, the ticket's subject is the reason and its first message their statement. Ticket and dispute are linked.
+ */
+export async function openDisputeFromTicket(ctx: Ctx, ticketId: string, staffId: string, input: { orderId?: string; category?: DisputeCategory; reason?: string } = {}) {
   return withScope(ctx, async (s) => {
-    const order = await lockOrder(s.tx, orderId);
-    if (order.buyer_id !== userId && order.seller_id !== userId) throw forbidden('not_participant', 'Not a participant of this order');
-    if (order.rail === 'crypto') throw conflict('onchain', 'Crypto escrow disputes are opened on-chain and decided by the validator panel');
-    if (!['paid', 'delivered'].includes(order.status)) throw conflict('invalid_state', `Cannot dispute an order that is ${order.status}`);
-    // Standard orders have no deadline: disputable until release. Account windows close on time.
-    if (order.status === 'delivered' && order.protection_ends_at && new Date(order.protection_ends_at) <= new Date()) {
-      throw conflict('window_closed', 'The protection window for this order has ended');
-    }
-    await transition(s.tx, order, 'disputed', userId, 'dispute_opened', '', [], { reason });
-    await postOrderCard(s, order, 'disputed');
-    const dispute = await one(s.tx, 'INSERT INTO disputes (order_id, opened_by, reason, category) VALUES ($1, $2, $3, $4) RETURNING *', [orderId, userId, reason, category]);
-    // The opening reason is also the opener's first statement.
-    await s.tx.query('INSERT INTO dispute_statements (dispute_id, user_id, role, body) VALUES ($1, $2, $3, $4)', [dispute.id, userId, userId === order.buyer_id ? 'buyer' : 'seller', reason]);
-    const room = await roomOf(s.tx, orderId);
-    await appendMessage(s, room.id, null, 'system', `Dispute opened: "${reason}". Escrow is frozen. An arbitration specialist will review this chat log. Keep all evidence here.`, [], undefined, { code: 'dispute_opened', params: { reason } });
-    for (const uid of [order.buyer_id, order.seller_id]) await enqueueEmail(s.tx, uid, 'dispute_opened', emailData(order, { reason }));
-    s.notifyUser(order.buyer_id, 'order.disputed', { orderId });
-    s.notifyUser(order.seller_id, 'order.disputed', { orderId });
+    const t = await maybeOne<any>(s.tx, 'SELECT id, number, user_id, order_id, subject, dispute_id FROM support_tickets WHERE id = $1 FOR UPDATE', [ticketId]);
+    if (!t) throw notFound('Ticket');
+    if (t.dispute_id) throw conflict('ticket_has_dispute', 'A dispute was already opened from this ticket');
+    const orderId = t.order_id ?? input.orderId;
+    if (!orderId) throw badRequest('order_required', 'This ticket names no order; pick the customer’s order first');
+    if (t.order_id && input.orderId && input.orderId !== t.order_id) throw badRequest('order_mismatch', 'This ticket is about another order');
+    const o = await maybeOne<{ buyer_id: string; seller_id: string }>(s.tx, 'SELECT buyer_id, seller_id FROM orders WHERE id = $1', [orderId]);
+    if (!o) throw notFound('Order');
+    if (o.buyer_id !== t.user_id && o.seller_id !== t.user_id) throw forbidden('not_ticket_order', 'The order does not belong to the customer who wrote this ticket');
+    if (await maybeOne(s.tx, 'SELECT 1 FROM disputes WHERE order_id = $1', [orderId])) throw conflict('already_disputed', 'This order already has a dispute');
+    const first = await maybeOne<{ body: string }>(s.tx, 'SELECT body FROM support_messages WHERE ticket_id = $1 AND NOT staff ORDER BY created_at, id LIMIT 1', [ticketId]);
+    const reason = (input.reason?.trim() || t.subject).slice(0, 2_000);
+    const statement = first?.body?.trim() ? first.body.trim().slice(0, 5_000) : null;
+    const dispute = await openDisputeIn(s, orderId, t.user_id, reason, input.category ?? 'other', { statement, ticketId, staffId });
+    await s.tx.query('UPDATE support_tickets SET dispute_id = $2, order_id = COALESCE(order_id, $3), priority = \'high\', updated_at = now() WHERE id = $1', [ticketId, dispute.id, orderId]);
+    await s.tx.query(`INSERT INTO support_messages (ticket_id, author_id, staff, internal, body) VALUES ($1, $2, true, true, $3)`, [ticketId, staffId, `Dispute opened on order ${dispute.order_ref ?? orderId} from this ticket.`]);
     return dispute;
   });
+}
+
+async function openDisputeIn(
+  s: TxScope, orderId: string, userId: string, reason: string, category: DisputeCategory,
+  fromTicket?: { statement: string | null; ticketId: string; staffId: string },
+) {
+  const order = await lockOrder(s.tx, orderId);
+  if (order.buyer_id !== userId && order.seller_id !== userId) throw forbidden('not_participant', 'Not a participant of this order');
+  if (order.rail === 'crypto') throw conflict('onchain', 'Crypto escrow disputes are opened on-chain and decided by the validator panel');
+  if (!['paid', 'delivered'].includes(order.status)) throw conflict('invalid_state', `Cannot dispute an order that is ${order.status}`);
+  // Standard orders have no deadline: disputable until release. Account windows close on time.
+  if (order.status === 'delivered' && order.protection_ends_at && new Date(order.protection_ends_at) <= new Date()) {
+    throw conflict('window_closed', 'The protection window for this order has ended');
+  }
+  await transition(s.tx, order, 'disputed', fromTicket?.staffId ?? userId, 'dispute_opened', '', [], { reason });
+  await postOrderCard(s, order, 'disputed');
+  const dispute = await one(
+    s.tx,
+    'INSERT INTO disputes (order_id, opened_by, reason, category, ticket_id, opened_by_staff) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+    [orderId, userId, reason, category, fromTicket?.ticketId ?? null, fromTicket?.staffId ?? null],
+  );
+  // The opening reason is also the opener's first statement (from a ticket: what they wrote to support).
+  await s.tx.query('INSERT INTO dispute_statements (dispute_id, user_id, role, body) VALUES ($1, $2, $3, $4)', [dispute.id, userId, userId === order.buyer_id ? 'buyer' : 'seller', fromTicket?.statement ?? reason]);
+  const room = await roomOf(s.tx, orderId);
+  await appendMessage(s, room.id, null, 'system', `Dispute opened: "${reason}". Escrow is frozen. An arbitration specialist will review this chat log. Keep all evidence here.`, [], undefined, { code: 'dispute_opened', params: { reason } });
+  for (const uid of [order.buyer_id, order.seller_id]) await enqueueEmail(s.tx, uid, 'dispute_opened', emailData(order, { reason }));
+  s.notifyUser(order.buyer_id, 'order.disputed', { orderId });
+  s.notifyUser(order.seller_id, 'order.disputed', { orderId });
+  return { ...dispute, order_ref: order.ref ?? null };
 }
 
 /**
@@ -1258,7 +1311,12 @@ export async function getOrderFor(ctx: Ctx, orderId: string, user: { id: string;
   const crypto = order.payment_provider === 'nowpayments';
   const [checklist, dispute, events, review, warrantyClaims, progress, buyerRep, buyerRating, cryptoPayments, cryptoRefund] = await Promise.all([
     maybeOne(q, 'SELECT items, completed_at, handover_platform, handover_at FROM security_checklists WHERE order_id = $1', [orderId]),
-    maybeOne<any>(q, 'SELECT * FROM disputes WHERE order_id = $1', [orderId]).then(async (d) => d && { ...d, statements: await listStatements(q, d.id) }),
+    // Round 24: which staff member opened it from a ticket is staff's to know.
+    maybeOne<any>(q, 'SELECT * FROM disputes WHERE order_id = $1', [orderId]).then(async (d) => {
+      if (!d) return d;
+      if (!staff) delete d.opened_by_staff;
+      return { ...d, statements: await listStatements(q, d.id) };
+    }),
     many(q, 'SELECT from_status, to_status, reason, created_at FROM order_events WHERE order_id = $1 ORDER BY id', [orderId]),
     maybeOne(q, 'SELECT id, rating, comment, seller_reply, created_at FROM reviews WHERE order_id = $1', [orderId]),
     claimsForOrder(q, orderId),

@@ -86,6 +86,8 @@ export const ORDER_STAFF_FIELDS = new Set(['released_by', 'release_note', 'tax_c
 export const SELLER_ONLY_FIELDS = new Set(['seller_rate_bps', 'seller_price_cents', 'seller_price_tiers']);
 /** On an order (a row with both buyer_id and seller_id) the seller's side of the money is the seller's (item 7). */
 export const ORDER_SELLER_FIELDS = new Set(['commission_bps', 'commission_cents', 'seller_net_cents', 'commission_tax_cents', 'seller_received_cents']);
+/** Round 24: what the buyer gave for delivery (method, character, city, UID) is for the two parties and staff only. */
+export const ORDER_PARTY_FIELDS = new Set(['delivery_method', 'delivery_info', 'character_name']);
 export function stripInternalFields(v: unknown, viewerId: string | null, depth = 0): unknown {
   if (depth > 8 || v === null || typeof v !== 'object') return v;
   if (Array.isArray(v)) return v.map((x) => stripInternalFields(x, viewerId, depth + 1));
@@ -97,7 +99,7 @@ export function stripInternalFields(v: unknown, viewerId: string | null, depth =
   let out: Record<string, unknown> | null = null;
   for (const [k, val] of Object.entries(row)) {
     const hidden =
-      STAFF_ONLY_FIELDS.has(k) || (BUYER_ONLY_FIELDS.has(k) && !ownRow) || (SELLER_ONLY_FIELDS.has(k) && !ownListing) || (order && ORDER_SELLER_FIELDS.has(k) && !ownListing) || (order && ORDER_STAFF_FIELDS.has(k));
+      STAFF_ONLY_FIELDS.has(k) || (BUYER_ONLY_FIELDS.has(k) && !ownRow) || (SELLER_ONLY_FIELDS.has(k) && !ownListing) || (order && ORDER_SELLER_FIELDS.has(k) && !ownListing) || (order && ORDER_STAFF_FIELDS.has(k)) || (order && ORDER_PARTY_FIELDS.has(k) && !ownRow && !ownListing);
     const next = hidden ? undefined : stripInternalFields(val, viewerId, depth + 1);
     if (next !== val) {
       out ??= { ...(v as Record<string, unknown>) };

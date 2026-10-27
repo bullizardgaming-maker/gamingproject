@@ -70,3 +70,27 @@ export async function pickCoin(page: Page, coin: RegExp = /Tether \(TRC-20\)/) {
   if (await checkout.getByRole('heading', { name: 'Payment method' }).count()) await checkout.getByRole('button', { name: /^Crypto/ }).click();
   await checkout.getByRole('button', { name: coin }).click();
 }
+
+/**
+ * Round 24: the order page has no dispute form. From the order page the buyer writes to support about the order;
+ * then an Admin opens the dispute from the ticket (Operations → Support). Ends signed in as Admin on the ticket;
+ * returns the order page URL.
+ */
+export async function disputeViaSupport(page: Page, subject: string, details: string, reason = 'Not delivered') {
+  const orderUrl = page.url().replace(/\?.*$/, '');
+  const orderId = orderUrl.split('/orders/')[1]!;
+  await page.goto(`/support/new?category=order&order=${orderId}`);
+  await page.locator('input[name=subject]').fill(subject);
+  await page.locator('textarea[name=body]').fill(details);
+  await page.getByRole('button', { name: 'Send request' }).click();
+  await expect(page.getByRole('heading', { name: subject })).toBeVisible();
+
+  await signIn(page, 'Admin');
+  await page.goto('/admin');
+  await page.getByRole('tab', { name: 'Support' }).click();
+  await page.getByRole('button', { name: subject }).click();
+  await page.getByLabel('Dispute reason').selectOption({ label: reason });
+  await page.getByRole('button', { name: 'Open dispute from this ticket' }).click();
+  await expect(page.getByTestId('ticket-dispute')).toContainText('open');
+  return orderUrl;
+}

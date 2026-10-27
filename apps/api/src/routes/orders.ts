@@ -29,6 +29,13 @@ import { me, requestMeta } from '../server.js';
 
 const Id = z.object({ id: z.string().uuid() });
 
+/** Round 24: the buyer's delivery choice (domain/delivery.ts checks it against the listing). */
+const DeliveryChoice = {
+  deliveryMethod: z.string().max(20).optional(),
+  deliveryInfo: z.object({ character: z.string().max(200).optional(), city: z.string().max(200).optional(), uid: z.string().max(200).optional() }).strict().optional(),
+  saveInfo: z.boolean().optional(),
+};
+
 /** Round 23e (item 9): an order names the Terms version the buyer saw on the page; without it, it is refused (stale: 409 terms_stale). */
 function requireTosVersion(v: string | undefined) {
   if (!v) throw badRequest('tos_version_required', 'Reload the page to see the current Terms, then try again');
@@ -48,7 +55,8 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
         sellerCode: z.string().trim().min(1).max(40).optional(),
         useCredit: z.boolean().optional(),
         currency: z.string().length(3).toUpperCase().optional(),
-        characterName: z.string().trim().min(1).max(60).optional().describe('In-game character name or UID, for games that deliver in-game'),
+        characterName: z.string().trim().min(1).max(60).optional().describe('In-game character name or UID, for games that deliver in-game (older clients; see deliveryInfo)'),
+        ...DeliveryChoice,
       })
       .parse(req.body);
     requireTosVersion(body.tosVersion);
@@ -69,7 +77,7 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/orders/cart', async (req, reply) => {
     const body = z
       .object({
-        items: z.array(z.object({ offerId: z.string().uuid(), quantity: z.number().int().positive().max(1_000_000).default(1), characterName: z.string().trim().min(1).max(60).optional() })).min(1).max(MAX_CART_ITEMS),
+        items: z.array(z.object({ offerId: z.string().uuid(), quantity: z.number().int().positive().max(1_000_000).default(1), characterName: z.string().trim().min(1).max(60).optional(), ...DeliveryChoice })).min(1).max(MAX_CART_ITEMS),
         acceptTos: z.literal(true),
         tosVersion: z.string().trim().min(1).max(40).optional(),
         currency: z.string().length(3).toUpperCase().optional(),

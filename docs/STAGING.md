@@ -115,5 +115,5 @@ else differs from a browser's API calls.
 ## Moving to production
 
 Staging leaves out what production needs: Stripe (`PAYMENT_PROVIDER=stripe` and its keys), Sumsub KYC, Postmark email,
-Twilio SMS, S3 storage, the KMS escrow signer, a read replica and backups. `SANDBOX_MODE` must be off there. See
+S3 storage, the KMS escrow signer, a read replica and backups. `SANDBOX_MODE` must be off there. See
 `docs/RUNBOOK.md`.
