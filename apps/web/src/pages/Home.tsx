@@ -65,14 +65,15 @@ export function Home() {
           </div>
           <ul className="home-bought">
             {bought.map((o) => (
-              <li key={o.id} className="card">
-                <span className="small muted">{o.game}</span>
-                <Link to={`/orders/${o.id}`} className="home-bought-title" dir="auto">{o.offer_title}</Link>
-                <div className="row spread small">
-                  <span className="num">{money(o.amount_cents, o.currency)}</span>
-                  <StatusEye status={o.status} label={statusLabel(o.status)} />
+              <li key={o.id} className="card home-bought-card">
+                <div className="home-bought-text">
+                  <span className="small muted">{o.game}</span>
+                  <Link to={`/orders/${o.id}`} className="home-bought-title" dir="auto">{o.offer_title}</Link>
+                  <span className="num small">{money(o.amount_cents, o.currency)}</span>
+                  {o.offer_id && <Link to={`/offers/${o.offer_id}`} className="small">{t('home.buyAgain')}</Link>}
                 </div>
-                {o.offer_id && <Link to={`/offers/${o.offer_id}`} className="small">{t('home.buyAgain')}</Link>}
+                {/* The status eye sits in the middle of the card's side (word on hover). */}
+                <StatusEye status={o.status} label={statusLabel(o.status)} size={34} className="home-bought-eye" />
               </li>
             ))}
           </ul>

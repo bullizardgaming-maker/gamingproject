@@ -1263,7 +1263,11 @@ main.shell { min-height: 100vh; min-height: 100dvh; }
 html.dark .avatar-ini { background: #3a3a3a; color: var(--ink); } /* pictures stay visible on grey cards */
 
 /* The status eye sits centred: on the price line of order cards and in the middle of its table cell. */
-.home-bought .row.spread { align-items: center; }
 .eye-status { vertical-align: middle; line-height: 0; }
 .eye-status svg { display: block; }
 table.orders-table td:has(> .eye-status), table.orders-table th:nth-child(3) { text-align: center; }
+
+/* Recently bought: text on the left, the status eye centred on the right side of the card. */
+.home-bought .card.home-bought-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; }
+.home-bought-text { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.home-bought-eye { align-self: center; }
