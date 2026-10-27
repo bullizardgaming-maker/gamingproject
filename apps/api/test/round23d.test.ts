@@ -218,9 +218,9 @@ describe('Round 23d', () => {
     const lead = await makeUser(h, { role: 'lead' });
     const support = await makeUser(h, { role: 'support' });
     expect((await support.api.get('/v1/admin/support/tickets')).status).not.toBe(403);
-    // Suspended: the existing session keeps signing in as them, but staff routes refuse.
+    // Suspended: the existing session is signed out at once (Round 23e) and staff cannot sign in again.
     expect((await admin.api.post(`/v1/admin/users/${support.id}/suspend`, { reason: 'under review', days: 3 })).status).toBe(200);
-    expect((await support.api.get('/v1/admin/support/tickets')).body.error.code).toBe('account_restricted');
+    expect((await support.api.get('/v1/admin/support/tickets')).status).toBe(401);
     const login = await client(h.app).post('/v1/auth/login', { email: support.email, password: 'correct horse battery' });
     expect(login.status).toBe(403);
     expect(login.body.error.code).toBe('suspended');
@@ -563,8 +563,8 @@ describe('Round 23d', () => {
     const fresh = await client(h.app).post('/v1/auth/mfa', { mfaToken: login3.body.mfaToken, code: enabled.body.recoveryCodes[0] });
     expect(fresh.status).toBe(200);
     const session = client(h.app, fresh.body.token);
-    for (let i = 0; i < h.ctx.cfg.LOGIN_MAX_FAILURES - 1; i++) expect((await session.post('/v1/me/2fa/disable', { code: '000000' })).status).toBe(401);
-    expect((await session.post('/v1/me/delete', { password: 'wrong password here' })).status).toBe(401); // the last straw
+    for (let i = 0; i < h.ctx.cfg.LOGIN_MAX_FAILURES - 1; i++) expect((await session.post('/v1/me/2fa/disable', { code: '000000' })).status).toBe(403); // 403 since Round 23e
+    expect((await session.post('/v1/me/delete', { password: 'wrong password here' })).status).toBe(403); // the last straw
     const locked = await session.post('/v1/me/2fa/disable', { code: enabled.body.recoveryCodes[1] });
     expect(locked.status).toBe(429);
     expect(locked.body.error.code).toBe('account_locked');

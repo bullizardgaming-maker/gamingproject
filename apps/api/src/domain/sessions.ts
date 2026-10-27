@@ -4,7 +4,7 @@ import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { many, maybeOne, withTx } from '../db.js';
 import { hmacSha256, randomToken } from '../lib/crypto.js';
-import { AppError, notFound, unauthorized } from '../lib/errors.js';
+import { AppError, notFound } from '../lib/errors.js';
 import { enqueueEmail } from './notifications.js';
 import { assertMaySignIn } from './users.js';
 
@@ -86,7 +86,7 @@ export async function refreshSession(ctx: Ctx, refreshToken: string, meta: Sessi
   if (outcome.kind === 'ok') return outcome.issued;
   if (outcome.kind === 'race') throw new AppError(409, 'refresh_superseded', 'This session was just refreshed elsewhere; retry with the newest token');
   if (outcome.kind === 'reuse') ctx.log.warn({}, 'refresh token reuse detected: session family revoked');
-  throw unauthorized('Session expired. Sign in again.');
+  throw new AppError(401, 'session_expired', 'You were signed out. Sign in again.');
 }
 
 /** Resolve the session behind an access token. Returns null if revoked. */

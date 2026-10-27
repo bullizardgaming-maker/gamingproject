@@ -354,7 +354,7 @@ const WSTATUS: Record<string, MessageKey> = {
   failed: 'money.wstatus.failed', rejected: 'money.wstatus.rejected', pending: 'money.wstatus.pending',
 };
 
-interface PayoutAddress { address: string | null; currency: string | null; currencyName: string | null; setAt: string | null; pending: { address: string; currency: string; since: string } | null; coins: Array<{ coin: string; name: string }> }
+interface PayoutAddress { address: string | null; currency: string | null; currencyName: string | null; setAt: string | null; clearedAt?: string | null; pending: { address: string; currency: string; since: string } | null; coins: Array<{ coin: string; name: string }> }
 
 /** The crypto address withdrawals go to: set with an email link, plus the 2FA code when the account has one. */
 function PayoutAddressCard({ onChanged, onMessage }: { onChanged: () => void; onMessage: (m: { kind: 'ok' | 'alert'; text: string }) => void }) {
@@ -398,6 +398,8 @@ function PayoutAddressCard({ onChanged, onMessage }: { onChanged: () => void; on
       <p className="small muted" style={{ margin: 0 }}>{t('money.payoutAddress.text')}</p>
       {pa.address ? (
         <p className="small" style={{ margin: 0 }}><b>{pa.currencyName}</b> · <code className="mono" style={{ wordBreak: 'break-all' }}>{pa.address}</code></p>
+      ) : pa.clearedAt ? (
+        <p className="small" role="status" style={{ margin: 0 }}>{t('money.payoutAddress.cleared')}</p>
       ) : (
         <p className="small muted" style={{ margin: 0 }}>{t('money.payoutAddress.none')}</p>
       )}
@@ -415,7 +417,8 @@ function PayoutAddressCard({ onChanged, onMessage }: { onChanged: () => void; on
       <form className="row" onSubmit={request} style={{ alignItems: 'end', flexWrap: 'wrap' }}>
         <label className="field" style={{ margin: 0 }}>
           {t('money.payoutAddress.coin')}
-          <select value={coin} onChange={(e) => setCoin(e.target.value)}>{pa.coins.map((c) => <option key={c.coin} value={c.coin}>{c.name}</option>)}</select>
+          <select value={coin} onChange={(e) => setCoin(e.target.value)} aria-describedby="payout-coin-hint">{pa.coins.map((c) => <option key={c.coin} value={c.coin}>{c.name}</option>)}</select>
+          <span id="payout-coin-hint" className="small muted">{t('money.payoutAddress.coinHint')}</span>
         </label>
         <label className="field" style={{ margin: 0, flex: 1, minWidth: 220 }}>
           {t('money.payoutAddress.address')}

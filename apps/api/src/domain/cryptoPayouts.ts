@@ -1,3 +1,4 @@
+import type { WithdrawalReason } from './locales/index.js';
 import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { many, maybeOne, one, withTx } from '../db.js';
@@ -34,8 +35,6 @@ const CONFIRM_TTL_MINUTES = 60;
 export const PAYOUT_COINS = ['usdttrc20', 'usdtbsc'] as const;
 /** Coins whose amounts are USD 1:1 for fee booking. */
 const USD_STABLE = /^usd[tc]/;
-/** What the seller reads when a withdrawal in a coin we no longer pay out in is refused (Round 22b). */
-const UNSUPPORTED_COIN_REASON = 'payouts are sent in USDT only; add a USDT (TRC-20 or BEP-20) payout address';
 
 /** Round 22b: every withdrawal is in USD; a balance in another currency waits for Finance's manual conversion (Ops alert). */
 export function assertUsdWithdrawal(currency: string) {
@@ -49,8 +48,8 @@ export function withdrawalFee(ctx: Ctx, amountCents: number) {
 const tokenHash = (ctx: Ctx, token: string) => hmacSha256(ctx.cfg.FINGERPRINT_KEY, `payout_address:${token}`);
 
 export async function payoutAddressOf(q: Queryable, userId: string) {
-  const u = await one<{ payout_address: string | null; payout_address_currency: string | null; payout_address_set_at: string | null }>(
-    q, 'SELECT payout_address, payout_address_currency, payout_address_set_at FROM users WHERE id = $1', [userId],
+  const u = await one<{ payout_address: string | null; payout_address_currency: string | null; payout_address_set_at: string | null; payout_address_cleared_at: string | null }>(
+    q, 'SELECT payout_address, payout_address_currency, payout_address_set_at, payout_address_cleared_at FROM users WHERE id = $1', [userId],
   );
   const pending = await maybeOne<{ address: string; currency: string; created_at: string }>(
     q, `SELECT address, currency, created_at FROM payout_address_changes WHERE user_id = $1 AND confirmed_at IS NULL AND expires_at > now() ORDER BY created_at DESC LIMIT 1`, [userId],
@@ -60,6 +59,8 @@ export async function payoutAddressOf(q: Queryable, userId: string) {
     currency: u.payout_address_currency,
     currencyName: u.payout_address_currency ? coinName(u.payout_address_currency) : null,
     setAt: u.payout_address_set_at,
+    /** Round 23f (§9.6): an old non-USDT address was removed (migration 078) and none was added since. */
+    clearedAt: u.payout_address ? null : u.payout_address_cleared_at,
     pending: pending ? { address: pending.address, currency: pending.currency, since: pending.created_at } : null,
     coins: PAYOUT_COINS.map((c) => ({ coin: c, name: coinName(c) })),
   };
@@ -271,7 +272,7 @@ export async function decideWithdrawal(ctx: Ctx, id: string, staff: { id: string
         ],
         `withdrawal_rejected:${id}`,
       );
-      await enqueueEmail(s.tx, w.user_id, 'withdrawal_failed', { amount_cents: amount, currency: w.currency, reason: unsupported ? UNSUPPORTED_COIN_REASON : note || 'not approved' });
+      await enqueueEmail(s.tx, w.user_id, 'withdrawal_failed', { amount_cents: amount, currency: w.currency, reason: unsupported ? 'unsupported_coin' : 'not_approved' }); // Round 23f: a code (§9.6)
       return { ...w, status: 'rejected', decision_note: note ?? null, ...(unsupported ? { refused: 'unsupported_coin' } : {}) };
     }
     await s.tx.query(`UPDATE withdrawals SET status = 'processing', decided_by = $2, decided_at = now(), decision_note = $3, updated_at = now() WHERE id = $1`, [id, staffId, note ?? null]);
@@ -304,7 +305,7 @@ async function sendPayout(ctx: Ctx, np: NowPaymentsProvider, w0: any) {
   await assertNotPaused(ctx.db, 'withdrawals'); // kill switch: nothing leaves while paused; the job sends it once lifted
   // Round 22b (6): an approved withdrawal in a coin we no longer pay out in is reversed, never sent.
   if (!(PAYOUT_COINS as readonly string[]).includes(w0.destination_currency)) {
-    await failWithdrawal(ctx, id, 'unsupported_coin', UNSUPPORTED_COIN_REASON);
+    await failWithdrawal(ctx, id, 'unsupported_coin', 'unsupported_coin');
     throw badRequest('unsupported_coin', `Payouts are sent in ${PAYOUT_COINS.map(coinName).join(', ')}; the amount is back in the seller’s balance`);
   }
   // Round 22b (1): claimed in one statement, and only if it was never handed over (no attempt, no provider ids). Two callers
@@ -469,7 +470,7 @@ export async function recheckUnknownPayouts(ctx: Ctx) {
 }
 
 /** Reverses an approved withdrawal that the provider could not send (or definitely failed): fee and net return to the seller. */
-async function failWithdrawal(ctx: Ctx, id: string, reason: string, emailReason = reason) {
+async function failWithdrawal(ctx: Ctx, id: string, reason: string, emailReason: WithdrawalReason = 'provider_failed') {
   await withScope(ctx, async (s) => {
     const w = await maybeOne<any>(s.tx, 'SELECT * FROM withdrawals WHERE id = $1 FOR UPDATE', [id]);
     if (!w || !['processing', 'unknown'].includes(w.status)) return;

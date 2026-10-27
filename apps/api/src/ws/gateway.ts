@@ -137,7 +137,7 @@ export function registerGateway(app: FastifyInstance, ctx: Ctx) {
       } catch (err) {
         const e = err instanceof AppError ? err : err instanceof z.ZodError || err instanceof SyntaxError ? new AppError(400, 'bad_frame', 'Malformed frame') : null;
         if (!e) ctx.log.error({ err }, 'ws handler error');
-        send(ws, { type: 'error', code: e?.code ?? 'internal', message: e?.message ?? 'Internal error', clientMsgId });
+        send(ws, { type: 'error', code: e?.code ?? 'internal', message: e?.message ?? 'Internal error', clientMsgId, ...(e?.details !== undefined ? { details: e.details } : {}) }); // details: e.g. offplatform_blocked { action } (Round 23f)
       }
     });
   });

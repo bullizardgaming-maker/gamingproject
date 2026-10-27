@@ -1,9 +1,13 @@
-import type { LocalePack } from './types.js';
+import { simpleDuration, type LocalePack } from './types.js';
+
+const U = { minute: 'Minute', minutes: 'Minuten', hour: 'Stunde', hours: 'Stunden' };
 
 const de: LocalePack = {
-  signoff: '— Dein Bullizard-Team',
-  manage: 'E-Mail-Einstellungen',
-  verifyCode: (code, minutes) => `Dein Bestätigungscode lautet ${code}. Er läuft in ${minutes} Minuten ab.`,
+  layout: { greeting: "Hey {name},", greetingNoName: "Hey,", signoff: "Dein Bullizard-Team", why: "Du bekommst diese E-Mail, weil du ein Bullizard-Konto hast.", safety: "Wir fragen nie per E-Mail nach deinem Passwort oder deinen Codes.", manage: "E-Mail-Einstellungen", legal: "Bullizard · Nur ab 18 · Mit keinem Spielepublisher verbunden", button: "Bullizard öffnen" },
+  verifySubject: (code) => `Dein Bullizard-Code: ${code}`,
+  verifyCode: (code, minutes) => `Dein Code lautet ${code}. Er gilt ${simpleDuration(minutes, U)}. Wenn du ihn nicht angefordert hast, ignoriere diese E-Mail.`,
+  duration: (minutes) => simpleDuration(minutes, U),
+  withdrawalReasons: { unsupported_coin: "Auszahlungen gehen nur in USDT raus. Füge eine USDT-Adresse (TRC-20 oder BEP-20) hinzu und versuch es noch einmal.", not_approved: "Sie wurde nicht freigegeben. Wende dich an den Support, wenn du Details brauchst.", provider_failed: "Das Zahlungsnetz hat sie abgelehnt. Prüfe deine Adresse und versuch es noch einmal." },
   templates: {
     protection_ending: {
       subject: (d) => `Noch 24 Stunden, um ${d.title} zu prüfen`,
@@ -70,8 +74,10 @@ const de: LocalePack = {
         `Nach Prüfung der Bestellung „${d.title}“ haben wir dem Käufer erstattet (${d.reason}). Dein Anteil von ${h.money(d.amount_cents, d.currency)} wurde von deinem Guthaben abgezogen; fällt es unter null, wird der Rest mit deinen nächsten Verkäufen verrechnet. Die Provision wurde ebenfalls erstattet (Gutschrift ${d.credit_note}).\n\n${link(`/orders/${d.order_id}`)}`,
     },
     withdrawal_failed: {
-      subject: (d, h) => `Auszahlung von ${h.money(d.amount_cents, d.currency)} fehlgeschlagen`,
-      body: (d, link, h) => `Deine Auszahlung von ${h.money(d.amount_cents, d.currency)} konnte nicht gesendet werden (${d.reason}). Das Geld ist wieder in deinem Guthaben. Prüfe dein Auszahlungskonto: ${link('/sell')}`,
+      subject: (d, h) => `Auszahlung von ${h.money(d.amount_cents, d.currency)} nicht gesendet`,
+      body: (d, link, h) => `Wir konnten deine Auszahlung von ${h.money(d.amount_cents, d.currency)} nicht senden. ${h.reason(d.reason)} Das Geld ist zurück in deinem Guthaben.
+
+Wallet öffnen: ${link('/sell/money')}`,
     },
     invoice_issued: {
       subject: (d) => `Deine Provisionsrechnung ${d.number}`,
@@ -151,7 +157,9 @@ const de: LocalePack = {
     },
     account_locked: {
       subject: () => 'Anmeldung nach Fehlversuchen pausiert',
-      body: (d, link) => `Es gab ${d.failures} fehlgeschlagene Anmeldeversuche für dein Konto, daher ist die Anmeldung für ${d.minutes} Minuten pausiert. Warst du das nicht, ist dein Konto sicher – wir empfehlen trotzdem die Zwei-Faktor-Anmeldung. Du kannst dein Passwort auch jetzt zurücksetzen: ${link('/forgot-password')}`,
+      body: (d, link, h) => `Jemand hat versucht, sich bei deinem Konto anzumelden, und das Passwort ${d.failures}-mal falsch eingegeben. Die Anmeldung ist deshalb für ${h.duration(Number(d.minutes))} pausiert. Warst du das, warte oder setz dein Passwort zurück. Wenn nicht, ist dein Konto weiter sicher. Schalte die Zwei-Faktor-Anmeldung ein, damit es so bleibt.
+
+Passwort zurücksetzen: ${link('/forgot-password')}`,
     },
   },
 };

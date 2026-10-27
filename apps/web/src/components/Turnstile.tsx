@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { DEMO } from '../api';
 import { t } from '../i18n';
@@ -77,6 +77,7 @@ export function Turnstile({ onToken, resetKey = 0, action }: { onToken: (token: 
   const cb = useRef(onToken);
   cb.current = onToken;
   const siteKey = turnstileSiteKey();
+  const [expired, setExpired] = useState(false);
 
   useEffect(() => {
     if (!siteKey) return;
@@ -88,8 +89,16 @@ export function Turnstile({ onToken, resetKey = 0, action }: { onToken: (token: 
           sitekey: siteKey,
           action,
           appearance: 'interaction-only',
-          callback: (token: string) => cb.current(token),
-          'expired-callback': () => cb.current(null),
+          callback: (token: string) => {
+            setExpired(false);
+            cb.current(token);
+          },
+          // Round 23f (§9.2): a token that timed out is dropped and the check runs again on its own, with a note.
+          'expired-callback': () => {
+            cb.current(null);
+            setExpired(true);
+            if (widget.current && window.turnstile) window.turnstile.reset(widget.current);
+          },
           'error-callback': () => cb.current(null),
         });
       })
@@ -109,5 +118,10 @@ export function Turnstile({ onToken, resetKey = 0, action }: { onToken: (token: 
   }, [resetKey]);
 
   if (!siteKey) return null;
-  return <div ref={box} className="turnstile" aria-label={t('auth.botCheck')} />;
+  return (
+    <>
+      <div ref={box} className="turnstile" aria-label={t('auth.botCheck')} />
+      {expired && <p className="small muted" role="status" style={{ margin: 0 }}>{t('auth.botCheckExpired')}</p>}
+    </>
+  );
 }

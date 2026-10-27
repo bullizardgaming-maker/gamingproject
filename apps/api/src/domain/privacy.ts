@@ -1,12 +1,11 @@
 import type { Ctx } from '../context.js';
-import { many, maybeOne, one } from '../db.js';
+import { many, maybeOne, one, type Queryable } from '../db.js';
 import { forgetNewsletterContact } from './newsletter.js';
-import { sellerBalances } from './sellerfx.js';
 import { openMessages } from './chat.js';
 import { hashPassword, randomToken, verifyPassword } from '../lib/crypto.js';
 import { AppError, unauthorized } from '../lib/errors.js';
-import { withScope } from './events.js';
-import { sellerAvailable, userCredit } from './ledger.js';
+import { withScope, type TxScope } from './events.js';
+import { shredUserChatKey } from './chatkeys.js';
 import { checkSecondFactor } from './mfa.js';
 import { revokeOtherSessions } from './sessions.js';
 import type { User } from './users.js';
@@ -61,6 +60,20 @@ export async function exportData(ctx: Ctx, userId: string) {
   };
 }
 
+/** Round 23e (item 2): any seller balance or store credit, in any currency, blocks deletion. */
+async function assertNoMoneyLeft(q: Queryable, userId: string) {
+  const money = await many<{ kind: string; currency: string; cents: string }>(
+    q,
+    `SELECT a.kind, a.currency, COALESCE(SUM(e.amount_cents), 0)::bigint AS cents FROM ledger_accounts a LEFT JOIN ledger_entries e ON e.account_id = a.id
+      WHERE a.owner_id = $1 AND a.kind IN ('seller_available', 'user_credit') GROUP BY a.kind, a.currency`,
+    [userId],
+  );
+  const seller = money.filter((m) => m.kind === 'seller_available').map((m) => Number(m.cents));
+  if (seller.some((b) => b > 0)) throw new AppError(409, 'balance_remaining', 'Withdraw your remaining balance first');
+  if (seller.some((b) => b < 0)) throw new AppError(409, 'balance_owed', 'Your balance is below zero. Contact support to settle it before deleting your account.');
+  if (money.some((m) => m.kind === 'user_credit' && Number(m.cents) > 0)) throw new AppError(409, 'credit_remaining', 'Spend your store credit first, or ask support to pay it out');
+}
+
 export async function deleteAccount(ctx: Ctx, user: User, password: string, code?: string) {
   const row = await one<{ password_hash: string }>(ctx.db, 'SELECT password_hash FROM users WHERE id = $1', [user.id]);
   if (!(await verifyPassword(password, row.password_hash))) throw unauthorized('Password is incorrect');
@@ -78,18 +91,16 @@ export async function deleteAccount(ctx: Ctx, user: User, password: string, code
     [user.id],
   );
   if (open?.n) throw new AppError(409, 'open_orders', `Finish or cancel your ${open.n} open order(s) first`);
-  // Every currency the seller holds money in (EUR/EGP sellers too).
-  const balances = (await sellerBalances(ctx.db, user.id)).map((b) => Number(b.cents));
-  if (balances.some((b) => b > 0)) throw new AppError(409, 'balance_remaining', 'Withdraw your remaining balance first');
-  if (balances.some((b) => b < 0)) throw new AppError(409, 'balance_owed', 'Your balance is negative after a chargeback. Contact support to settle it first.');
-  // Round 23d: store credit is money too; it is not silently written off with the account.
-  if ((await userCredit(ctx.db, user.id)) > 0) throw new AppError(409, 'credit_remaining', 'Spend your store credit first, or ask support to pay it out');
-
+  await assertNoMoneyLeft(ctx.db, user.id); // checked again inside the transaction below, with the row locked
   const scrambled = await hashPassword(randomToken(32));
   // A newsletter contact that reached Brevo is deleted there before the address is scrubbed here.
   const news = await maybeOne<{ email: string; news_synced_email: string | null; news_synced_at: string | null }>(ctx.db, 'SELECT email, news_synced_email, news_synced_at FROM users WHERE id = $1', [user.id]);
   if (news?.news_synced_at) await forgetNewsletterContact(ctx, news.news_synced_email ?? news.email); // the address Brevo actually has (Round 23d)
   return withScope(ctx, async (s) => {
+    // Round 23e (item 2): money is checked inside the deletion transaction with the user row locked, in every currency:
+    // seller balance (EUR/EGP sellers too) and store credit. Nothing is silently written off with the account.
+    await s.tx.query('SELECT 1 FROM users WHERE id = $1 FOR UPDATE', [user.id]);
+    await assertNoMoneyLeft(s.tx, user.id);
     await s.tx.query(
       `UPDATE users SET
           email = 'deleted-' || id || '@deleted.invalid', display_name = 'Deleted user', password_hash = $2,
@@ -143,13 +154,76 @@ export async function deleteAccount(ctx: Ctx, user: User, password: string, code
 }
 
 /**
- * Round 23d (item 5): when a user's chat is erased (key shredded), the files they uploaded go too — rows, names and
- * stored objects (S3 included). Objects are deleted first so a crash never leaves a file nobody can find.
+ * Round 23d (item 5) / 23e (item 1): when a user's chat is erased, the files they uploaded go too — rows, names and
+ * stored objects (S3 included). One transaction, in the order the foreign keys need: rows that point at the files
+ * (boosting progress screenshots, delivery proofs) let go, the attachment rows are deleted and their storage keys are
+ * queued; the objects are deleted after commit, and a failed delete stays queued for the retention job. A crash never
+ * leaves a row pointing at a missing file, nor a file nobody can find.
  */
+export async function eraseUserAttachmentsTx(s: TxScope, ctx: Ctx, userId: string) {
+  const atts = await s.tx.query<{ id: string; storage_key: string | null }>('SELECT id, storage_key FROM chat_attachments WHERE uploader_id = $1 FOR UPDATE', [userId]);
+  const ids = atts.rows.map((a) => a.id);
+  if (!ids.length) return 0;
+  const keys = atts.rows.map((a) => a.storage_key).filter((k): k is string => !!k);
+  await s.tx.query('UPDATE order_progress SET attachment_id = NULL WHERE attachment_id = ANY($1::uuid[])', [ids]);
+  await s.tx.query('UPDATE orders SET delivery_proof_id = NULL WHERE delivery_proof_id = ANY($1::uuid[])', [ids]);
+  await s.tx.query('DELETE FROM chat_attachments WHERE id = ANY($1::uuid[])', [ids]);
+  await queueStorageDeletions(s, ctx, keys, 'chat_erasure');
+  return ids.length;
+}
+
 export async function eraseUserAttachments(ctx: Ctx, userId: string) {
-  const atts = await many<{ id: string; storage_key: string | null }>(ctx.db, 'SELECT id, storage_key FROM chat_attachments WHERE uploader_id = $1', [userId]);
-  for (const a of atts) if (a.storage_key) await ctx.storage.delete(a.storage_key).catch(() => {});
-  await ctx.db.query(`UPDATE orders SET delivery_proof_id = NULL WHERE delivery_proof_id = ANY($1::uuid[])`, [atts.map((a) => a.id)]);
-  await ctx.db.query('DELETE FROM chat_attachments WHERE uploader_id = $1', [userId]);
-  return atts.length;
+  return withScope(ctx, (s) => eraseUserAttachmentsTx(s, ctx, userId));
+}
+
+/** Round 23e (item 1): destroy the chat key and the files in one transaction (admin erase-chat and the retention job). */
+export async function eraseUserChat(ctx: Ctx, userId: string, reason: string) {
+  return withScope(ctx, async (s) => {
+    const shredded = await shredUserChatKey(s.tx, userId, reason);
+    const files = await eraseUserAttachmentsTx(s, ctx, userId);
+    return { shredded, files };
+  });
+}
+
+/** Queue stored objects for deletion; they are deleted once the transaction commits (and retried later on failure). */
+export async function queueStorageDeletions(s: TxScope, ctx: Ctx, keys: string[], reason: string) {
+  if (!keys.length) return;
+  await s.tx.query(`INSERT INTO storage_deletions (storage_key, reason) SELECT unnest($1::text[]), $2 ON CONFLICT (storage_key) DO NOTHING`, [keys, reason]);
+  s.defer(async () => void (await drainStorageDeletions(ctx, keys)));
+}
+
+/** Delete queued objects (all due ones, or just `keys`), never one a row still references; a failure backs off 2^n minutes (≤ 1 day) and stays queued. */
+export async function drainStorageDeletions(ctx: Ctx, keys?: string[], limit = 500) {
+  const due = await many<{ storage_key: string; attempts: number }>(
+    ctx.db,
+    `SELECT storage_key, attempts FROM storage_deletions WHERE ($1::text[] IS NULL OR storage_key = ANY($1::text[])) AND ($1::text[] IS NOT NULL OR next_at <= now()) ORDER BY next_at LIMIT $2`,
+    [keys ?? null, limit],
+  );
+  let deleted = 0;
+  for (const d of due) {
+    // Round 23f (item 5): a key some row still points at (an attachment or banner re-using it) is never deleted; the
+    // queue entry is dropped, since the object is not orphaned.
+    const used = await maybeOne(
+      ctx.db,
+      `SELECT 1 WHERE EXISTS (SELECT 1 FROM chat_attachments WHERE storage_key = $1) OR EXISTS (SELECT 1 FROM shop_banners WHERE storage_key = $1)`,
+      [d.storage_key],
+    );
+    if (used) {
+      ctx.log.warn({ key: d.storage_key }, 'queued storage deletion skipped: the object is still referenced');
+      await ctx.db.query('DELETE FROM storage_deletions WHERE storage_key = $1', [d.storage_key]);
+      continue;
+    }
+    try {
+      await ctx.storage.delete(d.storage_key);
+      await ctx.db.query('DELETE FROM storage_deletions WHERE storage_key = $1', [d.storage_key]);
+      deleted++;
+    } catch (err) {
+      ctx.log.warn({ key: d.storage_key, attempts: d.attempts + 1, err: (err as Error).message }, 'stored object could not be deleted; will retry');
+      await ctx.db.query(
+        `UPDATE storage_deletions SET attempts = attempts + 1, last_error = $2, next_at = now() + make_interval(mins => LEAST(1440, power(2, LEAST(attempts + 1, 11))::int)) WHERE storage_key = $1`,
+        [d.storage_key, String((err as Error).message).slice(0, 300)],
+      );
+    }
+  }
+  return deleted;
 }

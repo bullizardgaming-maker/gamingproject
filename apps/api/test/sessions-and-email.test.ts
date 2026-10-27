@@ -90,7 +90,7 @@ describe('sessions and refresh tokens', () => {
     expect((await apiA.del(`/v1/me/sessions/${phone.id}`)).status).toBe(204);
     expect((await client(h.app, b.token).get('/v1/me')).status).toBe(401);
 
-    expect((await apiA.post('/v1/me/password', { currentPassword: 'wrong-password', newPassword: 'another good password' })).status).toBe(401);
+    expect((await apiA.post('/v1/me/password', { currentPassword: 'wrong-password', newPassword: 'another good password' })).body.error.code).toBe('wrong_current_password'); // 403 since Round 23f (§9.2)
     const changed = await apiA.post('/v1/me/password', { currentPassword: PASSWORD, newPassword: 'another good password' });
     expect(changed.body.signedOutDevices).toBe(1); // the registration session
     expect((await apiA.get('/v1/me')).status).toBe(200); // this device stays signed in

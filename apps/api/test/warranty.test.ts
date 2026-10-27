@@ -18,7 +18,7 @@ async function soldAccount(warrantyDays = 30) {
   const order = await buyAndPay(h, buyer, res.body.id);
   await seller.api.post(`/v1/orders/${order.id}/deliver`, { payload: 'login:pass' });
   await endWindowAndRelease(h, order.id); // no auto-release: staff release it once the window is over
-  return { seller, buyer, offer: res.body, order: (await buyer.api.get(`/v1/orders/${order.id}`)).body };
+  return { seller, buyer, offer: res.body, order: (await seller.api.get(`/v1/orders/${order.id}`)).body }; // seller_net_cents is the seller's (Round 23e)
 }
 
 describe('account warranty', () => {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ChatCircle, Coins, Flag, Headset, Minus, Plus } from '@phosphor-icons/react';
 import { api, money } from '../api';
@@ -8,6 +8,8 @@ import { WatchButton } from '../components/WatchButton';
 import { CurrencyList, DeliveryTag, fmtUnits, LevelTag, OfferTable, PresenceText, Rating, SellerAvatar } from '../components/CatalogUi';
 import { categoryLabel, slugify } from '@/lib/catalog';
 import { usePageMeta } from '@/lib/seo';
+import { useTermsVersion } from '@/lib/terms';
+import { TermsChanged } from '../components/TermsChanged';
 import { attributePairs } from '@/lib/attributes';
 import { unitPriceFor } from '@/lib/tiers';
 import { handoverFieldFor } from '../components/CharacterField';
@@ -28,11 +30,14 @@ export function OfferPage() {
   const [params] = useSearchParams();
   const [qtyText, setQtyText] = useState(params.get('qty') ?? '');
   const [busy, setBusy] = useState(false);
+  const terms = useTermsVersion(); // Round 23e/23f: the version loaded with the page goes with the order
+  const termsVersion = terms.version;
   const [error, setError] = useState('');
   const [others, setOthers] = useState<Offer[]>([]);
   const [sort, setSort] = useState<'recommended' | 'price_asc' | 'min_qty_asc'>('recommended');
   const [dialog, setDialog] = useState(false);
   const [copied, setCopied] = useState(false);
+  const lastChoice = useRef<DeliveryChoice | undefined>(undefined); // kept so accepting new Terms re-sends the same delivery choice
   usePageMeta({ title: offer?.title, description: offer ? `${offer.title} · ${offer.game}. Paid into escrow, released when you confirm delivery.` : undefined });
 
   useEffect(() => {
@@ -64,19 +69,27 @@ export function OfferPage() {
   const gameSlug = slugify(offer.game);
 
   const buy = async (choice?: DeliveryChoice) => {
+    lastChoice.current = choice;
     setBusy(true);
     setError('');
     try {
-      // The Terms version shown on this page goes with the order; the API refuses it if it changed meanwhile (Round 23d).
-      const terms = await api<{ version: string }>('/legal/terms').catch(() => null);
+      // The Terms version loaded with this page goes with the order; the API refuses it if it changed meanwhile (Round 23d/23e).
+      if (!termsVersion) throw Object.assign(new Error(t('legal.reloadTerms')), { code: 'terms_stale' });
       const res = await api<{ order: { id: string }; checkoutUrl: string | null }>('/orders', {
-        body: { offerId: offer.id, quantity: qty, rail: 'fiat', acceptTos: true, useCredit: true, ...(terms ? { tosVersion: terms.version } : {}), ...(choice ? { deliveryMethod: choice.method, deliveryInfo: choice.info, characterName: choice.info.character, saveInfo: choice.save } : {}) },
+        body: { offerId: offer.id, quantity: qty, rail: 'fiat', acceptTos: true, useCredit: true, tosVersion: termsVersion, ...(choice ? { deliveryMethod: choice.method, deliveryInfo: choice.info, characterName: choice.info.character, saveInfo: choice.save } : {}) },
         headers: { 'Idempotency-Key': `${offer.id}:${qty}:${Math.floor(Date.now() / 60_000)}` },
       });
       if (res.checkoutUrl) window.location.assign(res.checkoutUrl);
       else nav(`/orders/${res.order.id}`);
     } catch (e: any) {
-      setError(e.code === 'kyc_required' ? t('offer.verifyFirst') : e.code === 'terms_reacceptance_required' ? t('legal.acceptToContinue') : e.code === 'terms_stale' ? t('legal.reloadTerms') : e.message);
+      if (e.code === 'terms_stale') {
+        // Round 23f: fetch the version now in force and ask the buyer to read and accept it.
+        setDialog(false); // the Terms notice sits in the buy box, so close the pop-up to show it
+        await terms.onStale();
+        setBusy(false);
+        return;
+      }
+      setError(e.code === 'kyc_required' ? t('offer.verifyFirst') : e.code === 'terms_reacceptance_required' ? t('legal.acceptToContinue') : e.message);
       setBusy(false);
     }
   };
@@ -195,6 +208,7 @@ export function OfferPage() {
             </div>
           )}
           <div className="of-total"><span>{t('offer.total')}</span><b className="num">{money(total, offer.currency)}</b></div>
+          {terms.stale && <TermsChanged busy={busy} onAccept={() => { terms.accepted(); void buy(lastChoice.current); }} />}
           {error && !dialog && <div className="alert small" role="alert">{error} {error === t('offer.verifyFirst') && <Link to="/account">{t('offer.verifyNow')}</Link>}</div>}
           {!user ? (
             <Link className="btn go lg block" to={`/login?next=/offers/${offer.id}`}>{t('offer.signInToBuy')}</Link>

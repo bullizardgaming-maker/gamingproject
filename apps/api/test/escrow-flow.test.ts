@@ -67,7 +67,8 @@ describe('auto-delivery with escrow held until confirmation', () => {
     // Standard goods are held until the buyer confirms: no deadline, no auto-release (release-rule.test.ts).
     expect(detail.protection).toBe('until_confirmed');
     expect(detail.protection_ends_at).toBeNull();
-    expect(detail.commission_bps).toBe(PROMO_BPS);
+    expect((await seller.api.get(`/v1/orders/${order.id}`)).body.commission_bps).toBe(PROMO_BPS); // the seller's side (Round 23e)
+    expect(detail).not.toHaveProperty('commission_bps');
     expect(detail.amount_cents).toBe(grossUp(50_00, PROMO_BPS)); // 52.64: the seller's 50.00 plus 5% grossed up
 
     const items = (await buyer.api.get(`/v1/orders/${order.id}/items`)).body;
@@ -102,7 +103,7 @@ describe('auto-delivery with escrow held until confirmation', () => {
     await endWindowAndRelease(h, order.id); // no auto-release (Round 20): staff release once the window is over
     const done = (await buyer.api.get(`/v1/orders/${order.id}`)).body;
     expect(done.status).toBe('completed');
-    expect(done.commission_bps).toBe(PROMO_BPS);
+    expect((await seller.api.get(`/v1/orders/${order.id}`)).body.commission_bps).toBe(PROMO_BPS);
     expect(done.amount_cents).toBe(grossUp(100_00, PROMO_BPS));
     expect(await sellerAvailable(h.ctx.db, seller.id)).toBe(100_00);
   });
@@ -153,7 +154,8 @@ describe('game accounts: 14-day insurance, security changeover, disputes', () =>
     let detail = (await buyer.api.get(`/v1/orders/${order.id}`)).body;
     expect(detail.status).toBe('paid');
     expect(detail.protection).toBe('insurance_14d');
-    expect(detail.commission_bps).toBe(PROMO_BPS);
+    expect((await seller.api.get(`/v1/orders/${order.id}`)).body.commission_bps).toBe(PROMO_BPS); // the seller's side (Round 23e)
+    expect(detail).not.toHaveProperty('commission_bps');
     expect(detail.seller_protected).toBe(true);
 
     expect((await buyer.api.post(`/v1/orders/${order.id}/deliver`, { payload: 'x' })).status).toBe(403);

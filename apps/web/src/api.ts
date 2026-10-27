@@ -46,9 +46,11 @@ export interface User {
  */
 export function errorMessage(status: number, code: string, serverMessage?: string): string {
   if (code === 'network') return t('err.network');
-  if (code === 'too_many_requests' || status === 429) return t('err.too_many');
+  // Round 23f (copy deck §9.2): the code's own text first, so account_locked (429) and scanner_unavailable (503) say
+  // what happened instead of "too many tries" or the generic error.
   const key = `err.${code}`;
   if (code && key in en) return t(key as MessageKey);
+  if (code === 'too_many_requests' || status === 429) return t('err.too_many');
   if (status >= 500 || status === 0 || !serverMessage || code === 'internal') return t('err.generic');
   return serverMessage;
 }
@@ -56,7 +58,7 @@ export function errorMessage(status: number, code: string, serverMessage?: strin
 export class ApiError extends Error {
   /** The API's own message, before localisation. */
   public serverMessage: string;
-  constructor(public status: number, public code: string, message: string) {
+  constructor(public status: number, public code: string, message: string, public details?: any) {
     super(errorMessage(status, code, message));
     this.serverMessage = message;
   }
@@ -71,6 +73,23 @@ const TOKEN_KEY = 'mkt.token';
 let memoryToken: string | null = null;
 /** Set while a reload/new tab is still exchanging the refresh cookie, so the app does not flash "signed out". */
 const BOOT_KEY = 'mkt.signed-in';
+/** Set once this browser has tried the cookie exchange without the flag (the cookie is httpOnly: JS cannot see it). */
+const PROBED_KEY = 'mkt.session-probed';
+/**
+ * Round 23e (item 11): a token stored by an older build (before Round 23d) is removed on load. That browser was signed
+ * in, so it is treated as signed in: the refresh cookie is exchanged as on any reload.
+ */
+let legacySignedIn = false;
+if (!DEMO) {
+  try {
+    if (localStorage.getItem(TOKEN_KEY) !== null) {
+      localStorage.removeItem(TOKEN_KEY);
+      legacySignedIn = true;
+    }
+  } catch {
+    /* storage unavailable */
+  }
+}
 export const session = {
   get token() {
     if (!DEMO) return memoryToken;
@@ -83,13 +102,28 @@ export const session = {
   /** True when this browser signed in before and may still hold a refresh cookie. */
   get maybeSignedIn() {
     try {
-      return localStorage.getItem(BOOT_KEY) === '1';
+      return legacySignedIn || localStorage.getItem(BOOT_KEY) === '1';
+    } catch {
+      return legacySignedIn;
+    }
+  },
+  /**
+   * Round 23e (item 11): a refresh cookie can exist without the flag (storage cleared, a build from before the flag).
+   * Each browser tries the exchange once without it; a cookie found that way counts as signed in.
+   */
+  takeProbe() {
+    if (DEMO) return false;
+    try {
+      if (localStorage.getItem(PROBED_KEY) === '1') return false;
+      localStorage.setItem(PROBED_KEY, '1');
+      return true;
     } catch {
       return false;
     }
   },
   set(token: string | null) {
     memoryToken = token;
+    if (!token) legacySignedIn = false;
     try {
       if (DEMO) {
         if (token) localStorage.setItem(TOKEN_KEY, token);
@@ -120,25 +154,42 @@ function deviceFingerprint(): string {
 }
 
 let refreshing: Promise<boolean> | null = null;
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** One refresh call; 'race' means another tab rotated the cookie a moment ago (409 refresh_superseded). */
+async function refreshOnce(): Promise<'ok' | 'race' | 'failed'> {
+  const res = await fetch(`${BASE}/v1/auth/refresh`, { method: 'POST', credentials: 'include' }).catch(() => null);
+  if (!res) return 'race'; // network blip: retry like a race, never sign out for it
+  if (res.ok) {
+    session.set((await res.json()).token);
+    return 'ok';
+  }
+  return res.status === 409 ? 'race' : 'failed';
+}
 
 /**
- * Exchange the httpOnly refresh cookie for a new access token. Single-flight so
- * parallel 401s trigger one refresh; a 409 means another tab just rotated the
- * cookie, so we retry once with the newer cookie.
+ * Exchange the httpOnly refresh cookie for a new access token. Single-flight in this tab (parallel 401s trigger one
+ * refresh) and, where the browser has Web Locks, across tabs (Round 23e, item 11): tabs take turns, so the second one
+ * uses the cookie the first just received. A 409 (another tab rotated the cookie a moment ago; its Set-Cookie may not
+ * have landed yet) is retried with a short backoff instead of signing this tab out.
  */
 export function refreshAccessToken(): Promise<boolean> {
   if (DEMO) return Promise.resolve(false);
   refreshing ??= (async () => {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const res = await fetch(`${BASE}/v1/auth/refresh`, { method: 'POST', credentials: 'include' });
-      if (res.ok) {
-        session.set((await res.json()).token);
-        return true;
+    const run = async () => {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        if (attempt) await wait(150 * 2 ** attempt);
+        const r = await refreshOnce();
+        if (r === 'ok') return true;
+        if (r === 'failed') {
+          session.set(null);
+          return false;
+        }
       }
-      if (res.status !== 409) break;
-    }
-    session.set(null);
-    return false;
+      return false; // still racing: keep the tab as it is (signed-in flag kept), the next call tries again
+    };
+    const locks = (navigator as Navigator & { locks?: { request: (name: string, cb: () => Promise<boolean>) => Promise<boolean> } }).locks;
+    return locks ? locks.request('bz-auth-refresh', run) : run();
   })().finally(() => {
     refreshing = null;
   });
@@ -155,7 +206,7 @@ export async function api<T = any>(path: string, init: { method?: string; body?:
     const r = await demoFetch(method, path, init.body, session.token);
     if (r.status === 204) return undefined as T;
     const d = r.data as any;
-    if (r.status >= 400) throw new ApiError(r.status, d.error?.code ?? 'error', d.error?.message ?? '');
+    if (r.status >= 400) throw new ApiError(r.status, d.error?.code ?? 'error', d.error?.message ?? '', d.error?.details);
     return d as T;
   }
   const res = await fetch(`${BASE}/v1${path}`, {
@@ -172,13 +223,39 @@ export async function api<T = any>(path: string, init: { method?: string; body?:
     if (res.status === 401 && !retried && session.token && !path.startsWith('/auth/') && (await refreshAccessToken())) {
       return api<T>(path, init, true);
     }
-    throw new ApiError(res.status, data.error?.code ?? 'error', data.error?.message ?? '');
+    throw new ApiError(res.status, data.error?.code ?? 'error', data.error?.message ?? '', data.error?.details);
   }
   return data as T;
 }
 
 /** Upload a file as the raw request body (images); demo mode stores it as a data: URL instead. */
-export async function apiUpload<T = any>(path: string, file: File): Promise<T> {
+/** Round 23f (copy deck §9.3): what an upload is doing, for "Uploading 42%" / "Checking the file…". */
+export type UploadProgress = { phase: 'uploading'; pct: number } | { phase: 'scanning' };
+
+/** A request whose upload progress can be watched (fetch cannot report it). */
+function xhrSend(method: string, url: string, headers: Record<string, string>, body: Blob, onProgress?: (p: UploadProgress) => void, withCredentials = true) {
+  return new Promise<{ status: number; data: any }>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(method, url);
+    xhr.withCredentials = withCredentials;
+    for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
+    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.({ phase: 'uploading', pct: Math.min(100, Math.round((e.loaded / e.total) * 100)) });
+    xhr.upload.onload = () => onProgress?.({ phase: 'scanning' }); // every byte sent: the server scans it now
+    xhr.onload = () => {
+      let data: any = {};
+      try {
+        data = JSON.parse(xhr.responseText || '{}');
+      } catch {
+        /* not JSON */
+      }
+      resolve({ status: xhr.status, data });
+    };
+    xhr.onerror = () => reject(new ApiError(0, 'network', 'Network request failed'));
+    xhr.send(body);
+  });
+}
+
+export async function apiUpload<T = any>(path: string, file: File, onProgress?: (p: UploadProgress) => void): Promise<T> {
   if (DEMO) {
     const dataUrl = await new Promise<string>((resolve, reject) => {
       const r = new FileReader();
@@ -190,11 +267,16 @@ export async function apiUpload<T = any>(path: string, file: File): Promise<T> {
   }
   const headers: Record<string, string> = { 'Content-Type': file.type || 'application/octet-stream', 'X-Device-Fingerprint': deviceFingerprint() };
   if (session.token) headers.Authorization = `Bearer ${session.token}`;
+  if (onProgress) {
+    const r = await xhrSend('POST', `${BASE}/v1${path}`, headers, file, onProgress);
+    if (r.status < 200 || r.status >= 300) throw new ApiError(r.status, r.data.error?.code ?? 'error', r.data.error?.message ?? '', r.data.error?.details);
+    return r.data as T;
+  }
   const res = await fetch(`${BASE}/v1${path}`, { method: 'POST', headers, credentials: 'include', body: file }).catch(() => {
     throw new ApiError(0, 'network', 'Network request failed');
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(res.status, data.error?.code ?? 'error', data.error?.message ?? '');
+  if (!res.ok) throw new ApiError(res.status, data.error?.code ?? 'error', data.error?.message ?? '', data.error?.details);
   return data as T;
 }
 
@@ -206,13 +288,14 @@ export const MAX_VIDEO_BYTES = 95 * 1024 * 1024;
  * PUT straight to object storage with a signed URL (when the API has one) and then confirmed, so it never crosses
  * Cloudflare. Without object storage a larger video gets the translated size message before anything is sent.
  */
-export async function uploadChatFile<T = any>(roomId: string, file: File): Promise<T> {
+export async function uploadChatFile<T = any>(roomId: string, file: File, onProgress?: (p: UploadProgress) => void): Promise<T> {
   const isVideo = file.type.startsWith('video/');
-  const tooLarge = () => new ApiError(413, 'file_too_large', t('upload.videoTooLarge'));
+  // The size message carries the API's limit (95 MB through the API, 100 MB direct) — copy deck §9.3.
+  const tooLarge = (maxMb = MAX_VIDEO_BYTES / 1_048_576) => Object.assign(new ApiError(413, 'file_too_large', ''), { message: t('upload.videoTooLarge', { maxMb }) });
   try {
-    if (!isVideo || file.size <= MAX_VIDEO_BYTES) return await apiUpload<T>(`/chat/rooms/${roomId}/attachments`, file);
+    if (!isVideo || file.size <= MAX_VIDEO_BYTES) return await apiUpload<T>(`/chat/rooms/${roomId}/attachments`, file, onProgress);
   } catch (err) {
-    if (isVideo && !DEMO && err instanceof ApiError && err.code === 'file_too_large') throw tooLarge();
+    if (isVideo && !DEMO && err instanceof ApiError && err.code === 'file_too_large') throw tooLarge(err.details?.maxMb);
     throw err;
   }
   if (DEMO) throw tooLarge();
@@ -220,11 +303,12 @@ export async function uploadChatFile<T = any>(roomId: string, file: File): Promi
   try {
     start = await api(`/chat/rooms/${roomId}/attachments/direct`, { body: { fileName: file.name, contentType: file.type === 'video/webm' ? 'video/webm' : 'video/mp4', bytes: file.size } });
   } catch (err) {
-    if (err instanceof ApiError && (err.code === 'direct_upload_unavailable' || err.code === 'file_too_large')) throw tooLarge();
+    if (err instanceof ApiError && (err.code === 'direct_upload_unavailable' || err.code === 'file_too_large')) throw tooLarge(err.details?.maxMb);
     throw err;
   }
-  const put = await fetch(start.url, { method: start.method, headers: start.headers, body: file }).catch(() => null);
-  if (!put?.ok) throw new ApiError(put?.status ?? 0, 'network', 'Upload failed');
+  const put = await xhrSend(start.method, start.url, start.headers, file, onProgress, false).catch(() => null);
+  if (!put || put.status < 200 || put.status >= 300) throw new ApiError(put?.status ?? 0, 'network', 'Upload failed');
+  onProgress?.({ phase: 'scanning' });
   return api<T>(`/chat/attachments/${start.id}/complete`, { body: {} });
 }
 
@@ -344,7 +428,7 @@ export async function apiBlob(path: string): Promise<Blob> {
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, data.error?.code ?? 'error', data.error?.message ?? '');
+    throw new ApiError(res.status, data.error?.code ?? 'error', data.error?.message ?? '', data.error?.details);
   }
   return res.blob();
 }

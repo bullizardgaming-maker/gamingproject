@@ -199,5 +199,7 @@ const m: Messages = {
   'an.col.views': 'Visualizações',
   'an.col.conv': 'Conv.',
   'an.footnote': 'Cada visitante conta uma vez por anúncio por hora, e suas próprias visitas nunca contam. Conversão é pedidos divididos por visualizações.',
+  "money.payoutAddress.coinHint": "Só USDT, na rede TRC-20 ou BEP-20.",
+  "money.payoutAddress.cleared": "Agora os saques são só em USDT, então removemos seu endereço antigo. Adicione um endereço USDT para sacar.",
 };
 export default m;

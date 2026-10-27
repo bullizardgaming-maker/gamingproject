@@ -71,15 +71,30 @@ async function scanFileOrPause(ctx: Ctx, file: string, size: number) {
 /** Round 23d (item 8): a spool stops when the client goes quiet or drags on; temp space for spools is capped. */
 export const spoolLimits = { idleMs: 30_000, totalMs: 10 * 60_000 }; // mutable so tests can shorten them
 export const SPOOL_MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024; // temp space all in-flight spools may claim together
-let spoolReserved = 0;
-export const spoolReservedBytes = () => spoolReserved;
+/**
+ * Round 23e (item 6): uploads and downloads draw on separate temp-space budgets, so viewing files can never starve
+ * uploads. Downloads normally stream from storage verified chunk by chunk (no spool at all); only files stored before
+ * chunk hashes existed are spooled, against the small download budget.
+ */
+class SpoolBudget {
+  reserved = 0;
+  constructor(readonly max: number, readonly busy: () => AppError) {}
+}
+const uploadBudget = new SpoolBudget(SPOOL_MAX_TOTAL_BYTES, () => new AppError(503, 'uploads_busy', 'Too many uploads in progress; try again in a minute'));
+export const DOWNLOAD_SPOOL_MAX_TOTAL_BYTES = 512 * 1024 * 1024;
+const downloadBudget = new SpoolBudget(DOWNLOAD_SPOOL_MAX_TOTAL_BYTES, () => new AppError(503, 'downloads_busy', 'Too many downloads in progress; try again in a minute'));
+export const spoolReservedBytes = () => uploadBudget.reserved;
+export const downloadSpoolReservedBytes = () => downloadBudget.reserved;
 
-export async function spool(source: Readable, max: number, tooLarge: () => Error) {
-  if (spoolReserved + max > SPOOL_MAX_TOTAL_BYTES) throw new AppError(503, 'uploads_busy', 'Too many uploads in progress; try again in a minute');
-  spoolReserved += max;
+export async function spool(source: Readable, max: number, tooLarge: () => Error, budget: SpoolBudget = uploadBudget) {
+  if (budget.reserved + max > budget.max) {
+    source.destroy();
+    throw budget.busy();
+  }
+  budget.reserved += max;
   let released = false;
   const release = () => {
-    if (!released) spoolReserved -= max;
+    if (!released) budget.reserved -= max;
     released = true;
   };
   const dir = await mkdtemp(path.join(tmpdir(), 'bz-upload-'));
@@ -126,25 +141,175 @@ export async function spool(source: Readable, max: number, tooLarge: () => Error
   return { file, size, sha256: hash.digest('hex'), head: Buffer.concat(head), cleanup };
 }
 
+/** Round 23e (item 6): stored files are hashed per chunk at upload, so a download can be verified while it streams. */
+/**
+ * chunkBytes: hashing unit; perUser: open streams per user across every API node (download_slots, Round 23f);
+ * firstByteMs / idleMs: a storage read that does not start, or stalls, is dropped and its slot freed; totalMs: the
+ * longest a stream may run (also how long an unreleased slot can count). Mutable so tests can shrink them.
+ */
+export const downloadLimits = { chunkBytes: 1024 * 1024, perUser: 3, firstByteMs: 15_000, idleMs: 30_000, totalMs: 15 * 60_000 };
+type Hashed = { sha256: string; chunkBytes: number; chunks: string[] };
+function chunkHasher(chunkBytes: number) {
+  const whole = createHash('sha256');
+  const chunks: string[] = [];
+  let cur = createHash('sha256');
+  let fill = 0;
+  return {
+    update(buf: Buffer) {
+      whole.update(buf);
+      let off = 0;
+      while (off < buf.length) {
+        const n = Math.min(chunkBytes - fill, buf.length - off);
+        cur.update(buf.subarray(off, off + n));
+        fill += n;
+        off += n;
+        if (fill === chunkBytes) {
+          chunks.push(cur.digest('hex'));
+          cur = createHash('sha256');
+          fill = 0;
+        }
+      }
+    },
+    done(): Hashed {
+      if (fill > 0) chunks.push(cur.digest('hex'));
+      return { sha256: whole.digest('hex'), chunkBytes, chunks };
+    },
+  };
+}
+export function hashBuffer(buf: Buffer): Hashed {
+  const h = chunkHasher(downloadLimits.chunkBytes);
+  h.update(buf);
+  return h.done();
+}
+export async function hashFile(file: string): Promise<Hashed> {
+  const h = chunkHasher(downloadLimits.chunkBytes);
+  await pipeline(createReadStream(file), new Transform({ transform(c: Buffer, _e, cb) { h.update(c); cb(); } }));
+  return h.done();
+}
+
+/**
+ * Round 23e (item 6): a stored file streamed back through its chunk hashes. A chunk is passed on only after it matched
+ * the hash recorded at upload; a mismatch, a short or a long file ends the stream with an error, so unverified bytes
+ * never reach the client. Memory: one chunk.
+ */
+function verifyingStream(source: Readable, att: { bytes: number | string; sha256: string; chunk_bytes: number; chunk_sha256: string[] }) {
+  const size = att.chunk_bytes;
+  const hashes = att.chunk_sha256;
+  const total = Number(att.bytes);
+  const whole = createHash('sha256');
+  let buf: Buffer[] = [];
+  let fill = 0;
+  let index = 0;
+  let seen = 0;
+  const fail = () => new AppError(500, 'integrity_error', 'Stored file failed its integrity check');
+  let firstOk!: () => void;
+  let firstBad!: (err: Error) => void;
+  /** Settles when the first chunk passed its check (the response may start) or the stream failed before that. */
+  const first = new Promise<void>((resolve, reject) => {
+    firstOk = resolve;
+    firstBad = reject;
+  });
+  const emit = (t: Transform, chunk: Buffer) => {
+    if (index >= hashes.length || createHash('sha256').update(chunk).digest('hex') !== hashes[index]) return false;
+    index++;
+    whole.update(chunk);
+    t.push(chunk);
+    firstOk();
+    return true;
+  };
+  const t: Transform = new Transform({
+    transform(c: Buffer, _e, cb) {
+      seen += c.length;
+      if (seen > total) return cb(fail());
+      let off = 0;
+      while (off < c.length) {
+        const n = Math.min(size - fill, c.length - off);
+        buf.push(c.subarray(off, off + n));
+        fill += n;
+        off += n;
+        if (fill === size) {
+          const chunk = Buffer.concat(buf, fill);
+          buf = [];
+          fill = 0;
+          if (!emit(t, chunk)) return cb(fail());
+        }
+      }
+      cb();
+    },
+    flush(cb) {
+      if (fill > 0 && !emit(t, Buffer.concat(buf, fill))) return cb(fail());
+      if (seen !== total || index !== hashes.length || whole.digest('hex') !== att.sha256) return cb(fail());
+      cb();
+    },
+  });
+  t.once('error', (err) => firstBad(err));
+  first.catch(() => {}); // settled either way; a later failure only ends the stream
+  // Round 23f (items 2, 4): pipeline, so a client that goes away (the response destroys `t`) also destroys the storage
+  // read; and a read that never starts or stalls is dropped instead of holding its slot for ever.
+  let timer: NodeJS.Timeout | null = null;
+  const arm = (ms: number) => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => t.destroy(new AppError(504, 'storage_timeout', 'The stored file could not be read in time')), ms);
+  };
+  arm(downloadLimits.firstByteMs);
+  const cap = setTimeout(() => t.destroy(new AppError(504, 'storage_timeout', 'The download took too long')), downloadLimits.totalMs);
+  source.on('data', () => arm(downloadLimits.idleMs));
+  t.once('close', () => {
+    if (timer) clearTimeout(timer);
+    clearTimeout(cap);
+  });
+  pipelineCb(source, t, () => {}); // errors surface on `t`; either side ending tears the other down
+  return { stream: t, first };
+}
+
+/**
+ * Round 23e (item 6) / 23f (item 4): at most `downloadLimits.perUser` file streams per user at a time, counted in
+ * Postgres (download_slots) so the limit holds across API nodes. A slot that is never released (a node died) stops
+ * counting after `totalMs`, the longest a stream may run.
+ */
+async function takeDownloadSlot(ctx: Ctx, userId: string): Promise<() => void> {
+  const slot = await withTx(ctx.db, async (tx) => {
+    await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`download:${userId}`]);
+    return one<{ id: string | null }>(
+      tx,
+      `WITH active AS (SELECT count(*)::int AS n FROM download_slots WHERE user_id = $1 AND finished_at IS NULL AND started_at > now() - make_interval(secs => $3))
+       , ins AS (INSERT INTO download_slots (user_id) SELECT $1 FROM active WHERE n < $2 RETURNING id)
+       SELECT (SELECT id FROM ins) AS id`,
+      [userId, downloadLimits.perUser, downloadLimits.totalMs / 1000],
+    );
+  });
+  if (!slot.id) throw new AppError(429, 'downloads_busy', 'Finish your current downloads first');
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    void ctx.db.query('UPDATE download_slots SET finished_at = now() WHERE id = $1', [slot.id]).catch(() => {});
+  };
+}
+
 /**
  * Round 23d (item 7): a proof video is re-muxed with every metadata atom dropped (GPS, device, creation time,
  * chapters), streams copied as they are. ffmpeg is in the API image; if it is missing or fails the upload is refused
  * (fail closed) rather than stored with the location of the person who filmed it.
  */
-export async function stripVideoMetadata(src: string, kind: 'mp4' | 'webm'): Promise<{ file: string; size: number; sha256: string; cleanup: () => Promise<void> }> {
+/** Round 23e (item 5): resource limits for ffmpeg (mutable so tests can tighten them). fileBlocks: 512-byte blocks. */
+export const ffmpegLimits = { cpuSeconds: 60, memoryKb: 1024 * 1024, fileBlocks: 2 * 1024 * 400, wallMs: 120_000 };
+export async function stripVideoMetadata(src: string, kind: 'mp4' | 'webm'): Promise<{ file: string; size: number; sha256: string; hashed: Hashed; cleanup: () => Promise<void> }> {
   const dir = await mkdtemp(path.join(tmpdir(), 'bz-video-'));
   const out = path.join(dir, `clean.${kind}`);
   const cleanup = () => rm(dir, { recursive: true, force: true });
-  const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-i', src, '-map', '0', '-map_metadata', '-1', '-map_chapters', '-1', '-c', 'copy', ...(kind === 'mp4' ? ['-movflags', '+faststart'] : []), '-f', kind === 'mp4' ? 'mp4' : 'webm', out];
+  // Round 23e (item 5): only the picture and the sound are kept. Subtitle and data tracks go too — drones and action
+  // cameras (DJI, GoPro) write the GPS track there, not in the metadata atoms.
+  const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-threads', '1', '-i', src, '-map', '0:v', '-map', '0:a?', '-sn', '-dn', '-map_metadata', '-1', '-map_chapters', '-1', '-c', 'copy', ...(kind === 'mp4' ? ['-movflags', '+faststart'] : []), '-f', kind === 'mp4' ? 'mp4' : 'webm', out];
   try {
     await new Promise<void>((resolve, reject) => {
-      execFile('ffmpeg', args, { timeout: 120_000, maxBuffer: 1 << 20 }, (err, _stdout, stderr) => (err ? reject(new Error(`ffmpeg: ${String(stderr || err.message).slice(0, 500)}`)) : resolve()));
+      // ffmpeg parses untrusted files: it runs with a CPU-time, memory and output-size limit and is killed after 2 minutes.
+      execFile('/bin/sh', ['-c', `ulimit -t ${ffmpegLimits.cpuSeconds}; ulimit -v ${ffmpegLimits.memoryKb}; ulimit -f ${ffmpegLimits.fileBlocks}; exec ffmpeg "$@"`, 'ffmpeg', ...args], { timeout: ffmpegLimits.wallMs, killSignal: 'SIGKILL', maxBuffer: 1 << 20 }, (err, _stdout, stderr) => (err ? reject(new Error(`ffmpeg: ${String(stderr || err.message).slice(0, 500)}`)) : resolve()));
     });
     const size = (await stat(out)).size;
     if (size === 0) throw new Error('ffmpeg produced an empty file');
-    const hash = createHash('sha256');
-    await pipeline(createReadStream(out), new Transform({ transform(c: Buffer, _e, cb) { hash.update(c); cb(); } }));
-    return { file: out, size, sha256: hash.digest('hex'), cleanup };
+    const hashed = await hashFile(out);
+    return { file: out, size, sha256: hashed.sha256, hashed, cleanup };
   } catch (err) {
     await cleanup();
     throw new AppError(422, 'video_not_processable', 'This video could not be processed. Export it again as MP4 (H.264) or WebM and retry', { reason: String((err as Error).message).slice(0, 200) });
@@ -319,7 +484,9 @@ async function acceptUpload(
     }
   }
 
-  const hash = video ? video.sha256 : out.data ? sha256(out.data) : (input as { sha256: string }).sha256;
+  // Round 23e (item 6): whole-file and per-chunk hashes of exactly what is stored.
+  const hashed = video ? video.hashed : out.data ? hashBuffer(out.data) : await hashFile((input as { file: string }).file);
+  const hash = hashed.sha256;
   const storedBytes = video ? video.size : out.data ? out.data.length : size;
   const id = pending?.id ?? randomUUID();
   const key = pending?.key ?? `chat/${roomId}/${id}`;
@@ -345,17 +512,17 @@ async function acceptUpload(
     const att = pending
       ? await one(
           s.tx,
-          `UPDATE chat_attachments SET message_id = $2, mime = $3, bytes = $4, sha256 = $5, status = 'clean', scan_result = $6, key_version = $7, storage_key = $8
+          `UPDATE chat_attachments SET message_id = $2, mime = $3, bytes = $4, sha256 = $5, status = 'clean', scan_result = $6, key_version = $7, storage_key = $8, chunk_bytes = $9, chunk_sha256 = $10
             WHERE id = $1 AND status = 'uploading'
             RETURNING id, message_id, original_name, mime, bytes, width, height, sha256, created_at`,
-          [id, msg.id, MIME[kind], storedBytes, hash, `${ctx.scanner.name}: clean`, ctx.storage.keyVersion, key],
+          [id, msg.id, MIME[kind], storedBytes, hash, `${ctx.scanner.name}: clean`, ctx.storage.keyVersion, key, hashed.chunkBytes, hashed.chunks],
         )
       : await one(
           s.tx,
-          `INSERT INTO chat_attachments (id, room_id, uploader_id, message_id, original_name, mime, bytes, width, height, sha256, storage_key, status, scan_result, key_version)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'clean', $12, $13)
+          `INSERT INTO chat_attachments (id, room_id, uploader_id, message_id, original_name, mime, bytes, width, height, sha256, storage_key, status, scan_result, key_version, chunk_bytes, chunk_sha256)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'clean', $12, $13, $14, $15)
            RETURNING id, message_id, original_name, mime, bytes, width, height, sha256, created_at`,
-          [id, roomId, user.id, msg.id, name, MIME[kind], storedBytes, isVideo ? null : out.info.width, isVideo ? null : out.info.height, hash, key, `${ctx.scanner.name}: clean`, ctx.storage.keyVersion],
+          [id, roomId, user.id, msg.id, name, MIME[kind], storedBytes, isVideo ? null : out.info.width, isVideo ? null : out.info.height, hash, key, `${ctx.scanner.name}: clean`, ctx.storage.keyVersion, hashed.chunkBytes, hashed.chunks],
         );
     const counterpart = room.buyer_id === user.id ? room.seller_id : room.buyer_id;
     s.notifyUser(counterpart, 'chat.message', { roomId, seq: msg.seq });
@@ -443,29 +610,60 @@ export async function completeDirectVideoUpload(ctx: Ctx, attachmentId: string, 
 }
 
 /**
- * Round 23b/23d: an attachment as a stream (videos). The stored file is first spooled to a temp file and hashed;
- * only a file that matches its SHA-256 is streamed back (from the verified copy), so a tampered or truncated object
- * never reaches the client as a 200 with a body. The temp file goes when the stream ends.
+ * Round 23b/23d/23e: an attachment as a stream (videos). The file was verified once, at upload, and hashed per chunk;
+ * a view streams it from storage through those hashes (verifyingStream), so a tampered or truncated object never
+ * reaches the client as unverified bytes, and nothing is spooled against the upload temp-space budget. The response
+ * starts only after the first chunk checked out, so a bad file is a clean 500. Files stored before chunk hashes
+ * existed are spooled and checked whole, against the separate download budget. At most a few streams per user.
  */
 export async function openAttachment(ctx: Ctx, id: string, user: { id: string; role: string }) {
   const att = await maybeOne(ctx.db, `SELECT * FROM chat_attachments WHERE id = $1 AND status = 'clean'`, [id]);
   if (!att) throw notFound('Attachment');
   const room = await roomForParticipant(ctx.db, att.room_id, user);
-  let spooled: Awaited<ReturnType<typeof spool>>;
+  const isParticipant = room.buyer_id === user.id || room.seller_id === user.id;
+  const integrity = () => new AppError(500, 'integrity_error', 'Stored file failed its integrity check');
+  const release = await takeDownloadSlot(ctx, user.id);
   try {
-    spooled = await spool(await ctx.storage.getStream(att.storage_key), Number(att.bytes), () => new Error('larger than recorded'));
+    if (att.chunk_sha256?.length && att.chunk_bytes) {
+      const source = await ctx.storage.getStream(att.storage_key).catch((err) => {
+        ctx.log.error({ attachmentId: att.id, err }, 'stored attachment could not be read back');
+        throw integrity();
+      });
+      const { stream, first } = verifyingStream(source, att);
+      stream.once('close', release);
+      // A later chunk that fails ends the stream (the client sees a cut-off download, never the bad bytes).
+      stream.on('error', (err) => ctx.log.error({ attachmentId: att.id, err: err.message }, 'stored attachment failed its integrity check mid-stream'));
+      await first.catch((err) => {
+        stream.destroy();
+        if (err instanceof AppError && err.code === 'storage_timeout') throw err; // a stalled store: 504, slot freed
+        ctx.log.error({ attachmentId: att.id, err: (err as Error).message }, 'stored attachment failed its integrity check');
+        throw integrity();
+      });
+      return { att, stream, isParticipant };
+    }
+    let spooled: Awaited<ReturnType<typeof spool>>;
+    try {
+      spooled = await spool(await ctx.storage.getStream(att.storage_key), Number(att.bytes), () => new Error('larger than recorded'), downloadBudget);
+    } catch (err) {
+      if (err instanceof AppError && err.code === 'downloads_busy') throw err;
+      ctx.log.error({ attachmentId: att.id, err }, 'stored attachment could not be read back');
+      throw integrity();
+    }
+    if (spooled.size !== Number(att.bytes) || spooled.sha256 !== att.sha256) {
+      await spooled.cleanup();
+      ctx.log.error({ attachmentId: att.id }, 'stored attachment failed its integrity check');
+      throw integrity();
+    }
+    const stream = createReadStream(spooled.file);
+    stream.once('close', () => {
+      release();
+      void spooled.cleanup();
+    });
+    return { att, stream, isParticipant };
   } catch (err) {
-    ctx.log.error({ attachmentId: att.id, err }, 'stored attachment could not be read back');
-    throw new AppError(500, 'integrity_error', 'Stored file failed its integrity check');
+    release();
+    throw err;
   }
-  if (spooled.size !== Number(att.bytes) || spooled.sha256 !== att.sha256) {
-    await spooled.cleanup();
-    ctx.log.error({ attachmentId: att.id }, 'stored attachment failed its integrity check');
-    throw new AppError(500, 'integrity_error', 'Stored file failed its integrity check');
-  }
-  const stream = createReadStream(spooled.file);
-  stream.once('close', () => void spooled.cleanup());
-  return { att, stream, isParticipant: room.buyer_id === user.id || room.seller_id === user.id };
 }
 
 export async function readAttachment(ctx: Ctx, id: string, user: { id: string; role: string }) {

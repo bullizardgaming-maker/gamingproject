@@ -1266,7 +1266,8 @@ export async function getOrderFor(ctx: Ctx, orderId: string, user: { id: string;
     sellerView ? buyerReputation(q, order.buyer_id) : Promise.resolve(null),
     sellerView ? ratingForOrder(q, orderId) : Promise.resolve(null),
     crypto && order.buyer_id === user.id ? paymentsForOrder(q, orderId) : Promise.resolve([]),
-    crypto ? refundForOrder(q, orderId) : Promise.resolve(null),
+    // Round 23e (item 4): the refund (address, coin, transaction) is the buyer's and staff's; the seller sees none of it.
+    crypto && (staff || order.buyer_id === user.id) ? refundForOrder(q, orderId) : Promise.resolve(null),
   ]);
   const deliveryProof = order.delivery_proof_id
     ? await maybeOne(q, 'SELECT id, mime, original_name, bytes, width, height, created_at FROM chat_attachments WHERE id = $1', [order.delivery_proof_id])

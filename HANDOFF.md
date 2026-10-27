@@ -14,7 +14,7 @@ State of the project for whoever picks it up next (a person or another Claude se
 
 | Path | What |
 |---|---|
-| `apps/api` | Fastify 5 + Postgres API and worker. Migrations in `migrations/` (latest 074), business logic in `src/domain/`, routes in `src/routes/`, providers (payments, KYC, email, Steam/Riot…) in `src/providers/` |
+| `apps/api` | Fastify 5 + Postgres API and worker. Migrations in `migrations/` (latest 078), business logic in `src/domain/`, routes in `src/routes/`, providers (payments, KYC, email, Steam/Riot…) in `src/providers/` |
 | `apps/web` | React 19 + Vite + Tailwind v4 web app. `src/demo/` is an in-browser mock of the API used for previews and browser tests |
 | `contracts` | `MarketEscrow.sol` (Hardhat) |
 | `services/fraud-gnn` | Python fraud model service |
@@ -683,6 +683,78 @@ policy must still state: (1) the site stores a random **device identifier** in t
 signal; (2) on account deletion the identity-check **result** is kept for the AML retention period (provider,
 applicant id, level, status, dates — no document data), and the deletion of the applicant at the KYC provider is
 carried out by compliance within [N] days of the request.
+
+## Round 23e (Oct 26, 2026) — review fixes (`claude/round-23e-fixes.md`)
+
+Migration **076** (`076_round23e.sql`): `storage_deletions` (retry queue for stored objects), the two foreign keys to
+`chat_attachments` (`order_progress.attachment_id`, `orders.delivery_proof_id`) become `ON DELETE SET NULL`,
+`chat_attachments.chunk_bytes` / `chunk_sha256`. New test file `round23e.test.ts` — one test per item, each written to
+fail on 0123a8c and pass now. Still no seller API, API keys, SDKs or Developers page (permanent CEO decision).
+
+| # | What changed |
+|---|---|
+| 1 | Chat erasure (`eraseUserChat` in `privacy.ts`, used by `erase-chat` and the retention job): key shred, references let go (progress screenshot, delivery proof), attachment rows deleted and their keys queued — one transaction; objects are deleted after commit (`drainStorageDeletions`), a failure backs off 2^n min (≤ 1 day) and every retention run drains the queue. Retention picks up any deleted user who still has a key **or** files (resumable), and one user's failure no longer stops the run (`chatErasureErrors`). Room purges use the same order. |
+| 2 | Account deletion checks seller balance and store credit in **every** currency, again inside the deletion transaction with the user row locked (`assertNoMoneyLeft`). |
+| 3 | `assertMayChangeStatus` (`users.ts`) — the rank rule — on suspend, ban, reinstate, confirming a risk flag (which now also signs the account out) and deciding a chat flag (penalty ladder / lifting an auto-ban). A suspension (admin or ladder) revokes every session at once. |
+| 4 | `crypto_refund` on an order reaches only its buyer and staff. On order rows `released_by`, `release_note`, `tax_country` are staff-only (`ORDER_STAFF_FIELDS` in `server.ts`). |
+| 5 | Video re-mux keeps only `0:v` and `0:a?` (`-sn -dn`): subtitle/data tracks (DJI/GoPro GPS) are dropped. ffmpeg runs single-threaded under `sh -c 'ulimit -t/-v/-f'` (60 s CPU, 1 GB memory, 400 MB output) and is SIGKILLed after 2 min (`ffmpegLimits`). |
+| 6 | Uploads store per-chunk SHA-256 (1 MiB). A video view streams from storage through `verifyingStream`: each chunk is passed on only after it matched; the response starts once the first chunk checked out (a bad file is a clean 500), a bad later chunk ends the stream without its bytes. No spool per view; files stored before 076 are spooled against a separate 512 MB download budget. At most 3 streams per user (`downloads_busy`). Upload budget untouched by views. |
+| 7 | `seller_price_cents`, `seller_price_tiers` only for the listing's seller (and staff); on orders `commission_bps`, `commission_cents`, `commission_tax_cents`, `seller_net_cents`, `seller_received_cents` only for the seller and staff. |
+| 8 | Opting out in the app keeps `news_opt_in_at`; `news_opt_out_at` records the opt-out (also returned as `newsOptOutAt`). |
+| 9 | `POST /orders` and `/orders/cart` refuse a missing `tosVersion` (400 `tos_version_required`); stale stays 409 `terms_stale`. The web sends the version loaded with the page (`useTermsVersion`, `lib/terms.ts`). The demo mock enforces the same. Test harness: `client()` adds the version in force unless a test sets `tosVersion` itself. |
+| 10 | Wrong password / 2FA code on `/me/delete` and `/me/2fa/disable` is **403 `invalid_credentials`** (still counted towards the lockout once); the web client only refreshes on 401. |
+| 11 | **Web:** a legacy `mkt.token` is removed on load and that browser is treated as signed in (cookie exchanged); each browser also tries the exchange once without the flag (`mkt.session-probed`). Refresh is single-flight per tab and, with Web Locks, across tabs (`bz-auth-refresh`); a 409 race is retried with backoff (300/600/1200 ms) and never signs the tab out. |
+| 12 | Staff REST chat reads: a full read (offset 0) is always audited; polling (`afterSeq > 0`) once per staff, room and session every 15 min (`auditOncePerSession`). WebSocket subscribe/sync unchanged. |
+| 13 | Logs: `code` is redacted only inside request `body` / `query` / `params` (OTP, OAuth code) and under explicit names (`otpCode`, `mfaCode`, …); `err.code` and other error codes stay. |
+
+Suites on this commit: API 81 files / 724 tests green, typecheck clean; web typecheck + demo build green, browser
+126 passed / 5 skipped (one `round23a.spec.ts` Arabic-label run was flaky once and passed on rerun); `npm audit` 0 in
+root, api, web; image start check (build, runtime imports, migrate through 076, `/readyz` + `/healthz`, ffmpeg re-mux
+under the ulimits as user `node`) passed locally. Adjusted existing tests: `launch-basics`, `mfa`, `round23d` (wrong
+password/code is 403; a suspension signs out at once), `round20` (signs in again after the suspension), `bulk-listings`,
+`promos-fx`, `requests`, `escrow-flow`, `payout-holds`, `warranty` (seller-only prices and order money read from the
+seller's view); `helpers.ts` (`client()` sends the Terms version in force with orders).
+
+## Round 23f part A (Oct 27, 2026) — review fixes (`claude/round-23f-fixes.md`)
+
+Migration **077** (`077_round23f.sql`): `download_slots`. New test file `round23f.test.ts` (part A: one test per item,
+each failing on 0f824b2).
+
+| # | What changed |
+|---|---|
+| 1 | `deepRedact` copies plain objects only; a FastifyRequest/Reply or raw IncomingMessage is left to its serializer, so request logs have `method`, the redacted `url`, `remoteAddress` and `res.statusCode` again (lost since 23d). `createLogger(cfg, destination?)` takes a stream for tests. |
+| 2 | Verified downloads use `pipeline(source, verifier)`: a client that aborts destroys the storage read. |
+| 3 | `GET /legal/:doc` is `Cache-Control: no-store` plus `CDN-Cache-Control` / `Cloudflare-CDN-Cache-Control: no-store`, read from the primary. On 409 `terms_stale` the offer page and cart fetch the version in force and show `TermsChanged` (read the new Terms → "Accept and continue", which re-sends the order with it). Keys `legal.changedNotice`, `legal.readNew`, `legal.acceptAndContinue` in all six locales. **Cloudflare:** no cache rule may override origin headers for `/v1/*` (the API sends `no-store` where it matters). |
+| 4 | A storage read gets 15 s to first byte and 30 s idle (504 `storage_timeout`, slot freed), 15 min at most. The 3-streams-per-user limit is counted in Postgres (`download_slots`, per-user advisory lock), so it holds across nodes; an unreleased slot (node died) stops counting after 15 min; retention deletes rows older than a day. |
+| 5 | `drainStorageDeletions` never deletes a key a `chat_attachments` or `shop_banners` row still references (the queue entry is dropped with a warning). |
+| 6 | Custom not-found handler: logs `{ method, path }` without the query and answers 404 `not_found` (Fastify's default logged the full URL). |
+
+Suites: API 82 files / 730 tests green, typecheck clean; web typecheck + demo build green, affected browser specs
+(cart, buyer, launch-decisions, crypto, games) 21 passed / 2 skipped; `npm audit` 0 in root, api, web; image start
+check (build, runtime imports, migrate through 077, `/readyz` + `/healthz`, 404 log line without the query) passed.
+
+## Round 23f part B (Oct 27, 2026) — copy deck §9 (`claude/bullizard-copy-deck.md`, "9. Round 22 to 23c strings")
+
+Migration **078** (`078_round23f_copy.sql`): payout addresses in a coin other than USDT are removed and
+`users.payout_address_cleared_at` is set (the wallet shows `money.payoutAddress.cleared`). Tests: `round23f-copy.test.ts`
+(API, plus the web's `errorMessage`, chat-line mapping and keys) and `e2e/round23f.spec.ts`.
+
+| § | What changed |
+|---|---|
+| 9.1–9.6 web | Every key in en/ar **and** es/fr/de/pt (seller keys in `<loc>.seller.ts`). Placed: sign-up hint under the newsletter box, `account.newsletter.toggle` in Account, `auth.botCheckExpired` (Turnstile re-runs itself when a token expires), `auth.resetSent`, `account.data.before`, `upload.uploading` / `upload.scanning` on the deliver button (uploads report progress through XHR), `money.payoutAddress.coinHint`, `money.payoutAddress.cleared`. `upload.videoTooLarge` takes `{maxMb}` from `details.maxMb`. |
+| 9.2 / 9.8 API codes | `invalid_credentials` (sign-in, one message for unknown accounts too), `session_expired` (bad/expired token, refresh without or with a dead token), `reauth_required` (expired 2FA challenge), `wrong_current_password` (**403**, so the client does not refresh-and-retry). `balance_owed` no longer mentions chargebacks. |
+| 9.2 web | `errorMessage` checks `err.<code>` before the 429 and 5xx fallbacks (`account_locked`, `scanner_unavailable`). `ApiError` carries `details`. |
+| 9.5 chat | The WebSocket error frame now carries `details`; `lib/chatBlocked.ts` picks the line: `queue` → `chat.blocked.queue`, `ban` → `chat.blocked.ban`, stopped in the browser → `chat.notSent` + `chat.bannable`. The demo mock sends `details.action` too. |
+| 9.6 email | `withdrawal_failed` gets a reason **code** (`unsupported_coin`, `not_approved`, `provider_failed`; anything else reads as `provider_failed`), worded per language (`withdrawalReasons` in each pack); the provider's text goes to the log. |
+| 9.7 email | One layout (`emailLayoutHtml` in `notifications.ts`): greeting (`Hey {name},` — display name from the user row), body, one rune-green button (`#4bae24`, text `#0d131c`, radius 8, no shadow) made from the body's last "Label: URL" line, plain sign-off, rule, footer (why / safety / Email settings — not on security emails / legal). Plain text keeps "Label: URL". Variables are isolated in the HTML part (`<bdi>`, `<span dir="ltr">` for amounts and IDs) by rendering the body a second time with private-use markers. `arCount` / `arDuration` (`locales/types.ts`); every pack has `layout`, `duration`, `verifySubject`. Missing `quantity` / `tos_version` drop their piece. Verification-code email: subject with the code, code in a large LTR block (`renderCodeEmail`). |
+
+Suites: API 83 files / 739 tests green, typecheck clean; web typecheck + demo build green; browser suite 126 passed / 5
+skipped / 1 failure (the Turnstile spec, whose expected text changed with §9.2 — updated), then the affected specs
+(round23f, round23a, moderation, launch, messages, buyer, seller, wallet) 27 passed; `npm audit` 0 in root, api, web;
+image start check (build, runtime imports, migrate through 078, `/readyz` + `/healthz`) passed. Adjusted tests:
+`locale.test.ts` (plain sign-off, code email subject), `sessions-and-email.test.ts` (403 `wrong_current_password`),
+`e2e/round23a.spec.ts` (new newsletter label and captcha text). §9.8 item 7 (looking at one email per template in a
+browser) is for the copy owner: `render(ctx, name, TEMPLATE_DATA, 'ar').html` gives the page.
 
 ## Suggested next round
 

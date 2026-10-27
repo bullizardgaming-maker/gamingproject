@@ -12,7 +12,7 @@ import { beginSetup, disable, enable, remainingRecoveryCodes } from '../domain/m
 import { assertNotLocked, clearFailedLogins, noteFailedLogin, changePassword, requestPasswordReset, resetPassword, completeMfaLogin, confirmVerificationCode, login, register, sendVerificationCode, startKyc } from '../domain/users.js';
 import { REFRESH_TTL_DAYS, issueAccessToken, listSessions, refreshSession, revokeByRefreshToken, revokeFamily, revokeOtherSessions, revokeSessionById } from '../domain/sessions.js';
 import { enqueueEmail, getPreferences, setPreferences } from '../domain/notifications.js';
-import { AppError, badRequest, notFound, unauthorized } from '../lib/errors.js';
+import { AppError, badRequest, notFound } from '../lib/errors.js';
 import { safeEqual, sha256 } from '../lib/crypto.js';
 import { ATTR_KEY, ATTR_VALUE_MAX, CATEGORY_DEFAULTS, GAME_SETS, attributesFor, handoverFieldFor, LEAGUES } from '../domain/attributeSets.js';
 import { listLeagues } from '../domain/leagues.js';
@@ -40,6 +40,9 @@ import { me, requestMeta } from '../server.js';
 import { setNewsOptIn } from '../domain/newsletter.js';
 
 const Credentials = z.object({ email: z.string().email().max(254), password: z.string().min(10).max(200), captchaToken: z.string().max(4096).optional() });
+
+/** Round 23e (item 10): a wrong password or code on a signed-in action is 403 `invalid_credentials`, never 401 (a 401 means "session expired" to the client). */
+const wrongSecret = (err: AppError) => new AppError(403, 'invalid_credentials', err.message);
 
 export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   const strict = { config: { rateLimit: { max: ctx.cfg.AUTH_RATE_LIMIT_PER_MINUTE, timeWindow: '1 minute' } } };
@@ -124,7 +127,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/auth/refresh', { config: { rateLimit: { max: ctx.cfg.NODE_ENV === 'test' ? 10_000 : 60, timeWindow: '1 minute' } } }, async (req, reply) => {
     const { refreshToken } = z.object({ refreshToken: z.string().optional() }).parse(req.body ?? {});
     const token = refreshToken ?? req.cookies[COOKIE];
-    if (!token) throw unauthorized('Sign in again');
+    if (!token) throw new AppError(401, 'session_expired', 'You were signed out. Sign in again.');
     try {
       const s = await refreshSession(ctx, token, meta(req));
       return deliver(req, reply, { token: s.accessToken, refreshToken: s.refreshToken, expiresIn: s.expiresIn });
@@ -180,7 +183,10 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     try {
       res = await deleteAccount(ctx, me(req), body.password, body.code);
     } catch (err) {
-      if (err instanceof AppError && err.status === 401) await noteFailedLogin(ctx, me(req).id);
+      if (err instanceof AppError && err.status === 401) {
+        await noteFailedLogin(ctx, me(req).id);
+        throw wrongSecret(err); // Round 23e: 403, so the web client does not refresh and retry (counting the mistake twice)
+      }
       throw err;
     }
     reply.clearCookie(COOKIE, { path: '/v1/auth' });
@@ -208,7 +214,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   app.put('/me/newsletter', async (req) => {
     const { optIn } = z.object({ optIn: z.boolean() }).parse(req.body);
     const row = await setNewsOptIn(ctx.db, me(req).id, optIn);
-    return { newsOptIn: row.news_opt_in, newsOptInAt: row.news_opt_in_at };
+    return { newsOptIn: row.news_opt_in, newsOptInAt: row.news_opt_in_at, newsOptOutAt: row.news_opt_out_at };
   });
   app.patch('/me/email-preferences', async (req) => {
     const changes = z.record(z.string(), z.boolean()).parse(req.body);
@@ -274,7 +280,10 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     try {
       await disable(ctx, user.id, code);
     } catch (err) {
-      if (err instanceof AppError && err.status === 401) await noteFailedLogin(ctx, user.id);
+      if (err instanceof AppError && err.status === 401) {
+        await noteFailedLogin(ctx, user.id);
+        throw wrongSecret(err);
+      }
       throw err;
     }
     await clearFailedLogins(ctx.db, user.id);
@@ -515,8 +524,10 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   const LegalDocParam = z.object({ doc: z.enum(LEGAL_DOCS) });
   const Lang = z.object({ lang: z.string().regex(/^[A-Za-z]{2}(-[A-Za-z]{2,4})?$/).optional() });
   app.get('/legal/:doc', async (req, reply) => {
-    reply.header('Cache-Control', 'public, max-age=300');
-    return currentDocument(ctx.dbRead, LegalDocParam.parse(req.params).doc, Lang.parse(req.query).lang);
+    // Round 23f (item 3): the version in force is what checkout must send, so it is never cached (browser or
+    // Cloudflare) and read from the primary: right after a publish every page sees the new version.
+    reply.header('Cache-Control', 'no-store').header('CDN-Cache-Control', 'no-store').header('Cloudflare-CDN-Cache-Control', 'no-store');
+    return currentDocument(ctx.db, LegalDocParam.parse(req.params).doc, Lang.parse(req.query).lang);
   });
   app.get('/legal/:doc/history', async (req) => documentHistory(ctx.dbRead, LegalDocParam.parse(req.params).doc));
   app.get('/legal/:doc/versions/:version', async (req) => {

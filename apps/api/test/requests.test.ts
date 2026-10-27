@@ -59,7 +59,8 @@ describe('buyer requests', () => {
     const offerId = acc.body.offerId;
 
     const asBuyer = await buyer.api.get(`/v1/offers/${offerId}`);
-    expect(asBuyer.body).toMatchObject({ price_cents: 26_32, seller_price_cents: 25_00, delivery_mode: 'manual', stock: 1, reserved_for: buyer.id, delivery_hours: 2, game });
+    expect(asBuyer.body).not.toHaveProperty('seller_price_cents'); // seller-only (Round 23e)
+    expect(asBuyer.body).toMatchObject({ price_cents: 26_32, delivery_mode: 'manual', stock: 1, reserved_for: buyer.id, delivery_hours: 2, game });
     expect((await stranger.api.get(`/v1/offers/${offerId}`)).status).toBe(404);
     expect((await client(h.app).get(`/v1/offers/${offerId}`)).status).toBe(404);
     expect((await sellerB.api.get(`/v1/offers/${offerId}`)).status).toBe(200);
@@ -71,7 +72,9 @@ describe('buyer requests', () => {
 
     const order = await buyer.api.post('/v1/orders', { offerId, quantity: 1, acceptTos: true });
     expect(order.status, JSON.stringify(order.body)).toBe(201);
-    expect(order.body.order).toMatchObject({ seller_id: sellerB.id, amount_cents: 26_32, seller_net_cents: 25_00, status: 'awaiting_payment' });
+    expect(order.body.order).toMatchObject({ seller_id: sellerB.id, amount_cents: 26_32, status: 'awaiting_payment' });
+    expect(order.body.order).not.toHaveProperty('seller_net_cents'); // the seller's side (Round 23e)
+    expect(Number((await h.ctx.db.query('SELECT seller_net_cents FROM orders WHERE id = $1', [order.body.order.id])).rows[0].seller_net_cents)).toBe(25_00);
 
     // Closed requests take no more proposals.
     expect((await sellerA.api.post(`/v1/requests/${req.id}/proposals`, { priceCents: 1_00, deliveryHours: 1 })).status).toBe(409);

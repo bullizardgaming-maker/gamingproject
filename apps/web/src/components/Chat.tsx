@@ -3,16 +3,16 @@ import { Link } from 'react-router-dom';
 import { Check, Image as ImageIcon, ShieldCheck } from '@phosphor-icons/react';
 import { api, money, realtime, type ChatMessage } from '../api';
 import { detectOffPlatform } from '@/lib/safety';
+import { blockedAction, blockedNoticeKeys, isBlockedError, type BlockedAction } from '@/lib/chatBlocked';
 import { BrandMark } from './Brand';
 import { currentLocale, t, type MessageKey } from '../i18n';
 
 const time = (iso: string) => new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-const isBlockedError = (e: any) => e?.code === 'offplatform_blocked' || /^Not sent\./.test(String(e?.message ?? e ?? ''));
-
-function BlockedNotice() {
+function BlockedNotice({ action }: { action: BlockedAction }) {
+  const [first, second] = blockedNoticeKeys(action);
   return (
-    <div className="msg mine blocked" role="status">
-      <b>{t('chat.notSent')}</b> {t('chat.bannable')}
+    <div className="msg mine blocked" role={action === 'ban' ? 'alert' : 'status'}>
+      {second ? <><b>{t(first!)}</b> {t(second)}</> : t(first!)}
     </div>
   );
 }
@@ -57,13 +57,13 @@ function OfficialNote({ m }: { m: ChatMessage }) {
 export function Chat({ roomId, meId, names, accountOrder = false }: { roomId: string; meId: string; names: Record<string, string>; /** Account handovers may carry the account's email. */ accountOrder?: boolean }) {
   const [messages, setMessages] = useState<Map<number, ChatMessage>>(new Map());
   // Blocked attempts stay where they happened: each remembers the last message it followed.
-  const [blocked, setBlocked] = useState<Array<{ key: number; after: number }>>([]);
+  const [blocked, setBlocked] = useState<Array<{ key: number; after: number; action: BlockedAction }>>([]);
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
   const logRef = useRef<HTMLDivElement>(null);
   const lastSeq = useRef(-1);
 
-  const markBlocked = () => setBlocked((b) => [...b, { key: Date.now() + b.length, after: lastSeq.current }]);
+  const markBlocked = (action: BlockedAction = null) => setBlocked((b) => [...b, { key: Date.now() + b.length, after: lastSeq.current, action }]);
 
   useEffect(() => {
     setMessages(new Map());
@@ -79,7 +79,7 @@ export function Chat({ roomId, meId, names, accountOrder = false }: { roomId: st
     return realtime.subscribe(roomId, (f) => {
       if (f.type === 'history' && f.roomId === roomId) merge(f.messages);
       if (f.type === 'message' && f.roomId === roomId) merge([f.message]);
-      if (f.type === 'error') (isBlockedError(f) ? markBlocked() : setError(f.message));
+      if (f.type === 'error') (isBlockedError(f) ? markBlocked(blockedAction(f)) : setError(f.message));
     });
   }, [roomId]);
 
@@ -118,7 +118,7 @@ export function Chat({ roomId, meId, names, accountOrder = false }: { roomId: st
         const m = await api<ChatMessage>(`/chat/rooms/${roomId}/messages`, { body: { body } });
         setMessages((prev) => new Map(prev).set(m.seq, m));
       } catch (err: any) {
-        if (isBlockedError(err)) markBlocked();
+        if (isBlockedError(err)) markBlocked(blockedAction(err));
         else {
           setError(err.message);
           return;
@@ -158,11 +158,11 @@ export function Chat({ roomId, meId, names, accountOrder = false }: { roomId: st
       <div className="chat-log" ref={logRef} role="log" aria-label={t('a11y.chatLog')}>
         {orderCard && <OrderCard message={orderCard} />}
         {roomHasOrder && <SafetyPanel />}
-        {blocked.filter((b) => anchorOf(b.after) < 0).map((b) => <BlockedNotice key={b.key} />)}
+        {blocked.filter((b) => anchorOf(b.after) < 0).map((b) => <BlockedNotice key={b.key} action={b.action} />)}
         {ordered.map((m) => (
           <Fragment key={m.seq}>
             {line(m)}
-            {blocked.filter((b) => anchorOf(b.after) === m.seq).map((b) => <BlockedNotice key={b.key} />)}
+            {blocked.filter((b) => anchorOf(b.after) === m.seq).map((b) => <BlockedNotice key={b.key} action={b.action} />)}
           </Fragment>
         ))}
       </div>

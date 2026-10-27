@@ -68,12 +68,12 @@ function notify(userId: string, category: string, template: string, title: strin
 }
 
 class HttpError extends Error {
-  constructor(public status: number, public code: string, message: string) {
+  constructor(public status: number, public code: string, message: string, public details?: unknown) {
     super(message);
   }
 }
-const fail = (status: number, code: string, message: string): never => {
-  throw new HttpError(status, code, message);
+const fail = (status: number, code: string, message: string, details?: unknown): never => {
+  throw new HttpError(status, code, message, details);
 };
 
 // ---------------------------------------------------------------------------
@@ -548,7 +548,7 @@ const demoCaptcha = (body: any) => {
 route('POST', '/auth/login', ({ body }) => {
   demoCaptcha(body);
   const u = state.users.find((x) => x.email.toLowerCase() === String(body.email ?? '').toLowerCase());
-  if (!u || u.password !== body.password) fail(401, 'unauthorized', 'Invalid email or password');
+  if (!u || u.password !== body.password) fail(401, 'invalid_credentials', 'Wrong email or password.');
   if (u!.totp_enabled) return { mfaRequired: true, mfaToken: `mfa:${u!.id}` };
   if (u!.email === 'buyer@demo.test') seedOrdersFor(u!); // a purchase history to look at
   return { token: `demo:${u!.id}`, user: publicUser(u!) };
@@ -589,7 +589,7 @@ route('PUT', '/me/locale', ({ me, body }) => {
   u.locale = body.locale;
   return { locale: body.locale };
 });
-route('POST', '/auth/refresh', () => fail(401, 'unauthorized', 'Sign in again'));
+route('POST', '/auth/refresh', () => fail(401, 'session_expired', 'You were signed out. Sign in again.'));
 route('POST', '/auth/password/forgot', ({ body }) => (demoCaptcha(body), { message: 'If an account uses this email, a reset link is on its way.' }));
 route('POST', '/auth/password/reset', () => fail(400, 'invalid_reset_link', 'Reset links are emailed in the real app; this demo has no email.'));
 
@@ -622,7 +622,7 @@ route('POST', '/me/sessions/revoke-others', () => ({ signedOutDevices: 0 }));
 route('DELETE', '/me/sessions/:id', () => undefined);
 route('POST', '/me/password', ({ me, body }) => {
   const u = need(me);
-  if (body.currentPassword !== u.password) fail(401, 'unauthorized', 'Current password is incorrect');
+  if (body.currentPassword !== u.password) fail(403, 'wrong_current_password', "Your current password isn't right.");
   if (String(body.newPassword ?? '').length < 10) fail(400, 'validation_error', 'Invalid request');
   u.password = body.newPassword;
   return { signedOutDevices: 0 };
@@ -642,8 +642,9 @@ route('GET', '/me/email-preferences', ({ me }) => prefsOf(need(me).id));
 route('PUT', '/me/newsletter', ({ me, body }) => {
   const u = need(me);
   if (typeof body.optIn !== 'boolean') fail(400, 'validation_error', 'Invalid request');
-  if (!!u.news_opt_in !== body.optIn) { u.news_opt_in = body.optIn; u.news_opt_in_at = now(); }
-  return { newsOptIn: !!u.news_opt_in, newsOptInAt: u.news_opt_in_at ?? null };
+  // Round 23e: opting out keeps the consent time; the opt-out time is kept apart.
+  if (!!u.news_opt_in !== body.optIn) { u.news_opt_in = body.optIn; if (body.optIn) u.news_opt_in_at = now(); else (u as any).news_opt_out_at = now(); }
+  return { newsOptIn: !!u.news_opt_in, newsOptInAt: u.news_opt_in_at ?? null, newsOptOutAt: (u as any).news_opt_out_at ?? null };
 });
 route('PATCH', '/me/email-preferences', ({ me, body }) => {
   const u = need(me);
@@ -1140,8 +1141,13 @@ route('GET', '/catalog/price-history', ({ query }) => {
 });
 
 // --- Orders ----------------------------------------------------------------------------
+function assertTosVersion(v: unknown) {
+  if (!v) fail(400, 'tos_version_required', 'Reload the page to see the current Terms, then try again');
+  if (v !== TOS_VERSION) fail(409, 'terms_stale', 'The Terms were updated while you were on this page. Reload to see the current version');
+}
 route('POST', '/orders', ({ me, body }) => {
   const u = need(me);
+  assertTosVersion(body.tosVersion); // Round 23e: the Terms version loaded with the page is required
   if (u.kyc_tier < 1) fail(403, 'kyc_required', 'Verify your email and phone before purchasing');
   const offer = state.offers.find((x) => x.id === body.offerId && (!x.reserved_for || x.reserved_for === u.id)) ?? fail(404, 'not_found', 'Listing not found');
   if (offer.seller_id === u.id) fail(400, 'own_listing', 'You can’t buy your own listing');
@@ -1542,6 +1548,7 @@ route('PATCH', '/seller/codes/:id', ({ me, params, body }) => {
 // Cart: one demo payment for several orders (one per listing, each in its own escrow).
 route('POST', '/orders/cart', ({ me, body }) => {
   const u = need(me);
+  assertTosVersion(body.tosVersion); // Round 23e: the Terms version loaded with the page is required
   if (u.kyc_tier < 1) fail(403, 'kyc_required', 'Verify your email and phone before purchasing');
   const items: Array<{ offerId: string; quantity: number; characterName?: string }> = body.items ?? [];
   if (!items.length || items.length > 20) fail(400, 'invalid_cart', 'A cart holds 1 to 20 listings');
@@ -1917,7 +1924,7 @@ route('POST', '/chat/rooms/:id/messages', ({ me, params, body }) => {
       live(appendMessage(r.id, null, 'warning', 'This account has been banned for trying to move the deal outside Bullizard. Do not continue this trade anywhere else; staff will review the case.'));
     }
     save();
-    fail(422, 'offplatform_blocked', 'Not sent. Sharing outside contacts can get your account banned right away.');
+    fail(422, 'offplatform_blocked', 'Not sent. Sharing outside contacts can get your account banned right away.', { action }); // Round 23f: queue | ban, as the API
   }
   const m = appendMessage(r.id, u.id, 'text', text, reasons.map((x) => `offplatform:${x}`));
   scheduleReply(r.id, u.id === r.buyer_id ? r.seller_id : r.buyer_id);
@@ -3449,7 +3456,7 @@ export async function demoBlob(pathWithQuery: string, token: string | null): Pro
     return blobRoute(me, path, new URLSearchParams(qs ?? ''));
   } catch (err) {
     const { ApiError } = await import('../api');
-    if (err instanceof HttpError) throw new ApiError(err.status, err.code, err.message);
+    if (err instanceof HttpError) throw new ApiError(err.status, err.code, err.message, err.details);
     throw err;
   }
 }
@@ -3470,7 +3477,7 @@ export async function demoFetch(method: string, pathWithQuery: string, body: unk
       save();
       return { status: data === undefined ? 204 : method === 'POST' && /\/(orders|offers)$/.test(path) ? 201 : 200, data };
     } catch (err) {
-      if (err instanceof HttpError) return { status: err.status, data: { error: { code: err.code, message: err.message } } };
+      if (err instanceof HttpError) return { status: err.status, data: { error: { code: err.code, message: err.message, ...(err.details !== undefined ? { details: err.details } : {}) } } };
       console.error(err);
       return { status: 500, data: { error: { code: 'internal', message: 'Demo error' } } };
     }

@@ -19,13 +19,13 @@ async function fillSignUp(page: Page, name: string) {
 test.describe('newsletter consent', () => {
   test('is unticked at sign-up, stored when ticked, and can be changed in Account', async ({ page }) => {
     await openSignUp(page);
-    const news = page.getByRole('checkbox', { name: 'Send me news, new games and offers.' });
+    const news = page.getByRole('checkbox', { name: 'Email me about new games and offers' });
     await expect(news).not.toBeChecked();
     await fillSignUp(page, 'News Fan');
     await news.check();
     await page.getByRole('button', { name: 'Create account' }).click();
     await expect(page).toHaveURL(/\/account/);
-    const setting = page.locator('.card', { has: page.getByRole('heading', { name: 'News and offers' }) }).getByRole('checkbox', { name: 'Send me news, new games and offers.' });
+    const setting = page.locator('.card', { has: page.getByRole('heading', { name: 'News and offers' }) }).getByRole('checkbox', { name: 'Email me about new games and offers' });
     await expect(setting).toBeChecked();
     await setting.uncheck();
     await expect(page.getByText('Saved.')).toBeVisible();
@@ -43,7 +43,7 @@ test.describe('newsletter consent', () => {
     await page.goto('/login');
     await page.getByLabel('Language', { exact: true }).first().selectOption('ar');
     await page.getByRole('button', { name: 'New here? Create an account' }).click(); // the auth chrome is English-only
-    await expect(page.getByText('أرسل لي الأخبار والألعاب الجديدة والعروض.')).toBeVisible();
+    await expect(page.getByText('راسلني عن الألعاب الجديدة والعروض.')).toBeVisible();
   });
 });
 
@@ -100,12 +100,12 @@ test.describe('Cloudflare Turnstile', () => {
     await page.locator('input[name=email]').fill('buyer@demo.test');
     await page.locator('input[name=password]').fill('demo-password-123');
     await page.locator('form button[type=submit]').click();
-    await expect(page.getByRole('alert')).toHaveText('Please complete the bot check.');
+    await expect(page.getByRole('alert')).toHaveText('Finish the quick check above first.');
     await page.goto('/forgot-password');
     await expect(page.locator('.turnstile')).toHaveAttribute('data-action', 'reset');
     await page.locator('input[name=email]').fill('buyer@demo.test');
     await page.getByRole('button', { name: 'Email me a reset link' }).click();
-    await expect(page.getByRole('alert')).toHaveText('Please complete the bot check.');
+    await expect(page.getByRole('alert')).toHaveText('Finish the quick check above first.');
   });
 });
 

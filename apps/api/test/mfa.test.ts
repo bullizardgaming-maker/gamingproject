@@ -63,7 +63,7 @@ describe('two-factor login', () => {
     expect((await client(h.app).post('/v1/auth/mfa', { mfaToken: login2.body.mfaToken, code: recovery })).status).toBe(401);
 
     const session = client(h.app, ok.body.token);
-    expect((await session.post('/v1/me/2fa/disable', { code: '123456' })).status).toBe(401);
+    expect((await session.post('/v1/me/2fa/disable', { code: '123456' })).status).toBe(403); // Round 23e: 403 invalid_credentials
     expect((await session.post('/v1/me/2fa/disable', { code: enabled.body.recoveryCodes[1] })).status).toBe(200);
     const plain = await client(h.app).post('/v1/auth/login', { email: u.email, password: 'correct horse battery' });
     expect(plain.body.token).toBeTruthy();
