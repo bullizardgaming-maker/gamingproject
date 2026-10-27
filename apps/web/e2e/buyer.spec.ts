@@ -49,7 +49,8 @@ test.describe('buyer', () => {
   test('opens a support request about an order and gets a reply', async ({ page }) => {
     await signIn(page, 'Buyer');
     await buy(page, '/offers/offer-1');
-    await page.getByRole('link', { name: 'Get help with this order' }).click();
+    // Help with an order is a support ticket (Round 24: no help or dispute links on the order page).
+    await page.goto(`/support/new?category=order&order=${page.url().split('/orders/')[1]!.split('?')[0]}`);
     await page.locator('input[name=subject]').fill('Key says already redeemed');
     await page.locator('textarea[name=body]').fill('The key from this order is rejected by Steam.');
     await page.getByRole('button', { name: 'Send request' }).click();

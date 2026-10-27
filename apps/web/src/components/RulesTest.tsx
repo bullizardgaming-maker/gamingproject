@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { HELP_CENTER } from '@/lib/features';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
 import { t } from '../i18n';
@@ -49,7 +50,7 @@ export function RulesTest({ onPassed }: { onPassed: () => void }) {
   return (
     <form className="card stack" onSubmit={submit} aria-labelledby="rules-title" data-testid="rules-test">
       <h2 id="rules-title" style={{ margin: 0 }}>{t('rules.title')}</h2>
-      <p className="muted" style={{ margin: 0 }}>{t('rules.lede', { pct: test.passMarkPct })} <Link to="/help/report-a-user">{t('rules.readRules')}</Link></p>
+      <p className="muted" style={{ margin: 0 }}>{t('rules.lede', { pct: test.passMarkPct })} {HELP_CENTER && <Link to="/help/report-a-user">{t('rules.readRules')}</Link>}</p>
       {result && (
         <div className={result.passed ? 'ok' : 'alert'} role="status">
           {result.passed ? t('rules.passed', { pct: result.scorePct }) : t('rules.failed', { pct: result.scorePct, need: result.passMarkPct })}

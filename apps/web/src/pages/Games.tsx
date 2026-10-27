@@ -1,18 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, NavLink, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { GameBanner } from '@/components/GameArt';
-import { MagnifyingGlass as Search, ShieldCheck, Lightning as Zap } from '@phosphor-icons/react';
+import { ArrowRight, MagnifyingGlass as Search, ShieldCheck, Lightning as Zap } from '@phosphor-icons/react';
 import { api } from '../api';
-import { CATEGORY_ICON, CategoriesRetry, CurrencyTable, OfferTable } from '../components/CatalogUi';
-import { CATEGORY_META, categoryLabel, slugify, useCategoryOrder, useGames, type GameEntry } from '@/lib/catalog';
+import { CATEGORY_ICON, CategoriesRetry, CurrencyList, OfferTable } from '../components/CatalogUi';
+import { CATEGORY_META, categoryLabel, initials, slugify, useCategoryOrder, useGames, type GameEntry } from '@/lib/catalog';
 import { cn } from '@/lib/utils';
 import { usePrice } from '@/lib/prefs';
 import type { Offer } from './Market';
 import { usePageMeta } from '@/lib/seo';
-import { attrLabel, attributesFor } from '@/lib/attributes';
-import { t, type MessageKey } from '../i18n';
+import { attrLabel, attributesFor, type AttributeDef } from '@/lib/attributes';
+import { intlLocale, t, type MessageKey } from '../i18n';
 import { WatchButton } from '../components/WatchButton';
-import { SaveSearchButton, paramsFromUrl } from '../components/SaveSearchButton';
 import { recordBrowse } from '@/lib/recent';
 
 type AttrFacet = { key: string; value: string; count: number };
@@ -25,26 +24,6 @@ type SeoSlug = (typeof SEO_SLUGS)[number];
 const seoSlug = (slug: string): SeoSlug | null => (SEO_SLUGS as readonly string[]).includes(slug) ? (slug as SeoSlug) : null;
 const seoKey = (slug: SeoSlug, field: 'title' | 'description' | 'h1' | 'intro' | 'buy' | 'servers') => `seo.${slug}.${field}` as MessageKey;
 
-/** "How buying works" + FAQ: the shared SEO copy under every launch game's offer table. */
-function SeoFooter() {
-  return (
-    <section className="card stack pg-seo" aria-labelledby="seo-how">
-      <h2 id="seo-how" style={{ margin: 0, fontSize: 18 }}>{t('seo.how.title')}</h2>
-      <ol className="stack" style={{ margin: 0, paddingInlineStart: 20, gap: 4 }}>
-        {(['seo.how.1', 'seo.how.2', 'seo.how.3', 'seo.how.4'] as const).map((k) => <li key={k}>{t(k)}</li>)}
-      </ol>
-      <h2 style={{ margin: '8px 0 0', fontSize: 18 }}>{t('seo.faq.title')}</h2>
-      <dl className="stack" style={{ margin: 0, gap: 8 }}>
-        {([1, 2, 3, 4] as const).map((i) => (
-          <div key={i}>
-            <dt><b>{t(`seo.faq.${i}.q` as MessageKey)}</b></dt>
-            <dd className="muted" style={{ margin: 0 }}>{t(`seo.faq.${i}.a` as MessageKey)}</dd>
-          </div>
-        ))}
-      </dl>
-    </section>
-  );
-}
 const letterOf = (g: string) => (/^[a-z]/i.test(g) ? g[0]!.toUpperCase() : '#');
 
 /** /games: every game with live offers, A–Z, each with direct links into its categories. */
@@ -182,6 +161,35 @@ export function GamePage() {
     return () => { stale = true; };
   }, [query]);
 
+  // Currency: the buyer picks a server (or league) first; every option shows its offers and lowest price.
+  const pickDef: AttributeDef | undefined = category === 'currency' && entry ? attributesFor(entry.game, category)[0] : undefined;
+  const picked = pickDef ? get(`attr.${pickDef.key}`) : '';
+  const [all, setAll] = useState<Offer[] | null>(null);
+  useEffect(() => {
+    if (!entry || !pickDef) return setAll(null);
+    let stale = false;
+    api<{ items: Offer[] }>(`/offers?${new URLSearchParams({ game: entry.game, category, sort: 'price_asc', pageSize: '100' })}`)
+      .then((r) => { if (!stale) setAll(r.items); })
+      .catch(() => { if (!stale) setAll([]); });
+    return () => { stale = true; };
+  }, [entry?.game, category, pickDef?.key]);
+  const servers = useMemo(() => {
+    if (!pickDef) return [];
+    const by = new Map<string, Offer[]>();
+    for (const o of all ?? []) {
+      const v = o.attributes?.[pickDef.key];
+      if (v) by.set(v, [...(by.get(v) ?? []), o]);
+    }
+    const names = pickDef.type === 'select' ? [...(pickDef.options ?? [])] : [...by.keys()].sort();
+    return names.map((name) => {
+      const list = by.get(name) ?? [];
+      const cheapest = list.reduce<Offer | null>((m, o) => (!m || o.price_cents < m.price_cents ? o : m), null);
+      const sellers = [...new Map(list.map((o) => [o.seller_id, o.seller_name])).values()];
+      const sold = list.reduce((n, o) => n + (o.sold_count ?? 0), 0);
+      return { name, count: list.length, cheapest, sellers, sold };
+    });
+  }, [all, pickDef]);
+
   const more = async () => {
     const next = page + 1;
     const r = await api<{ items: Offer[]; hasMore: boolean }>(`/offers?${query}&page=${next}`);
@@ -269,17 +277,56 @@ export function GamePage() {
             </div>
           )}
         </section>
+      ) : category === 'currency' && pickDef && !picked ? (
+        <section className="srv" aria-labelledby="srv-title">
+          <h2 id="srv-title" className="srv-title">{pickDef.key === 'league' ? t('srv.pickLeague') : t('srv.pickServer')}</h2>
+          {all === null ? (
+            <p className="muted">{t('game.loadingOffers')}</p>
+          ) : (
+            <ul className="srv-grid">
+              {servers.map((sv, n) => (
+                <li key={sv.name}>
+                  <button type="button" className="srv-card" disabled={!sv.count} onClick={() => set(`attr.${pickDef.key}`, sv.name)}>
+                    <img className="srv-cover" src={`/games/${slug}.webp`} alt="" loading="lazy" onError={(e) => ((e.target as HTMLImageElement).style.display = 'none')} />
+                    <span className="srv-top">
+                      <b className="srv-name">{entry.game} {sv.name}</b>
+                      {sv.sold > 0 && <span className="srv-sold num">{t('ct.sold', { n: sv.sold.toLocaleString(intlLocale()) })}</span>}
+                      <span className="srv-mid">
+                        <span className="srv-faces" aria-hidden>{sv.sellers.slice(0, 3).map((name) => <span key={name} className="avatar-ini">{initials(name)}</span>)}</span>
+                        <span className="srv-count"><b className="num">{t('offers.count', { count: sv.count })}</b><span className="small muted">{t('srv.available')}</span></span>
+                      </span>
+                    </span>
+                    <span className="srv-bottom">
+                      {sv.cheapest ? (
+                        <span className="srv-price"><span className="small muted">{t('ct.from')}</span><span><b className="num">{price.offer(sv.cheapest as any)}</b>{sv.cheapest.unit_label && <span className="small muted"> / {sv.cheapest.unit_label}</span>}</span></span>
+                      ) : (
+                        <span className="small muted">{t('srv.none')}</span>
+                      )}
+                      <span className={`srv-go${n === 0 ? ' on' : ''}`} aria-hidden><ArrowRight className="size-5 rtl:rotate-180" /></span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       ) : category === 'currency' ? (
         <section className="ct-wrap" aria-labelledby="ct-title">
           <div className="ct-bar">
-            <AttributeFilters game={entry.game} category={category} facets={facets} params={params} set={set} clear={(keys) => { const next = new URLSearchParams(params); keys.forEach((k) => next.delete(k)); setParams(next, { replace: true }); }} />
+            {pickDef && (
+              <span className="srv-picked">
+                <span className="small muted">{attrLabel(pickDef.label)}</span>
+                <b>{picked}</b>
+                <button type="button" className="btn ghost sm" onClick={() => set(`attr.${pickDef.key}`, '')}>{t('srv.change')}</button>
+              </span>
+            )}
+            <AttributeFilters game={entry.game} category={category} facets={facets} params={params} set={set} skip={pickDef?.key} clear={(keys) => { const next = new URLSearchParams(params); keys.forEach((k) => next.delete(k)); setParams(next, { replace: true }); }} />
             <label className="ct-toggle">
               <input type="checkbox" role="switch" checked={get('online') === '1'} onChange={(e) => set('online', e.target.checked ? '1' : '')} />
               <span>{t('ct.onlineOnly')}</span>
             </label>
             <span className="ct-sell row" style={{ gap: 8, height: 'auto' }}>
-              <SaveSearchButton params={paramsFromUrl(params, { game: entry.game, category })} name={`${entry.game} · ${categoryLabel(category)}`} />
-            <Link className="btn ghost sm" to="/sell">{t('ct.sell', { game: entry.game, what: categoryLabel(category).toLowerCase() })}</Link>
+              <Link className="btn ghost sm" to="/sell">{t('ct.sell', { game: entry.game, what: categoryLabel(category).toLowerCase() })}</Link>
             </span>
           </div>
           {error && <div className="alert" role="alert">{error}</div>}
@@ -295,11 +342,23 @@ export function GamePage() {
                   ))}
                 </div>
               </div>
-              <CurrencyTable
+              <CurrencyList
                 offers={shownOffers}
                 empty={<>{t('game.noMatch')} <button className="cursor-pointer border-0 bg-transparent p-0 underline" onClick={() => nav(`/games/${slug}/${category}`)}>{t('game.clear')}</button></>}
               />
               {hasMore && <button className="btn ghost" style={{ alignSelf: 'center' }} onClick={more}>{t('game.more')}</button>}
+              {pickDef && servers.some((sv) => sv.name !== picked && sv.count) && (
+                <section className="srv-other" aria-labelledby="srv-other-title">
+                  <h3 id="srv-other-title">{pickDef.key === 'league' ? t('srv.otherLeagues') : t('srv.otherServers')}</h3>
+                  <div className="srv-chips">
+                    {servers.filter((sv) => sv.name !== picked && sv.count).map((sv) => (
+                      <button key={sv.name} type="button" className="srv-chip" onClick={() => { set(`attr.${pickDef.key}`, sv.name); window.scrollTo({ top: 0 }); }}>
+                        <b>{sv.name}</b> <span className="small muted num">{t('srv.from', { price: price.offer(sv.cheapest as any) })}</span>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              )}
               <p className="small muted" style={{ margin: 0 }}>
                 {t('req.cta')} <Link to={`/requests/new?${new URLSearchParams({ game: entry.game, category })}`}>{t('req.post')}</Link>
               </p>
@@ -385,7 +444,6 @@ export function GamePage() {
                   <Link to="/sell">{t('game.sellThis', { game: entry.game, what: category ? categoryLabel(category) : t('game.items') })}</Link>
                 </span>
                 <span className="flex flex-wrap items-center gap-2">
-                  <SaveSearchButton params={paramsFromUrl(params, { game: entry.game, ...(category ? { category } : {}) })} name={category ? `${entry.game} · ${categoryLabel(category)}` : entry.game} />
                   <WatchButton
                     label={category ? t('game.alertLows') : t('game.watch', { game: entry.game })}
                     target={{
@@ -401,7 +459,6 @@ export function GamePage() {
         </section>
       </div>
       )}
-      {seo && <SeoFooter />}
     </div>
   );
 }
@@ -411,8 +468,8 @@ export function GamePage() {
  * shows how many live offers it has given the other filters; options with none are still listed
  * (greyed) so the full range is visible.
  */
-function AttributeFilters({ game, category, facets, params, set, clear }: { game: string; category: string; facets: AttrFacet[]; params: URLSearchParams; set: (k: string, v: string) => void; clear: (keys: string[]) => void }) {
-  const defs = attributesFor(game, category);
+function AttributeFilters({ game, category, facets, params, set, clear, skip }: { game: string; category: string; facets: AttrFacet[]; params: URLSearchParams; set: (k: string, v: string) => void; clear: (keys: string[]) => void; skip?: string }) {
+  const defs = attributesFor(game, category).filter((d) => d.key !== skip);
   if (!defs.length) return null;
   const active = defs.filter((d) => params.get(`attr.${d.key}`));
   return (

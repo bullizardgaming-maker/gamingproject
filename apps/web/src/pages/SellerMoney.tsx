@@ -165,7 +165,6 @@ export function SellerMoney() {
 
       <PayoutAddressCard onChanged={load} onMessage={setMsg} />
 
-      {!PHASE2_UI && <Exports />}
       {PHASE2_UI && (
       <details className="card wl-more">
         <summary><b>{t('money.taxAndInvoices')}</b></summary>
@@ -272,7 +271,7 @@ function Withdraw({ currency, max, disabled, onWithdraw }: { currency: string; m
   const [checked, setChecked] = useState(false);
   const [dest, setDest] = useState<{ address: string | null; currencyName: string | null } | null>(null);
   const [quote, setQuote] = useState<{ feeCents: number; netCents: number; feeBps: number; feeMinCents: number } | null>(null);
-  const cents = amount ? Math.round(Number(amount) * 100) : max;
+  const cents = amount ? Math.round(Number(amount) * 100) : 0; // nothing until the seller types an amount
   useEffect(() => {
     api<{ address: string | null; currencyName: string | null }>('/seller/payout-address').then(setDest).catch(() => {});
   }, []);
@@ -301,7 +300,6 @@ function Withdraw({ currency, max, disabled, onWithdraw }: { currency: string; m
           type="number"
           min={0}
           step="0.01"
-          placeholder={t('money.all', { amount: (max / 100).toFixed(2) })}
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
         />
@@ -317,7 +315,7 @@ function Withdraw({ currency, max, disabled, onWithdraw }: { currency: string; m
         {t('wallet.checked')}
       </label>
       <button className="btn lg block" disabled={disabled || !checked || cents <= 0 || cents > max} onClick={() => (onWithdraw(cents), setAmount(''), setChecked(false))}>
-        {t('money.withdrawAmount', { amount: money(cents, currency) })}
+        {cents > 0 ? t('money.withdrawAmount', { amount: money(cents, currency) }) : t('money.withdraw')}
       </button>
     </div>
   );

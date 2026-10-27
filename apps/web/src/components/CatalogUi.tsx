@@ -1,7 +1,7 @@
 import { useId } from 'react';
 import { Link } from 'react-router-dom';
 import { money } from '../api';
-import { Medal as Award, SealCheck as BadgeCheck, Coins, GameController as Gamepad2, Gift, Key as KeyRound, RocketLaunch as Rocket, ShieldCheck, DeviceMobile as Smartphone, Star, Sword as Swords, UserCircle as UserRound, VideoCamera as Video, Lightning as Zap } from '@phosphor-icons/react';
+import { Medal as Award, SealCheck as BadgeCheck, Clock, Coins, Package, ThumbsUp, GameController as Gamepad2, Gift, Key as KeyRound, RocketLaunch as Rocket, ShieldCheck, DeviceMobile as Smartphone, Star, Sword as Swords, UserCircle as UserRound, VideoCamera as Video, Lightning as Zap } from '@phosphor-icons/react';
 import { categoriesUnavailable, categoryLabel, deliveryLabel, initials, retryCategories, useCategoryOrder } from '@/lib/catalog';
 import { cn } from '@/lib/utils';
 import { attributePairs } from '@/lib/attributes';
@@ -11,6 +11,7 @@ import type { Offer } from '../pages/Market';
 import { OnlineDot, lastSeenLabel } from '@/lib/presence';
 import { intlLocale, t, type MessageKey } from '../i18n';
 import { isTopRank, rankName, rankPerk } from '@/lib/ranks';
+import { compact, levelFromOrders, methodLabel, methodsOf, METHODS } from '@/lib/delivery';
 
 export const CATEGORY_ICON: Record<string, typeof Coins> = {
   accounts: UserRound,
@@ -120,9 +121,7 @@ export function OfferTable({ offers, showGame = false, showSeller = true, empty,
                     <Avatar name={o.seller_name} className="size-7 text-[11px]" />
                     <Link to={`/sellers/${o.seller_id}`} className="lt-name">{o.seller_name}</Link>
                     {o.seller_online && <OnlineDot />}
-                    {o.seller_rank && <RankPill name={o.seller_rank} />}
-                    {o.seller_trust_level && o.seller_trust_level !== 'new' && <TrustBadge level={o.seller_trust_level} />}
-                    {o.seller_founding && <FoundingBadge />}
+                    <LevelTag offer={o} />
                     <Rating value={o.seller_rating} count={o.seller_review_count} />
                   </div>
                 )}
@@ -237,7 +236,7 @@ export function SellerBadge({ badge: b }: { badge: string }) {
 
 /** "Online now", or how long the seller has been away. */
 export function PresenceText({ online, lastSeen }: { online?: boolean; lastSeen?: string | null }) {
-  if (online) return <span className="presence on">{t('presence.online')}</span>;
+  if (online) return null; // the green dot on the picture says it
   const l = lastSeenLabel(lastSeen);
   return l ? <span className="presence">{l}</span> : null;
 }
@@ -278,3 +277,78 @@ export function CurrencyTable({ offers, empty, current }: { offers: Offer[]; emp
 const fmtQty = (n: number) => n.toLocaleString(intlLocale());
 /** "850 Divine Orb", or "850 × 1M" when the unit is itself a number. */
 export const fmtUnits = (n: number, unit?: string | null) => `\u2066${!unit ? fmtQty(n) : /^\d/.test(unit) ? `${fmtQty(n)} × ${unit}` : `${fmtQty(n)} ${unit}`}\u2069`; // isolated so it reads left to right inside Arabic
+
+/** Seller level ("Lvl 155"): grows with completed orders. Shown on listings instead of badges. */
+export function LevelTag({ offer, className }: { offer: Pick<Offer, 'seller_level' | 'seller_completed_orders'>; className?: string }) {
+  const n = offer.seller_level ?? levelFromOrders(offer.seller_completed_orders ?? 0);
+  return <span className={cn('lvl', className)} aria-label={t('lvl.aria', { n })}>{t('lvl', { n })}</span>;
+}
+
+/** Delivery time as a short number: "Instant", "30 min", "1 hr". */
+export function DeliveryShort({ offer }: { offer: Pick<Offer, 'delivery_mode' | 'delivery_hours'> }) {
+  const instant = offer.delivery_mode === 'auto';
+  return (
+    <span className={cn('cl-chip', instant && 'is-instant')}>
+      {instant ? <Zap className="size-3.5" weight="fill" aria-hidden /> : <Clock className="size-3.5" aria-hidden />}
+      {deliveryLabel(offer.delivery_mode, offer.delivery_hours)}
+    </span>
+  );
+}
+
+/** The delivery methods a listing offers, as icons (name on hover and for screen readers). */
+export function MethodIcons({ offer }: { offer: Pick<Offer, 'game' | 'category_slug' | 'delivery_methods'> }) {
+  const ms = methodsOf(offer);
+  if (!ms.length) return null;
+  return (
+    <span className="cl-methods">
+      {ms.map((m) => {
+        const Icon = METHODS[m].icon;
+        return <span key={m} className="cl-method" title={methodLabel(m)}><Icon className="size-4" aria-hidden /><span className="sr-only">{methodLabel(m)}</span></span>;
+      })}
+    </span>
+  );
+}
+
+/**
+ * Currency listings (Round 24): one row per seller — who, level, positive share and sales on this
+ * listing, then minimum, stock, delivery time and methods as plain numbers (the unit is in the
+ * price), and the price per unit. The server is picked before the list, so it isn't repeated here.
+ */
+export function CurrencyList({ offers, empty, current }: { offers: Offer[]; empty?: React.ReactNode; current?: string }) {
+  const price = usePrice();
+  if (offers.length === 0) return <div className="card text-center text-muted-foreground">{empty ?? t('table.empty')}</div>;
+  return (
+    <ul className="cl" aria-label={t('ct.sellers')}>
+      {offers.map((o) => {
+        const pct = o.seller_positive_pct;
+        return (
+          <li key={o.id} className={cn('cl-row', o.id === current && 'on')} aria-current={o.id === current || undefined}>
+            <div className="cl-who">
+              <SellerAvatar name={o.seller_name} online={o.seller_online} />
+              <div className="min-w-0">
+                <Link to={`/offers/${o.id}`} className="cl-name after:absolute after:inset-0" aria-label={o.unit_label ? undefined : `${o.title} · ${o.seller_name}`}>{o.seller_name}</Link>
+                <LevelTag offer={o} />
+              </div>
+            </div>
+            <div className="cl-trust">
+              {pct != null && <span className="cl-pos" title={t('ct.positive', { n: pct })}><ThumbsUp className="size-3.5" weight="fill" aria-hidden /><span className="num">{pct}%</span><span className="sr-only">{t('ct.positive', { n: pct })}</span></span>}
+              {o.sold_count != null && <span className="cl-sold num">{t('ct.sold', { n: compact(o.sold_count) })}</span>}
+            </div>
+            <div className="cl-chips">
+              {o.unit_label && <span className="cl-chip num">{t('ct.minShort', { n: compact(o.min_qty ?? 1) })}</span>}
+              <span className="cl-chip num" title={t('ct.stockShort', { n: o.stock.toLocaleString(intlLocale()) })}><Package className="size-3.5" aria-hidden />{compact(o.stock)}<span className="sr-only"> {t('table.stock')}</span></span>
+              <DeliveryShort offer={o as any} />
+              <MethodIcons offer={o} />
+            </div>
+            <div className="cl-price">
+              <span className="cl-from">{t('ct.from')}</span>
+              <b className="num">{price.offer(o as any)}</b>
+              {o.unit_label && <span className="cl-per">{t('ct.per', { unit: o.unit_label })}</span>}
+            </div>
+            <span className="btn ghost sm cl-view" aria-hidden>{t('ct.view')}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}

@@ -38,3 +38,6 @@ export function useFeatures(): Features {
   }, []);
   return features;
 }
+
+/** The help centre is drafted, not published yet (CEO, Round 24b): no links to it, and /help sends people to support. */
+export const HELP_CENTER = false;

@@ -5,8 +5,8 @@ import { Chat } from '../components/Chat';
 import { useSession } from '../session';
 import { t } from '../i18n';
 import { usePageMeta } from '@/lib/seo';
+import { StatusEye } from '../components/StatusEye';
 
-const CHIP: Record<string, string> = { completed: 'released', delivered: 'held', paid: 'held', disputed: 'disputed' };
 const STATUSES = ['awaiting_payment', 'paid', 'delivered', 'completed', 'disputed', 'refunded', 'cancelled'] as const;
 const statusText = (s: string) => ((STATUSES as readonly string[]).includes(s) ? t(`orders.status.${s as (typeof STATUSES)[number]}`) : s.replace('_', ' '));
 
@@ -34,14 +34,14 @@ export function Orders() {
         <div className="card"><p className="muted">{t('orders.empty')} {as === 'buyer' ? <Link to="/market">{t('orders.browse')}</Link> : <Link to="/sell">{t('orders.create')}</Link>}</p></div>
       ) : (
         <div className="card table-wrap">
-          <table className="data">
+          <table className="data orders-table">
             <thead><tr><th>{t('orders.col.listing')}</th><th>{t('orders.col.amount')}</th><th>{t('orders.col.status')}</th><th>{t('orders.col.placed')}</th></tr></thead>
             <tbody>
               {orders.map((o) => (
                 <tr key={o.id}>
                   <td><Link to={`/orders/${o.id}`}>{o.offer_title}</Link><div className="small muted">{o.ref ? <span className="mono">{o.ref} · </span> : null}{o.game}</div></td>
                   <td className="mono">{money(o.amount_cents, o.currency)}</td>
-                  <td><span className={`chip ${CHIP[o.status] ?? ''}`}>{statusText(o.status)}</span></td>
+                  <td><StatusEye status={o.status} label={statusText(o.status)} /></td>
                   <td className="small muted">{new Date(o.created_at).toLocaleDateString()}</td>
                 </tr>
               ))}

@@ -1,5 +1,6 @@
-import { ShieldCheck } from '@phosphor-icons/react';
+import { ShieldCheck, Star } from '@phosphor-icons/react';
 import { BuyerProtection } from '../components/Brand';
+import { StatusEye } from '../components/StatusEye';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, money, realtime, uploadChatFile } from '../api';
@@ -305,10 +306,6 @@ export function OrderPage() {
     { label: isBuyer ? t('order.step.youConfirm') : t('order.step.buyerConfirms'), sub: order.status === 'delivered' ? clock : undefined, state: done ? 'done' : delivered ? (stopped ? 'stop' : 'now') : '' },
     { label: isSeller ? t('order.step.youPaid') : t('order.step.sellerPaid'), sub: done ? hm(at('completed')) || undefined : undefined, state: done ? 'done' : '' },
   ];
-  const openDispute = () => {
-    const d = document.getElementById('order-dispute') as HTMLDetailsElement | null;
-    if (d) { d.open = true; d.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
-  };
   const checkoutMode = order.status === 'awaiting_payment' && isBuyer && order.payment_provider === 'nowpayments';
 
   if (checkoutMode) {
@@ -331,14 +328,7 @@ export function OrderPage() {
               <div className="pg-total"><span>{t('checkout.toPay')}</span><span className="pg-price">{money(order.charged_cents ?? order.amount_cents, order.currency)}</span></div>
             </div>
             <span className="small muted num" data-testid="order-ref">{order.ref ?? t('order.ref', { id: order.id.slice(0, 8) })}</span>
-            {order.tos_version && (
-              <p className="small muted" style={{ margin: 0 }} data-testid="order-terms">
-                <Link to={`/terms/versions/${encodeURIComponent(order.tos_version)}`} target="_blank" rel="noopener">
-                  {t('legal.acceptedOn', { version: order.tos_version, date: new Date(order.tos_accepted_at ?? order.created_at).toLocaleDateString() })}
-                </Link>
-              </p>
-            )}
-            <div className="bp-box"><BuyerProtection /></div>
+            <div className="bp-box"><BuyerProtection short /></div>
           </aside>
         </div>
       </div>
@@ -362,7 +352,10 @@ export function OrderPage() {
           {order.status === 'awaiting_payment' && isBuyer && order.rail === 'crypto' && <CryptoDeposit orderId={order.id} />}
           <section className="card od" aria-labelledby="od-title">
             <div className="od-head">
-              <h1 id="od-title" className="od-ref num" data-testid="order-ref">{order.ref ?? t('order.ref', { id: order.id.slice(0, 8) })}</h1>
+              <div className="od-title-row">
+                <StatusEye status={order.status} label={statusText(order.status)} size={30} />
+                <h1 id="od-title" className="od-ref num" data-testid="order-ref">{order.ref ?? t('order.ref', { id: order.id.slice(0, 8) })}</h1>
+              </div>
               <span className={`od-status ${variant}`}>{statusText(order.status)}</span>
               {order.status === 'delivered' && <span className="small muted">{clock}</span>}
             </div>
@@ -388,9 +381,6 @@ export function OrderPage() {
             <div className="od-total">
               <span className="pg-label">{isSeller ? t('od.youEarn') : t('od.total')}</span>
               <span className="od-amount num">{money(isSeller ? order.seller_net_cents : order.amount_cents, order.currency)}</span>
-              {isBuyer && order.status !== 'awaiting_payment' && (
-                <span className="small muted">{t('order.paidVia', { amount: money(order.amount_cents, order.currency), method: order.rail === 'crypto' ? t('order.rail.onchain') : order.payment_provider === 'nowpayments' ? t('order.rail.crypto') : t('order.rail.card') })}</span>
-              )}
               {order.escrow_frozen && order.status !== 'disputed' && <span className="small muted">{t('order.frozenNote')}</span>}
             </div>
             {(isBuyer && order.status === 'delivered' && order.rail === 'fiat') || ((isBuyer || isSeller) && ['paid', 'delivered'].includes(order.status) && order.rail === 'fiat') ? (
@@ -410,14 +400,8 @@ export function OrderPage() {
                   </>
                 )}
                 {isBuyer && order.status === 'paid' && order.rail === 'fiat' && !order.escrow_frozen && <EarlyConfirm onYes={() => act('confirm')} />}
-                <div className="od-links">
-                  <button type="button" className="pg-wrong" onClick={openDispute}>{t('order.somethingWrong')}</button>
-                  <Link className="small muted" to={`/support/new?category=order&order=${order.id}`}>{t('order.getHelp')}</Link>
-                </div>
               </div>
-            ) : (
-              <div className="od-links"><Link className="small muted" to={`/support/new?category=order&order=${order.id}`}>{t('order.getHelp')}</Link></div>
-            )}
+            ) : null}
           </section>
           {order.delivery_proof && (
             <div className="card">
@@ -520,29 +504,13 @@ export function OrderPage() {
               </button>
             </div>
           )}
-          {(isBuyer || isSeller) && ['paid', 'delivered'].includes(order.status) && order.rail === 'fiat' && (
-            <details className="card" id="order-dispute">
-              <summary style={{ cursor: 'pointer' }}><b>{t('order.openDispute')}</b></summary>
-              <div className="stack" style={{ marginTop: 12 }}>
-                <p className="small muted">{t('order.dispute.text')}</p>
-                <label className="field">
-                  {t('order.dispute.problem')}
-                  <select value={category} onChange={(e) => setCategory(e.target.value)}>
-                    {DISPUTE_CATEGORIES.map((k) => <option key={k} value={k}>{disputeCategory(k)}</option>)}
-                  </select>
-                </label>
-                <textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder={t('order.dispute.placeholder')} />
-                <button className="btn dispute" disabled={reason.trim().length < 10} onClick={() => act('dispute', { reason, category })}>{t('order.dispute.open')}</button>
-              </div>
-            </details>
-          )}
 
           {isBuyer && order.status === 'completed' && !order.review && <ReviewForm orderId={order.id} onDone={load} />}
           <WarrantyCard order={order} isBuyer={isBuyer} isSeller={isSeller} onDone={load} />
           {order.review && (
             <div className="card stack">
               <h3>{t('order.review')}</h3>
-              <p><span className="mono">{'★'.repeat(order.review.rating)}{'☆'.repeat(5 - order.review.rating)}</span> {order.review.comment}</p>
+              <p><span className="stars-show" role="img" aria-label={`${order.review.rating}/5`}>{[1, 2, 3, 4, 5].map((n) => <Star key={n} className={n <= order.review!.rating ? 'on' : ''} weight="fill" aria-hidden />)}</span> {order.review.comment}</p>
               {order.review.seller_reply && <p className="small muted">{t('order.sellerReplied', { reply: order.review.seller_reply })}</p>}
             </div>
           )}
@@ -569,7 +537,6 @@ export function OrderPage() {
             </div>
           )}
 
-          <Link to="/orders" className="small">{t('order.allOrders')}</Link>
         </div>
         <Chat roomId={order.room_id} meId={user.id} names={names} accountOrder={order.category_kind === 'account'} />
       </div>
@@ -625,8 +592,8 @@ function ReviewForm({ orderId, onDone }: { orderId: string; onDone: () => void }
       <h3>{t('order.rate')}</h3>
       <div className="row" role="radiogroup" aria-label={t('order.rating')}>
         {[1, 2, 3, 4, 5].map((n) => (
-          <button key={n} type="button" className={`btn ghost rate-star${n <= rating ? ' on' : ''}`} aria-checked={n === rating} aria-label={`${n}★`} role="radio" onClick={() => setRating(n)}>
-            {n}★
+          <button key={n} type="button" className={`rate-star${n <= rating ? ' on' : ''}`} aria-checked={n === rating} aria-label={`${n}★`} role="radio" onClick={() => setRating(n)}>
+            <Star className="size-7" weight="fill" aria-hidden />
           </button>
         ))}
       </div>

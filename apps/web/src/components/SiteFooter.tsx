@@ -5,11 +5,10 @@ import { useInstall } from '@/lib/pwa';
 import { LOCALES, setLocale, t, useLocale, type Locale } from '../i18n';
 import { DISPLAY_CURRENCIES, resolvedTheme, setCurrency, setTheme, useDisplayCurrency, useTheme, type DisplayCurrency } from '@/lib/prefs';
 import { BrandLockup } from './Brand';
+import { HELP_CENTER } from '@/lib/features';
 
 const links = (): Array<[string, string]> => [
-  [t('footer.helpCentre'), '/help'],
-  [t('footer.escrow'), '/help/how-escrow-works'],
-  [t('footer.fees'), '/help/selling-fees'],
+  ...(HELP_CENTER ? ([[t('footer.helpCentre'), '/help'], [t('footer.escrow'), '/help/how-escrow-works'], [t('footer.fees'), '/help/selling-fees']] as Array<[string, string]>) : []),
   [t('footer.openShop'), '/sell'],
   [t('footer.games'), '/games'],
   [t('footer.contact'), '/support/new'],

@@ -5,6 +5,7 @@ import { ArrowRight } from '@phosphor-icons/react';
 import { CATEGORY_ICON, CategoriesRetry, TrustStrip } from '../components/CatalogUi';
 import { GameSearch } from '../components/SiteHeader';
 import { BrandMark } from '../components/Brand';
+import { StatusEye } from '../components/StatusEye';
 import { api, money } from '../api';
 import { useSession } from '../session';
 import { categoryLabel, popular, slugify, useCategoryOrder, useGames, type GameEntry } from '@/lib/catalog';
@@ -69,7 +70,7 @@ export function Home() {
                 <Link to={`/orders/${o.id}`} className="home-bought-title" dir="auto">{o.offer_title}</Link>
                 <div className="row spread small">
                   <span className="num">{money(o.amount_cents, o.currency)}</span>
-                  <span className="muted">{statusLabel(o.status)}</span>
+                  <StatusEye status={o.status} label={statusLabel(o.status)} />
                 </div>
                 {o.offer_id && <Link to={`/offers/${o.offer_id}`} className="small">{t('home.buyAgain')}</Link>}
               </li>

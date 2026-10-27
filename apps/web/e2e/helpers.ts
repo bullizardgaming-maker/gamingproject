@@ -21,21 +21,28 @@ export async function expectNoHorizontalScroll(page: Page) {
   expect(scroll, `page is ${scroll}px wide in a ${width}px viewport`).toBeLessThanOrEqual(width);
 }
 
-/** Games that deliver in-game ask for the buyer's character name (or UID) before paying. */
-export async function fillCharacter(page: Page, name = 'TestChar_01') {
-  // The buy box (and with it the field) renders once the listing has loaded.
+/** Games that deliver in-game: the details are asked in the delivery pop-up after Buy now (Round 24). Waits for the buy box. */
+export async function fillCharacter(page: Page, _name = 'TestChar_01') {
   await expect(page.getByRole('button', { name: /Buy now/ })).toBeVisible();
-  const field = page.getByTestId('character-field');
-  if (!(await field.count())) return;
-  const input = field.getByRole('textbox');
+}
+
+/** Buy now; when the delivery pop-up opens, pick the first method, fill what it asks and continue. */
+export async function buyNow(page: Page, name = 'TestChar_01', save = true) {
+  await page.getByRole('button', { name: /Buy now/ }).click();
+  const dialog = page.getByRole('dialog', { name: 'Delivery method' });
+  if (!(await dialog.waitFor({ timeout: 2_000 }).then(() => true, () => false))) return;
+  const input = dialog.getByLabel('Character name');
   if (await input.count()) await input.fill(name);
-  else await field.getByRole('button', { name: /Confirm/ }).click();
+  const city = dialog.getByLabel('City');
+  if (await city.count()) await city.selectOption({ index: 1 });
+  if (!save) await dialog.getByLabel('Save for my next purchase').uncheck();
+  await dialog.getByRole('button', { name: 'Continue to checkout' }).click();
 }
 
 /** Pay the crypto checkout on the current page (order or cart): pick a coin, then the demo network confirms it. */
 export async function payCrypto(page: Page) {
   const checkout = page.locator('.crypto-checkout');
-  await checkout.getByRole('button', { name: /Tether \(TRC-20\)/ }).click();
+  await pickCoin(page);
   await expect(checkout.getByText('Waiting for your transfer')).toBeVisible();
   await expect(checkout).toHaveCount(0, { timeout: 20_000 });
 }
@@ -44,7 +51,7 @@ export async function payCrypto(page: Page) {
 export async function buy(page: Page, offerPath: string) {
   await page.goto(offerPath);
   await fillCharacter(page);
-  await page.getByRole('button', { name: /Buy now/ }).click();
+  await buyNow(page);
   await page.waitForURL(/\/orders\/.*pay=crypto/);
   await payCrypto(page);
 }
@@ -54,4 +61,12 @@ export async function signOut(page: Page) {
   await page.getByRole('button', { name: 'Account menu' }).click();
   await page.getByRole('menuitem', { name: 'Sign out' }).click();
   await expect(page.getByRole('link', { name: 'Sign in' }).first()).toBeVisible();
+}
+
+/** Pay (Round 24b): pick Crypto as the payment method, then a coin from the list. */
+export async function pickCoin(page: Page, coin: RegExp = /Tether \(TRC-20\)/) {
+  const checkout = page.locator('.crypto-checkout');
+  await expect(checkout.locator('.pg-coins h3')).toBeVisible();
+  if (await checkout.getByRole('heading', { name: 'Payment method' }).count()) await checkout.getByRole('button', { name: /^Crypto/ }).click();
+  await checkout.getByRole('button', { name: coin }).click();
 }

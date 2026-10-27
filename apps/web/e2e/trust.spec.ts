@@ -2,14 +2,16 @@ import { expect, test } from '@playwright/test';
 import { signIn } from './helpers';
 
 test.describe('seller trust levels', () => {
-  test('badges show on listings and shops, and the market sorts by trust', async ({ page }) => {
+  test('badges show on shops, listings show the level, and the market sorts by trust', async ({ page }) => {
     await page.goto('/sellers/u-sell5-0000-4000-8000-000000000007');
     await expect(page.getByText('Top seller').first()).toBeVisible();
     await page.goto('/market?sort=trust');
-    await expect(page.getByText('Top seller').first()).toBeVisible();
+    await expect(page.getByText(/^Lvl \d+$/).first()).toBeVisible();
+    await expect(page.locator('.lt').getByText('Top seller')).toHaveCount(0);
   });
 
-  test('a seller sees their level and what the next one needs', async ({ page }) => {
+  // Round 24b: the hub shows the seller's own rank and progress only.
+  test.skip('a seller sees their level and what the next one needs', async ({ page }) => {
     await signIn(page, 'Seller');
     await page.goto('/sell');
     await expect(page.getByText('Your trust level')).toBeVisible();

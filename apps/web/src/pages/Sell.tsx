@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
+import { HELP_CENTER } from '@/lib/features';
+import { methodLabel, methodsForGame } from '@/lib/delivery';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { api, money } from '../api';
 import { FeeLadder, pct } from '../components/FeeLadder';
@@ -125,7 +127,7 @@ function TrustCard() {
 }
 
 /** "Online now" opt-out and the seller's own reply time, as buyers see it. */
-function PresenceSettings({ shop }: { shop?: Dashboard['shop'] }) {
+export function PresenceSettings({ shop }: { shop?: Dashboard['shop'] }) {
   const [show, setShow] = useState(shop?.showOnline ?? true);
   const [saved, setSaved] = useState(false);
   const reply = replyLabel(shop?.responseMinutes);
@@ -210,6 +212,7 @@ export function Sell() {
       <NavLink end to="/sell">{t('sell.tab.shop')}</NavLink>
       <NavLink to="/sell/analytics">{t('sell.tab.analytics')}</NavLink>
       <NavLink to="/sell/money">{t('sell.tab.money')}</NavLink>
+      {user && <NavLink to={`/sellers/${user.id}`}>{t('sell.tab.myShop')}</NavLink>}
     </nav>
   );
   if (moneyTab || analyticsTab) {
@@ -261,9 +264,6 @@ export function Sell() {
           <b>{t('founding.badge')}</b> · {dash.founding.windowOpen ? t('founding.spots', { used: dash.founding.featuredUsed, slots: dash.founding.featuredSlots, days: dash.founding.featuredDays, until: new Date(dash.founding.foundingUntil).toLocaleDateString(intlLocale(), { month: 'short', day: 'numeric' }) }) : t('founding.spotsOver')}
         </div>
       )}
-      <PresenceSettings shop={dash.shop} />
-      <TrustCard />
-      {user && <StorefrontEditor sellerId={user.id} />}
       <div className="grid three">
         <div className="card stack">
           <div className="eyebrow">{t('ranks.yourRank')}</div>
@@ -321,10 +321,7 @@ export function Sell() {
         )}
       </div>
 
-      {PHASE2_UI && <LinkedAccounts accounts={linked} onChange={load} />}
       <NewOffer onCreated={() => (setJustPassed(false), load())} offers={offers} linked={linked} />
-      <BulkListings onApplied={load} />
-      <div className="card"><FeeLadder current={dash.rank?.name ?? dash.tier.name} /></div>
     </div>
   );
 }
@@ -588,6 +585,7 @@ function NewOffer({ onCreated, offers, linked }: { onCreated: () => void; offers
           ...(f.linkedAccountId ? { linkedAccountId: f.linkedAccountId } : {}),
           ...(f.minBuyerReputation === 'on' ? { minBuyerReputation: 'good' } : {}),
           ...(f.categorySlug === 'currency' && unit.trim() ? { unitLabel: unit.trim(), minQty: Number(f.minQty || 1), stock: Number(f.stock || 1) } : {}),
+          ...(category !== 'accounts' && methodsForGame(f.game).length ? { deliveryMethods: new FormData(form).getAll('deliveryMethods') } : {}),
           ...(bundleOn ? { bundle: Object.entries(parts).map(([offerId, quantity]) => ({ offerId, quantity })) } : {}),
         },
       });
@@ -644,6 +642,16 @@ function NewOffer({ onCreated, offers, linked }: { onCreated: () => void; offers
         )}
         {category !== 'accounts' && <label className="field">{byAmount ? t('sell.f.stockUnits', { unit: unit.trim() }) : t('sell.f.stock')}<input name="stock" type="number" min="1" defaultValue="1" /></label>}
         {byAmount && <label className="field">{t('sell.f.minQty', { unit: unit.trim() })}<input name="minQty" type="number" min="1" defaultValue="1" /></label>}
+        {category !== 'accounts' && methodsForGame(game).length > 0 && (
+          <fieldset className="field sell-methods">
+            <legend>{t('of.deliveryMethods')}</legend>
+            {methodsForGame(game).map((m) => (
+              <label key={m} className="check-row" style={{ color: 'var(--ink)' }}>
+                <input type="checkbox" name="deliveryMethods" value={m} defaultChecked style={{ width: 'auto' }} /> {methodLabel(m)}
+              </label>
+            ))}
+          </fieldset>
+        )}
         {category === 'accounts' && (
           <label className="field">
             {t('warranty.sellLabel')}
@@ -802,7 +810,7 @@ function SellPreview({ price }: { price: string }) {
           <span className="small muted">
             {t('preview.buyersPay', { price: money(p.buyerCents) })}
             {PREVIEW_CURRENCIES.filter((c) => c !== 'USD').map((c) => ` · ${show(p.buyerCents, c)}`).join('')}
-            {' · '}<Link to="/help/selling-fees">{t('preview.feeDetails')}</Link>
+            {HELP_CENTER && <>{' · '}<Link to="/help/selling-fees">{t('preview.feeDetails')}</Link></>}
           </span>
         </>
       )}
@@ -855,7 +863,7 @@ export function PricePreview({ price, currency = 'USD' }: { price: string; curre
         {others.length > 0 && <span className="muted"> · {others.map(([c, v]) => `≈ ${money(v, c)}`).join(' · ')}</span>}
       </span>
       <span className="muted">{t('preview.commission', { amount: money(p.commissionCents), rate: pct(p.rateBps) })}{p.promo ? ` · ${t('preview.promo', { until: new Date(p.promo.endsAt).toLocaleDateString(intlLocale(), { month: 'short', day: 'numeric' }) })}` : ''}</span>
-      <span className="muted">{t('preview.youEarn', { price: money(p.sellerCents) })} · <Link to="/help/selling-fees">{t('preview.feeDetails')}</Link></span>
+      <span className="muted">{t('preview.youEarn', { price: money(p.sellerCents) })}{HELP_CENTER && <> · <Link to="/help/selling-fees">{t('preview.feeDetails')}</Link></>}</span>
     </span>
   );
 }

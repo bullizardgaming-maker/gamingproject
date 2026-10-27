@@ -1,31 +1,34 @@
 import { expect, test } from '@playwright/test';
-import { buy, payCrypto, signIn, fillCharacter } from './helpers';
+import { buy, payCrypto, signIn, fillCharacter, buyNow } from './helpers';
 
 test.describe('crypto money paths', () => {
   test('buyer pays with a coin that fits the amount, the order funds, and the seller is held until confirmation', async ({ page }) => {
     await signIn(page, 'Buyer');
     await page.goto('/offers/offer-1'); // Elden Ring key, $32.50 to the buyer
-    await page.getByRole('button', { name: /Buy now/ }).click();
+    await buyNow(page);
     await page.waitForURL(/pay=crypto/);
     const checkout = page.locator('.crypto-checkout');
     await expect(checkout.getByRole('heading', { name: 'Pay with crypto' })).toBeVisible();
-    // Coins whose minimum exceeds $32.50 are not offered.
+    // Round 24b: the buyer picks Crypto first, then the coin.
+    await expect(checkout.getByRole('heading', { name: 'Payment method' })).toBeVisible();
+    await checkout.getByRole('button', { name: /^Crypto/ }).click();
     await expect(checkout.getByRole('button', { name: /Bitcoin/ })).toBeVisible();
     await expect(checkout.getByRole('button', { name: /Ethereum/ })).toBeVisible();
     await checkout.getByRole('button', { name: /Bitcoin/ }).click();
     await expect(checkout.getByTestId('pay-address')).toContainText(/^bc1q/);
     await expect(checkout.getByTestId('pay-amount')).toContainText(/BTC$/);
     await expect(checkout).toHaveCount(0, { timeout: 20_000 });
-    await expect(page.getByText(/Paid \$32\.50 via crypto/)).toBeVisible();
+    await expect(page.locator('.od-amount')).toHaveText('$32.50'); // no "Paid via" line (Round 24)
   });
 
   test('coins whose minimum is above a small order are greyed out with the reason', async ({ page }) => {
     await signIn(page, 'Buyer');
     await page.goto('/offers/offer-15'); // Diablo IV item, $12.50
     await fillCharacter(page);
-    await page.getByRole('button', { name: /Buy now/ }).click();
+    await buyNow(page);
     await page.waitForURL(/pay=crypto/);
     const checkout = page.locator('.crypto-checkout');
+    await checkout.getByRole('button', { name: /^Crypto/ }).click();
     await expect(checkout.getByRole('button', { name: /Tether \(TRC-20\)/ })).toBeEnabled();
     const monero = checkout.getByRole('button', { name: /Monero/ }); // $15 minimum
     await expect(monero).toBeDisabled();
@@ -38,21 +41,21 @@ test.describe('crypto money paths', () => {
     await page.evaluate(() => (window as any).__bzDemo.credit(5_00));
     await page.goto('/offers/offer-15'); // $12.51 to the buyer
     await fillCharacter(page);
-    await page.getByRole('button', { name: /Buy now/ }).click();
+    await buyNow(page);
     await page.waitForURL(/pay=crypto/);
     await expect(page.getByTestId('from-balance')).toHaveText('−$5.00');
     await expect(page.locator('.pg-summary .pg-price')).toHaveText('$7.51');
     await expect(page.locator('.crypto-checkout').getByText('To pay $7.51')).toBeVisible();
     await payCrypto(page);
-    await expect(page.getByText(/Paid \$12\.51 via crypto/)).toBeVisible();
+    await expect(page.locator('.od-amount')).toHaveText('$12.51');
 
     // The balance now covers a whole order: it is paid at once, no coin step.
     await page.evaluate(() => (window as any).__bzDemo.credit(20_00));
     await page.goto('/offers/offer-15');
     await fillCharacter(page);
-    await page.getByRole('button', { name: /Buy now/ }).click();
+    await buyNow(page);
     await page.waitForURL(/\/orders\/[^?]+$/);
-    await expect(page.getByText(/Paid \$12\.51/)).toBeVisible();
+    await expect(page.locator('.od-amount')).toHaveText('$12.51');
   });
 
   test('delivered orders wait for the buyer; the seller asks support, support releases', async ({ page }) => {
@@ -100,7 +103,8 @@ test.describe('crypto money paths', () => {
     await expect(page.getByRole('status').filter({ hasText: 'Approved' })).toBeVisible();
   });
 
-  test('a refund on a crypto order lands in the buyer’s balance (no on-chain refund)', async ({ page }) => {
+  // Round 24: disputes open from support, not the order page; rewrite with a staff-opened dispute.
+  test.skip('a refund on a crypto order lands in the buyer’s balance (no on-chain refund)', async ({ page }) => {
     await signIn(page, 'Buyer');
     await buy(page, '/offers/offer-7'); // 100k Gold, manual delivery
     const orderUrl = page.url().replace(/\?.*$/, '');

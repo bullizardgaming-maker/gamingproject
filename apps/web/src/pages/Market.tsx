@@ -27,6 +27,16 @@ export interface Offer {
   /** Up to two badges the seller chose to show: `rank:<name>`, `founding`, `trust:<level>`, `verified`. */
   seller_badges?: string[];
   seller_last_seen_at?: string | null;
+  /** Seller level, from completed orders (Round 24). */
+  seller_level?: number | null;
+  /** Share of positive reviews, 0–100. */
+  seller_positive_pct?: number | null;
+  /** Completed orders on this listing. */
+  sold_count?: number | null;
+  /** Public offer ID shown to buyers, for reports: "BZO" + 12 characters, no dash. */
+  public_id?: string | null;
+  /** Delivery methods the seller offers on this listing (keys from lib/delivery). */
+  delivery_methods?: string[] | null;
   /** Currency sold by amount: price_cents (= price_per_unit_cents) is per one `unit_label` ("1M"), bought from `min_qty` up to `stock` (= stock_qty). */
   unit_label?: string | null;
   unit_size?: number | null;

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { payCrypto, signIn, signOut } from './helpers';
+import { payCrypto, signIn, signOut, buyNow } from './helpers';
 
 /** A tiny PNG (1×1) used as the seller's delivery proof. */
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
@@ -16,22 +16,18 @@ test.describe('launch games: in-game delivery', () => {
   test('buyer gives a character name once, the seller delivers with proof, the buyer sees it', async ({ page }) => {
     await signIn(page, 'Buyer');
     await page.goto('/offers/offer-55'); // 100M kinah — Aion delivers in-game
-    const pay = page.getByRole('button', { name: /Buy now/ });
-    await expect(pay).toBeDisabled(); // no character yet
-    await page.getByLabel('Deliver to character').fill('Kaisinel_Pat');
-    await expect(page.getByRole('link', { name: 'How in-game delivery works' })).toHaveAttribute('href', '/help/delivery-in-game');
-    await pay.click();
+    // Buy now opens the delivery pop-up: pick a method, give the character name, keep it for next time.
+    await buyNow(page, 'Kaisinel_Pat');
     await page.waitForURL(/\/orders\/.*pay=crypto/);
     await payCrypto(page);
     await expect(page.getByTestId('order-character')).toContainText('Kaisinel_Pat');
     const orderUrl = page.url().split('?')[0]!;
 
-    // Next time the name is remembered: one tap to confirm, or change it.
+    // Next time the saved name is filled in.
     await page.goto('/offers/offer-55');
-    const field = page.getByTestId('character-field');
-    await expect(field).toContainText('Kaisinel_Pat');
-    await expect(field.getByRole('button', { name: /Confirm/ })).toBeVisible();
-    await expect(field.getByRole('button', { name: 'Change' })).toBeVisible();
+    await page.getByRole('button', { name: /Buy now/ }).click();
+    await expect(page.getByRole('dialog', { name: 'Delivery method' }).getByLabel('Character name')).toHaveValue('Kaisinel_Pat');
+    await page.keyboard.press('Escape');
 
     // The seller must attach proof before the delivery counts.
     await signOut(page);

@@ -5,6 +5,7 @@
  * elsewhere in production: the hosted card checkout, auto-delivery, the seller replying in chat,
  * and identity verification. Nothing here talks to a server.
  */
+import { levelFromOrders, methodsOf, METHODS } from '@/lib/delivery';
 import { CATEGORIES, DEMO_CODE, DEMO_FULL, seed, type DemoState, type DemoUser } from './seed';
 import { CATEGORY_DEFAULTS, GAME_SETS, LEAGUES, PERMANENT_LEAGUES, attributesFor, cleanAttributes, handoverFieldFor, handoverKey, setLeagues } from '../../../api/src/domain/attributeSets';
 import { checkTiers, effectivePrice, unitPriceFor } from '../../../api/src/domain/priceTiers';
@@ -230,7 +231,17 @@ function offerView(o: any) {
     seller_completed_orders: s.completed,
     seller_rating: s.rating,
     seller_review_count: s.count,
+    // Round 24: level from completed orders, positive share, sales on this listing, public ID, delivery methods.
+    seller_level: levelFromOrders(s.completed),
+    seller_positive_pct: s.count ? Math.round(((s.rating ?? 0) / 5) * 1000) / 10 : null,
+    sold_count: soldBefore(o.id) + state.orders.filter((x) => x.offer_id === o.id && x.status === 'completed').length,
+    public_id: `BZO${hash('', o.id).slice(0, 12).toUpperCase()}`,
+    delivery_methods: o.delivery_methods ?? null,
   };
+}
+/** Seeded sales per listing (stable per id), so demo listings show a sold count. */
+function soldBefore(id: string) {
+  return parseInt(hash('sold', id).slice(0, 6), 16) % 3_400 + 12;
 }
 
 function hash(prev: string, body: string) {
@@ -1144,9 +1155,24 @@ route('POST', '/orders', ({ me, body }) => {
   const available = availableOf(offer);
   if (available < qty) fail(409, 'out_of_stock', 'Not enough stock for this order');
   const code = body.sellerCode ? sellerCodeQuote(offer, u, qty, body.sellerCode) : null;
-  const characterName = characterFor(u, offer, body.characterName);
+  // Round 24: the buyer picks one of the listing's delivery methods and fills only its fields.
+  const methods = methodsOf(offerView(offer));
+  const method = body.deliveryMethod ?? methods[0] ?? null;
+  if (methods.length && !methods.includes(method)) fail(400, 'invalid_delivery_method', 'Pick one of the seller’s delivery methods');
+  const info: Record<string, string> = {};
+  for (const f of method ? METHODS[method as keyof typeof METHODS].fields : []) {
+    const v = String(body.deliveryInfo?.[f.key] ?? (f.key === 'character' ? body.characterName ?? '' : '')).trim().slice(0, 60);
+    if (!v) fail(400, 'delivery_info_required', `${f.key} is required`);
+    if (f.options && !f.options.includes(v)) fail(400, 'delivery_info_invalid', `Pick a ${f.key} from the list`);
+    info[f.key] = v;
+  }
+  const characterName = characterFor(u, offer, info.character ?? info.uid ?? body.characterName);
   const o = createOrderRecord(u, offer, qty, body.rail ?? 'fiat', code?.discount ?? 0);
-  if (characterName) rememberCharacter(u, offer, o, characterName);
+  if (method) Object.assign(o, { delivery_method: method, delivery_info: info });
+  if (characterName) {
+    o.character_name = characterName;
+    if (body.saveInfo !== false) rememberCharacter(u, offer, o, characterName);
+  }
   if (code) Object.assign(o, { seller_code_id: code.c.id, seller_discount_cents: code.discount });
   if (body.useCredit && o.rail === 'fiat') applyCredit(u, o);
   return { order: orderDetail(o), checkoutUrl: o.rail === 'fiat' && o.charged_cents > 0 ? `/orders/${o.id}?pay=crypto` : null };
@@ -2091,6 +2117,13 @@ route('POST', '/offers', ({ me, body }) => {
     o.min_qty = min;
     o.stock = Math.max(1, Math.floor(Number(body.stock ?? 1)));
     if (min > o.stock) fail(400, 'invalid_min_qty', 'The minimum order can’t be more than your stock');
+  }
+  // Round 24: delivery methods from the game's fixed list.
+  if (Array.isArray(body.deliveryMethods)) {
+    const allowed = methodsOf({ game: body.game, category_slug: body.categorySlug, delivery_methods: null });
+    const picked = body.deliveryMethods.filter((m: string) => (allowed as string[]).includes(m));
+    if (allowed.length && !picked.length) fail(400, 'invalid_delivery_method', 'Pick at least one delivery method');
+    (o as any).delivery_methods = picked.length ? picked : null;
   }
   if (o.min_buyer_reputation && o.price_cents < 100_00) fail(400, 'not_high_value', 'A minimum buyer reputation can only be set on listings of 100 or more');
   if (body.linkedAccountId) {

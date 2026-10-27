@@ -25,6 +25,7 @@ test('high-value listings can be limited to established buyers', async ({ page }
   await page.getByRole('button', { name: 'Publish offer' }).click();
   await expect(page.getByText('Huge gold pack, 1M').first()).toBeVisible();
   await page.goto('/games/albion-online/currency');
+  await page.getByRole('button', { name: /Europe/ }).click(); // server first (Round 24)
   await page.getByRole('link', { name: /Huge gold pack, 1M/ }).first().click();
   await expect(page.getByText('Established buyers only').first()).toBeVisible();
 });

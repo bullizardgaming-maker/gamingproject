@@ -5,7 +5,8 @@ import { parseCsv } from '../../api/src/domain/csv';
 
 const toCsv = (rows: string[][]) => rows.map((r) => r.map((c) => (/[",\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c)).join(',')).join('\n');
 
-test('a seller downloads listings as CSV, edits them and imports with a preview', async ({ page }) => {
+// Round 24b: removed from the seller hub (CEO).
+test.skip('a seller downloads listings as CSV, edits them and imports with a preview', async ({ page }) => {
   await signIn(page, 'Seller');
   await page.goto('/sell');
   const card = page.locator('section', { has: page.getByRole('heading', { name: 'Edit listings in a spreadsheet' }) });

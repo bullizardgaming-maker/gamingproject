@@ -7,7 +7,7 @@ test.describe('launch extras', () => {
     const first = page.getByRole('listitem').first();
     await expect(first).toContainText('Elden Ring — Steam key (Global)'); // featured, though not the newest
     await expect(first.getByTestId('featured-chip')).toBeVisible();
-    await expect(first.getByTestId('founding-badge')).toBeVisible();
+    await expect(first.getByTestId('founding-badge')).toHaveCount(0); // badges show on the profile only (Round 24)
     await page.goto('/sellers/u-sell1-0000-4000-8000-000000000002');
     await expect(page.getByTestId('founding-badge')).toBeVisible();
 

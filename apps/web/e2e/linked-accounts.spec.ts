@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test';
 import { signIn } from './helpers';
 
-test('a seller links Steam and Riot accounts and lists one with a verified badge', async ({ page }) => {
+// Round 24b: removed from the seller hub (CEO).
+test.skip('a seller links Steam and Riot accounts and lists one with a verified badge', async ({ page }) => {
   await signIn(page, 'Seller');
   await page.goto('/sell');
   const card = page.locator('section', { has: page.getByRole('heading', { name: 'Linked game accounts' }) });

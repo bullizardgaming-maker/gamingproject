@@ -1,7 +1,7 @@
 import { mkdirSync, truncateSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
-import { payCrypto, signIn, signOut, watchErrors } from './helpers';
+import { payCrypto, signIn, signOut, watchErrors, buyNow } from './helpers';
 
 /** Round 23a: newsletter consent, Cloudflare Turnstile on the auth forms only, the proof video size message. */
 
@@ -113,8 +113,7 @@ test.describe('proof video size', () => {
   test('a video over 95 MB gets the translated limit before anything is uploaded', async ({ page }, info) => {
     await signIn(page, 'Buyer');
     await page.goto('/offers/offer-55');
-    await page.getByLabel('Deliver to character').fill('Big_Video');
-    await page.getByRole('button', { name: /Buy now/ }).click();
+    await buyNow(page, 'Big_Video');
     await page.waitForURL(/\/orders\/.*pay=crypto/);
     await payCrypto(page);
     const orderUrl = page.url().split('?')[0]!;

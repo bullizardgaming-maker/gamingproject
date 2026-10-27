@@ -17,16 +17,12 @@ test.describe('languages', () => {
     await expectNoHorizontalScroll(page);
   });
 
-  test('seller hub and help centre are translated', async ({ page }) => {
+  test('seller hub is translated', async ({ page }) => {
     await signIn(page, 'Seller');
     await page.getByLabel('Language', { exact: true }).first().selectOption('ar');
     await page.goto('/sell');
-    await expect(page.getByRole('heading', { name: 'متجرك', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'لوحة البائع', exact: true })).toBeVisible();
     await expectNoHorizontalScroll(page);
-    await page.goto('/help');
-    await expect(page.getByText('النزاعات والحماية').first()).toBeVisible();
-    await page.goto('/help/how-escrow-works');
-    await expect(page.getByRole('heading', { name: 'كيف يحمي الضمان طلبك' })).toBeVisible();
   });
 
   test('buyer orders page is translated and right-to-left', async ({ page }) => {

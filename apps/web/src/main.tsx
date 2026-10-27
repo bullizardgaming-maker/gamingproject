@@ -1,6 +1,7 @@
 import { StrictMode, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { HELP_CENTER } from '@/lib/features';
 import { SessionProvider } from './session';
 import { Home } from './pages/Home';
 import { WalletPage } from './pages/Wallet';
@@ -100,8 +101,8 @@ function App() {
           <Route path="/requests/mine" element={<MyRequests />} />
           <Route path="/requests/proposals" element={<MyProposals />} />
           <Route path="/requests/:id" element={<RequestPage />} />
-          <Route path="/help" element={<HelpCentre />} />
-          <Route path="/help/:slug" element={<HelpArticlePage />} />
+          <Route path="/help" element={HELP_CENTER ? <HelpCentre /> : <Navigate to="/support/new" replace />} />
+          <Route path="/help/:slug" element={HELP_CENTER ? <HelpArticlePage /> : <Navigate to="/support/new" replace />} />
           <Route path="/support" element={<SupportList />} />
           <Route path="/support/new" element={<SupportNew />} />
           <Route path="/support/:id" element={<SupportTicket />} />

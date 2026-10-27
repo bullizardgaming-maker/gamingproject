@@ -18,8 +18,10 @@ test.describe('seller side', () => {
     await page.getByRole('button', { name: 'Publish offer' }).click();
     await expect(page.getByText('Silver by the million').first()).toBeVisible();
     await page.goto('/games/albion-online/currency');
-    await expect(page.locator('.ct-row').filter({ hasText: '20 M' }).first()).toBeVisible(); // minimum shown in units
-    await page.goto('/sell');
+    await page.getByRole('button', { name: /Europe/ }).click(); // the server is picked first (Round 24)
+    await expect(page.locator('.cl-row').filter({ hasText: 'Min. 20' }).first()).toBeVisible(); // plain numbers, the unit is in the price
+    await page.goto('/sellers/u-sell1-0000-4000-8000-000000000002');
+    await page.getByRole('button', { name: 'Edit shop' }).click();
 
     const picker = page.locator('.badge-pick');
     const on = picker.locator('.badge-opt[aria-pressed="true"]');

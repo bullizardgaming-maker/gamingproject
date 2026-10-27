@@ -15,7 +15,7 @@ test.describe('seller', () => {
     await expect(preview).toContainText('≈ €');
     await expect(preview).toContainText('≈ EGP');
     await expect(preview).toContainText('You earn $25.00');
-    await expect(preview.getByRole('link', { name: 'Fee details' })).toHaveAttribute('href', '/help/selling-fees');
+    await expect(preview.getByRole('link', { name: 'Fee details' })).toHaveCount(0); // help centre drafted (Round 24b)
     await page.locator('select[name=deliveryMode]').selectOption('manual');
     await page.locator('select[name="attr.server"]').selectOption('KR');
     await page.locator('select[name="attr.rank_from"]').selectOption('Silver');
@@ -34,7 +34,7 @@ test.describe('seller', () => {
     await expect(page.getByText('Your rank')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Basilisk' })).toBeVisible();
     await expect(page.getByTestId('seller-rate')).toContainText('Commission 10.99%');
-    await expect(page.getByRole('table', { name: 'Commission by seller rank' })).toContainText('Dragon');
+    await expect(page.getByRole('table', { name: 'Commission by seller rank' })).toHaveCount(0); // own rank and progress only (Round 24b)
     await signOut(page);
     // RiftTrader opened their shop three weeks ago: still inside the 60-day launch promo.
     await page.goto('/login');
@@ -59,10 +59,11 @@ test.describe('seller', () => {
   test('money page: invoice PDF and withdrawal', async ({ page }) => {
     await signIn(page, 'Seller');
     await page.goto('/sell/money');
-    await page.getByText('Tax, invoices and exports').click();
-    await expect(page.getByRole('heading', { name: 'Commission invoices' })).toBeVisible();
-    const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'PDF' }).first().click()]);
-    expect(download.suggestedFilename()).toMatch(/\.pdf$/);
+    await expect(page.getByText('Tax, invoices and exports')).toHaveCount(0); // removed (Round 24b)
+    // Nothing is filled in: the fee shows once the seller types an amount.
+    await expect(page.getByTestId('withdrawal-fee')).toHaveCount(0);
+    await page.getByLabel(/Amount in/).fill('10');
+    await expect(page.getByTestId('withdrawal-fee')).toBeVisible();
     await page.getByLabel(/I checked the address and network/).check();
     await page.getByRole('button', { name: /^Withdraw \$/ }).click();
     await expect(page.getByText(/sent once the treasury approves/).first()).toBeVisible();
@@ -71,13 +72,13 @@ test.describe('seller', () => {
   test('can hide online status from buyers', async ({ page }) => {
     await signIn(page, 'Seller');
     await page.goto('/sellers/u-sell1-0000-4000-8000-000000000002');
-    await expect(page.getByText('Online now')).toBeVisible();
-    await page.goto('/sell');
+    await expect(page.getByRole('img', { name: 'Online now' }).first()).toBeVisible(); // the green dot
+    await page.getByRole('button', { name: 'Edit shop' }).click(); // shop settings live on the shop page (Round 24b)
     await expect(page.getByText('Buyers see: “Usually replies within 15 minutes”')).toBeVisible();
     await page.getByLabel('Show buyers when I’m online').uncheck();
     await expect(page.getByRole('status').filter({ hasText: 'Saved' })).toBeVisible();
-    await page.goto('/sellers/u-sell1-0000-4000-8000-000000000002');
+    await page.getByRole('button', { name: 'Done' }).click();
     await expect(page.getByText('Usually replies within 15 minutes')).toBeVisible();
-    await expect(page.getByText('Online now')).toHaveCount(0);
+    await expect(page.getByRole('img', { name: 'Online now' })).toHaveCount(0);
   });
 });

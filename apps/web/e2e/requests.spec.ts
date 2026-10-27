@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { expectNoHorizontalScroll, payCrypto, signIn, watchErrors } from './helpers';
+import { expectNoHorizontalScroll, payCrypto, signIn, watchErrors, buyNow } from './helpers';
 
 test.describe('buyer requests', () => {
   test('the board is public and filters by game', async ({ page }) => {
@@ -31,7 +31,7 @@ test.describe('buyer requests', () => {
     await page.goto('/games/valorant/accounts');
     await expect(page.getByText(/EU account with Reaver Vandal/)).toHaveCount(0);
     await page.goto(url);
-    await page.getByRole('button', { name: /Buy now/ }).click();
+    await buyNow(page);
     await page.waitForURL(/\/orders\/.*pay=crypto/);
     await payCrypto(page);
     done();

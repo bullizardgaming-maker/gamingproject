@@ -137,29 +137,7 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid }: { base: 
           </div>
         </div>
       ) : (
-        <div className="card pg-coins">
-          <div className="row spread">
-            <h3 style={{ margin: 0 }}>{t('crypto.chooseCoin')}</h3>
-            <span className="small muted">{t('crypto.toPayShort', { amount: money(owed, currency) })}</span>
-          </div>
-          {coins && !coins.coins.some((c) => c.available !== false) && <p className="small">{t('crypto.noCoin')}</p>}
-          <div className="pg-coin-list">
-            {coins?.coins.map((c) => {
-              const off = c.available === false;
-              return (
-                <button key={c.coin} type="button" className={`pg-coin${off ? ' off' : ''}`} disabled={busy || off} aria-disabled={off || undefined} onClick={() => pick(c.coin)} title={off ? t('crypto.tooSmall', { amount: money(Math.round(c.minUsd * 100), 'USD') }) : undefined}>
-                  <span className="pg-sym" aria-hidden>{ticker(c.coin).slice(0, 4)}</span>
-                  <span className="min-w-0 flex-1">
-                    <b className="block">{c.name}{c.network && !c.name.includes('(') && c.network !== c.name && !c.name.startsWith(c.network) && <span className="pg-net">{c.network}</span>}</b>
-                    <span className="small muted">{off ? t('crypto.tooSmall', { amount: money(Math.round(c.minUsd * 100), 'USD') }) : c.fee_cents != null ? t('crypto.feeLine', { fee: money(c.fee_cents, 'USD') }) : t('crypto.minimum', { amount: money(Math.round(c.minUsd * 100), 'USD') })}</span>
-                  </span>
-                  {!off && c.total_cents != null && <b className="pg-coin-total num">{money(c.total_cents, 'USD')}</b>}
-                </button>
-              );
-            })}
-          </div>
-          <p className="small muted" style={{ margin: 0 }}>{t('crypto.feeNote')}</p>
-        </div>
+        <CoinSteps coins={coins} owed={owed} currency={currency} busy={busy} onPick={pick} />
       )}
       {payments.filter((p) => !OPEN.has(p.status)).length > 0 && (
         <details>
@@ -254,3 +232,50 @@ export const REFUND_COINS = [
   { coin: 'usdttrc20', name: 'Tether (TRC-20)' }, { coin: 'usdterc20', name: 'Tether (ERC-20)' }, { coin: 'usdtbsc', name: 'Tether (BEP-20)' },
   { coin: 'usdcerc20', name: 'USD Coin (ERC-20)' }, { coin: 'btc', name: 'Bitcoin' }, { coin: 'eth', name: 'Ethereum' }, { coin: 'ltc', name: 'Litecoin' }, { coin: 'trx', name: 'TRON' },
 ];
+
+/** First the buyer picks Crypto as the payment method, then the usual coin list (Round 24b). */
+function CoinSteps({ coins, owed, currency, busy, onPick }: { coins: Coins | null; owed: number; currency: string; busy: boolean; onPick: (coin: string) => void }) {
+  const [method, setMethod] = useState(false);
+  const ticker = (code: string) => code.toUpperCase().replace(/(.+)(TRC20|ERC20|BSC|SOL)$/, '$1');
+  if (!method) {
+    return (
+      <div className="card pg-coins">
+        <div className="row spread">
+          <h3 style={{ margin: 0 }}>{t('pay.method')}</h3>
+          <span className="small muted">{t('crypto.toPayShort', { amount: money(owed, currency) })}</span>
+        </div>
+        <div className="pg-coin-list">
+          <button type="button" className="pg-coin" onClick={() => setMethod(true)}>
+            <span className="pg-sym" aria-hidden>₿</span>
+            <span className="min-w-0 flex-1"><b className="block">{t('pay.crypto')}</b><span className="small muted">{t('pay.cryptoText')}</span></span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="card pg-coins">
+      <div className="row spread">
+        <h3 style={{ margin: 0 }}>{t('crypto.chooseCoin')}</h3>
+        <span className="small muted">{t('crypto.toPayShort', { amount: money(owed, currency) })}</span>
+      </div>
+      {coins && !coins.coins.some((c) => c.available !== false) && <p className="small">{t('crypto.noCoin')}</p>}
+      <div className="pg-coin-list">
+        {coins?.coins.map((c) => {
+          const off = c.available === false;
+          return (
+            <button key={c.coin} type="button" className={`pg-coin${off ? ' off' : ''}`} disabled={busy || off} aria-disabled={off || undefined} onClick={() => onPick(c.coin)} title={off ? t('crypto.tooSmall', { amount: money(Math.round(c.minUsd * 100), 'USD') }) : undefined}>
+              <span className="pg-sym" aria-hidden>{ticker(c.coin).slice(0, 4)}</span>
+              <span className="min-w-0 flex-1">
+                <b className="block">{c.name}{c.network && !c.name.includes('(') && c.network !== c.name && !c.name.startsWith(c.network) && <span className="pg-net">{c.network}</span>}</b>
+                <span className="small muted">{off ? t('crypto.tooSmall', { amount: money(Math.round(c.minUsd * 100), 'USD') }) : c.fee_cents != null ? t('crypto.feeLine', { fee: money(c.fee_cents, 'USD') }) : t('crypto.minimum', { amount: money(Math.round(c.minUsd * 100), 'USD') })}</span>
+              </span>
+              {!off && c.total_cents != null && <b className="pg-coin-total num">{money(c.total_cents, 'USD')}</b>}
+            </button>
+          );
+        })}
+      </div>
+      <p className="small muted" style={{ margin: 0 }}>{t('crypto.feeNote')}</p>
+    </div>
+  );
+}

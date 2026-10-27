@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { HELP_CENTER } from '@/lib/features';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api';
 import { currentLocale, t } from '../i18n';
@@ -108,7 +109,7 @@ export function LegalPage({ doc: fixed }: { doc?: LegalDoc }) {
       <nav className="small muted" aria-label={t('legal.nav')} style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px' }}>
         {LEGAL_DOCS.filter((d) => d !== doc).map((d) => <Link key={d} to={`/${d}`}>{legalTitle(d)}</Link>)}
         {doc === 'terms' && !version && <Link to="/terms/history">{t('legal.history')}</Link>}
-        <Link to="/help">{t('footer.helpCentre')}</Link>
+        {HELP_CENTER && <Link to="/help">{t('footer.helpCentre')}</Link>}
       </nav>
     </article>
   );

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { HELP_CENTER } from '@/lib/features';
 import { Link } from 'react-router-dom';
 import { handoverFieldFor, handoverKey } from '../../../api/src/domain/attributeSets';
 import { useSession } from '../session';
@@ -56,7 +57,7 @@ export function CharacterField({ game, category, value, onChange, compact = fals
           </button>
           <button type="button" className="pg-saved-change" onClick={() => { setEditing(true); setConfirmed(false); onChange('', false); }}>{t('handover.change')}</button>
         </div>
-        {!compact && <span className="small muted">{t('handover.responsible')} <Link to="/help/delivery-in-game">{t('handover.terms')}</Link></span>}
+        {!compact && HELP_CENTER && <span className="small muted">{t('handover.responsible')} <Link to="/help/delivery-in-game">{t('handover.terms')}</Link></span>}
       </div>
     );
   }
@@ -75,7 +76,7 @@ export function CharacterField({ game, category, value, onChange, compact = fals
         }}
       />
       <span id={`handover-hint-${field.key}`} className="small muted">
-        {hint} {!compact && <>{t('handover.responsible')} <Link to="/help/delivery-in-game">{t('handover.terms')}</Link></>}
+        {hint} {!compact && HELP_CENTER && <>{t('handover.responsible')} <Link to="/help/delivery-in-game">{t('handover.terms')}</Link></>}
       </span>
     </label>
   );

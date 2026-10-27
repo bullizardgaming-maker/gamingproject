@@ -9,7 +9,9 @@ import type { Offer } from './Market';
 import { usePageMeta } from '@/lib/seo';
 import { lastSeenLabel, replyLabel } from '@/lib/presence';
 import { intlLocale, t } from '../i18n';
-import { languageName } from '../components/StorefrontEditor';
+import { StorefrontEditor, languageName } from '../components/StorefrontEditor';
+import { PresenceSettings } from './Sell';
+import { useSession } from '../session';
 
 interface Profile {
   id: string;
@@ -48,13 +50,20 @@ export function SellerPage() {
   const [tab, setTab] = useState<'offers' | 'reviews'>('offers');
   const [game, setGame] = useState('');
   const [error, setError] = useState('');
+  const { user } = useSession();
+  const own = user?.id === id;
+  const [editing, setEditing] = useState(false);
+  const [shopSettings, setShopSettings] = useState<any>(undefined);
+  useEffect(() => {
+    if (own && editing && shopSettings === undefined) api<any>('/seller/dashboard').then((d) => setShopSettings(d.shop ?? null)).catch(() => setShopSettings(null));
+  }, [own, editing, shopSettings]);
 
   useEffect(() => {
     setProfile(null);
     setOffers(null);
     api<Profile>(`/sellers/${id}?limit=30`).then(setProfile).catch((e) => setError(e.message));
     api<{ items: Offer[] }>(`/offers?seller=${id}&pageSize=60&sort=best_selling`).then((r) => setOffers(r.items)).catch(() => setOffers([]));
-  }, [id]);
+  }, [id, editing]); // leaving edit mode reloads the shop with the changes
 
   usePageMeta({
     title: profile ? `${profile.display_name} — seller` : undefined,
@@ -62,13 +71,14 @@ export function SellerPage() {
   });
   const games = useMemo(() => {
     const m = new Map<string, number>();
-    for (const o of offers ?? []) m.set(o.game, (m.get(o.game) ?? 0) + 1);
+    // The categories the seller lists in: "Albion Online · Currency".
+    for (const o of offers ?? []) { const k = `${o.game} · ${categoryLabel(o.category_slug)}`; m.set(k, (m.get(k) ?? 0) + 1); }
     return [...m.entries()].sort((a, b) => b[1] - a[1]);
   }, [offers]);
 
   if (!profile) return <p className="muted">{error || t('sp.loading')}</p>;
   const r = profile.rating;
-  const shown = (offers ?? []).filter((o) => !game || o.game === game);
+  const shown = (offers ?? []).filter((o) => !game || `${o.game} · ${categoryLabel(o.category_slug)}` === game);
   const shop = profile.storefront;
   const reply = replyLabel(profile.response_minutes);
 
@@ -78,19 +88,19 @@ export function SellerPage() {
       <section className="card sp-head">
         <div className="sp-who">
           <SellerAvatar name={profile.display_name} online={profile.online} size="size-20 text-2xl" className="sp-avatar" />
-          <div className="min-w-0">
-            <h1 className="sp-name">{profile.display_name}</h1>
+          <h1 className="sp-name">{profile.display_name}</h1>
+        </div>
+        <div className="sp-meta">
             <div className="sp-badges">
               {profile.identity_verified && <span className="rank"><BadgeCheck className="size-3" aria-hidden /> {t('badge.idVerified')}</span>}
               <TrustBadge level={profile.trust_level} />
               {profile.founding && <FoundingBadge />}
             </div>
             <p className="sp-presence small">
-              {profile.online ? <span className="presence on">{t('presence.online')}</span> : lastSeenLabel(profile.last_seen_at) && <span className="presence">{lastSeenLabel(profile.last_seen_at)}</span>}
+              {!profile.online && lastSeenLabel(profile.last_seen_at) && <span className="presence">{lastSeenLabel(profile.last_seen_at)}</span>}
               {reply && <span className="muted">{reply}</span>}
               {!!shop?.languages?.length && <span className="muted">{t('sp.speaks', { list: shop.languages.map(languageName).join(', ') })}</span>}
             </p>
-          </div>
         </div>
         <dl className="sp-stats">
           <div><dt>{t('sp.positive')}</dt><dd className="num">{r.count ? `${Number(r.positive_pct)}%` : '—'}</dd></div>
@@ -100,9 +110,16 @@ export function SellerPage() {
           <div><dt>{t('sp.since')}</dt><dd>{since(profile.member_since)}</dd></div>
         </dl>
         {shop?.intro && <p className="sp-intro" dir="auto">{shop.intro}</p>}
+        {own && <button type="button" className="btn ghost sm sp-edit" onClick={() => setEditing((e) => !e)}>{editing ? t('sp.done') : t('sp.edit')}</button>}
         {profile.shop_paused && <div className="notice">{profile.shop_pause_message || t('sp.paused')}</div>}
       </section>
 
+      {own && editing && (
+        <section className="stack sp-editor" aria-label={t('sp.edit')}>
+          {shopSettings !== undefined && <PresenceSettings shop={shopSettings ?? undefined} />}
+          <StorefrontEditor sellerId={id} />
+        </section>
+      )}
       {shop && shop.pinned.length > 0 && (
         <section className="stack" aria-labelledby="pinned-title" style={{ gap: 12 }}>
           <h2 id="pinned-title" className="sp-h2">{t('sp.featured')}</h2>
@@ -123,7 +140,7 @@ export function SellerPage() {
         <>
           {games.length > 1 && (
             <div className="pg-seg sp-games" role="group" aria-label="Game">
-              <button type="button" aria-pressed={!game} onClick={() => setGame('')}>{t('sp.allGames')}</button>
+              <button type="button" aria-pressed={!game} onClick={() => setGame('')}>{t('sp.allCats')}</button>
               {games.map(([g, n]) => (
                 <button key={g} type="button" aria-pressed={game === g} onClick={() => setGame(g)}>{g} <span className="muted">{n}</span></button>
               ))}
@@ -159,7 +176,6 @@ export function SellerPage() {
           </ul>
         </>
       )}
-      <p className="small muted">{t('sp.reviewNote')}</p>
     </div>
   );
 }

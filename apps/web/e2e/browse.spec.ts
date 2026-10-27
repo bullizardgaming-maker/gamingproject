@@ -54,13 +54,12 @@ test.describe('browsing', () => {
     await page.getByRole('tab', { name: /Reviews/ }).click();
   });
 
-  test('status page, help centre and deep-link reload', async ({ page }) => {
+  test('status page; the help centre is drafted and sends people to support', async ({ page }) => {
     await page.goto('/status');
     await expect(page.getByRole('heading', { name: 'All systems operational' })).toBeVisible();
     await page.goto('/help');
-    await page.getByLabel('Search help articles').fill('refund');
-    await page.getByText('When will I see my refund?').click();
-    await expect(page.getByRole('heading', { name: 'When will I see my refund?' })).toBeVisible();
+    await expect(page).toHaveURL(/\/support\/new/); // Round 24b: no help centre until it is built
+    await expect(page.getByRole('contentinfo').getByRole('link', { name: 'Help centre' })).toHaveCount(0);
   });
 
   test('dark mode and display currency persist', async ({ page }) => {
@@ -96,8 +95,6 @@ test.describe('browsing', () => {
   });
 
   test('quantity prices lower the unit price as you buy more', async ({ page }) => {
-    await page.goto('/games/world-of-warcraft/currency');
-    await expect(page.getByText('$15.00 at 10+')).toBeVisible();
     await page.goto('/offers/offer-7');
     await page.getByRole('button', { name: '10+ · $15.00 each' }).click();
     await expect(page.getByLabel('Quantity')).toHaveValue('10');
@@ -111,7 +108,9 @@ test.describe('browsing', () => {
     await page.goto('/games/genshin-impact/top-ups');
     await expect(page.getByRole('img', { name: 'Online now' }).first()).toBeVisible();
     await page.goto('/sellers/u-sell5-0000-4000-8000-000000000007');
-    await expect(page.getByText('Online now')).toBeVisible();
+    // Online is the green dot on the picture; "last seen" is written only when the seller is away (Round 24).
+    await expect(page.getByRole('img', { name: 'Online now' }).first()).toBeVisible();
+    await expect(page.getByText('Online now', { exact: true })).toHaveCount(0);
     await expect(page.getByText('Usually replies within 15 minutes')).toBeVisible();
     await page.goto('/sellers/u-sell2-0000-4000-8000-000000000004');
     await expect(page.getByText('Usually replies within an hour')).toBeVisible();

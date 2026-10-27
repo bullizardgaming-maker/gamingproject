@@ -1,4 +1,5 @@
 import type React from 'react';
+import { HELP_CENTER } from '@/lib/features';
 import { ShieldCheck } from '@phosphor-icons/react';
 import { Link } from 'react-router-dom';
 import { t, useLocale } from '../i18n';
@@ -54,11 +55,11 @@ export function BrandName({ className }: { className?: string }) {
 }
 
 /** "Bullizard Buyer Protection" with the name as the logo. */
-export function BuyerProtection({ text = true }: { text?: boolean }) {
+export function BuyerProtection({ text = true, short = false }: { text?: boolean; short?: boolean }) {
   return (
     <div className="bp">
       <b className="bp-title"><ShieldCheck className="bp-icon" weight="bold" aria-hidden /><BrandName /><span>{t('protect.title')}</span></b>
-      {text && <span className="small muted">{t('protect.text')} <Link to="/help/buyer-protection">{t('protect.more')}</Link></span>}
+      {text && (short ? <span className="small muted">{t('protect.short')}</span> : <span className="small muted">{t('protect.text')} {HELP_CENTER && <Link to="/help/buyer-protection">{t('protect.more')}</Link>}</span>)}
     </div>
   );
 }
