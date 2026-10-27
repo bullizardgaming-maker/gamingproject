@@ -23,8 +23,8 @@
   --muted: #e2e7ee;
   --muted-foreground: #4f5e75; /* 4.5:1 on secondary and tinted panels */
   --accent: #ffffff;
-  --accent-foreground: #348300;
-  --destructive: #ff1000;
+  --accent-foreground: #2f7600;
+  --destructive: #d40d00;
   --border: #cfd6e0;
   --input: #cfd6e0;
   --ring: #16202e;

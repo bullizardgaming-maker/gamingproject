@@ -61,7 +61,7 @@ export function Login() {
   if (mfaToken) {
     return (
       <form className="card stack" style={{ maxWidth: 440, margin: '24px auto' }} onSubmit={submitCode}>
-        <h2>Enter your sign-in code</h2>
+        <h1 className="auth-h1">Enter your sign-in code</h1>
         <p className="muted small">Open your authenticator app and enter the 6-digit code for Bullizard. Lost your phone? Enter one of your recovery codes instead.</p>
         <input name="code" className="mono" autoComplete="one-time-code" autoFocus required maxLength={20} aria-label="Code" />
         {error && <div className="alert" role="alert">{error}</div>}
@@ -74,7 +74,7 @@ export function Login() {
     <div className="stack" style={{ maxWidth: 640, margin: '24px auto' }}>
     {DEMO && mode === 'login' && <DemoSignIn next={params.get('next') ?? '/market'} />}
     <div className="card stack" style={{ maxWidth: 440, width: '100%', margin: '0 auto' }}>
-      <h2>{mode === 'login' ? 'Sign in' : 'Create an account'}</h2>
+      <h1 className="auth-h1">{mode === 'login' ? 'Sign in' : 'Create an account'}</h1>
       <form className="stack" onSubmit={submit}>
         {mode === 'register' && (
           <label className="field">Display name<input name="displayName" required minLength={2} maxLength={40} /></label>
@@ -469,7 +469,7 @@ export function ForgotPassword() {
   };
   return (
     <form className="card stack" style={{ maxWidth: 440, margin: '24px auto' }} onSubmit={submit}>
-      <h2>Reset your password</h2>
+      <h1 className="auth-h1">Reset your password</h1>
       {sent ? (
         <div className="ok" role="status">{t('auth.resetSent')}</div>
       ) : (

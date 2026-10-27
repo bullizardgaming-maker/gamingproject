@@ -14,10 +14,10 @@
   --held-soft: #fdf3d0;
   --released: #00771d;  /* completed / confirmed: green (4.9:1 on frost) */
   --released-soft: #ffffff;
-  --disputed: #ff1000;  /* cancelled, failed, disputed: red (5.0:1 on frost) */
+  --disputed: #d40d00;  /* cancelled, failed, disputed: red (readable on light backgrounds) */
   --disputed-soft: #fbe5e2;
   --held-ink: #7a5300;      /* text on held-soft */
-  --released-ink: #348300;  /* text on released-soft */
+  --released-ink: #2f7600;  /* text on released-soft */
   --disputed-ink: #9d2a22;
   --field: #fff;            /* input backgrounds */
   --band: #f8fafc;          /* page top band (game pages) */
@@ -327,7 +327,7 @@ html.dark {
   --rule: #3a3a3a;
   --held: #ffc000;
   --held-soft: #3a300c;
-  --released: #00771d;
+  --released: #00a127;
   --released-soft: #00851f;
   --disputed: #ff1400;
   --disputed-soft: #3d1714;
@@ -1284,3 +1284,7 @@ table.orders-table td:has(> .eye-status), table.orders-table th:nth-child(3) { t
 .home-bought .card.home-bought-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; }
 .home-bought-text { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .home-bought-eye { align-self: center; }
+
+/* Sign-in pages: the page's main heading, at the card-title size */
+.auth-h1 { font-size: clamp(24px, 3vw, 34px); font-weight: 650; }
+[data-theme] .auth-h1, html.dark .auth-h1 { font-weight: 700; }

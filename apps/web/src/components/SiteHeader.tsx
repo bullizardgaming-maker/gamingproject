@@ -49,6 +49,7 @@ export function GameSearch({ big = false, autoFocus = false }: { big?: boolean; 
     <form
       ref={box}
       role="search"
+      aria-label={big ? t('search.heroLabel') : t('search.label')}
       className="relative w-full"
       onSubmit={(e) => {
         e.preventDefault();

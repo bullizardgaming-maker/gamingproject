@@ -956,5 +956,6 @@ const de: Messages = {
   "chat.blocked.ban": "Nicht gesendet. Dein Konto wurde gesperrt, weil du externe Kontakte geteilt hast. Glaubst du, das war ein Fehler? Schreib an support@bullizard.com.",
   "err.unsupported_coin": "Auszahlungen gehen nur in USDT raus, über TRC-20 oder BEP-20. Füge eine USDT-Adresse hinzu, um auszuzahlen.",
   "err.unsupported_currency": "Auszahlungen gibt es nur in USD. Wende dich wegen Guthaben in einer anderen Währung an den Support.",
+  "search.heroLabel": "Spiele suchen",
 };
 export default de;

@@ -70,7 +70,7 @@ export function AmlPanel() {
               <thead><tr><th>User</th><th>Rule</th><th>Opened</th></tr></thead>
               <tbody>
                 {cases.map((c) => (
-                  <tr key={c.id} onClick={() => setSelected(c.id)} className={cn('cursor-pointer hover:bg-secondary/60', selected === c.id && 'bg-secondary')}>
+                  <tr key={c.id} onClick={() => setSelected(c.id)} tabIndex={0} onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), setSelected(c.id))} className={cn('cursor-pointer hover:bg-secondary/60', selected === c.id && 'bg-secondary')}>
                     <td>
                       {c.display_name}
                       {c.holds_payouts && <span className="chip disputed" style={{ marginInlineStart: 6 }}>payouts paused</span>}

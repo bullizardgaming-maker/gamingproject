@@ -177,7 +177,7 @@ export function StatusPage() {
           <b>Get status updates by email</b>
           <div className="small muted">One email per incident update or planned maintenance. Unsubscribe from any email.</div>
         </div>
-        <input type="email" required placeholder="you@example.com" aria-label="Email for status updates" value={email} onChange={(e) => setEmail(e.target.value)} style={{ flex: '1 1 220px' }} />
+        <input type="email" required aria-label="Email for status updates" value={email} onChange={(e) => setEmail(e.target.value)} style={{ flex: '1 1 220px' }} />
         <button className="btn">Subscribe</button>
       </form>
     </div>

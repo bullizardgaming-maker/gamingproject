@@ -1732,6 +1732,7 @@ const en = {
   "err.unsupported_currency": "Withdrawals are in USD only. Contact support about a balance in another currency.",
   "money.payoutAddress.coinHint": "USDT only, on TRC-20 or BEP-20.",
   "money.payoutAddress.cleared": "Payouts are now USDT only, so your old payout address was removed. Add a USDT address to withdraw.",
+  "search.heroLabel": "Search games",
 };
 
 export type MessageKey = keyof typeof en;

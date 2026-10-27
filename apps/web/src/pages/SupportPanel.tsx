@@ -46,7 +46,7 @@ export function SupportPanel() {
             <thead><tr><th>#</th><th>Request</th><th>Customer</th><th>Status</th><th>Assignee</th><th>Updated</th></tr></thead>
             <tbody>
               {list.map((t) => (
-                <tr key={t.id} onClick={() => show(t.id)} style={{ cursor: 'pointer' }}>
+                <tr key={t.id} onClick={() => show(t.id)} tabIndex={0} onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), show(t.id))} style={{ cursor: 'pointer' }}>
                   <td className="mono">{t.number}</td>
                   <td>
                     <button className="cursor-pointer border-0 bg-transparent p-0 text-start font-medium hover:underline" onClick={(e) => (e.stopPropagation(), show(t.id))}>{t.subject}</button>

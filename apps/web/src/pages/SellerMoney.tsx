@@ -464,7 +464,7 @@ function TaxForm({ tax, onSaved, onError }: { tax: TaxProfile; onSaved: (t: TaxP
       {business && (
         <label className="field">
           {t('money.vatNumber')}
-          <input name="taxId" className="mono" defaultValue={tax.taxId ?? ''} placeholder="e.g. DE123456789" />
+          <input name="taxId" className="mono" defaultValue={tax.taxId ?? ''} />
           {tax.taxId && <span className={cn('small', tax.taxIdVerified ? 'text-released' : 'text-muted-foreground')}>{tax.taxIdVerified ? t('money.vies') : t('money.notVerified')}</span>}
         </label>
       )}

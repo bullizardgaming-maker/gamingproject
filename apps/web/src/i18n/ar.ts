@@ -1534,5 +1534,6 @@ const ar: Messages = {
   "chat.blocked.ban": "لم تُرسَل. تم حظر حسابك بسبب مشاركة وسائل تواصل خارجية. تظن أننا أخطأنا؟ راسل support@bullizard.com.",
   "err.unsupported_coin": "السحب بعملة USDT فقط، على شبكة TRC-20 أو BEP-20. أضف عنوان USDT لتسحب.",
   "err.unsupported_currency": "السحب بالدولار فقط. تواصل مع الدعم بخصوص أي رصيد بعملة أخرى.",
+  "search.heroLabel": "ابحث عن الألعاب",
 };
 export default ar;

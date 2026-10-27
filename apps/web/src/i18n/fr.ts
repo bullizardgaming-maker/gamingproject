@@ -956,5 +956,6 @@ const fr: Messages = {
   "chat.blocked.ban": "Non envoyé. Votre compte a été banni pour partage de contacts extérieurs. Vous pensez que c’est une erreur ? Écrivez à support@bullizard.com.",
   "err.unsupported_coin": "Les paiements partent uniquement en USDT, sur TRC-20 ou BEP-20. Ajoutez une adresse USDT pour retirer.",
   "err.unsupported_currency": "Les retraits se font uniquement en USD. Contactez le support pour un solde dans une autre devise.",
+  "search.heroLabel": "Rechercher des jeux",
 };
 export default fr;
