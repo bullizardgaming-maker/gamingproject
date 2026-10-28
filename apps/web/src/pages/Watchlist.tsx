@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { BellRinging as BellRing, MagnifyingGlass as Search, Trash as Trash2 } from '@phosphor-icons/react';
-import { api, money } from '../api';
+import { BellRinging as BellRing, Trash as Trash2 } from '@phosphor-icons/react';
+import { money } from '../api';
 import { useSession } from '../session';
 import { WatchButton } from '../components/WatchButton';
 import { reloadWatches, removeWatch, useWatches, type Watch } from '@/lib/watches';
@@ -93,42 +93,7 @@ export function Watchlist() {
           })}
         </ul>
       )}
-      <SavedSearches />
     </div>
   );
 }
 
-interface SavedSearch { id: string; name: string; path: string; frequency: 'hourly' | 'daily'; last_sent_at: string | null }
-
-/** Saved searches: digests of new listings matching saved filters. */
-function SavedSearches() {
-  const [list, setList] = useState<SavedSearch[] | null>(null);
-  const load = () => void api<SavedSearch[]>('/me/saved-searches').then(setList).catch(() => setList([]));
-  useEffect(load, []);
-  return (
-    <section className="stack" style={{ gap: 10, marginTop: 16 }}>
-      <div>
-        <h2 style={{ margin: 0 }}>{t('saved.title')}</h2>
-        <p className="muted small" style={{ margin: '4px 0 0' }}>{t('saved.lede')}</p>
-      </div>
-      {list === null ? null : list.length === 0 ? (
-        <p className="small muted">{t('saved.empty')}</p>
-      ) : (
-        <ul className="m-0 list-none overflow-hidden rounded-xl border border-border bg-card p-0">
-          {list.map((s) => (
-            <li key={s.id} className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-3 last:border-b-0">
-              <Search className="size-4 text-muted-foreground" />
-              <Link to={s.path} className="min-w-0 flex-1 truncate font-medium no-underline hover:underline">{s.name}</Link>
-              <select aria-label={t('saved.frequency')} value={s.frequency} style={{ width: 150, height: 34, padding: '4px 8px' }}
-                onChange={async (e) => (await api(`/me/saved-searches/${s.id}`, { method: 'PATCH', body: { frequency: e.target.value } }), load())}>
-                <option value="daily">{t('saved.daily')}</option>
-                <option value="hourly">{t('saved.hourly')}</option>
-              </select>
-              <button className="btn ghost" aria-label={t('saved.delete', { name: s.name })} onClick={async () => (await api(`/me/saved-searches/${s.id}`, { method: 'DELETE' }), load())}><Trash2 className="size-4" /></button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
-  );
-}

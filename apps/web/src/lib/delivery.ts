@@ -10,7 +10,8 @@ import {
   type DeliveryFieldKey,
   type DeliveryMethod,
 } from '../../../api/src/domain/delivery';
-import { intlLocale, t } from '../i18n';
+import { intlLocale, t, type MessageKey } from '../i18n';
+import type { DeliveryTime } from '../../../api/src/domain/unitPrice';
 
 /**
  * Delivery methods: a fixed list per game. The seller ticks the ones they offer on each listing;
@@ -54,3 +55,6 @@ export const compact = (n: number) => {
 
 /** Seller level from completed orders: 1 + ⌊2·√orders⌋ (1 order → 3, 100 → 21, 3,000 → 110). */
 export const levelFromOrders = levelOf;
+
+/** "15 min", "1 hr", "24 hr" for the fixed delivery-time list (Round 25). */
+export const deliveryTimeLabel = (k: DeliveryTime) => t(`dt.${k}` as MessageKey);

@@ -13,6 +13,7 @@ import { DeliveryProof, type ProofAttachment } from '../components/DeliveryProof
 import { useSession } from '../session';
 import { currentLocale, intlLocale, t } from '../i18n';
 import { usePageMeta } from '@/lib/seo';
+import { usePrice } from '@/lib/prefs';
 import { attributePairs } from '@/lib/attributes';
 
 interface OrderDetail {
@@ -199,6 +200,7 @@ export const DISPUTE_CATEGORY: Record<string, string> = {
 };
 
 export function OrderPage() {
+  const viewerPrice = usePrice(); // the buyer's chosen currency, at the published rate
   usePageMeta({ title: t('order.meta'), noindex: true });
   const { id } = useParams();
   const { user } = useSession();
@@ -324,9 +326,9 @@ export function OrderPage() {
               </div>
             </div>
             <div className="pg-rows">
-              <div><span className="muted">{t('checkout.price')}</span><span className="num">{money(order.amount_cents, order.currency)}</span></div>
-              {(order.credit_cents ?? 0) > 0 && <div><span className="muted">{t('checkout.fromBalance')}</span><span className="num" data-testid="from-balance">−{money(order.credit_cents!, order.currency)}</span></div>}
-              <div className="pg-total"><span>{t('checkout.toPay')}</span><span className="pg-price">{money(order.charged_cents ?? order.amount_cents, order.currency)}</span></div>
+              <div><span className="muted">{t('checkout.price')}</span><span className="num">{viewerPrice(order.amount_cents, order.currency)}</span></div>
+              {(order.credit_cents ?? 0) > 0 && <div><span className="muted">{t('checkout.fromBalance')}</span><span className="num" data-testid="from-balance">−{viewerPrice(order.credit_cents!, order.currency)}</span></div>}
+              <div className="pg-total"><span>{t('checkout.toPay')}</span><span className="pg-price">{viewerPrice(order.charged_cents ?? order.amount_cents, order.currency)}</span></div>
             </div>
             <span className="small muted num" data-testid="order-ref">{order.ref ?? t('order.ref', { id: order.id.slice(0, 8) })}</span>
             <div className="bp-box"><BuyerProtection short /></div>

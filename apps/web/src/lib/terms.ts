@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 
 /**
@@ -10,12 +10,14 @@ import { api } from '../api';
 export function useTermsVersion() {
   const [version, setVersion] = useState<string | null>(null);
   const [stale, setStale] = useState(false);
+  /** The page's own load of the version (a click can come before it answers). */
+  const first = useRef<Promise<string | null> | null>(null);
   const load = useCallback(() => api<{ version: string }>('/legal/terms').then((d) => (setVersion(d.version), d.version)), []);
   useEffect(() => {
     let live = true;
-    api<{ version: string }>('/legal/terms')
-      .then((d) => live && setVersion(d.version))
-      .catch(() => {});
+    first.current = api<{ version: string }>('/legal/terms')
+      .then((d) => (live && setVersion(d.version), d.version))
+      .catch(() => null);
     return () => {
       live = false;
     };
@@ -24,5 +26,7 @@ export function useTermsVersion() {
     await load().catch(() => null);
     setStale(true);
   }, [load]);
-  return { version, stale, onStale, accepted: () => setStale(false) };
+  /** The version loaded with the page, waiting for that first load if Buy is pressed before it answers. */
+  const ready = useCallback(async () => version ?? (await first.current) ?? null, [version]);
+  return { version, stale, onStale, ready, accepted: () => setStale(false) };
 }

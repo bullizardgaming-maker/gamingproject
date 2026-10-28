@@ -43,7 +43,7 @@ test.describe('newsletter consent', () => {
     await page.goto('/login');
     await page.getByLabel('Language', { exact: true }).first().selectOption('ar');
     await page.getByRole('button', { name: 'New here? Create an account' }).click(); // the auth chrome is English-only
-    await expect(page.getByText('راسلني عن الألعاب الجديدة والعروض.')).toBeVisible();
+    await expect(page.getByText(/راسلني عن الألعاب الجديدة والعروض\./)).toBeVisible();
   });
 });
 
@@ -72,7 +72,7 @@ test.describe('Cloudflare Turnstile', () => {
     const errors = watchErrors(page);
     await withTurnstile(page);
     await page.goto('/market');
-    await expect(page.getByRole('heading', { name: 'All offers' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Currency', exact: true })).toBeVisible(); // the market opens on game coins (Round 25)
     await expect(turnstileScripts(page)).toHaveCount(0); // not on ordinary pages
 
     await openSignUp(page);

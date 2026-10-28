@@ -55,12 +55,15 @@ export function Rating({ value, count, className }: { value: number | string | n
   );
 }
 
-export function DeliveryTag({ offer }: { offer: Pick<Offer, 'delivery_mode'> & { delivery_hours?: number | null } }) {
+/** Promised delivery in hours: the Round 25 minutes when the API sends them, else the older hours. */
+export const deliveryHoursOf = (o: { delivery_minutes?: number | null; delivery_hours?: number | null }) => (o.delivery_minutes != null ? o.delivery_minutes / 60 : o.delivery_hours);
+
+export function DeliveryTag({ offer }: { offer: Pick<Offer, 'delivery_mode'> & { delivery_hours?: number | null; delivery_minutes?: number | null } }) {
   const instant = offer.delivery_mode === 'auto';
   return (
     <span className={cn('inline-flex items-center gap-1 whitespace-nowrap font-mono text-xs', instant ? 'text-released' : 'text-muted-foreground')}>
       {instant && <Zap className="size-3.5" weight="fill" />}
-      {deliveryLabel(offer.delivery_mode, offer.delivery_hours)}
+      {deliveryLabel(offer.delivery_mode, deliveryHoursOf(offer))}
     </span>
   );
 }
@@ -128,7 +131,6 @@ export function OfferTable({ offers, showGame = false, showSeller = true, empty,
                 <div className="lt-tags">
                   <ProtectionTag offer={o} />
                   {o.is_bundle && <span className="chip">{t('bundle.chip')}</span>}
-                  {o.featured && <span className="chip" data-testid="featured-chip"><Star className="size-3" /> {t('featured.chip')}</span>}
                 </div>
               </div>
               <div className="lt-del"><DeliveryTag offer={o as any} /></div>
@@ -285,12 +287,12 @@ export function LevelTag({ offer, className }: { offer: Pick<Offer, 'seller_leve
 }
 
 /** Delivery time as a short number: "Instant", "30 min", "1 hr". */
-export function DeliveryShort({ offer }: { offer: Pick<Offer, 'delivery_mode' | 'delivery_hours'> }) {
+export function DeliveryShort({ offer }: { offer: Pick<Offer, 'delivery_mode' | 'delivery_hours' | 'delivery_minutes'> }) {
   const instant = offer.delivery_mode === 'auto';
   return (
     <span className={cn('cl-chip', instant && 'is-instant')}>
       {instant ? <Zap className="size-3.5" weight="fill" aria-hidden /> : <Clock className="size-3.5" aria-hidden />}
-      {deliveryLabel(offer.delivery_mode, offer.delivery_hours)}
+      {deliveryLabel(offer.delivery_mode, deliveryHoursOf(offer))}
     </span>
   );
 }
@@ -350,5 +352,17 @@ export function CurrencyList({ offers, empty, current }: { offers: Offer[]; empt
         );
       })}
     </ul>
+  );
+}
+
+/** Up to four seller faces, then "+N" for the rest. */
+export function SellerFaces({ sellers, total }: { sellers: Array<{ id: string; name: string }>; total: number }) {
+  if (!sellers.length) return <span className="srv-faces" aria-hidden />;
+  const more = total - Math.min(sellers.length, 4);
+  return (
+    <span className="srv-faces" aria-label={t('srv.sellers', { n: total })} role="img">
+      {sellers.slice(0, 4).map((s) => <span key={s.id} className="avatar-ini" aria-hidden>{initials(s.name)}</span>)}
+      {more > 0 && <span className="srv-more num" aria-hidden>+{more}</span>}
+    </span>
   );
 }

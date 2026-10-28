@@ -7,6 +7,9 @@ import { cn } from '@/lib/utils';
 import { t, type MessageKey } from '../i18n';
 import { PHASE2_UI } from '@/lib/launch';
 
+/** Round 24b (CEO): tax, invoices and exports are not shown to sellers. */
+const TAX_INVOICES = false;
+
 interface Hold {
   level: string;
   holdDays: number;
@@ -165,7 +168,7 @@ export function SellerMoney() {
 
       <PayoutAddressCard onChanged={load} onMessage={setMsg} />
 
-      {PHASE2_UI && (
+      {TAX_INVOICES && PHASE2_UI && (
       <details className="card wl-more">
         <summary><b>{t('money.taxAndInvoices')}</b></summary>
         <div className="stack" style={{ marginTop: 16 }}>

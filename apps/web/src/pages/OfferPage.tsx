@@ -17,6 +17,8 @@ import { DeliveryDialog, type DeliveryChoice } from '../components/DeliveryDialo
 import { METHODS, methodLabel, methodsOf } from '@/lib/delivery';
 import { intlLocale, t } from '../i18n';
 import { BuyerProtection } from '../components/Brand';
+import { usePrice } from '@/lib/prefs';
+import { MIN_CURRENCY_ORDER_USD_CENTS, totalCentsFor, unitMicrosFor, volumePercentFor } from '../../../api/src/domain/unitPrice';
 
 /**
  * One offer, Eldorado-style: what you get and from whom on the left (kept short), the buy box on
@@ -31,12 +33,12 @@ export function OfferPage() {
   const [qtyText, setQtyText] = useState(params.get('qty') ?? '');
   const [busy, setBusy] = useState(false);
   const terms = useTermsVersion(); // Round 23e/23f: the version loaded with the page goes with the order
-  const termsVersion = terms.version;
   const [error, setError] = useState('');
   const [others, setOthers] = useState<Offer[]>([]);
   const [sort, setSort] = useState<'recommended' | 'price_asc' | 'min_qty_asc'>('recommended');
   const [dialog, setDialog] = useState(false);
   const [copied, setCopied] = useState(false);
+  const price = usePrice();
   const lastChoice = useRef<DeliveryChoice | undefined>(undefined); // kept so accepting new Terms re-sends the same delivery choice
   usePageMeta({ title: offer?.title, description: offer ? `${offer.title} · ${offer.game}. Paid into escrow, released when you confirm delivery.` : undefined });
 
@@ -59,8 +61,15 @@ export function OfferPage() {
   const min = offer.min_qty ?? 1;
   const qty = Math.max(0, Math.floor(Number(qtyText) || 0));
   const qtyOk = qty >= min && qty <= offer.stock;
+  // Round 25: currency listings are priced per unit in micro-units, with volume discounts; the total is rounded up
+  // to the cent (the order quote at checkout is the amount charged).
+  const micro = offer.unit_price_micros != null ? Number(offer.unit_price_micros) : null;
+  const volume = offer.volume_discounts ?? [];
+  const unitMicros = micro != null ? unitMicrosFor(micro, volume, Math.max(qty, 1)) : null;
+  const pctOff = micro != null ? volumePercentFor(volume, Math.max(qty, 1)) : 0;
   const unit = unitPriceFor(offer, Math.max(qty, 1));
-  const total = unit * Math.max(qty, 1);
+  const total = unitMicros != null ? totalCentsFor(unitMicros, Math.max(qty, 1)) : unit * Math.max(qty, 1);
+  const belowMin = micro != null && total < MIN_CURRENCY_ORDER_USD_CENTS;
   const own = user?.id === offer.seller_id;
   const needsCharacter = !!handoverFieldFor(offer.game, offer.category_slug);
   const methods = needsCharacter ? methodsOf(offer) : [];
@@ -74,9 +83,10 @@ export function OfferPage() {
     setError('');
     try {
       // The Terms version loaded with this page goes with the order; the API refuses it if it changed meanwhile (Round 23d/23e).
-      if (!termsVersion) throw Object.assign(new Error(t('legal.reloadTerms')), { code: 'terms_stale' });
+      const tosVersion = await terms.ready();
+      if (!tosVersion) throw Object.assign(new Error(t('legal.reloadTerms')), { code: 'terms_stale' });
       const res = await api<{ order: { id: string }; checkoutUrl: string | null }>('/orders', {
-        body: { offerId: offer.id, quantity: qty, rail: 'fiat', acceptTos: true, useCredit: true, tosVersion: termsVersion, ...(choice ? { deliveryMethod: choice.method, deliveryInfo: choice.info, characterName: choice.info.character, saveInfo: choice.save } : {}) },
+        body: { offerId: offer.id, quantity: qty, rail: 'fiat', acceptTos: true, useCredit: true, tosVersion, ...(choice ? { deliveryMethod: choice.method, deliveryInfo: choice.info, characterName: choice.info.character, saveInfo: choice.save } : {}) },
         headers: { 'Idempotency-Key': `${offer.id}:${qty}:${Math.floor(Date.now() / 60_000)}` },
       });
       if (res.checkoutUrl) window.location.assign(res.checkoutUrl);
@@ -189,13 +199,23 @@ export function OfferPage() {
               <button type="button" className="of-plus" aria-label={t('offer.more')} onClick={() => step(1)} disabled={qty >= offer.stock}><Plus className="size-4" aria-hidden /></button>
             </div>
             <p className="of-unitprice small muted num">
-              {onSale && <span className="line-through" style={{ marginInlineEnd: 6 }}>{money(offer.regular_price_cents!, offer.currency)}</span>}
-              {t('of.unitPrice', { price: money(unit, offer.currency) })}{isUnit ? ` / ${offer.unit_label}` : ''}
+              {onSale && micro == null && <span className="line-through" style={{ marginInlineEnd: 6 }}>{price(offer.regular_price_cents!)}</span>}
+              {t('of.unitPrice', { price: unitMicros != null ? price.unit(unitMicros) : price(unit) })}{isUnit ? ` / ${offer.unit_label}` : ''}
+              {pctOff > 0 && <span className="text-released"> · {t('vd.off', { n: pctOff })}</span>}
               {min > 1 && <> · {t('ct.minShort', { n: min.toLocaleString(intlLocale()) })}</>}
             </p>
             {onSale && offer.sale_ends_at && <p className="small text-released" style={{ margin: 0, textAlign: 'center' }}>{t('sale.endsOn', { when: new Date(offer.sale_ends_at).toLocaleString(intlLocale(), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) })}</p>}
           </div>
-          {tiers.length > 0 && (
+          {volume.length > 0 && micro != null && (
+            <div className="pg-seg of-volume" role="group" aria-label={t('vd.title')}>
+              {volume.map((v) => (
+                <button key={v.minQty} type="button" aria-pressed={pctOff === v.percentOff} onClick={() => setQtyText(String(v.minQty))}>
+                  {t('vd.row', { qty: v.minQty.toLocaleString(intlLocale()), n: v.percentOff })}
+                </button>
+              ))}
+            </div>
+          )}
+          {tiers.length > 0 && micro == null && (
             <div className="stack" style={{ gap: 6 }}>
               <div className="pg-seg" role="group" aria-label={t('tier.title')}>
                 {[{ minQty: 1, priceCents: offer.price_cents }, ...tiers].map((tr) => (
@@ -207,7 +227,8 @@ export function OfferPage() {
               {unit < offer.price_cents && <div className="small text-released">{t('tier.saving', { amount: money((offer.price_cents - unit) * qty, offer.currency), each: money(unit, offer.currency) })}</div>}
             </div>
           )}
-          <div className="of-total"><span>{t('offer.total')}</span><b className="num">{money(total, offer.currency)}</b></div>
+          <div className="of-total"><span>{t('offer.total')}</span><b className="num" data-testid="offer-total">{price(total)}</b></div>
+          {belowMin && <p className="small muted" style={{ margin: 0 }} role="status">{t('vd.minOrder', { amount: price(MIN_CURRENCY_ORDER_USD_CENTS) })}</p>}
           {terms.stale && <TermsChanged busy={busy} onAccept={() => { terms.accepted(); void buy(lastChoice.current); }} />}
           {error && !dialog && <div className="alert small" role="alert">{error} {error === t('offer.verifyFirst') && <Link to="/account">{t('offer.verifyNow')}</Link>}</div>}
           {!user ? (
@@ -215,7 +236,7 @@ export function OfferPage() {
           ) : own ? (
             <p className="muted small" style={{ margin: 0 }}>{t('offer.yours')}</p>
           ) : (
-            <button className="btn go lg block" disabled={busy || !qtyOk} onClick={() => (methods.length ? (setError(''), setDialog(true)) : buy())}>
+            <button className="btn go lg block" disabled={busy || !qtyOk || belowMin} onClick={() => (methods.length ? (setError(''), setDialog(true)) : buy())}>
               {busy && !dialog ? t('offer.opening') : t('of.buyNow')}
             </button>
           )}

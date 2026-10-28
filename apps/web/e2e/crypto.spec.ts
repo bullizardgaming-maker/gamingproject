@@ -9,9 +9,10 @@ test.describe('crypto money paths', () => {
     await page.waitForURL(/pay=crypto/);
     const checkout = page.locator('.crypto-checkout');
     await expect(checkout.getByRole('heading', { name: 'Pay with crypto' })).toBeVisible();
-    // Round 24b: the buyer picks Crypto first, then the coin.
-    await expect(checkout.getByRole('heading', { name: 'Payment method' })).toBeVisible();
-    await checkout.getByRole('button', { name: /^Crypto/ }).click();
+    // Round 25: payment method first (only Crypto for the beta), then the invoice currency, then the coin.
+    await expect(checkout.getByRole('heading', { name: 'Choose payment method' })).toBeVisible();
+    await checkout.getByTestId('method-crypto').click();
+    await checkout.getByTestId('invoice-USD').click();
     await expect(checkout.getByRole('button', { name: /Bitcoin/ })).toBeVisible();
     await expect(checkout.getByRole('button', { name: /Ethereum/ })).toBeVisible();
     await checkout.getByRole('button', { name: /Bitcoin/ }).click();
@@ -28,12 +29,15 @@ test.describe('crypto money paths', () => {
     await buyNow(page);
     await page.waitForURL(/pay=crypto/);
     const checkout = page.locator('.crypto-checkout');
-    await checkout.getByRole('button', { name: /^Crypto/ }).click();
+    await checkout.getByTestId('method-crypto').click();
+    await checkout.getByTestId('invoice-USD').click();
     await expect(checkout.getByRole('button', { name: /Tether \(TRC-20\)/ })).toBeEnabled();
     const monero = checkout.getByRole('button', { name: /Monero/ }); // $15 minimum
     await expect(monero).toBeDisabled();
     await expect(monero).toContainText("Order is below this coin's minimum ($15.00)");
-    await payCrypto(page);
+    await checkout.getByRole('button', { name: /Tether \(TRC-20\)/ }).click();
+    await expect(checkout.getByText('Waiting for your transfer')).toBeVisible();
+    await expect(checkout).toHaveCount(0, { timeout: 20_000 });
   });
 
   test('the buyer’s balance is spent first and the summary shows what is left to pay', async ({ page }) => {
@@ -116,6 +120,8 @@ test.describe('crypto money paths', () => {
     await page.getByRole('button', { name: 'Statements', exact: true }).click();
     await page.getByPlaceholder('Decision note (shared in the order record)').fill('No delivery evidence in the chat.');
     await page.getByRole('button', { name: 'Refund buyer' }).click();
+    // The decision is saved once the case leaves the queue (its buttons go with it); only then switch accounts.
+    await expect(page.getByRole('button', { name: 'Refund buyer' })).toHaveCount(0);
     await expect(page.getByText('No gold arrived and the seller stopped answering')).toHaveCount(0);
 
     await signIn(page, 'Buyer');
@@ -124,5 +130,32 @@ test.describe('crypto money paths', () => {
     await expect(page.getByLabel('Address')).toHaveCount(0); // nothing to send on-chain: the money is balance now
     await page.goto('/wallet');
     await expect(page.getByRole('heading', { name: /Balance/ })).toBeVisible();
+  });
+});
+
+test.describe('crypto checkout, Round 25', () => {
+  test('an EUR invoice uses the held price; a provider outage shows a message and Retry', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('bz.currency', 'EUR'));
+    await signIn(page, 'Buyer');
+    await page.goto('/offers/offer-1');
+    await buyNow(page);
+    await page.waitForURL(/pay=crypto/);
+    const checkout = page.locator('.crypto-checkout');
+    await checkout.getByTestId('method-crypto').click();
+    await checkout.getByTestId('invoice-EUR').click();
+    await expect(checkout.getByTestId('pay-due')).toContainText('€');
+    await checkout.getByRole('button', { name: /Tether \(TRC-20\)/ }).click();
+    await expect(checkout.getByTestId('pay-breakdown')).toContainText('Invoice: €');
+    await expect(checkout).toHaveCount(0, { timeout: 20_000 });
+
+    // The provider is down: a clear message and Retry, never an endless "Loading payment options…".
+    await page.evaluate(() => localStorage.setItem('bz.demo.cryptoDown', '1'));
+    await page.goto('/offers/offer-1');
+    await buyNow(page);
+    await page.waitForURL(/pay=crypto/);
+    await expect(page.getByTestId('pay-error')).toContainText('Crypto payments are unavailable right now');
+    await page.evaluate(() => localStorage.removeItem('bz.demo.cryptoDown'));
+    await page.getByRole('button', { name: 'Retry' }).click();
+    await expect(page.getByRole('heading', { name: 'Choose payment method' })).toBeVisible();
   });
 });

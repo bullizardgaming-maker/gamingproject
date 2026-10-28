@@ -21,17 +21,11 @@ test.describe('seller discounts', () => {
     await page.getByRole('button', { name: 'Apply' }).click();
     await expect(page.getByText('That code isn’t valid for this seller')).toBeVisible();
   });
-
-  test('a seller starts a sale', async ({ page }) => {
+  // Round 25 (CEO): the Sale tool is removed from the seller's pages.
+  test('the seller hub has no Sale button', async ({ page }) => {
     await signIn(page, 'Seller');
     await page.goto('/sell');
-    const row = page.getByRole('row', { name: /Elden Ring — Steam key/ });
-    await row.getByRole('button', { name: 'Sale' }).click();
-    await page.getByLabel('Sale price (USD)').fill('25');
-    await page.getByRole('button', { name: 'Start sale' }).click();
-    await expect(page.getByText(/Sale \$25\.00 until/)).toBeVisible();
-    await page.goto('/offers/offer-1');
-    await expect(page.locator('.line-through').first()).toBeVisible(); // the regular price, crossed out
-    await expect(page.getByText(/Sale ends/)).toBeVisible();
+    await expect(page.getByRole('row', { name: /Elden Ring — Steam key/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Sale', exact: true })).toHaveCount(0);
   });
 });

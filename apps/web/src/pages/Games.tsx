@@ -3,8 +3,8 @@ import { Link, NavLink, useNavigate, useParams, useSearchParams } from 'react-ro
 import { GameBanner } from '@/components/GameArt';
 import { ArrowRight, MagnifyingGlass as Search, ShieldCheck, Lightning as Zap } from '@phosphor-icons/react';
 import { api } from '../api';
-import { CATEGORY_ICON, CategoriesRetry, CurrencyList, OfferTable } from '../components/CatalogUi';
-import { CATEGORY_META, categoryLabel, initials, slugify, useCategoryOrder, useGames, type GameEntry } from '@/lib/catalog';
+import { CATEGORY_ICON, CategoriesRetry, CurrencyList, OfferTable, SellerFaces } from '../components/CatalogUi';
+import { CATEGORY_META, categoryLabel, slugify, useCategoryOrder, useGames, type GameEntry } from '@/lib/catalog';
 import { cn } from '@/lib/utils';
 import { usePrice } from '@/lib/prefs';
 import type { Offer } from './Market';
@@ -15,6 +15,17 @@ import { WatchButton } from '../components/WatchButton';
 import { recordBrowse } from '@/lib/recent';
 
 type AttrFacet = { key: string; value: string; count: number };
+/** GET /games/:slug/servers (Round 25, B1). */
+export interface ServerSummary {
+  name: string;
+  offers: number;
+  sellers: Array<{ id: string; name: string; avatar: string | null }>;
+  sellers_count: number;
+  sold: number;
+  from_unit_price: string | null;
+  from_unit_price_micros: number | null;
+}
+
 
 const LETTERS = ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
 
@@ -164,31 +175,20 @@ export function GamePage() {
   // Currency: the buyer picks a server (or league) first; every option shows its offers and lowest price.
   const pickDef: AttributeDef | undefined = category === 'currency' && entry ? attributesFor(entry.game, category)[0] : undefined;
   const picked = pickDef ? get(`attr.${pickDef.key}`) : '';
-  const [all, setAll] = useState<Offer[] | null>(null);
+  // Round 25 (B1): one call lists every server with its offers, sellers, sales and lowest unit price (no paging).
+  const [servers, setServers] = useState<ServerSummary[] | null>(null);
+  const [serversError, setServersError] = useState(false);
+  const [serversTry, setServersTry] = useState(0);
   useEffect(() => {
-    if (!entry || !pickDef) return setAll(null);
+    if (!entry || !pickDef) return setServers(null);
     let stale = false;
-    api<{ items: Offer[] }>(`/offers?${new URLSearchParams({ game: entry.game, category, sort: 'price_asc', pageSize: '100' })}`)
-      .then((r) => { if (!stale) setAll(r.items); })
-      .catch(() => { if (!stale) setAll([]); });
+    setServers(null);
+    setServersError(false);
+    api<ServerSummary[]>(`/games/${slug}/servers?${new URLSearchParams({ category })}`)
+      .then((r) => { if (!stale) setServers(r); })
+      .catch(() => { if (!stale) (setServers([]), setServersError(true)); });
     return () => { stale = true; };
-  }, [entry?.game, category, pickDef?.key]);
-  const servers = useMemo(() => {
-    if (!pickDef) return [];
-    const by = new Map<string, Offer[]>();
-    for (const o of all ?? []) {
-      const v = o.attributes?.[pickDef.key];
-      if (v) by.set(v, [...(by.get(v) ?? []), o]);
-    }
-    const names = pickDef.type === 'select' ? [...(pickDef.options ?? [])] : [...by.keys()].sort();
-    return names.map((name) => {
-      const list = by.get(name) ?? [];
-      const cheapest = list.reduce<Offer | null>((m, o) => (!m || o.price_cents < m.price_cents ? o : m), null);
-      const sellers = [...new Map(list.map((o) => [o.seller_id, o.seller_name])).values()];
-      const sold = list.reduce((n, o) => n + (o.sold_count ?? 0), 0);
-      return { name, count: list.length, cheapest, sellers, sold };
-    });
-  }, [all, pickDef]);
+  }, [entry?.game, slug, category, pickDef?.key, serversTry]);
 
   const more = async () => {
     const next = page + 1;
@@ -280,29 +280,31 @@ export function GamePage() {
       ) : category === 'currency' && pickDef && !picked ? (
         <section className="srv" aria-labelledby="srv-title">
           <h2 id="srv-title" className="srv-title">{pickDef.key === 'league' ? t('srv.pickLeague') : t('srv.pickServer')}</h2>
-          {all === null ? (
+          {servers === null ? (
             <p className="muted">{t('game.loadingOffers')}</p>
+          ) : serversError ? (
+            <div className="alert" role="alert">{t('srv.loadFailed')} <button type="button" className="btn ghost sm" onClick={() => setServersTry((n) => n + 1)}>{t('catalog.retry')}</button></div>
           ) : (
             <ul className="srv-grid">
-              {servers.map((sv, n) => (
+              {servers.map((sv) => (
                 <li key={sv.name}>
-                  <button type="button" className="srv-card" disabled={!sv.count} onClick={() => set(`attr.${pickDef.key}`, sv.name)}>
+                  <button type="button" className="srv-card" disabled={!sv.offers} onClick={() => set(`attr.${pickDef.key}`, sv.name)}>
                     <img className="srv-cover" src={`/games/${slug}.webp`} alt="" loading="lazy" onError={(e) => ((e.target as HTMLImageElement).style.display = 'none')} />
                     <span className="srv-top">
                       <b className="srv-name">{entry.game} {sv.name}</b>
                       {sv.sold > 0 && <span className="srv-sold num">{t('ct.sold', { n: sv.sold.toLocaleString(intlLocale()) })}</span>}
                       <span className="srv-mid">
-                        <span className="srv-faces" aria-hidden>{sv.sellers.slice(0, 3).map((name) => <span key={name} className="avatar-ini">{initials(name)}</span>)}</span>
-                        <span className="srv-count"><b className="num">{t('offers.count', { count: sv.count })}</b><span className="small muted">{t('srv.available')}</span></span>
+                        <SellerFaces sellers={sv.sellers} total={sv.sellers_count} />
+                        <span className="srv-count"><b className="num">{t('offers.count', { count: sv.offers })}</b><span className="small muted">{t('srv.available')}</span></span>
                       </span>
                     </span>
                     <span className="srv-bottom">
-                      {sv.cheapest ? (
-                        <span className="srv-price"><span className="small muted">{t('ct.from')}</span><span><b className="num">{price.offer(sv.cheapest as any)}</b>{sv.cheapest.unit_label && <span className="small muted"> / {sv.cheapest.unit_label}</span>}</span></span>
+                      {sv.from_unit_price_micros != null ? (
+                        <span className="srv-price"><span className="small muted">{t('ct.from')}</span><span><b className="num">{price.unit(sv.from_unit_price_micros)}</b></span></span>
                       ) : (
                         <span className="small muted">{t('srv.none')}</span>
                       )}
-                      <span className={`srv-go${n === 0 ? ' on' : ''}`} aria-hidden><ArrowRight className="size-5 rtl:rotate-180" /></span>
+                      <span className="srv-go" aria-hidden><ArrowRight className="size-5 rtl:rotate-180" /></span>
                     </span>
                   </button>
                 </li>
@@ -347,13 +349,13 @@ export function GamePage() {
                 empty={<>{t('game.noMatch')} <button className="cursor-pointer border-0 bg-transparent p-0 underline" onClick={() => nav(`/games/${slug}/${category}`)}>{t('game.clear')}</button></>}
               />
               {hasMore && <button className="btn ghost" style={{ alignSelf: 'center' }} onClick={more}>{t('game.more')}</button>}
-              {pickDef && servers.some((sv) => sv.name !== picked && sv.count) && (
+              {pickDef && servers?.some((sv) => sv.name !== picked && sv.offers) && (
                 <section className="srv-other" aria-labelledby="srv-other-title">
                   <h3 id="srv-other-title">{pickDef.key === 'league' ? t('srv.otherLeagues') : t('srv.otherServers')}</h3>
                   <div className="srv-chips">
-                    {servers.filter((sv) => sv.name !== picked && sv.count).map((sv) => (
+                    {servers!.filter((sv) => sv.name !== picked && sv.offers).map((sv) => (
                       <button key={sv.name} type="button" className="srv-chip" onClick={() => { set(`attr.${pickDef.key}`, sv.name); window.scrollTo({ top: 0 }); }}>
-                        <b>{sv.name}</b> <span className="small muted num">{t('srv.from', { price: price.offer(sv.cheapest as any) })}</span>
+                        <b>{sv.name}</b> {sv.from_unit_price_micros != null && <span className="small muted num">{t('srv.from', { price: price.unit(sv.from_unit_price_micros) })}</span>}
                       </button>
                     ))}
                   </div>

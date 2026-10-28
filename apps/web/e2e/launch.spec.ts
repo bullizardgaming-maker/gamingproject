@@ -2,14 +2,14 @@ import { expect, test } from '@playwright/test';
 import { signIn, signOut } from './helpers';
 
 test.describe('launch extras', () => {
-  test('Founding Sellers carry a badge and feature listings for free; featured listings lead the market', async ({ page }) => {
+  test('Founding Sellers carry a badge and feature listings for free; featured shows only on their own shop', async ({ page }) => {
+    // Round 25 (CEO): no featured badge or boost in the market; the newest listing leads "newest".
     await page.goto('/market?category=keys&sort=newest');
-    const first = page.getByRole('listitem').first();
-    await expect(first).toContainText('Elden Ring — Steam key (Global)'); // featured, though not the newest
-    await expect(first.getByTestId('featured-chip')).toBeVisible();
-    await expect(first.getByTestId('founding-badge')).toHaveCount(0); // badges show on the profile only (Round 24)
+    await expect(page.getByTestId('featured-chip')).toHaveCount(0);
+    await expect(page.locator('.lt').getByTestId('founding-badge')).toHaveCount(0); // badges show on the profile only (Round 24)
     await page.goto('/sellers/u-sell1-0000-4000-8000-000000000002');
     await expect(page.getByTestId('founding-badge')).toBeVisible();
+    await expect(page.getByTestId('shop-featured')).toContainText('Elden Ring — Steam key (Global)'); // pinned at the top of the shop
 
     await signIn(page, 'Seller');
     await page.goto('/sell');

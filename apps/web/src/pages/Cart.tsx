@@ -8,6 +8,7 @@ import { useSession } from '../session';
 import { clearCart, removeFromCart, setQuantity, useCart } from '@/lib/cart';
 import { unitPriceFor } from '@/lib/tiers';
 import { usePageMeta } from '@/lib/seo';
+import { usePrice } from '@/lib/prefs';
 import { useTermsVersion } from '@/lib/terms';
 import { TermsChanged } from '../components/TermsChanged';
 import type { Offer } from './Market';
@@ -24,7 +25,6 @@ export function CartPage() {
   const [names, setNames] = useState<Record<string, { value: string; ok: boolean }>>({});
   const [busy, setBusy] = useState(false);
   const terms = useTermsVersion(); // Round 23e/23f: the version loaded with the page goes with the order
-  const termsVersion = terms.version;
   const [error, setError] = useState('');
 
   const ids = items.map((i) => i.offerId).join(',');
@@ -60,9 +60,10 @@ export function CartPage() {
     setBusy(true);
     setError('');
     try {
-      if (!termsVersion) throw Object.assign(new Error(t('legal.reloadTerms')), { code: 'terms_stale' });
+      const tosVersion = await terms.ready();
+      if (!tosVersion) throw Object.assign(new Error(t('legal.reloadTerms')), { code: 'terms_stale' });
       const res = await api<{ checkoutUrl: string | null }>('/orders/cart', {
-        body: { items: payable.map((l) => ({ offerId: l.offerId, quantity: l.quantity, ...(needsName(l) ? { characterName: names[l.offerId]!.value.trim() } : {}) })), acceptTos: true, currency: [...currencies][0], useCredit: true, tosVersion: termsVersion },
+        body: { items: payable.map((l) => ({ offerId: l.offerId, quantity: l.quantity, ...(needsName(l) ? { characterName: names[l.offerId]!.value.trim() } : {}) })), acceptTos: true, currency: [...currencies][0], useCredit: true, tosVersion },
         headers: { 'Idempotency-Key': `cart:${payable.map((l) => `${l.offerId}x${l.quantity}`).join(',')}:${Math.floor(Date.now() / 60_000)}` },
       });
       for (const l of payable) removeFromCart(l.offerId);
@@ -170,6 +171,7 @@ export function CartPage() {
 
 /** Crypto payment for a cart checkout: one payment covers every order in it. */
 export function CartPayPage() {
+  const price = usePrice(); // the buyer's chosen currency, at the published rate
   const { id } = useParams();
   const nav = useNavigate();
   const [view, setView] = useState<{ checkout: { id: string; status: string; presentment_amount_cents: number; presentment_currency: string }; orders: Array<{ id: string; offer_title: string; quantity: number; seller_name: string; amount_cents: number; credit_cents?: number; charged_cents?: number; currency: string }> } | null>(null);
@@ -196,13 +198,13 @@ export function CartPayPage() {
     <div className="stack" style={{ maxWidth: 640 }}>
       <div>
         <div className="eyebrow">Checkout</div>
-        <h1 style={{ fontSize: 32 }}>{view.orders.length} listing{view.orders.length === 1 ? '' : 's'} · {money(toPay, cur)}</h1>
+        <h1 style={{ fontSize: 32 }}>{view.orders.length} listing{view.orders.length === 1 ? '' : 's'} · {price(toPay, cur)}</h1>
       </div>
       <div className="card small pg-rows">
-        {view.orders.map((o) => <div key={o.id}><span>{o.offer_title} × {o.quantity} · {o.seller_name}</span><span className="num">{money(o.amount_cents, o.currency)}</span></div>)}
-        <div><span className="muted">{t('checkout.price')}</span><span className="num">{money(total, cur)}</span></div>
-        {fromBalance > 0 && <div><span className="muted">{t('checkout.fromBalance')}</span><span className="num" data-testid="from-balance">−{money(fromBalance, cur)}</span></div>}
-        <div className="pg-total"><span>{t('checkout.toPay')}</span><span className="pg-price">{money(toPay, cur)}</span></div>
+        {view.orders.map((o) => <div key={o.id}><span>{o.offer_title} × {o.quantity} · {o.seller_name}</span><span className="num">{price(o.amount_cents, o.currency)}</span></div>)}
+        <div><span className="muted">{t('checkout.price')}</span><span className="num">{price(total, cur)}</span></div>
+        {fromBalance > 0 && <div><span className="muted">{t('checkout.fromBalance')}</span><span className="num" data-testid="from-balance">−{price(fromBalance, cur)}</span></div>}
+        <div className="pg-total"><span>{t('checkout.toPay')}</span><span className="pg-price">{price(toPay, cur)}</span></div>
       </div>
       <CryptoCheckout base={`/checkouts/${view.checkout.id}`} amountCents={toPay} currency={cur} onPaid={load} />
     </div>

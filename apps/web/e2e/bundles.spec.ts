@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { buy, signIn } from './helpers';
+import { buy, signIn, startOffer } from './helpers';
 
 test.describe('bundles', () => {
   test('a buyer sees what is inside and gets every part delivered', async ({ page }) => {
@@ -13,9 +13,7 @@ test.describe('bundles', () => {
 
   test('a seller builds a bundle from their instant listings', async ({ page }) => {
     await signIn(page, 'Seller');
-    await page.goto('/sell');
-    await page.locator('select[name=categorySlug]').selectOption('keys');
-    await page.locator('input[name=game]').fill('Valorant');
+    await startOffer(page, 'keys', 'Valorant');
     await page.locator('input[name=title]').fill('VP + skin code starter pack');
     await page.locator('input[name=price]').fill('70');
     await page.getByLabel('Make this a bundle of my instant listings').check();

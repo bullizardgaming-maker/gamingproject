@@ -81,6 +81,11 @@ export function SellerPage() {
   const shown = (offers ?? []).filter((o) => !game || `${o.game} · ${categoryLabel(o.category_slug)}` === game);
   const shop = profile.storefront;
   const reply = replyLabel(profile.response_minutes);
+  // Featured (CEO, Round 25): only here, on the seller's own shop, pinned at the top. The shop's pinned picks and
+  // the listings the API marks featured (GET /offers?seller= only) share the one section.
+  const featured = [...(shop?.pinned ?? []), ...(offers ?? []).filter((o) => o.featured && !shop?.pinned.some((p) => p.id === o.id))];
+  const featuredIds = new Set(featured.map((o) => o.id));
+  const rest = shown.filter((o) => game || !featuredIds.has(o.id));
 
   return (
     <div className="stack sp">
@@ -120,10 +125,10 @@ export function SellerPage() {
           <StorefrontEditor sellerId={id} />
         </section>
       )}
-      {shop && shop.pinned.length > 0 && (
-        <section className="stack" aria-labelledby="pinned-title" style={{ gap: 12 }}>
+      {featured.length > 0 && (
+        <section className="stack" aria-labelledby="pinned-title" style={{ gap: 12 }} data-testid="shop-featured">
           <h2 id="pinned-title" className="sp-h2">{t('sp.featured')}</h2>
-          <OfferCards offers={shop.pinned} />
+          <OfferCards offers={featured} />
         </section>
       )}
 
@@ -146,7 +151,7 @@ export function SellerPage() {
               ))}
             </div>
           )}
-          {offers === null ? <p className="muted">{t('sp.loading')}</p> : shown.length === 0 ? <div className="card muted">{t('sp.noOffers')}</div> : <OfferCards offers={shown} />}
+          {offers === null ? <p className="muted">{t('sp.loading')}</p> : shown.length === 0 ? <div className="card muted">{t('sp.noOffers')}</div> : rest.length ? <OfferCards offers={rest} /> : null}
         </>
       ) : profile.reviews.length === 0 ? (
         <div className="card muted">{t('sp.noReviews')}</div>

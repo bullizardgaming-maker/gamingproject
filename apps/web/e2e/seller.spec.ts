@@ -1,19 +1,18 @@
 import { expect, test } from '@playwright/test';
-import { signIn, signOut } from './helpers';
+import { signIn, signOut, startOffer } from './helpers';
 
 test.describe('seller', () => {
   test('creates a listing with game-specific fields that buyers can filter by', async ({ page }) => {
     await signIn(page, 'Seller');
-    await page.goto('/sell');
-    await page.locator('select[name=categorySlug]').selectOption('boosting');
-    await page.locator('input[name=game]').fill('League of Legends');
+    await startOffer(page, 'boosting', 'League of Legends');
     await page.locator('input[name=title]').fill('Silver → Gold in 3 days');
     await page.locator('input[name=price]').fill('25');
     // Live preview: NorthWind is on the Basilisk rank (10.99%), grossed up on top of the $25.
     const preview = page.getByTestId('price-preview');
     await expect(preview).toContainText('Buyers pay $28.09');
-    await expect(preview).toContainText('≈ €');
-    await expect(preview).toContainText('≈ EGP');
+    await expect(preview).toContainText('€'); // exact conversions, no "≈" (Round 25)
+    await expect(preview).toContainText('EGP');
+    await expect(preview).not.toContainText('≈');
     await expect(preview).toContainText('You earn $25.00');
     await expect(preview.getByRole('link', { name: 'Fee details' })).toHaveCount(0); // help centre drafted (Round 24b)
     await page.locator('select[name=deliveryMode]').selectOption('manual');

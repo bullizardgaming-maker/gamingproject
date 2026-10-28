@@ -1,10 +1,11 @@
 import { useSyncExternalStore } from 'react';
 import { api, money } from '../api';
+import { moneyLocale } from '../i18n';
 
 /**
  * Viewer preferences kept in this browser: colour theme and the currency prices are shown in.
- * Prices are settled in USD; other currencies are shown as approximate conversions at the
- * platform's published rates (checkout always shows the exact amount charged).
+ * Prices are settled in USD; EUR and EGP prices are exact conversions at the platform's published
+ * rates (GET /fx/rates), the same rates checkout charges at (Round 25: no "≈").
  */
 export type Theme = 'light' | 'dark' | 'system';
 export const DISPLAY_CURRENCIES = ['USD', 'EUR', 'EGP'] as const;
@@ -60,7 +61,7 @@ export function applyTheme() {
   document.documentElement.classList.toggle('dark', dark);
   document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
   // Browser chrome (and the installed app's title bar) follows the chosen theme, not just the OS.
-  document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute('content', dark ? '#0d131c' : '#eef1f5'));
+  document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute('content', dark ? '#0a0a0a' : '#eef1f5'));
 }
 media?.addEventListener?.('change', () => theme === 'system' && (applyTheme(), emit()));
 
@@ -80,9 +81,9 @@ export function setCurrency(c: DisplayCurrency) {
 
 let loading: Promise<void> | null = null;
 function loadRates() {
-  loading ??= api<{ rates: Array<{ currency: string; rate: number | string }> }>('/fx/rates')
+  loading ??= api<{ exact?: Record<string, string>; rates: Array<{ currency: string; rate: number | string }> }>('/fx/rates')
     .then((r) => {
-      rates = { USD: 1, ...Object.fromEntries(r.rates.map((x) => [x.currency, Number(x.rate)])) };
+      rates = { USD: 1, ...Object.fromEntries(r.rates.map((x) => [x.currency, Number(x.rate)])), ...Object.fromEntries(Object.entries(r.exact ?? {}).map(([c, v]) => [c, Number(v)])) };
       emit();
     })
     .catch(() => {
@@ -95,19 +96,35 @@ if (currency !== 'USD') loadRates();
 export const useTheme = () => useSyncExternalStore(subscribe, () => theme);
 export const useDisplayCurrency = () => useSyncExternalStore(subscribe, () => currency);
 
+/** The viewer's rate for a currency (USD per 1 USD = 1); undefined until /fx/rates has loaded. */
+export const rateFor = (c: string) => rates[c];
+export const useRates = () => useSyncExternalStore(subscribe, () => rates);
+
 /**
- * Price formatter in the viewer's currency. `fmt(cents)` takes a USD (settlement) amount: exact in
- * USD, "≈" when converted. `fmtOffer(o)` shows a listing in its own currency when the viewer
- * picked that currency, otherwise converts its settlement price.
+ * Price formatter in the viewer's currency. `fmt(cents)` takes a USD (settlement) amount and shows it
+ * converted at the published rate (exact, no "≈"). `fmtOffer(o)` shows a listing in its own currency
+ * when the viewer picked that currency, otherwise converts its settlement price. `fmt.unit(micros)`
+ * shows a currency listing's unit price with six decimals.
  */
 export function usePrice() {
   const cur = useSyncExternalStore(subscribe, () => currency);
   useSyncExternalStore(subscribe, () => rates);
   const fmt = (cents: number, from = 'USD') => {
     if (cur === from || from !== 'USD' || !rates[cur]) return money(cents, from);
-    return `≈ ${money(Math.round(cents * rates[cur]!), cur)}`;
+    return money(Math.round(cents * rates[cur]!), cur);
   };
-  const fmtOffer = (o: { price_cents: number; currency: string; price_settlement_cents?: number | string | null }) =>
-    o.currency === cur ? money(o.price_cents, cur) : fmt(o.currency === 'USD' ? o.price_cents : Number(o.price_settlement_cents ?? o.price_cents), o.currency === 'USD' || o.price_settlement_cents != null ? 'USD' : o.currency);
-  return Object.assign(fmt, { offer: fmtOffer });
+  /** A unit price in USD micro-units (6 decimals), in the viewer's currency, rounded up like the API. */
+  const fmtUnit = (micros: number) => {
+    const r = cur === 'USD' ? 1 : rates[cur];
+    const c = r ? cur : 'USD';
+    return unitMoney(Math.ceil(micros * (r ?? 1)), c);
+  };
+  const fmtOffer = (o: { price_cents: number; currency: string; price_settlement_cents?: number | string | null; unit_price_micros?: number | null }) =>
+    o.unit_price_micros != null ? fmtUnit(Number(o.unit_price_micros)) : o.currency === cur ? money(o.price_cents, cur) : fmt(o.currency === 'USD' ? o.price_cents : Number(o.price_settlement_cents ?? o.price_cents), o.currency === 'USD' || o.price_settlement_cents != null ? 'USD' : o.currency);
+  return Object.assign(fmt, { offer: fmtOffer, unit: fmtUnit, currency: rates[cur] || cur === 'USD' ? cur : 'USD' });
+}
+
+/** 123 micro-units in USD → "$0.000123" (six decimals, the viewer's locale and currency sign). */
+export function unitMoney(micros: number, currency = 'USD') {
+  return new Intl.NumberFormat(moneyLocale(), { style: 'currency', currency, minimumFractionDigits: 2, maximumFractionDigits: 6 }).format(micros / 1_000_000);
 }

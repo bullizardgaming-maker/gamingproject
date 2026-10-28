@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { signIn, signOut } from './helpers';
+import { signIn, signOut, startOffer } from './helpers';
 
 test.describe('seller onboarding', () => {
   test('a new seller passes the rules test before the first listing and sees the ID deadline', async ({ page }) => {
@@ -28,14 +28,15 @@ test.describe('seller onboarding', () => {
     await expect(page.getByTestId('seller-rate')).toContainText('Commission 13.99%'); // the promo starts with the first listing
 
     // First listing: allowed on Tier 1; the ID deadline then shows on the hub.
-    await page.locator('select[name=categorySlug]').selectOption('currency');
-    await page.locator('input[name=game]').fill('Albion Online');
-    await page.locator('input[name=title]').fill('5M silver — Europe');
-    await page.locator('input[name=price]').fill('6');
-    await page.locator('select[name=deliveryMode]').selectOption('manual');
+    // Round 25: the currency form is server, stock, unit price (6 decimals), delivery methods and time.
+    await startOffer(page, 'currency', 'Albion Online');
     await page.locator('select[name="attr.server"]').selectOption('Europe');
+    await page.locator('input[name=stock]').fill('5000000');
+    await page.locator('input[name=unitPrice]').fill('0.000012');
+    await page.locator('select[name=deliveryTime]').selectOption('1h');
     await page.getByRole('button', { name: 'Publish offer' }).click();
-    await expect(page.getByText('5M silver — Europe').first()).toBeVisible();
+    await expect(page.getByText('Your offer is live.')).toBeVisible();
+    await expect(page.getByText('Albion Online · Europe').first()).toBeVisible();
     await expect(page.getByTestId('id-deadline')).toContainText('Verify your identity by');
     await expect(page.getByTestId('seller-rate')).toContainText('Launch promo: 5%');
   });

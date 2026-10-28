@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { buy, signIn } from './helpers';
+import { buy, signIn, startOffer } from './helpers';
 
 test.describe('safety and moderation', () => {
   test('chat warns before sending contact details', async ({ page }) => {
@@ -17,14 +17,12 @@ test.describe('safety and moderation', () => {
 
   test('a listing with a review term waits for a moderator', async ({ page }) => {
     await signIn(page, 'Seller');
-    await page.goto('/sell');
-    await page.locator('select[name=categorySlug]').selectOption('items');
-    await page.locator('input[name=game]').fill('Counter-Strike 2');
+    await startOffer(page, 'items', 'Counter-Strike 2');
     await page.locator('input[name=title]').fill('Wallhack-proof crosshair pack');
     await page.locator('input[name=price]').fill('3');
     await page.getByRole('button', { name: 'Publish offer' }).click();
     await expect(page.getByText('In review').first()).toBeVisible();
-    await page.locator('input[name=game]').fill('Counter-Strike 2');
+    await startOffer(page, 'items', 'Counter-Strike 2');
     await page.locator('input[name=title]').fill('Carding guide');
     await page.locator('input[name=price]').fill('3');
     await page.getByRole('button', { name: 'Publish offer' }).click();

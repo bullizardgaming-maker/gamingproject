@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { payCrypto, signIn, signOut, buyNow } from './helpers';
+import { payCrypto, signIn, signOut, buyNow, startOffer } from './helpers';
 
 /** A tiny PNG (1×1) used as the seller's delivery proof. */
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
@@ -51,15 +51,13 @@ test.describe('launch games: in-game delivery', () => {
 
   test('the sell form shows league and mode for Path of Exile, with the open challenge league', async ({ page }) => {
     await signIn(page, 'Seller');
-    await page.goto('/sell');
-    await page.locator('select[name=categorySlug]').selectOption('currency');
-    await page.locator('input[name=game]').fill('Path of Exile');
+    await startOffer(page, 'currency', 'Path of Exile');
     const league = page.locator('select[name="attr.league"]');
     await expect(league).toBeVisible();
     await expect(league.locator('option')).toContainText(['Standard', 'Hardcore', 'Mercenaries']);
     await expect(league.locator('option', { hasText: 'Settlers' })).toHaveCount(0); // ended
     await expect(page.locator('select[name="attr.mode"]').locator('option')).toContainText(['Softcore', 'Hardcore']);
-    await page.locator('input[name=game]').fill('Albion Online');
+    await startOffer(page, 'currency', 'Albion Online');
     await expect(page.locator('select[name="attr.server"]').locator('option')).toContainText(['Americas', 'Europe', 'Asia']);
   });
 

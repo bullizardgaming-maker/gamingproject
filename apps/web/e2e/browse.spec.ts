@@ -6,10 +6,23 @@ test.describe('browsing', () => {
     const done = watchErrors(page);
     await page.goto('/');
     await expect(page.getByRole('heading', { name: /The market for every game/ })).toBeVisible();
+    // Round 25: the market opens on game coins as game + server cards, G2G-style, with a filter panel.
     await page.goto('/market');
+    await expect(page.getByRole('heading', { name: 'Currency', exact: true })).toBeVisible();
+    await expect(page.getByTestId('result-count')).toContainText(/\d+ results/);
+    await expect(page.locator('.mk-card').first()).toBeVisible();
+    const panel = page.getByRole('complementary', { name: 'Filters' });
+    await panel.getByRole('button', { name: /^World of Warcraft/ }).click();
+    await expect(page).toHaveURL(/game=World/);
+    await expect(page.locator('.mk-card').first()).toContainText('World of Warcraft');
+    await page.getByLabel('Sort').selectOption('price_asc');
+    await expect(page).toHaveURL(/sort=price_asc/);
+    // Other product types come as the listing table, paged.
+    await page.goto('/market?category=keys');
     await expect(page.getByRole('link', { name: 'Red Dead Redemption 2 — Rockstar key' })).toBeVisible();
-    await page.getByRole('button', { name: 'Next' }).click();
-    await expect(page.getByText(/Page 2 of/)).toBeVisible();
+    await page.goto('/market?q=e');
+    await page.locator('.mk-pager').getByRole('button', { name: '2', exact: true }).click();
+    await expect(page.locator('.mk-pager [aria-current=page]')).toHaveText('2');
     await page.fill('input[name=q]', 'valorant');
     await page.press('input[name=q]', 'Enter');
     await expect(page.getByText('Immortal 2 account').first()).toBeVisible();
@@ -65,9 +78,10 @@ test.describe('browsing', () => {
   test('dark mode and display currency persist', async ({ page }) => {
     await page.goto('/games/genshin-impact');
     await page.getByLabel('Show prices in', { exact: true }).first().selectOption('EGP');
-    await expect(page.getByText(/≈ EGP/).first()).toBeVisible();
+    await expect(page.getByText(/EGP\s?[\d,.]+/).first()).toBeVisible(); // exact, no "≈" (Round 25)
+    await expect(page.getByText(/≈/)).toHaveCount(0);
     await page.getByLabel('Show prices in', { exact: true }).first().selectOption('EUR');
-    await expect(page.getByText(/≈ €/).first()).toBeVisible();
+    await expect(page.getByText(/€[\d,.]+/).first()).toBeVisible();
     // The theme follows the device until the viewer picks one; the choice sticks across a reload.
     await page.emulateMedia({ colorScheme: 'dark' });
     await expect(page.locator('html')).toHaveClass(/dark/);
@@ -85,7 +99,8 @@ test.describe('browsing', () => {
     const page = await cairo.newPage();
     await page.goto('/games/genshin-impact');
     await expect(page.getByLabel('Show prices in').first()).toHaveValue('EGP');
-    await expect(page.getByText(/≈ EGP/).first()).toBeVisible();
+    await expect(page.getByTestId('prefs-currency')).toHaveText('EGP'); // visible in the top bar
+    await expect(page.getByText(/EGP\s?[\d,.]+/).first()).toBeVisible();
     await cairo.close();
     const berlin = await browser.newContext({ timezoneId: 'Europe/Berlin', locale: 'de-DE' });
     const p2 = await berlin.newPage();
@@ -94,14 +109,16 @@ test.describe('browsing', () => {
     await berlin.close();
   });
 
-  test('quantity prices lower the unit price as you buy more', async ({ page }) => {
+  test('volume discounts lower the unit price as you buy more', async ({ page }) => {
+    // Round 25: currency listings take a % off from a quantity; the total is quantity × unit price, rounded up.
     await page.goto('/offers/offer-7');
-    await page.getByRole('button', { name: '10+ · $15.00 each' }).click();
-    await expect(page.getByLabel('Quantity')).toHaveValue('10');
-    await expect(page.getByText('$150.00').first()).toBeVisible();
-    await expect(page.getByText('You save $30.00 ($15.00 each)')).toBeVisible();
     await page.getByLabel('Quantity').fill('3');
-    await expect(page.getByText('$54.00').first()).toBeVisible();
+    const three = await page.getByTestId('offer-total').textContent();
+    await page.getByRole('button', { name: /^10\+ · \d+% off$/ }).click();
+    await expect(page.getByLabel('Quantity')).toHaveValue('10');
+    await expect(page.locator('.of-unitprice')).toContainText('% off');
+    const ten = Number((await page.getByTestId('offer-total').textContent())!.replace(/[^\d.]/g, ''));
+    expect(ten).toBeLessThan((Number(three!.replace(/[^\d.]/g, '')) / 3) * 10);
   });
 
   test('listings and shops show who is online and how fast they reply', async ({ page }) => {

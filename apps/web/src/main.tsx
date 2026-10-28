@@ -10,6 +10,7 @@ import { OfferPage } from './pages/OfferPage';
 import { OrderPage } from './pages/OrderPage';
 import { InquiryChat, Orders } from './pages/Orders';
 import { Sell } from './pages/Sell';
+import { CreateOffer } from './pages/CreateOffer';
 import { Messages } from './pages/Messages';
 import { LegalHistory, LegalPage } from './pages/Legal';
 import { Account, ForgotPassword, Login, ResetPassword } from './pages/Account';
@@ -113,6 +114,7 @@ function App() {
           <Route path="/chat/:id" element={<InquiryChat />} />
           <Route path="/messages" element={<Messages />} />
           <Route path="/sell" element={<Sell />} />
+          <Route path="/sell/new" element={<CreateOffer />} />
           <Route path="/sell/money" element={<Sell />} />
           <Route path="/sell/analytics" element={<Sell />} />
           <Route path="/sell/invoices" element={<Navigate to="/sell/money" replace />} />

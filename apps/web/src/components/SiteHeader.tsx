@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ChatCentered as MessageSquare, ClockCounterClockwise, Eye, MagnifyingGlass as Search, TrendUp, X } from '@phosphor-icons/react';
+import { ChatCentered as MessageSquare, ClockCounterClockwise, Eye, MagnifyingGlass as Search, Plus, TrendUp, X } from '@phosphor-icons/react';
 import { BrandLockup } from './Brand';
 import { useSession } from '../session';
 import { NotificationBell } from './NotificationBell';
@@ -164,6 +164,7 @@ export function SiteHeader() {
                 <MessageSquare className="size-[18px]" />
               </Link>
               <NotificationBell />
+              <Link className="btn sm header-create" to="/sell/new"><Plus className="size-4" aria-hidden /><span>{t('sell.createOffer')}</span></Link>
               <AccountMenu />
             </>
           ) : (

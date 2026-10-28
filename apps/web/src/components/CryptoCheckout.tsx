@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import QRCode from 'qrcode';
-import { api, money } from '../api';
-import { t } from '../i18n';
+import { ApiError, api, money } from '../api';
+import { t, type MessageKey } from '../i18n';
+import { useDisplayCurrency, usePrice } from '@/lib/prefs';
 
 /**
  * Crypto checkout. `base` is `/orders/<id>` or `/checkouts/<id>`; the API under it offers the
@@ -22,43 +23,80 @@ export interface CryptoPayment {
   actually_paid_usd: string | null;
   /** Network fee the buyer covers on top of the order amount. */
   fee_usd?: string;
+  /** Round 25: what the invoice is priced in (USD or EUR) and that amount, plus the EUR-per-USD rate used. */
+  price_currency?: string;
+  price_amount?: string;
+  fx_rate?: string;
   status: string;
   expires_at: string | null;
   created_at: string;
 }
 interface Coins { owedCents: number; currency: string; coins: Array<{ coin: string; name: string; minUsd: number; available?: boolean; network?: string; fee_cents?: number; total_cents?: number }> }
+/** GET /payment-methods (Round 25, B5): only Crypto for the beta; more methods appear when they are enabled. */
+interface PaymentMethod { id: string; currencies: string[]; enabled: boolean; pay_currency?: string }
+/** POST …/fx-quote: the price in a currency, held until `lockedUntil`. */
+interface FxQuote { currency: string; rate: string | number; amountCents: number; usdCents: number; lockedUntil: string; fresh?: boolean }
 
 const STATUSES = ['waiting', 'confirming', 'confirmed', 'sending', 'partially_paid', 'finished', 'failed', 'refunded', 'expired'] as const;
 const statusText = (s: string) => ((STATUSES as readonly string[]).includes(s) ? t(`crypto.status.${s as (typeof STATUSES)[number]}`) : s);
 const OPEN = new Set(['waiting', 'confirming', 'confirmed', 'sending']);
 const trim = (n: string) => n.replace(/(\.\d*?[1-9])0+$|\.0+$/, '$1');
+const hm = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
+/**
+ * Checkout payment (Round 25): first the payment method (from GET /payment-methods; only Crypto now), then what
+ * the crypto invoice is priced in (USD or EUR; EGP viewers pay a USD invoice), then the coin. `base` is
+ * `/orders/<id>` or `/checkouts/<id>` (a cart is quoted as one; a single order inside it is never re-quoted).
+ * An EUR price is held 15 minutes; if it lapsed, the API answers 409 fx_quote_expired with the new price, which
+ * the buyer confirms before paying. A provider outage shows its message and a Retry, never an endless "Loading".
+ */
 export function CryptoCheckout({ base, amountCents, currency, onPaid }: { base: string; amountCents: number; currency: string; onPaid: () => void }) {
+  const viewer = useDisplayCurrency();
   const [coins, setCoins] = useState<Coins | null>(null);
-  const [payments, setPayments] = useState<CryptoPayment[]>([]);
+  const [payments, setPayments] = useState<CryptoPayment[] | null>(null);
+  const [methods, setMethods] = useState<PaymentMethod[] | null>(null);
+  const [loadError, setLoadError] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  const [method, setMethod] = useState<string | null>(null);
+  const [invoice, setInvoice] = useState<'USD' | 'EUR' | null>(null);
+  const [quote, setQuote] = useState<FxQuote | null>(null);
+  /** A lapsed EUR price came back with a new amount: the buyer confirms it before the coin is charged. */
+  const [requote, setRequote] = useState<{ coin: string; quote: FxQuote } | null>(null);
 
   const load = useCallback(async () => {
-    const [c, p] = await Promise.all([api<Coins>(`${base}/crypto/coins`).catch(() => null), api<CryptoPayment[]>(`${base}/crypto/payments`)]);
-    setCoins(c);
-    setPayments(p);
-    return p;
-  }, [base]);
+    setLoadError('');
+    try {
+      const [m, p, c] = await Promise.all([
+        api<PaymentMethod[]>(`/payment-methods?currency=${viewer}`),
+        api<CryptoPayment[]>(`${base}/crypto/payments`),
+        api<Coins>(`${base}/crypto/coins`),
+      ]);
+      setMethods(m.filter((x) => x.enabled));
+      setPayments(p);
+      setCoins(c);
+      return p;
+    } catch (e: any) {
+      // 503 payment_provider_unavailable (Round 25): the provider is down or slow; say so and offer Retry.
+      setLoadError(e?.code === 'payment_provider_unavailable' || e?.status === 503 ? t('crypto.unavailable') : e.message || t('crypto.unavailable'));
+      return null;
+    }
+  }, [base, viewer]);
 
   useEffect(() => {
-    load().catch((e) => setError(e.message));
+    void load();
   }, [load]);
 
-  const open = payments.find((p) => OPEN.has(p.status));
-  const underpaid = payments.find((p) => p.status === 'partially_paid');
-  const paidCents = payments.filter((p) => ['partially_paid', 'finished', 'confirmed', 'sending'].includes(p.status)).reduce((s, p) => s + Math.round(Number(p.actually_paid_usd ?? 0) * 100), 0);
+  const list = payments ?? [];
+  const open = list.find((p) => OPEN.has(p.status));
+  const underpaid = list.find((p) => p.status === 'partially_paid');
+  const paidCents = list.filter((p) => ['partially_paid', 'finished', 'confirmed', 'sending'].includes(p.status)).reduce((s, p) => s + Math.round(Number(p.actually_paid_usd ?? 0) * 100), 0);
 
   // Poll the open payment every 5 s; the API asks the provider and applies what it finds.
   useEffect(() => {
     if (!open) return;
-    const t = setInterval(async () => {
+    const timer = setInterval(async () => {
       try {
         const next = await api<CryptoPayment[]>(`${base}/crypto/payments/${open.payment_id}/refresh`, { method: 'POST', body: {} });
         setPayments(next);
@@ -66,24 +104,51 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid }: { base: 
         if (mine && (mine.status === 'finished' || (mine.status === 'partially_paid' && paidCents >= amountCents))) onPaid();
         else if (mine && mine.status === 'partially_paid') {
           const c = await api<Coins>(`${base}/crypto/coins`).catch(() => null);
-          setCoins(c);
+          if (c) setCoins(c);
           onPaid();
         }
       } catch {
         /* keep polling */
       }
     }, 5_000);
-    return () => clearInterval(t);
+    return () => clearInterval(timer);
   }, [base, open?.payment_id, amountCents, paidCents, onPaid]);
+
+  const crypto = methods?.find((m) => m.id === 'crypto');
+  // EGP (or any viewer the method doesn't price in) gets the method's pay currency: USD.
+  const invoiceChoices = (crypto?.currencies.filter((c) => c === 'USD' || c === 'EUR') ?? ['USD']) as Array<'USD' | 'EUR'>;
+  const offered = invoiceChoices.includes(viewer as 'USD' | 'EUR') ? invoiceChoices : (['USD'] as const).filter((c) => invoiceChoices.includes(c));
+
+  const chooseInvoice = async (c: 'USD' | 'EUR') => {
+    setError('');
+    setInvoice(c);
+    setQuote(null);
+    if (c === 'USD') return;
+    setBusy(true);
+    try {
+      setQuote(await api<FxQuote>(`${base}/fx-quote`, { body: { currency: c } }));
+    } catch (e: any) {
+      // Round 25b: an order inside a cart is quoted and paid through its checkout only (409 use_checkout).
+      setError(e?.code === 'use_checkout' ? t('crypto.useCheckout') : e.message);
+      setInvoice(null);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const pick = async (coin: string) => {
     setBusy(true);
     setError('');
     try {
-      await api(`${base}/crypto/pay`, { body: { coin } });
+      await api(`${base}/crypto/pay`, { body: { coin, priceCurrency: invoice ?? 'USD' } });
+      setRequote(null);
       await load();
     } catch (e: any) {
-      setError(e.message);
+      if (e instanceof ApiError && e.code === 'fx_quote_expired' && e.details) {
+        const q = e.details as FxQuote;
+        setQuote(q);
+        setRequote({ coin, quote: q });
+      } else setError(e?.code === 'payment_provider_unavailable' ? t('crypto.unavailable') : e?.code === 'use_checkout' ? t('crypto.useCheckout') : e.message);
     } finally {
       setBusy(false);
     }
@@ -99,10 +164,18 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid }: { base: 
     }
   };
 
-  if (!coins && payments.length === 0) return <div className="card"><p className="muted">{error || t('crypto.loading')}</p></div>;
+  if (loadError && !payments) {
+    return (
+      <div className="card stack" data-testid="pay-error">
+        <div className="alert" role="alert">{loadError}</div>
+        <button type="button" className="btn" style={{ alignSelf: 'flex-start' }} onClick={() => void load()}>{t('crypto.retry')}</button>
+      </div>
+    );
+  }
+  if (!payments || !methods) return <div className="card"><p className="muted">{t('crypto.loading')}</p></div>;
   const owed = coins?.owedCents ?? amountCents - paidCents;
   const ticker = (code: string) => code.toUpperCase().replace(/(.+)(TRC20|ERC20|BSC|SOL)$/, '$1');
-  const network = (name: string) => /\(([^)]+)\)/.exec(name)?.[1] ?? name;
+  const invoiceAmount = (p: CryptoPayment) => (p.price_currency && p.price_currency !== 'USD' && p.price_amount ? money(Math.round(Number(p.price_amount) * 100), p.price_currency) : money(Math.round(Number(p.price_usd) * 100), 'USD'));
 
   return (
     <div className="crypto-checkout pg-pay">
@@ -118,11 +191,13 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid }: { base: 
           <div className="pg-qr-info">
             <div className="row spread">
               <span className="small muted">{t('crypto.sendExactly')}</span>
-              <span className="chip held">{statusText(open.status)}{open.expires_at ? ` · ${t('crypto.rateLocked', { time: new Date(open.expires_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) })}` : ''}</span>
+              <span className="chip held">{statusText(open.status)}{open.expires_at ? ` · ${t('crypto.rateLocked', { time: hm(open.expires_at) })}` : ''}</span>
             </div>
             <b className="pg-pay-amount num" data-testid="pay-amount">{trim(open.pay_amount)} {ticker(open.pay_currency)}</b>
             <span className="small muted">{t('crypto.onNetwork', { network: open.pay_currency_name })}</span>
-            {Number(open.fee_usd) > 0 && (
+            {open.price_currency && open.price_currency !== 'USD' ? (
+              <span className="small muted num" data-testid="pay-breakdown">{t('crypto.invoiceIn', { amount: invoiceAmount(open) })}</span>
+            ) : Number(open.fee_usd) > 0 && (
               <span className="small muted num" data-testid="pay-breakdown">
                 {t('crypto.breakdown', { price: money(Math.round(Number(open.price_usd) * 100), 'USD'), fee: money(Math.round(Number(open.fee_usd) * 100), 'USD'), total: money(Math.round((Number(open.price_usd) + Number(open.fee_usd)) * 100), 'USD') })}
               </span>
@@ -136,20 +211,136 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid }: { base: 
             <p className="small muted" style={{ margin: 0 }}>{t('crypto.sendExact')}</p>
           </div>
         </div>
+      ) : !method ? (
+        <MethodStep methods={methods} owed={owed} onPick={(id) => { setMethod(id); if (offered.length === 1) void chooseInvoice(offered[0]!); }} />
+      ) : !invoice || (invoice === 'EUR' && !quote) ? (
+        <InvoiceStep choices={offered} owed={owed} busy={busy} onPick={chooseInvoice} onBack={() => setMethod(null)} />
       ) : (
-        <CoinSteps coins={coins} owed={owed} currency={currency} busy={busy} onPick={pick} />
+        <CoinStep
+          coins={coins}
+          due={invoice === 'EUR' && quote ? money(quote.amountCents, 'EUR') : money(owed, 'USD')}
+          heldUntil={invoice === 'EUR' && quote ? quote.lockedUntil : null}
+          usd={invoice === 'USD'}
+          busy={busy}
+          onPick={pick}
+          onBack={() => (offered.length > 1 ? (setInvoice(null), setQuote(null)) : setMethod(null))}
+          coinsError={!coins ? loadError : ''}
+          onRetry={() => void load()}
+        />
       )}
-      {payments.filter((p) => !OPEN.has(p.status)).length > 0 && (
+      {requote && (
+        <div className="notice stack" role="alertdialog" aria-labelledby="requote-title" data-testid="fx-requote" style={{ gap: 8 }}>
+          <b id="requote-title">{t('crypto.newPrice', { amount: money(requote.quote.amountCents, requote.quote.currency) })}</b>
+          <span className="small">{t('crypto.newPriceText', { time: hm(requote.quote.lockedUntil) })}</span>
+          <div className="row" style={{ gap: 8 }}>
+            <button type="button" className="btn" disabled={busy} onClick={() => void pick(requote.coin)}>{t('crypto.payNewPrice')}</button>
+            <button type="button" className="btn ghost" onClick={() => setRequote(null)}>{t('crypto.notNow')}</button>
+          </div>
+        </div>
+      )}
+      {list.filter((p) => !OPEN.has(p.status)).length > 0 && (
         <details>
           <summary className="small muted" style={{ cursor: 'pointer' }}>{t('crypto.history')}</summary>
           <ul className="small" style={{ margin: '6px 0 0', paddingInlineStart: 18 }}>
-            {payments.map((p) => (
-              <li key={p.id}>{t('crypto.historyLine', { coin: p.pay_currency_name, amount: trim(p.pay_amount), price: money(Math.round(Number(p.price_usd) * 100), 'USD'), status: statusText(p.status) })}{p.actually_paid_usd ? ` · ${t('crypto.received', { amount: money(Math.round(Number(p.actually_paid_usd) * 100), 'USD') })}` : ''}</li>
+            {list.map((p) => (
+              <li key={p.id}>{t('crypto.historyLine', { coin: p.pay_currency_name, amount: trim(p.pay_amount), price: invoiceAmount(p), status: statusText(p.status) })}{p.actually_paid_usd ? ` · ${t('crypto.received', { amount: money(Math.round(Number(p.actually_paid_usd) * 100), 'USD') })}` : ''}</li>
             ))}
           </ul>
         </details>
       )}
       {error && <div className="alert" role="alert">{error}</div>}
+    </div>
+  );
+}
+
+const METHOD_TEXT: Record<string, { name: MessageKey; text: MessageKey; sym: string }> = {
+  crypto: { name: 'pay.crypto', text: 'pay.cryptoText', sym: '₿' },
+};
+
+/** Step 1: how to pay. Built for more methods later (e.g. a local wallet in EGP); only enabled ones are listed. */
+function MethodStep({ methods, owed, onPick }: { methods: PaymentMethod[]; owed: number; onPick: (id: string) => void }) {
+  const price = usePrice();
+  return (
+    <div className="card pg-coins">
+      <div className="row spread">
+        <h3 style={{ margin: 0 }}>{t('pay.chooseMethod')}</h3>
+        <span className="small muted num">{t('crypto.toPayShort', { amount: price(owed) })}</span>
+      </div>
+      {methods.length === 0 ? (
+        <p className="small" role="status">{t('pay.noMethod')}</p>
+      ) : (
+        <div className="pg-coin-list">
+          {methods.map((m) => {
+            const meta = METHOD_TEXT[m.id];
+            return (
+              <button key={m.id} type="button" className="pg-coin" onClick={() => onPick(m.id)} data-testid={`method-${m.id}`}>
+                <span className="pg-sym" aria-hidden>{meta?.sym ?? m.id.slice(0, 2).toUpperCase()}</span>
+                <span className="min-w-0 flex-1"><b className="block">{meta ? t(meta.name) : m.id}</b>{meta && <span className="small muted">{t(meta.text)}</span>}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Step 2 (crypto): what the invoice is priced in. EGP viewers skip this: their invoice is in USD. */
+function InvoiceStep({ choices, owed, busy, onPick, onBack }: { choices: ReadonlyArray<'USD' | 'EUR'>; owed: number; busy: boolean; onPick: (c: 'USD' | 'EUR') => void; onBack: () => void }) {
+  return (
+    <div className="card pg-coins">
+      <div className="row spread">
+        <h3 style={{ margin: 0 }}>{t('pay.invoiceCurrency')}</h3>
+        <button type="button" className="btn ghost sm" onClick={onBack}>{t('pay.back')}</button>
+      </div>
+      <div className="pg-coin-list">
+        {choices.map((c) => (
+          <button key={c} type="button" className="pg-coin" disabled={busy} onClick={() => onPick(c)} data-testid={`invoice-${c}`}>
+            <span className="pg-sym" aria-hidden>{c === 'EUR' ? '€' : '$'}</span>
+            <span className="min-w-0 flex-1"><b className="block">{c}</b><span className="small muted">{c === 'USD' ? money(owed, 'USD') : t('pay.eurText')}</span></span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Step 3: the coin. Amounts are in the invoice currency; network fees are estimates in USD. */
+function CoinStep({ coins, due, heldUntil, usd, busy, onPick, onBack, coinsError, onRetry }: { coins: Coins | null; due: string; heldUntil: string | null; usd: boolean; busy: boolean; onPick: (coin: string) => void; onBack: () => void; coinsError: string; onRetry: () => void }) {
+  const ticker = (code: string) => code.toUpperCase().replace(/(.+)(TRC20|ERC20|BSC|SOL)$/, '$1');
+  return (
+    <div className="card pg-coins">
+      <div className="row spread">
+        <h3 style={{ margin: 0 }}>{t('crypto.chooseCoin')}</h3>
+        <span className="small muted num" data-testid="pay-due">{t('crypto.toPayShort', { amount: due })}{heldUntil ? ` · ${t('pay.heldUntil', { time: hm(heldUntil) })}` : ''}</span>
+      </div>
+      <button type="button" className="btn ghost sm" style={{ alignSelf: 'flex-start' }} onClick={onBack}>{t('pay.back')}</button>
+      {coinsError ? (
+        <div className="stack" style={{ gap: 8 }}>
+          <div className="alert" role="alert">{coinsError}</div>
+          <button type="button" className="btn" style={{ alignSelf: 'flex-start' }} onClick={onRetry}>{t('crypto.retry')}</button>
+        </div>
+      ) : (
+        <>
+          {coins && !coins.coins.some((c) => c.available !== false) && <p className="small">{t('crypto.noCoin')}</p>}
+          <div className="pg-coin-list">
+            {coins?.coins.map((c) => {
+              const off = c.available === false;
+              return (
+                <button key={c.coin} type="button" className={`pg-coin${off ? ' off' : ''}`} disabled={busy || off} aria-disabled={off || undefined} onClick={() => onPick(c.coin)} title={off ? t('crypto.tooSmall', { amount: money(Math.round(c.minUsd * 100), 'USD') }) : undefined}>
+                  <span className="pg-sym" aria-hidden>{ticker(c.coin).slice(0, 4)}</span>
+                  <span className="min-w-0 flex-1">
+                    <b className="block">{c.name}{c.network && !c.name.includes('(') && c.network !== c.name && !c.name.startsWith(c.network) && <span className="pg-net">{c.network}</span>}</b>
+                    <span className="small muted">{off ? t('crypto.tooSmall', { amount: money(Math.round(c.minUsd * 100), 'USD') }) : c.fee_cents != null ? t('crypto.feeLine', { fee: money(c.fee_cents, 'USD') }) : t('crypto.minimum', { amount: money(Math.round(c.minUsd * 100), 'USD') })}</span>
+                  </span>
+                  {usd && !off && c.total_cents != null && <b className="pg-coin-total num">{money(c.total_cents, 'USD')}</b>}
+                </button>
+              );
+            })}
+          </div>
+          <p className="small muted" style={{ margin: 0 }}>{t('crypto.feeNote')}</p>
+        </>
+      )}
     </div>
   );
 }
@@ -232,50 +423,3 @@ export const REFUND_COINS = [
   { coin: 'usdttrc20', name: 'Tether (TRC-20)' }, { coin: 'usdterc20', name: 'Tether (ERC-20)' }, { coin: 'usdtbsc', name: 'Tether (BEP-20)' },
   { coin: 'usdcerc20', name: 'USD Coin (ERC-20)' }, { coin: 'btc', name: 'Bitcoin' }, { coin: 'eth', name: 'Ethereum' }, { coin: 'ltc', name: 'Litecoin' }, { coin: 'trx', name: 'TRON' },
 ];
-
-/** First the buyer picks Crypto as the payment method, then the usual coin list (Round 24b). */
-function CoinSteps({ coins, owed, currency, busy, onPick }: { coins: Coins | null; owed: number; currency: string; busy: boolean; onPick: (coin: string) => void }) {
-  const [method, setMethod] = useState(false);
-  const ticker = (code: string) => code.toUpperCase().replace(/(.+)(TRC20|ERC20|BSC|SOL)$/, '$1');
-  if (!method) {
-    return (
-      <div className="card pg-coins">
-        <div className="row spread">
-          <h3 style={{ margin: 0 }}>{t('pay.method')}</h3>
-          <span className="small muted">{t('crypto.toPayShort', { amount: money(owed, currency) })}</span>
-        </div>
-        <div className="pg-coin-list">
-          <button type="button" className="pg-coin" onClick={() => setMethod(true)}>
-            <span className="pg-sym" aria-hidden>₿</span>
-            <span className="min-w-0 flex-1"><b className="block">{t('pay.crypto')}</b><span className="small muted">{t('pay.cryptoText')}</span></span>
-          </button>
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div className="card pg-coins">
-      <div className="row spread">
-        <h3 style={{ margin: 0 }}>{t('crypto.chooseCoin')}</h3>
-        <span className="small muted">{t('crypto.toPayShort', { amount: money(owed, currency) })}</span>
-      </div>
-      {coins && !coins.coins.some((c) => c.available !== false) && <p className="small">{t('crypto.noCoin')}</p>}
-      <div className="pg-coin-list">
-        {coins?.coins.map((c) => {
-          const off = c.available === false;
-          return (
-            <button key={c.coin} type="button" className={`pg-coin${off ? ' off' : ''}`} disabled={busy || off} aria-disabled={off || undefined} onClick={() => onPick(c.coin)} title={off ? t('crypto.tooSmall', { amount: money(Math.round(c.minUsd * 100), 'USD') }) : undefined}>
-              <span className="pg-sym" aria-hidden>{ticker(c.coin).slice(0, 4)}</span>
-              <span className="min-w-0 flex-1">
-                <b className="block">{c.name}{c.network && !c.name.includes('(') && c.network !== c.name && !c.name.startsWith(c.network) && <span className="pg-net">{c.network}</span>}</b>
-                <span className="small muted">{off ? t('crypto.tooSmall', { amount: money(Math.round(c.minUsd * 100), 'USD') }) : c.fee_cents != null ? t('crypto.feeLine', { fee: money(c.fee_cents, 'USD') }) : t('crypto.minimum', { amount: money(Math.round(c.minUsd * 100), 'USD') })}</span>
-              </span>
-              {!off && c.total_cents != null && <b className="pg-coin-total num">{money(c.total_cents, 'USD')}</b>}
-            </button>
-          );
-        })}
-      </div>
-      <p className="small muted" style={{ margin: 0 }}>{t('crypto.feeNote')}</p>
-    </div>
-  );
-}

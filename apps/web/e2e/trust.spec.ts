@@ -5,7 +5,7 @@ test.describe('seller trust levels', () => {
   test('badges show on shops, listings show the level, and the market sorts by trust', async ({ page }) => {
     await page.goto('/sellers/u-sell5-0000-4000-8000-000000000007');
     await expect(page.getByText('Top seller').first()).toBeVisible();
-    await page.goto('/market?sort=trust');
+    await page.goto('/market?category=keys&sort=recommended');
     await expect(page.getByText(/^Lvl \d+$/).first()).toBeVisible();
     await expect(page.locator('.lt').getByText('Top seller')).toHaveCount(0);
   });

@@ -39,17 +39,17 @@ test.describe('languages', () => {
   test('German and back to English', async ({ page }) => {
     await page.goto('/market');
     await page.getByLabel('Language', { exact: true }).first().selectOption('de');
-    await expect(page.getByRole('heading', { name: 'Alle Angebote' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Währung', exact: true })).toBeVisible(); // the market opens on game coins (Round 25)
     await expect(page.locator('html')).toHaveAttribute('dir', 'ltr');
     await page.getByLabel('Sprache', { exact: true }).first().selectOption('en');
-    await expect(page.getByRole('heading', { name: 'All offers' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Currency', exact: true })).toBeVisible();
   });
 
   test('picks the browser language on first visit', async ({ browser }) => {
     const ctx = await browser.newContext({ locale: 'fr-FR' });
     const page = await ctx.newPage();
     await page.goto('/market');
-    await expect(page.getByRole('heading', { name: 'Toutes les offres' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Monnaie', exact: true })).toBeVisible();
     await ctx.close();
   });
 });

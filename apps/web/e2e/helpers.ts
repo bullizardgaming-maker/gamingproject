@@ -56,6 +56,16 @@ export async function buy(page: Page, offerPath: string) {
   await payCrypto(page);
 }
 
+/** Create offer (Round 25): its own page; step 1 picks the product type and the game, then step 2 opens. */
+export async function startOffer(page: Page, type: string, game: string) {
+  await page.goto('/sell/new');
+  await page.locator('.co-type').filter({ has: page.locator(`input[value="${type}"]`) }).click();
+  await page.locator('input[name=game]').fill(game);
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Publish offer' })).toBeVisible();
+}
+
 /** Sign out from the account menu in the top bar. */
 export async function signOut(page: Page) {
   await page.getByRole('button', { name: 'Account menu' }).click();
@@ -63,11 +73,16 @@ export async function signOut(page: Page) {
   await expect(page.getByRole('link', { name: 'Sign in' }).first()).toBeVisible();
 }
 
-/** Pay (Round 24b): pick Crypto as the payment method, then a coin from the list. */
-export async function pickCoin(page: Page, coin: RegExp = /Tether \(TRC-20\)/) {
+/**
+ * Pay (Round 25): choose the payment method (Crypto), then what the invoice is priced in (USD unless given; EGP
+ * viewers skip this step), then a coin from the list.
+ */
+export async function pickCoin(page: Page, coin: RegExp = /Tether \(TRC-20\)/, invoice: 'USD' | 'EUR' = 'USD') {
   const checkout = page.locator('.crypto-checkout');
   await expect(checkout.locator('.pg-coins h3')).toBeVisible();
-  if (await checkout.getByRole('heading', { name: 'Payment method' }).count()) await checkout.getByRole('button', { name: /^Crypto/ }).click();
+  if (await checkout.getByRole('heading', { name: 'Choose payment method' }).count()) await checkout.getByTestId('method-crypto').click();
+  await expect(checkout.getByRole('heading', { name: /^(Pay in|Choose a coin)$/ })).toBeVisible();
+  if (await checkout.getByRole('heading', { name: 'Pay in' }).count()) await checkout.getByTestId(`invoice-${invoice}`).click();
   await checkout.getByRole('button', { name: coin }).click();
 }
 

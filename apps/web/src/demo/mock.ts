@@ -13,6 +13,8 @@ import { checkTiers, effectivePrice, unitPriceFor } from '../../../api/src/domai
 import { classify, detectOffPlatform, matchTerms } from '../../../api/src/domain/safety';
 import { parseCsv } from '../../../api/src/domain/csv';
 import { platformForGame } from '../../../api/src/domain/platforms';
+import { DELIVERY_TIMES, MIN_CURRENCY_ORDER_USD_CENTS, centsForMicros, checkVolumeDiscounts, deliveryTimeFor, formatUnitPrice, grossMicros, isDeliveryTime, parseUnitPrice, totalCentsFor, unitMicrosFor, volumePercentFor } from '../../../api/src/domain/unitPrice';
+import { slugify } from '@/lib/catalog';
 import { LAUNCH_GAMES, isLaunchGame } from '../lib/launch';
 
 /** Which games sellers may list (staff-set; the launch games by default, every game in the full demo). */
@@ -23,7 +25,7 @@ const gameAllowed = (game: string) => {
   return list.some((g) => g.toLowerCase() === game.trim().toLowerCase());
 };
 
-const KEY = DEMO_FULL ? 'bz.demo.v28' : 'bz.demo.launch.v4';
+const KEY = DEMO_FULL ? 'bz.demo.v29' : 'bz.demo.launch.v5';
 const day = 86_400_000;
 const now = () => new Date().toISOString();
 const rid = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2) + Date.now().toString(16));
@@ -205,7 +207,6 @@ function offerView(o: any) {
     seller_price_tiers: o.price_tiers ?? [],
     seller_founding: !!userById(o.seller_id)?.founding,
     seller_rank: tierOf(o.seller_id).rank.name,
-    featured: !!o.featured_until && Date.parse(o.featured_until) > Date.now(),
     sale_ends_at: price < o.price_cents ? o.sale_ends_at : null,
     seller_online: pr.online,
     seller_last_seen_at: pr.last_seen_at,
@@ -238,7 +239,37 @@ function offerView(o: any) {
     sold_count: soldBefore(o.id) + state.orders.filter((x) => x.offer_id === o.id && x.status === 'completed').length,
     public_id: `BZO${hash('', o.id).slice(0, 12).toUpperCase()}`,
     delivery_methods: o.delivery_methods ?? null,
+    // Round 25: currency listings priced per unit in micro-units, volume discounts, delivery time from a fixed list.
+    ...unitView(o, rate),
+    // Featured is only shown on the seller's own shop (GET /offers?seller=); no listing gate on buyer reputation.
+    featured: undefined,
+    featured_until: undefined,
+    min_buyer_reputation: undefined,
   };
+}
+/** Seller's unit price in micro-units for a currency listing (older listings: the per-unit cents × 10,000). */
+const sellerMicrosOf = (o: any): number | null => (o.category_slug === 'currency' ? o.unit_price_micros ?? effectivePrice(o) * 10_000 : null);
+const deliveryMinutesOf = (o: any): number => (o.delivery_mode === 'auto' ? 0 : o.delivery_minutes ?? Math.round(Number(o.delivery_hours ?? 24) * 60));
+function unitView(o: any, rate: number) {
+  const sm = sellerMicrosOf(o);
+  const buyer = sm == null ? null : grossMicros(sm, rate);
+  const dm = deliveryMinutesOf(o);
+  return {
+    unit_price_micros: buyer,
+    seller_unit_price_micros: sm,
+    price_settlement_micros: buyer,
+    volume_discounts: o.category_slug === 'currency' ? o.volume_discounts ?? [] : [],
+    delivery_minutes: dm,
+    delivery_time: dm === 0 || dm > 1440 ? null : deliveryTimeFor(dm),
+  };
+}
+/** What an order of `quantity` costs: currency listings by unit price (rounded up to the cent), others by tiers. */
+function orderPrice(offer: any, quantity: number) {
+  const sm = sellerMicrosOf(offer);
+  if (sm == null) return { sellerCents: unitPriceFor({ price_cents: effectivePrice(offer), price_tiers: offer.price_tiers }, quantity) * quantity, unitMicros: null, listingUnitMicros: null, pct: 0 };
+  const tiers = offer.volume_discounts ?? [];
+  const unit = unitMicrosFor(sm, tiers, quantity);
+  return { sellerCents: totalCentsFor(unit, quantity), unitMicros: grossMicros(unit, rateFor(offer)), listingUnitMicros: grossMicros(sm, rateFor(offer)), pct: volumePercentFor(tiers, quantity) };
 }
 /** Seeded sales per listing (stable per id), so demo listings show a sold count. */
 function soldBefore(id: string) {
@@ -481,10 +512,12 @@ function rememberCharacter(u: DemoUser, offer: any, o: any, name: string) {
   u.handover_names = { ...(u.handover_names ?? {}), [handoverKey(offer.game)]: name };
 }
 function createOrderRecord(buyer: DemoUser, offer: any, quantity: number, rail: 'fiat' | 'crypto', sellerDiscount = 0) {
-  const sellerAmount = unitPriceFor({ price_cents: effectivePrice(offer), price_tiers: offer.price_tiers }, quantity) * quantity - sellerDiscount;
+  const priced = orderPrice(offer, quantity);
+  const sellerAmount = priced.sellerCents - sellerDiscount;
   // (a cart sets checkout_id on the orders it creates)
   const bps = rateFor(offer);
   const amount = grossUp(sellerAmount, bps);
+  if (priced.unitMicros != null && amount < MIN_CURRENCY_ORDER_USD_CENTS) fail(400, 'below_minimum_order', 'The smallest order is $1.00; add more units', { minCents: MIN_CURRENCY_ORDER_USD_CENTS, currency: 'USD' });
   const commission = amount - sellerAmount;
   const isAccount = offer.category_kind === 'account';
   const id = rid();
@@ -502,6 +535,8 @@ function createOrderRecord(buyer: DemoUser, offer: any, quantity: number, rail: 
     tos_version: TOS_VERSION, tos_accepted_at: now(), lead_review: amount > 200_00,
     created_at: now(), items: [],
     warranty_days: rail === 'fiat' ? offer.warranty_days ?? 0 : 0, warranty_ends_at: null,
+    unit_price_micros: priced.unitMicros, listing_unit_price_micros: priced.listingUnitMicros, amount_usd_cents: amount,
+    presentment_currency: null as string | null, presentment_amount_cents: null as number | null, fx_rate: null as number | null, fx_locked_at: null as string | null,
   };
   state.orders.push(o);
   postOrderCard(o, 'awaiting_payment');
@@ -709,7 +744,16 @@ route('PUT', '/admin/launch', ({ me, body }) => {
   save();
   return { phase: state.launchPhase, foundingUntil: state.launch.foundingUntil, foundingFeaturedSlots: state.launch.featuredSlots, featuredDays: state.launch.featuredDays };
 });
-route('GET', '/offers', ({ query }) => {
+const isFeatured = (o: any) => !!o.featured_until && Date.parse(o.featured_until) > Date.now();
+/** A listing's unit price for filters and sorting: micro-units for currency, the per-unit price × 10,000 otherwise. */
+const unitKey = (o: any) => (o.unit_price_micros != null ? Number(o.unit_price_micros) : o.price_cents * 10_000);
+/** The game's server / region / league field for a category (its first listing field). */
+const serverField = (game: string, category: string) => attributesFor(game, category || 'currency')[0];
+/**
+ * Market search (Round 25, B4): every filter the API takes. `skip` leaves one filter out, so a facet can
+ * count its own options as if that filter were not set (as the API does).
+ */
+function marketItems(query: URLSearchParams, skip?: 'game' | 'server' | 'deliveryMethod' | 'category') {
   const q = (query.get('q') ?? '').toLowerCase().trim();
   let items = state.offers.filter(listed).map(offerView);
   if (q) items = items.filter((o) => `${o.title} ${o.game} ${o.description}`.toLowerCase().includes(q) || q.split(/\s+/).every((w) => `${o.title} ${o.game}`.toLowerCase().includes(w)));
@@ -718,10 +762,35 @@ route('GET', '/offers', ({ query }) => {
   if (query.get('maxPrice')) items = items.filter((o) => o.price_cents <= Number(query.get('maxPrice')));
   if (query.get('minRating')) items = items.filter((o) => (o.seller_rating ?? 0) >= Number(query.get('minRating')));
   if (query.get('seller')) items = items.filter((o) => o.seller_id === query.get('seller'));
-  if (query.get('game')) items = items.filter((o) => o.game.toLowerCase() === query.get('game')!.toLowerCase());
+  if (query.get('game') && skip !== 'game') items = items.filter((o) => o.game.toLowerCase() === query.get('game')!.toLowerCase());
   if (query.get('inStock') !== 'false') items = items.filter((o) => o.stock > 0);
+  if (query.get('category') && skip !== 'category') items = items.filter((o) => o.category_slug === query.get('category'));
+  // Price range in the display currency, per unit.
+  const rate = RATES[String(query.get('currency') ?? 'USD').toUpperCase()] ?? 1;
+  const lo = parseUnitPrice(query.get('minUnitPrice') ?? '');
+  const hi = parseUnitPrice(query.get('maxUnitPrice') ?? '');
+  if (lo != null) items = items.filter((o) => Math.ceil(unitKey(o) * rate) >= lo);
+  if (hi != null) items = items.filter((o) => Math.ceil(unitKey(o) * rate) <= hi);
+  const dm = query.get('deliveryMethod');
+  if (dm && skip !== 'deliveryMethod') items = items.filter((o) => methodsOf(o).includes(dm as never));
+  const mt = query.get('maxDeliveryTime');
+  if (mt && isDeliveryTime(mt)) items = items.filter((o) => o.delivery_minutes <= DELIVERY_TIMES[mt]);
+  if (query.get('online') === 'true') items = items.filter((o) => o.seller_online);
+  if (query.get('minLevel')) items = items.filter((o) => (o.seller_level ?? 0) >= Number(query.get('minLevel')));
+  // Server / region / league: the game's first field (needs a game).
+  const server = query.get('server');
+  if (server && query.get('game') && skip !== 'server') {
+    const f = serverField(query.get('game')!, query.get('category') ?? 'currency');
+    if (f) items = items.filter((o) => String(o.attributes?.[f.key] ?? '').toLowerCase() === server.toLowerCase());
+  }
   // Game-specific fields: attr.<key>=<value>, exact and case-insensitive.
   const attrs = [...query.entries()].filter(([k]) => k.startsWith('attr.')).map(([k, v]) => [k.slice(5), v.toLowerCase()] as const);
+  return { items, attrs };
+}
+route('GET', '/offers', ({ query }) => {
+  const q = (query.get('q') ?? '').toLowerCase().trim();
+  const { items: base, attrs } = marketItems(query, 'category');
+  let items = base;
   const matches = (o: any, skip?: string) => attrs.every(([k, v]) => k === skip || String(o.attributes?.[k] ?? '').toLowerCase() === v);
   const counted = (xs: any[]) => {
     const m = new Map<string, number>();
@@ -746,16 +815,74 @@ route('GET', '/offers', ({ query }) => {
     recommended: (a, b) => (b.seller_rating ?? 0) * 100 - (a.seller_rating ?? 0) * 100 + (a.price_cents - b.price_cents) / 10,
     min_qty_asc: (a, b) => (a.min_qty ?? 1) - (b.min_qty ?? 1),
     delivery: (a, b) => (a.delivery_hours ?? 0) - (b.delivery_hours ?? 0),
-    price_asc: (a, b) => a.price_cents - b.price_cents,
-    price_desc: (a, b) => b.price_cents - a.price_cents,
+    fastest_delivery: (a, b) => a.delivery_minutes - b.delivery_minutes,
+    most_sold: (a, b) => (b.sold_count ?? 0) - (a.sold_count ?? 0),
+    price_asc: (a, b) => unitKey(a) - unitKey(b),
+    price_desc: (a, b) => unitKey(b) - unitKey(a),
     rating: (a, b) => (b.seller_rating ?? 0) - (a.seller_rating ?? 0),
     best_selling: (a, b) => b.seller_completed_orders - a.seller_completed_orders,
     trust: (a, b) => TRUST_ORDER.indexOf(a.seller_trust_level) - TRUST_ORDER.indexOf(b.seller_trust_level) || (b.seller_rating ?? 0) - (a.seller_rating ?? 0),
   };
-  if (by[sort]) items.sort((a, b) => Number(b.featured) - Number(a.featured) || by[sort]!(a, b)); // featured spots lead every ordering
+  // Featured (CEO, Round 25): only the seller's own shop shows it, pinned first. Nothing else boosts it.
+  const shop = !!query.get('seller');
+  if (shop) for (const o of items) o.featured = isFeatured(state.offers.find((x) => x.id === o.id));
+  if (by[sort]) items.sort((a, b) => (shop ? Number(b.featured) - Number(a.featured) : 0) || by[sort]!(a, b));
+  const cur = String(query.get('currency') ?? '').toUpperCase();
+  if (RATES[cur]) for (const o of items) Object.assign(o, { display_currency: cur, display_price_cents: Math.round(o.price_cents * RATES[cur]!), display_unit_price_micros: o.unit_price_micros == null ? null : Math.ceil(o.unit_price_micros * RATES[cur]!) });
   const page = Math.max(1, Number(query.get('page') ?? 1));
   const pageSize = Number(query.get('pageSize') ?? 12);
+  if (pageSize > 60) fail(400, 'validation_error', 'pageSize is at most 60');
   return { items: items.slice((page - 1) * pageSize, page * pageSize), total: items.length, page, pageSize, hasMore: page * pageSize < items.length, facets };
+});
+// Round 25 (B4): counts per game, server and delivery method for the market's filter panel.
+route('GET', '/offers/facets', ({ query }) => {
+  const byGame = new Map<string, number>();
+  for (const o of marketItems(query, 'game').items) byGame.set(o.game, (byGame.get(o.game) ?? 0) + 1);
+  const game = query.get('game');
+  let servers = null as null | { key: string; label: string; values: Array<{ name: string; count: number }> };
+  if (game) {
+    const f = serverField(game, query.get('category') ?? 'currency');
+    if (f) {
+      const list = marketItems(query, 'server').items;
+      const counts = new Map<string, number>();
+      for (const o of list) { const v = o.attributes?.[f.key]; if (v) counts.set(v, (counts.get(v) ?? 0) + 1); }
+      const names = f.type === 'select' ? [...(f.options ?? [])] : [...counts.keys()].sort();
+      servers = { key: f.key, label: f.label, values: names.map((name) => ({ name, count: counts.get(name) ?? 0 })) };
+    }
+  }
+  const methods = new Map<string, number>();
+  for (const o of marketItems(query, 'deliveryMethod').items) for (const m of methodsOf(o)) methods.set(m, (methods.get(m) ?? 0) + 1);
+  return {
+    games: [...byGame.entries()].map(([g, count]) => ({ game: g, count })).sort((a, b) => b.count - a.count || a.game.localeCompare(b.game)),
+    servers,
+    delivery_methods: [...methods.entries()].map(([method, count]) => ({ method, count })),
+  };
+});
+// Round 25 (B1): every server of a game with its live offers, sellers, sales and lowest unit price. No paging.
+route('GET', '/games/:slug/servers', ({ params, query }) => {
+  const category = query.get('category') ?? 'currency';
+  const games = [...new Set([...state.offers.map((o) => o.game), ...Object.keys(GAME_SETS)])];
+  const found = games.find((g) => slugify(g) === params[0]);
+  if (!found) return fail(404, 'not_found', 'Game not found');
+  const game = state.offers.find((o) => o.game.toLowerCase() === found.toLowerCase())?.game ?? found;
+  const f = serverField(game, category);
+  if (!f) return [];
+  const live = state.offers.filter((o) => listed(o) && o.game.toLowerCase() === game.toLowerCase() && o.category_slug === category && availableOf(o) > 0).map(offerView);
+  const names = f.type === 'select' ? [...(f.options ?? [])] : [...new Set(live.map((o) => o.attributes?.[f.key]).filter(Boolean) as string[])].sort();
+  return names.map((name) => {
+    const list = live.filter((o) => o.attributes?.[f.key] === name);
+    const bySeller = new Map<string, { id: string; name: string; avatar: null; sales: number }>();
+    for (const o of list) {
+      const cur = bySeller.get(o.seller_id) ?? { id: o.seller_id, name: o.seller_name, avatar: null, sales: o.seller_completed_orders };
+      bySeller.set(o.seller_id, cur);
+    }
+    const sellers = [...bySeller.values()].sort((a, b) => b.sales - a.sales);
+    const from = list.reduce<number | null>((m, o) => (o.unit_price_micros != null && (m == null || o.unit_price_micros < m) ? o.unit_price_micros : m), null);
+    return {
+      name, offers: list.length, sellers: sellers.slice(0, 4).map(({ sales: _s, ...x }) => x), sellers_count: sellers.length,
+      sold: list.reduce((n, o) => n + (o.sold_count ?? 0), 0), from_unit_price: from == null ? null : formatUnitPrice(from), from_unit_price_micros: from,
+    };
+  });
 });
 /** Open challenge leagues become sell-form choices (the shared attribute sets read them live). */
 function syncLeagues() {
@@ -1161,10 +1288,6 @@ route('POST', '/orders', ({ me, body }) => {
   if (u.kyc_tier < 1) fail(403, 'kyc_required', 'Verify your email first.');
   const offer = state.offers.find((x) => x.id === body.offerId && (!x.reserved_for || x.reserved_for === u.id)) ?? fail(404, 'not_found', 'Listing not found');
   if (offer.seller_id === u.id) fail(400, 'own_listing', 'You can’t buy your own listing');
-  if (offer.min_buyer_reputation) {
-    const level = buyerRepOf(u.id).level;
-    if (level !== 'good') fail(403, 'buyer_reputation_required', level === 'new' ? 'This seller only sells this listing to established buyers: complete three orders first' : 'This seller only sells this listing to buyers in good standing');
-  }
   const qty = Number(body.quantity ?? 1);
   const unit = offer as { min_qty?: number; unit_label?: string };
   if (unit.min_qty && qty < unit.min_qty) fail(400, 'below_min_qty', `The minimum for this offer is ${unit.min_qty} ${unit.unit_label ?? ''}`.trim());
@@ -1192,6 +1315,10 @@ const DEMO_NETWORK: Record<string, [string, number]> = {
 };
 const DEMO_RATE: Record<string, number> = { usdttrc20: 1, usdtbsc: 1, usdcmatic: 1, usdterc20: 1, btc: 97_000, eth: 3_400, ltc: 95, trx: 0.24, sol: 190, doge: 0.33, xmr: 160, ton: 5.4 };
 const coinNameOf = (c: string) => DEMO_COINS.find((x) => x[0] === c)?.[1] ?? c.toUpperCase();
+/** Round 25b: an order inside a cart is quoted and paid through its checkout only. */
+const notInCart = (p: { kind: string; orders: any[] }) => {
+  if (p.kind === 'orders' && p.orders[0]?.checkout_id) fail(409, 'use_checkout', 'This order is part of a cart; pay for it from the cart checkout', { checkoutId: p.orders[0].checkout_id });
+};
 function payableOf(u: DemoUser, kind: 'orders' | 'checkouts', id: string) {
   if (kind === 'orders') {
     const o = orderFor(u, id);
@@ -1204,8 +1331,36 @@ function payableOf(u: DemoUser, kind: 'orders' | 'checkouts', id: string) {
 const paymentsOf = (kind: string, id: string) => state.cryptoPayments.filter((p) => p.ref_kind === kind && p.ref_id === id);
 const paidSoFar = (kind: string, id: string) => paymentsOf(kind, id).reduce((s, p) => s + (['partially_paid', 'finished'].includes(p.status) ? Math.round(Number(p.actually_paid_usd) * 100) : 0), 0);
 const view = (p: any) => ({ ...p, pay_currency_name: coinNameOf(p.pay_currency), ref_kind: undefined, ref_id: undefined, finish_at: undefined });
+/** Demo switch for testing the error path: localStorage bz.demo.cryptoDown = "1" makes the provider "down". */
+const providerDown = () => {
+  let down = false;
+  try {
+    down = localStorage.getItem('bz.demo.cryptoDown') === '1';
+  } catch {
+    /* storage blocked: the provider is up */
+  }
+  if (down) fail(503, 'payment_provider_unavailable', 'Crypto payments are unavailable right now. Try again in a few minutes.', { retryable: true });
+};
+/** Round 25 (B6): lock the price in `currency` for 15 minutes on the payable's orders; fresh = a new quote. */
+function lockFx(p: ReturnType<typeof payableOf>, currency: string) {
+  const first = p.orders[0];
+  const live = first.presentment_currency === currency && first.fx_locked_at && Date.now() - Date.parse(first.fx_locked_at) < FX_TTL_MS;
+  const rate = currency === 'USD' ? 1 : RATES[currency]!;
+  if (!live) for (const o of p.orders) Object.assign(o, { presentment_currency: currency, fx_rate: rate, presentment_amount_cents: Math.round((o.charged_cents ?? o.amount_cents) * rate), fx_locked_at: now() });
+  const amountCents = p.orders.reduce((s: number, o: any) => s + o.presentment_amount_cents, 0);
+  save();
+  return { currency, rate: rate.toFixed(8), amountCents, usdCents: p.owed, lockedUntil: new Date(Date.parse(first.fx_locked_at) + FX_TTL_MS).toISOString(), fresh: !live };
+}
 for (const kind of ['orders', 'checkouts'] as const) {
+  route('POST', `/${kind}/:id/fx-quote`, ({ me, params, body }) => {
+    const p = payableOf(need(me), kind, params[0]!);
+    notInCart(p);
+    const cur = String(body.currency ?? '').toUpperCase();
+    if (!['USD', 'EUR'].includes(cur)) fail(400, 'unsupported_currency', 'Crypto payments are priced in USD or EUR');
+    return lockFx(p, cur);
+  });
   route('GET', `/${kind}/:id/crypto/coins`, ({ me, params }) => {
+    providerDown();
     const p = payableOf(need(me), kind, params[0]!);
     const owed = p.owed - paidSoFar(kind, p.id);
     const coins = DEMO_COINS.map(([coin, name, minUsd]) => ({ coin, name, minUsd, available: minUsd * 100 <= owed, network: DEMO_NETWORK[coin]![0], fee_cents: DEMO_NETWORK[coin]![1], total_cents: owed + DEMO_NETWORK[coin]![1] }));
@@ -1215,9 +1370,20 @@ for (const kind of ['orders', 'checkouts'] as const) {
   route('POST', `/${kind}/:id/crypto/pay`, ({ me, params, body }) => {
     const p = payableOf(need(me), kind, params[0]!);
     if (p.status !== 'awaiting_payment') fail(409, 'invalid_state', 'This order is already paid');
+    notInCart(p);
     if (paymentsOf(kind, p.id).some((x) => x.status === 'waiting')) fail(409, 'payment_open', 'A payment is already waiting for your transfer');
+    providerDown();
     const owed = p.owed - paidSoFar(kind, p.id);
     const coin = String(body.coin);
+    // Round 25 (B5): the invoice is in USD or EUR; EUR uses the locked quote (409 with a new one when it lapsed).
+    const priceCurrency = String(body.priceCurrency ?? 'USD').toUpperCase();
+    if (!['USD', 'EUR'].includes(priceCurrency)) fail(400, 'unsupported_currency', 'Crypto payments are priced in USD or EUR');
+    let price = { currency: 'USD', amountCents: owed, rate: 1 };
+    if (priceCurrency !== 'USD') {
+      const q = lockFx(p, priceCurrency);
+      if (q.fresh) fail(409, 'fx_quote_expired', `The ${priceCurrency} price was refreshed; check it and pay again`, { currency: q.currency, rate: q.rate, amountCents: q.amountCents, usdCents: p.owed, lockedUntil: q.lockedUntil });
+      price = { currency: priceCurrency, amountCents: owed === p.owed ? q.amountCents : Math.ceil(owed * Number(q.rate)), rate: Number(q.rate) };
+    }
     if (!DEMO_COINS.some(([c, , min]) => c === coin && min * 100 <= owed)) fail(400, 'coin_unavailable', `${coinNameOf(coin)} can’t be used for this amount`);
     // The buyer sends the order amount plus the coin's network fee; only the order amount counts toward the order.
     const fee = DEMO_NETWORK[coin]?.[1] ?? 0;
@@ -1226,6 +1392,7 @@ for (const kind of ['orders', 'checkouts'] as const) {
       id: rid(), ref_kind: kind, ref_id: p.id, payment_id: String(5_000_000 + state.cryptoPayments.length), pay_currency: coin, pay_address: `${coin === 'btc' ? 'bc1q' : coin === 'eth' || coin.endsWith('erc20') ? '0x' : 'T'}demo${rid().replace(/-/g, '').slice(0, 28)}`,
       pay_extra_id: null, pay_amount: amount.toFixed(coin.startsWith('usd') ? 2 : 8), price_usd: (owed / 100).toFixed(2), fee_usd: (fee / 100).toFixed(2), actually_paid: '0', actually_paid_usd: null as string | null, status: 'waiting',
       expires_at: new Date(Date.now() + 20 * 60_000).toISOString(), created_at: now(), finish_at: Date.now() + 1_500, // the demo "network" confirms after a moment
+      price_currency: price.currency, price_amount: (price.amountCents / 100).toFixed(2), fx_rate: price.rate.toFixed(8),
     };
     state.cryptoPayments.push(pay);
     save();
@@ -1498,10 +1665,11 @@ route('POST', '/orders/quote', ({ me, body }) => {
   const offer = state.offers.find((x) => x.id === body.offerId) ?? fail(404, 'not_found', 'Listing not found');
   const qty = Number(body.quantity ?? 1);
   const code = body.sellerCode ? sellerCodeQuote(offer, u, qty, body.sellerCode) : null;
-  const subtotal = unitPriceFor({ price_cents: effectivePrice(offer), price_tiers: offer.price_tiers }, qty) * qty;
-  const sellerAmount = subtotal - (code?.discount ?? 0);
+  const priced = orderPrice(offer, qty);
+  const sellerAmount = priced.sellerCents - (code?.discount ?? 0);
   const amount = gross(offer.seller_id, sellerAmount);
-  return { listingCurrency: offer.currency, amountCents: amount, sellerAmountCents: sellerAmount, commissionBps: rateFor(offer), chargedCents: amount, sellerDiscountCents: code?.discount ?? 0, discountCents: 0, creditCents: 0, presentmentCurrency: offer.currency, presentmentAmountCents: amount };
+  if (priced.unitMicros != null && amount < MIN_CURRENCY_ORDER_USD_CENTS) fail(400, 'below_minimum_order', 'The smallest order is $1.00; add more units', { minCents: MIN_CURRENCY_ORDER_USD_CENTS, currency: 'USD' });
+  return { listingCurrency: offer.currency, amountCents: amount, sellerAmountCents: sellerAmount, commissionBps: rateFor(offer), chargedCents: amount, sellerDiscountCents: code?.discount ?? 0, discountCents: 0, creditCents: 0, presentmentCurrency: offer.currency, presentmentAmountCents: amount, listingUnitPriceMicros: priced.listingUnitMicros, volumePercentOff: priced.pct, unitPriceMicros: priced.unitMicros };
 });
 const ownOffer = (me: DemoUser | null, id: string) => {
   const u = needSeller(me);
@@ -2075,17 +2243,26 @@ route('GET', '/seller/offers', ({ me }) => {
   const u = needSeller(me);
   return state.offers
     .filter((o) => o.seller_id === u.id)
-    .map((o) => ({ ...offerView(o), available: availableOf(o), linked_account_id: o.linked_account_id ?? null }));
+    .map((o) => ({ ...offerView(o), available: availableOf(o), linked_account_id: o.linked_account_id ?? null, featured: isFeatured(o), featured_until: o.featured_until ?? null }));
 });
 route('POST', '/offers', ({ me, body }) => {
   const u = needSeller(me);
   const cat = CATEGORIES.find((c) => c.slug === body.categorySlug) ?? fail(400, 'invalid_category', 'Unknown category');
   if (!body.title || String(body.title).length < 3) fail(400, 'validation_error', 'Give the listing a title');
-  if (!(body.priceCents > 0)) fail(400, 'validation_error', 'Set a price');
+  // Round 25: currency listings give a unit price with up to 6 decimals (or micro-units); others a price in cents.
+  let unitMicros: number | null = body.unitPriceMicros ?? null;
+  if (body.unitPrice != null) {
+    const p = parseUnitPrice(String(body.unitPrice));
+    if (p == null || p < 1) fail(400, 'invalid_unit_price', 'The unit price is a number with up to 6 decimals, e.g. 0.000123');
+    if (unitMicros != null && unitMicros !== p) fail(400, 'invalid_unit_price', 'unitPrice and unitPriceMicros disagree');
+    unitMicros = p;
+  }
+  if (unitMicros == null && !(body.priceCents > 0)) fail(400, 'validation_error', 'Set a price');
   if (!gameAllowed(String(body.game ?? ''))) fail(400, 'game_not_open', `${body.game} isn’t on Bullizard yet; suggest it on the game vote`);
   const attrs = cleanAttributes(String(body.game ?? ''), cat.slug, body.attributes);
   if (!attrs.ok) fail(400, 'invalid_attributes', attrs.error);
-  const tiers = checkTiers(Number(body.priceCents), body.priceTiers, cat.kind);
+  if (unitMicros != null && body.priceTiers?.length) fail(400, 'invalid_tiers', 'Currency listings use volume discounts instead of price tiers');
+  const tiers = unitMicros != null ? { ok: true as const, value: [] as Array<{ minQty: number; priceCents: number }> } : checkTiers(Number(body.priceCents), body.priceTiers, cat.kind);
   if (!tiers.ok) fail(400, 'invalid_tiers', tiers.error);
   // Same screening as the API: block terms refuse, review terms and contact details hold for a moderator.
   const text = `${body.title}\n${body.description ?? ''}`;
@@ -2114,10 +2291,20 @@ route('POST', '/offers', ({ me, body }) => {
     expired_reason: null as string | null,
     featured_until: null as string | null,
     linked_account_id: null as string | null,
-    min_buyer_reputation: (body.minBuyerReputation ?? null) as 'good' | null,
     unit_label: null as string | null,
     min_qty: 1,
   };
+  if (unitMicros != null) {
+    if (cat.slug !== 'currency') fail(400, 'invalid_unit_price', 'Only currency listings have a unit price');
+    const first = attributesFor(String(body.game), cat.slug)[0];
+    if (first && !(o.attributes as Record<string, string>)[first.key]) fail(400, 'server_required', `Pick the ${first.label.toLowerCase()}`, { field: first.key });
+    if (body.deliveryMode === 'manual' && !(Number(body.stock) >= 1)) fail(400, 'stock_required', 'Set how many units you have');
+    if (!isDeliveryTime(body.deliveryTime)) fail(400, 'delivery_time_required', 'Pick a delivery time');
+    const vd = checkVolumeDiscounts(body.volumeDiscounts, 1);
+    if (!vd.ok) return fail(400, 'invalid_volume_discounts', vd.error);
+    Object.assign(o, { unit_price_micros: unitMicros, price_cents: centsForMicros(unitMicros), volume_discounts: vd.value, delivery_minutes: DELIVERY_TIMES[body.deliveryTime as keyof typeof DELIVERY_TIMES], stock: Math.max(1, Math.floor(Number(body.stock))) });
+    if (body.deliveryMethods === undefined) fail(400, 'invalid_delivery_method', 'Pick at least one delivery method');
+  } else if (isDeliveryTime(body.deliveryTime)) (o as any).delivery_minutes = DELIVERY_TIMES[body.deliveryTime as keyof typeof DELIVERY_TIMES];
   // Currency sold by amount: a unit, a minimum order and the stock in units (same rules as the API).
   if (body.unitLabel) {
     if (cat.kind !== 'currency') fail(400, 'invalid_unit', 'Only currency can be sold by amount');
@@ -2133,7 +2320,6 @@ route('POST', '/offers', ({ me, body }) => {
     if (!r.ok) return fail(400, 'invalid_delivery_method', r.error);
     (o as any).delivery_methods = r.value;
   }
-  if (o.min_buyer_reputation && o.price_cents < 100_00) fail(400, 'not_high_value', 'A minimum buyer reputation can only be set on listings of 100 or more');
   if (body.linkedAccountId) {
     checkAttach(u, body.linkedAccountId, body.game, cat.kind);
     o.linked_account_id = body.linkedAccountId;
@@ -2554,7 +2740,7 @@ route('POST', '/requests/:id/proposals/:pid/accept', ({ me, params }) => {
     id: `offer-r-${rid().slice(0, 8)}`, seller_id: p.seller_id, category_slug: r.category_slug, category_kind: CATEGORIES.find((c) => c.slug === r.category_slug)!.kind, game: r.game,
     title: r.title, description: [r.description, p.message].filter(Boolean).join('\n\n'), price_cents: p.price_cents, currency: r.currency, delivery_mode: 'manual' as const,
     delivery_hours: p.delivery_hours, stock: 1, inventory: [] as string[], price_tiers: [], review_reasons: [] as string[], bundle: null, sale_price_cents: null, sale_starts_at: null, sale_ends_at: null, status: 'active', owner_proof_status: 'none', attributes: r.attributes ?? {}, version: 1, created_at: now(),
-    reserved_for: u.id, request_id: r.id, warranty_days: 0, expired_reason: null as string | null, featured_until: null as string | null, linked_account_id: null, min_buyer_reputation: null,
+    reserved_for: u.id, request_id: r.id, warranty_days: 0, expired_reason: null as string | null, featured_until: null as string | null, linked_account_id: null,
   };
   state.offers.push(offer);
   Object.assign(p, { status: 'accepted', offer_id: offer.id, updated_at: now() });
@@ -2562,47 +2748,6 @@ route('POST', '/requests/:id/proposals/:pid/accept', ({ me, params }) => {
   Object.assign(r, { status: 'accepted', accepted_proposal_id: p.id, updated_at: now() });
   notify(p.seller_id, 'selling', 'request_accepted', `Proposal accepted: ${r.title}`, 'The buyer accepted your proposal. You’ll get the usual new-order notice when they pay.', `/requests/${r.id}`);
   return { offerId: offer.id, request: reqView(r, u.id) };
-});
-// --- Saved searches ---------------------------------------------------------------------------
-const savedPath = (p: any) => {
-  const qs = new URLSearchParams();
-  for (const k of ['q', 'game', 'category'] as const) if (p[k]) qs.set(k, p[k]);
-  if (p.maxPriceCents != null) qs.set('maxPrice', String(p.maxPriceCents));
-  if (p.delivery) qs.set('delivery', p.delivery);
-  if (p.ownerVerified) qs.set('ownerVerified', 'true');
-  if (p.minRating) qs.set('minRating', String(p.minRating));
-  for (const [k, v] of Object.entries(p.attributes ?? {})) qs.set(`attr.${k}`, String(v));
-  qs.set('sort', 'newest');
-  return `/market?${qs}`;
-};
-route('GET', '/me/saved-searches', ({ me }) => state.savedSearches.filter((s) => s.user_id === need(me).id).map((s) => ({ ...s, path: savedPath(s.params) })));
-route('POST', '/me/saved-searches', ({ me, body }) => {
-  const u = need(me);
-  const p = body.params ?? {};
-  if (!p.q && !p.game && !p.category) fail(400, 'invalid_search', 'Save a search with at least a game, a category or search words');
-  if (state.savedSearches.filter((s) => s.user_id === u.id).length >= 20) fail(400, 'too_many_searches', 'You can save up to 20 searches');
-  const s = { id: rid(), user_id: u.id, name: String(body.name ?? 'Search').slice(0, 80), params: p, frequency: body.frequency ?? 'daily', last_sent_at: null, created_at: now() };
-  state.savedSearches.unshift(s);
-  // Stand-in for the first digest, so the demo shows what it looks like.
-  setTimeout(() => {
-    const hits = state.offers.filter((o) => listed(o) && (!p.game || o.game.toLowerCase() === String(p.game).toLowerCase()) && (!p.category || o.category_slug === p.category)).slice(0, 3);
-    if (!hits.length) return;
-    notify(u.id, 'alerts', 'saved_search_digest', `${hits.length} new listings for "${s.name}"`, hits.map((o) => `${o.title}: $${(effectivePrice(o) / 100).toFixed(2)}`).join(' · ') + ' (Demo: simulated digest.)', savedPath(p));
-    save();
-  }, 5000);
-  return { ...s, path: savedPath(p) };
-});
-route('PATCH', '/me/saved-searches/:id', ({ me, params, body }) => {
-  const s = state.savedSearches.find((x) => x.id === params[0] && x.user_id === need(me).id) ?? fail(404, 'not_found', 'Saved search not found');
-  if (body.frequency) s.frequency = body.frequency;
-  if (body.name) s.name = body.name;
-  return { ...s, path: savedPath(s.params) };
-});
-route('DELETE', '/me/saved-searches/:id', ({ me, params }) => {
-  const u = need(me);
-  const i = state.savedSearches.findIndex((x) => x.id === params[0] && x.user_id === u.id);
-  if (i < 0) fail(404, 'not_found', 'Saved search not found');
-  state.savedSearches.splice(i, 1);
 });
 // --- Watchlist & price alerts ------------------------------------------------------------
 const RATES: Record<string, number> = { USD: 1, EUR: 0.92, EGP: 48.5 };
@@ -2891,7 +3036,22 @@ route('POST', '/seller/debts/:id/pay', ({ me, params }) => {
   Object.assign(d, { owed_cents: 0, closed_at: now(), closed_reason: 'repaid' });
   return { paymentId: rid(), amountCents: d.peak_cents, currency: d.currency, checkoutUrl: '/sell/money?repaid=1' };
 });
-route('GET', '/fx/rates', () => ({ settlement: 'USD', spreadBps: 100, rates: [{ currency: 'EUR', rate: 0.92, fetched_at: now() }, { currency: 'EGP', rate: 48.5, fetched_at: now() }] }));
+// Round 25 (B6): exact rates; the price a buyer sees in EUR at checkout is the price charged (held 15 minutes).
+const FX_TTL_MS = 15 * 60_000;
+route('GET', '/fx/rates', () => {
+  const asOf = new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000).toISOString();
+  return {
+    base: 'USD', settlement: 'USD', spreadBps: 0, quote_ttl_seconds: FX_TTL_MS / 1000, as_of: asOf,
+    exact: { EGP: RATES.EGP!.toFixed(8), EUR: RATES.EUR!.toFixed(8) },
+    rates: (['EUR', 'EGP'] as const).map((c) => ({ currency: c, rate: RATES[c]!.toFixed(8), fetched_at: asOf, as_of: asOf, source: 'static' })),
+  };
+});
+// Round 25 (B5): payment methods for the viewer's currency (only crypto for the beta).
+route('GET', '/payment-methods', ({ query }) => {
+  const cur = String(query.get('currency') ?? 'USD').toUpperCase();
+  if (!RATES[cur]) fail(400, 'unsupported_currency', 'Unsupported currency');
+  return [{ id: 'crypto', currencies: ['USD', 'EUR'], enabled: true, pay_currency: cur === 'EUR' ? 'EUR' : 'USD' }];
+});
 route('GET', '/admin/fx/position', ({ me }) => {
   needStaff(me);
   return {

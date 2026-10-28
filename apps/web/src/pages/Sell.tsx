@@ -9,16 +9,15 @@ import { useSession } from '../session';
 import { SellerMoney } from './SellerMoney';
 import { SellerAnalytics } from './SellerAnalytics';
 import { usePageMeta } from '@/lib/seo';
+import { unitMoney } from '@/lib/prefs';
 import { intlLocale, t, type MessageKey } from '../i18n';
 import { attrLabel, attributesFor, useLeagues } from '@/lib/attributes';
-import { categoryLabel, isCategoryOpen, useCategoryOrder } from '@/lib/catalog';
+import { categoryLabel } from '@/lib/catalog';
 import { replyLabel } from '@/lib/presence';
 import { TrustBadge } from '../components/CatalogUi';
 import { StorefrontEditor } from '../components/StorefrontEditor';
-import { GamePicker } from '../components/GamePicker';
-import { PHASE2_UI, sellableGames } from '@/lib/launch';
+import { PHASE2_UI } from '@/lib/launch';
 import { rankName, rankPerk } from '@/lib/ranks';
-import { KNOWN_GAMES } from '@/lib/gameList';
 import { BulkListings } from '../components/BulkListings';
 import { LinkedAccounts, platformName, type LinkedAccount } from '../components/LinkedAccounts';
 import { platformForGame } from '../../../api/src/domain/platforms';
@@ -49,7 +48,7 @@ interface Founding {
   featuredDays: number;
 }
 
-interface SellerOffer {
+export interface SellerOffer {
   id: string;
   title: string;
   game: string;
@@ -73,6 +72,9 @@ interface SellerOffer {
   reserved_for?: string | null;
   is_bundle?: boolean;
   linked_account_id?: string | null;
+  /** Round 25, currency listings: buyer's and seller's unit price in micro-units. */
+  unit_price_micros?: number | null;
+  seller_unit_price_micros?: number | null;
 }
 
 const TIER_ROWS = [0, 1, 2];
@@ -156,7 +158,8 @@ export function PresenceSettings({ shop }: { shop?: Dashboard['shop'] }) {
 export function Sell() {
   usePageMeta({ title: 'Sell on Bullizard', description: t('grow.sellText') });
   const { user, refresh } = useSession();
-  const { pathname } = useLocation();
+  const { pathname, state: navState } = useLocation();
+  const created = !!(navState as { created?: boolean } | null)?.created;
   const navigate = useNavigate();
   const moneyTab = pathname.startsWith('/sell/money');
   const analyticsTab = pathname.startsWith('/sell/analytics');
@@ -251,7 +254,7 @@ export function Sell() {
         <div className="notice stack" role="status" data-testid="onboarding-done" style={{ gap: 6 }}>
           <b>{t('onb.done.title')}</b>
           <span>{t('onb.done.text', { date: dash.onboarding.idDueAt ? new Date(dash.onboarding.idDueAt).toLocaleDateString(intlLocale(), { month: 'short', day: 'numeric' }) : '' })}</span>
-          <a className="btn" href="#create-offer" style={{ alignSelf: 'flex-start' }}>{t('onb.done.cta')}</a>
+          <Link className="btn" to="/sell/new" style={{ alignSelf: 'flex-start' }}>{t('onb.done.cta')}</Link>
         </div>
       ) : dash.onboarding && !dash.onboarding.identityVerified && (
         <div className={dash.onboarding.sellingRestrictedAt ? 'alert' : 'notice'} role={dash.onboarding.sellingRestrictedAt ? 'alert' : 'status'} data-testid="id-deadline">
@@ -303,10 +306,14 @@ export function Sell() {
           <Link to="/orders?as=seller">{t('sell.manageOrders')}</Link>
         </div>
       </div>
+      {created && <div className="ok" role="status">{t('co.created')}</div>}
       {msg && <div className={msg.kind}>{msg.text}</div>}
 
       <div className="card">
-        <h3>{t('sell.listings')}</h3>
+        <div className="row spread" style={{ marginBottom: 12 }}>
+          <h3 style={{ margin: 0 }}>{t('sell.listings')}</h3>
+          <Link className="btn sm" to="/sell/new">{t('sell.createOffer')}</Link>
+        </div>
         {offers.length === 0 ? (
           <p className="muted">{t('sell.noListings')}</p>
         ) : (
@@ -320,36 +327,7 @@ export function Sell() {
           </div>
         )}
       </div>
-
-      <NewOffer onCreated={() => (setJustPassed(false), load())} offers={offers} linked={linked} />
     </div>
-  );
-}
-
-/** A timed sale on one listing: a lower price until a date (seller-funded). */
-function SaleForm({ offer, onDone }: { offer: SellerOffer; onDone: () => void }) {
-  const [error, setError] = useState('');
-  const running = offer.sale_price_cents != null;
-  const submit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const f = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>;
-    try {
-      await api(`/offers/${offer.id}/sale`, { method: 'PUT', body: { salePriceCents: Math.round(Number(f.price) * 100), endsAt: new Date(`${f.ends}T23:59:00`).toISOString() } });
-      onDone();
-    } catch (err: any) {
-      setError(err.message);
-    }
-  };
-  const defaultEnd = new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10);
-  return (
-    <form className="row" onSubmit={submit} style={{ alignItems: 'end' }}>
-      <label className="field">{t('sale.price')}<input name="price" type="number" step="0.01" min="0.01" max={(offer.price_cents - 1) / 100} required defaultValue={offer.sale_price_cents ? offer.sale_price_cents / 100 : undefined} /></label>
-      <label className="field">{t('sale.ends')}<input name="ends" type="date" required defaultValue={offer.sale_ends_at?.slice(0, 10) ?? defaultEnd} /></label>
-      <button className="btn">{running ? t('sale.update') : t('sale.start')}</button>
-      {running && <button type="button" className="btn ghost" onClick={async () => (await api(`/offers/${offer.id}/sale`, { method: 'DELETE' }), onDone())}>{t('sale.endNow')}</button>}
-      <span className="small muted" style={{ flex: '1 1 220px' }}>{t('sale.hint')}</span>
-      {error && <div className="alert" style={{ width: '100%' }}>{error}</div>}
-    </form>
   );
 }
 
@@ -429,7 +407,6 @@ function OfferRow({ offer, linked, onChange, founding }: { offer: SellerOffer; l
   const [content, setContent] = useState('');
   const [result, setResult] = useState('');
   const [proofOpen, setProofOpen] = useState(false);
-  const [saleOpen, setSaleOpen] = useState(false);
   const needsProof = offer.category_slug === 'accounts' && ['none', 'rejected'].includes(offer.owner_proof_status);
 
   const submitProof = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -478,18 +455,14 @@ function OfferRow({ offer, linked, onChange, founding }: { offer: SellerOffer; l
           )}
         </td>
         <td className="mono">
-          {money(offer.seller_price_cents ?? offer.price_cents)}
-          <div className="small muted">{t('ranks.buyersPay', { price: money(offer.price_cents) })}</div>
-          {offer.sale_price_cents != null && offer.sale_ends_at && new Date(offer.sale_ends_at) > new Date() && (
-            <div className="small text-released">{t('sale.until', { price: money(offer.sale_price_cents), when: new Date(offer.sale_ends_at).toLocaleDateString(intlLocale(), { month: 'short', day: 'numeric' }) })}</div>
-          )}
+          {offer.seller_unit_price_micros != null ? unitMoney(offer.seller_unit_price_micros) : money(offer.seller_price_cents ?? offer.price_cents)}
+          <div className="small muted">{t('ranks.buyersPay', { price: offer.unit_price_micros != null ? unitMoney(offer.unit_price_micros) : money(offer.price_cents) })}</div>
         </td>
         <td className="mono">{offer.available}</td>
         <td>{offer.delivery_mode === 'auto' ? t('delivery.instant') : t('sell.manual')}</td>
         <td>
           {offer.delivery_mode === 'auto' && !offer.is_bundle && <button className="btn ghost" onClick={() => setOpen(!open)}>{t('sell.addStock')}</button>}
           {needsProof && <button className="btn ghost" onClick={() => setProofOpen(!proofOpen)}>{t('sell.addProof')}</button>}
-          {!offer.reserved_for && <button className="btn ghost" onClick={() => setSaleOpen(!saleOpen)}>{t('sale.button')}</button>}
           {founding?.founding && founding.windowOpen && offer.status === 'active' && (
             offer.featured ? (
               <button className="btn ghost" onClick={() => api(`/offers/${offer.id}/feature`, { method: 'DELETE' }).then(onChange).catch((e) => setFeatureError(e.message))}>{t('founding.unfeature')}</button>
@@ -501,13 +474,6 @@ function OfferRow({ offer, linked, onChange, founding }: { offer: SellerOffer; l
           {featureError && <div className="small" style={{ color: 'var(--disputed)' }}>{featureError}</div>}
         </td>
       </tr>
-      {saleOpen && (
-        <tr>
-          <td colSpan={5}>
-            <SaleForm offer={offer} onDone={() => (setSaleOpen(false), onChange())} />
-          </td>
-        </tr>
-      )}
       {proofOpen && (
         <tr>
           <td colSpan={5}>
@@ -547,17 +513,16 @@ function OfferRow({ offer, linked, onChange, founding }: { offer: SellerOffer; l
   );
 }
 
-function NewOffer({ onCreated, offers, linked }: { onCreated: () => void; offers: SellerOffer[]; linked: LinkedAccount[] }) {
+/**
+ * Create offer, step 2 for every product type except currency (Round 25): the type and game were picked in step 1.
+ * Currency has its own short form (CurrencyOfferForm on the create page).
+ */
+export function OtherOfferForm({ category, game, onCreated, offers, linked }: { category: string; game: string; onCreated: () => void; offers: SellerOffer[]; linked: LinkedAccount[] }) {
   const [error, setError] = useState('');
   const [bundleOn, setBundleOn] = useState(false);
   const [parts, setParts] = useState<Record<string, number>>({});
   const bundleable = offers.filter((o) => o.delivery_mode === 'auto' && o.status === 'active' && !o.is_bundle && !o.reserved_for);
-  useCategoryOrder(); // closed launch-phase categories drop out of the picker once known
-  const [category, setCategory] = useState('currency');
-  const [game, setGame] = useState('');
   const [price, setPrice] = useState('');
-  const [unit, setUnit] = useState('');
-  const byAmount = category === 'currency' && unit.trim().length > 0;
   useLeagues(game); // league options refresh from the table once it loads
   const fields = attributesFor(game, category);
   // Account listings can show a linked account from the game's own platform, if it isn't on another listing.
@@ -583,16 +548,12 @@ function NewOffer({ onCreated, offers, linked }: { onCreated: () => void; offers
           ...(f.deliveryMode === 'manual' && f.categorySlug !== 'accounts' ? { stock: Number(f.stock || 1) } : {}),
           ...(f.categorySlug === 'accounts' && Number(f.warrantyDays) ? { warrantyDays: Number(f.warrantyDays) } : {}),
           ...(f.linkedAccountId ? { linkedAccountId: f.linkedAccountId } : {}),
-          ...(f.minBuyerReputation === 'on' ? { minBuyerReputation: 'good' } : {}),
-          ...(f.categorySlug === 'currency' && unit.trim() ? { unitLabel: unit.trim(), minQty: Number(f.minQty || 1), stock: Number(f.stock || 1) } : {}),
           ...(methodsForListing(f.game, f.categorySlug).length ? { deliveryMethods: new FormData(form).getAll('deliveryMethods') } : {}),
           ...(bundleOn ? { bundle: Object.entries(parts).map(([offerId, quantity]) => ({ offerId, quantity })) } : {}),
         },
       });
       form.reset();
-      setGame('');
       setPrice('');
-      setUnit('');
       setBundleOn(false);
       setParts({});
       onCreated();
@@ -602,31 +563,16 @@ function NewOffer({ onCreated, offers, linked }: { onCreated: () => void; offers
   };
   return (
     <form className="pg-sell" id="create-offer" onSubmit={submit} aria-labelledby="create-offer-title">
-      <h2 id="create-offer-title" className="pg-h1">{t('sell.new')}</h2>
+      <h2 id="create-offer-title" className="sr-only">{t('sell.new')}</h2>
+      <input type="hidden" name="categorySlug" value={category} />
+      <input type="hidden" name="game" value={game} />
       <div className="pg-split">
       <div className="pg-sell-main">
       <div className="card stack">
       <div className="grid two">
-        <label className="field">
-          {t('market.category')}
-          <select name="categorySlug" value={category} onChange={(e) => setCategory(e.target.value)}>
-            {['currency', 'items', 'top-ups', 'accounts', 'boosting', 'keys', 'gift-cards', 'video-games'].filter(isCategoryOpen).map((c) => (
-              <option key={c} value={c}>{categoryLabel(c)}</option>
-            ))}
-          </select>
-        </label>
-        <GamePicker label={t('sell.f.game')} name="game" required options={sellableGames(KNOWN_GAMES)} value={game} onChange={setGame} />
         <label className="field">{t('sell.f.title')}<input name="title" required minLength={3} maxLength={140} /></label>
-        {category === 'currency' && (
-          <label className="field">
-            {t('sell.f.unit')}
-            <input name="unitLabel" list="unit-suggestions" maxLength={12} value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="M" aria-describedby="unit-hint" />
-            <datalist id="unit-suggestions"><option value="M" /><option value="k" /><option value="B" /><option value="Divine Orb" /><option value="Exalted Orb" /></datalist>
-            <span id="unit-hint" className="small muted">{t('sell.f.unitHint')}</span>
-          </label>
-        )}
         <label className="field">
-          {byAmount ? t('sell.f.pricePerUnit', { unit: unit.trim() }) : t('sell.f.price')}
+          {t('sell.f.price')}
           <input name="price" className="num" type="number" step="0.01" min="0.01" required value={price} onChange={(e) => setPrice(e.target.value)} aria-describedby="price-preview" />
         </label>
         {PHASE2_UI ? (
@@ -640,8 +586,7 @@ function NewOffer({ onCreated, offers, linked }: { onCreated: () => void; offers
         ) : (
           <input type="hidden" name="deliveryMode" value="manual" />
         )}
-        {category !== 'accounts' && <label className="field">{byAmount ? t('sell.f.stockUnits', { unit: unit.trim() }) : t('sell.f.stock')}<input name="stock" type="number" min="1" defaultValue="1" /></label>}
-        {byAmount && <label className="field">{t('sell.f.minQty', { unit: unit.trim() })}<input name="minQty" type="number" min="1" defaultValue="1" /></label>}
+        {category !== 'accounts' && <label className="field">{t('sell.f.stock')}<input name="stock" type="number" min="1" defaultValue="1" /></label>}
         {methodsForListing(game, category).length > 0 && (
           <fieldset className="field sell-methods">
             <legend>{t('of.deliveryMethods')}</legend>
@@ -661,12 +606,6 @@ function NewOffer({ onCreated, offers, linked }: { onCreated: () => void; offers
             <span id="warranty-hint" className="small muted">{t('warranty.sellHint')}</span>
           </label>
         )}
-        <div className="field">
-          <label className="check-row" style={{ color: 'var(--ink)' }}>
-            <input name="minBuyerReputation" type="checkbox" style={{ width: 'auto' }} aria-describedby="minrep-hint" /> {t('minRep.sellLabel')}
-          </label>
-          <span id="minrep-hint" className="small muted">{t('minRep.sellHint')}</span>
-        </div>
         {platform && (
           <label className="field">
             {t('linked.sellLabel', { platform: platformName(platform) })}
@@ -787,7 +726,7 @@ function SellPreview({ price }: { price: string }) {
     };
   }, [cents]);
   const rate = (c: string) => (p && p.buyerCents ? (p.buyerIn[c] ?? p.buyerCents) / p.buyerCents : 1);
-  const show = (usdCents: number, c: string) => (c === 'USD' ? money(usdCents) : `≈ ${money(Math.round(usdCents * rate(c)), c)}`);
+  const show = (usdCents: number, c: string) => (c === 'USD' ? money(usdCents) : money(Math.round(usdCents * rate(c)), c));
   return (
     <div className="pg-sell-pv" id="price-preview" data-testid="price-preview" aria-live="polite">
       <div className="row spread">
@@ -860,7 +799,7 @@ export function PricePreview({ price, currency = 'USD' }: { price: string; curre
     <span id="price-preview" className="small stack" style={{ gap: 2 }} data-testid="price-preview">
       <span>
         <b>{t('preview.buyersPay', { price: money(p.buyerCents) })}</b>
-        {others.length > 0 && <span className="muted"> · {others.map(([c, v]) => `≈ ${money(v, c)}`).join(' · ')}</span>}
+        {others.length > 0 && <span className="muted"> · {others.map(([c, v]) => money(v, c)).join(' · ')}</span>}
       </span>
       <span className="muted">{t('preview.commission', { amount: money(p.commissionCents), rate: pct(p.rateBps) })}{p.promo ? ` · ${t('preview.promo', { until: new Date(p.promo.endsAt).toLocaleDateString(intlLocale(), { month: 'short', day: 'numeric' }) })}` : ''}</span>
       <span className="muted">{t('preview.youEarn', { price: money(p.sellerCents) })}{HELP_CENTER && <> · <Link to="/help/selling-fees">{t('preview.feeDetails')}</Link></>}</span>

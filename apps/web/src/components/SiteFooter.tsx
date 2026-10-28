@@ -56,7 +56,7 @@ function FooterPrefs() {
         {(Object.keys(LOCALES) as Locale[]).map((l) => <option key={l} value={l} lang={l}>{LOCALES[l].name}</option>)}
       </select>
       <select aria-label={t('prefs.currency')} value={cur} onChange={(e) => setCurrency(e.target.value as DisplayCurrency)}>
-        {DISPLAY_CURRENCIES.map((c) => <option key={c} value={c}>{c === 'USD' ? c : `${c} (approx.)`}</option>)}
+        {DISPLAY_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
       </select>
       <button type="button" className="ftr-theme" aria-pressed={dark} onClick={() => setTheme(dark ? 'light' : 'dark')}>
         {dark ? <Moon className="size-4" aria-hidden /> : <Sun className="size-4" aria-hidden />} {t('footer.nightMode')}

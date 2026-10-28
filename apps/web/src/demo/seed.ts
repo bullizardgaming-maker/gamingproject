@@ -354,8 +354,6 @@ export function seed() {
       // Account listings: a warranty that runs on after escrow releases.
       warranty_days: WARRANTY[title] ?? 0,
       linked_account_id: (title.startsWith('Immortal 2') ? 'la-1' : title.startsWith('Diamond 1 smurf') ? 'la-3' : null) as string | null,
-      // High-value listings can be limited to established buyers (opt-in).
-      min_buyer_reputation: (title.startsWith('OG account') ? 'good' : null) as 'good' | null,
       review_reasons: [] as string[],
       bundle: null as Array<{ offer_id: string; quantity: number }> | null,
       sale_price_cents: (SALES[title] ? net(seller, SALES[title]![0]) : null) as number | null,
@@ -368,6 +366,12 @@ export function seed() {
       created_at: ago((list.length - i) * 3_600_000 * 7),
     };
   });
+  // Round 25: currency listings use volume discounts (% off from a quantity) instead of price tiers.
+  for (const o of offers) {
+    if (o.category_slug !== 'currency' || !o.price_tiers.length) continue;
+    (o as any).volume_discounts = o.price_tiers.map((t) => ({ minQty: t.minQty, percentOff: Math.max(1, Math.round((1 - t.priceCents / o.price_cents) * 100)) }));
+    o.price_tiers = [];
+  }
   // Launch view: currency is sold by amount (price per unit, a minimum, stock in units), like G2G and Eldorado.
   if (!DEMO_FULL) {
     for (const o of offers) {
@@ -489,7 +493,6 @@ export function seed() {
     rulesQuestions: RULES_QUESTIONS.map((q, i) => ({ id: `rq-${i + 1}`, ...q, question_ar: q.question_ar as string | null, options_ar: q.options_ar as string[] | null, explanation_ar: q.explanation_ar as string | null, active: true })),
     watches: [] as any[],
     tickets: [] as any[],
-    savedSearches: [] as any[],
     sellerCodes: [
       { id: 'code-1', seller_id: users[1]!.id, code: 'NORTHWIND10', percent_off: 10, min_order_cents: 20_00, max_uses: 500, per_buyer_limit: 1, starts_at: ago(10 * day), ends_at: ago(-20 * day), active: true, created_at: ago(10 * day), uses_before: 37 },
     ] as any[],

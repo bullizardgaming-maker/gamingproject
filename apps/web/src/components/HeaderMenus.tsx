@@ -50,7 +50,7 @@ export function PrefsMenu() {
         <Globe className="size-4" aria-hidden />
         <span>{LOCALES[lang].short}</span>
         <span className="prefs-sep" aria-hidden />
-        <span>{cur}</span>
+        <span className="prefs-cur" data-testid="prefs-currency">{cur}</span>
         <span className="prefs-sep" aria-hidden />
         {dark ? <Moon className="size-4" aria-hidden /> : <Sun className="size-4" aria-hidden />}
       </button>
@@ -72,10 +72,9 @@ export function PrefsMenu() {
               <legend>{t('prefs.currency')}</legend>
               <div className="seg-row">
                 {DISPLAY_CURRENCIES.map((c) => (
-                  <button key={c} type="button" aria-pressed={c === cur} onClick={() => setCurrency(c)}>{c === 'USD' ? c : `≈ ${c}`}</button>
+                  <button key={c} type="button" aria-pressed={c === cur} onClick={() => setCurrency(c)}>{c}</button>
                 ))}
               </div>
-              <p className="small muted" style={{ margin: '4px 0 0' }}>{t('prefs.currencyApprox')}</p>
             </fieldset>
             <fieldset>
               <legend>{t('prefs.theme')}</legend>
