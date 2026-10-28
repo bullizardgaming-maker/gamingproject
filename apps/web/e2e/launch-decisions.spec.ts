@@ -54,7 +54,7 @@ test.describe('launch decisions', () => {
 
   test('sign-up needs the 18+ / Terms / Privacy box; legal pages are linked from the footer and help centre', async ({ page }) => {
     await page.goto('/login');
-    await page.getByRole('button', { name: 'New here? Create an account' }).click();
+    await page.getByRole('button', { name: 'Sign up, it’s free!' }).click();
     const box = page.getByRole('checkbox', { name: /18 or older/ });
     await expect(box).toBeVisible();
     await expect(page.getByRole('link', { name: 'Privacy Policy' })).toHaveAttribute('href', '/privacy');
@@ -88,7 +88,7 @@ test.describe('damage limits (launch gate §4)', () => {
     await expect(page.getByTestId('paused-banner')).toContainText('sign-ups');
     await signOut(page);
     await page.goto('/login');
-    await page.getByRole('button', { name: 'New here? Create an account' }).click();
+    await page.getByRole('button', { name: 'Sign up, it’s free!' }).click();
     await page.locator('input[name=displayName]').fill('Late Comer');
     await page.locator('input[name=email]').fill(`late-${Date.now()}@example.com`);
     await page.locator('input[name=password]').fill('correct horse battery');

@@ -61,7 +61,7 @@ test.describe('launch extras', () => {
 
   test('a creator code is entered once at sign-up (one code per account); finance manages codes', async ({ page }) => {
     await page.goto('/login?ref=arcane-tv');
-    await page.getByRole('button', { name: 'New here? Create an account' }).click();
+    await page.getByRole('button', { name: 'Sign up, it’s free!' }).click();
     const codeField = page.getByLabel('Invite or creator code (optional)');
     await expect(codeField).toHaveValue('arcane-tv'); // pre-filled from the invite link
     await page.locator('input[name=displayName]').fill('Code Fan');

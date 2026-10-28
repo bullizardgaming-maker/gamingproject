@@ -1369,3 +1369,58 @@ a.srv-card:hover .srv-go { background: var(--rune); border-color: var(--rune); c
 .co-methods { margin-top: 8px; }
 .co-type { position: relative; }
 .co-type .co-radio { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+
+/* Sign in (Round 25c): one centred card, our icon and wordmark on top, pill buttons, a "thousands of Gamers" line. */
+.auth-wrap { display: flex; flex-direction: column; align-items: center; gap: 0; padding: 24px 0 8px; }
+.auth-wrap > .demo-signin, .auth-wrap > :first-child:not(.auth-card) { width: 100%; max-width: 640px; margin-bottom: 20px; }
+.auth-card { width: 100%; max-width: 400px; display: flex; flex-direction: column; align-items: center; padding: 32px; border: 1px solid var(--rule); border-radius: 24px; background: linear-gradient(90deg, color-mix(in srgb, var(--ink) 6%, var(--paper)) 0%, var(--paper) 100%); box-shadow: 0 24px 60px rgba(0, 0, 0, .25); }
+.auth-icon { display: grid; place-items: center; width: 48px; height: 48px; margin-bottom: 16px; border-radius: 999px; border: 1px solid var(--rule); background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--ink); }
+.auth-brand { display: flex; justify-content: center; margin: 0 0 24px; color: var(--ink); line-height: 1; }
+.auth-form { width: 100%; display: flex; flex-direction: column; gap: 12px; }
+.auth-form > input, .auth-form .field input { height: 46px; padding: 0 18px; border: 1px solid var(--rule); border-radius: 12px; background: var(--field); color: var(--ink); font-size: 14px; }
+.auth-form .field { gap: 6px; }
+.auth-check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--ink); }
+.auth-check input { width: 16px; height: 16px; margin: 2px 0 0; flex: none; accent-color: var(--ink); }
+.auth-error { padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--disputed) 12%, transparent); color: var(--disputed); font-size: 13px; }
+html.dark .auth-error { color: #f6a39b; }
+.auth-rule { width: 100%; margin: 4px 0; border: 0; border-top: 1px solid var(--rule); }
+.auth-submit { width: 100%; height: 46px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--rule); border-radius: 999px; background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--ink); font: 600 14px/1 var(--body); cursor: pointer; transition: background-color .14s ease-out; }
+.auth-submit:hover { background: color-mix(in srgb, var(--ink) 18%, transparent); }
+.auth-forgot { align-self: flex-end; margin-top: -4px; font-size: 12px; color: var(--steel); }
+.auth-switch { margin: 4px 0 0; text-align: center; font-size: 13px; color: var(--steel); }
+.auth-switch button { padding: 0; border: 0; background: none; color: var(--ink); font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
+.auth-social { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: 40px; text-align: center; }
+.auth-social p { margin: 0; font-size: 14px; color: var(--steel); }
+.auth-social b { color: var(--ink); font-weight: 600; }
+.auth-faces { display: inline-flex; }
+.auth-faces .avatar-ini { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 999px; border: 2px solid var(--frost); background: var(--raised); color: var(--ink); font: 700 12px/1 var(--body); }
+html.dark .auth-faces .avatar-ini { background: #3a3a3a; }
+.auth-faces .avatar-ini + .avatar-ini { margin-inline-start: -10px; }
+
+/* Sign-in code step and "You're in" (Round 25c). */
+.auth-step { text-align: center; }
+.auth-title { margin: 0; font-size: 26px; line-height: 1.15; }
+.auth-sub { margin: 6px 0 20px; font-size: 13px; color: var(--steel); }
+.auth-shield { display: grid; place-items: center; width: 84px; height: 72px; margin-bottom: 8px; }
+.auth-shield-paper { display: flex; flex-direction: column; align-items: center; gap: 5px; width: 58px; height: 58px; padding-top: 10px; border: 1px solid var(--rule); border-radius: 14px; background: var(--field); color: var(--ink); box-shadow: 0 6px 18px rgba(0, 0, 0, .18); }
+.auth-shield-paper i { display: block; height: 2px; border-radius: 2px; background: color-mix(in srgb, var(--ink) 25%, transparent); }
+.auth-shield-paper i:first-of-type { width: 24px; }
+.auth-shield-paper i:last-of-type { width: 16px; background: color-mix(in srgb, var(--ink) 15%, transparent); }
+.auth-code { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; width: 100%; }
+.auth-code input { height: 56px; min-width: 0; padding: 0; border: 1px solid var(--rule); border-radius: 12px; background: var(--field); color: var(--ink); text-align: center; font: 600 24px/1 var(--mono); caret-color: var(--ink); }
+.auth-code input[data-filled] { border-color: var(--steel); }
+.auth-code input[aria-invalid='true'] { border-color: var(--disputed); }
+.auth-code-status { display: flex; align-items: center; justify-content: center; min-height: 40px; width: 100%; padding-top: 6px; font-size: 12px; color: var(--steel); }
+.auth-code-status p { margin: 0; display: inline-flex; align-items: center; gap: 6px; }
+.auth-code-status .auth-error { padding: 4px 10px; }
+@media (prefers-reduced-motion: no-preference) { .auth-spin { animation: auth-spin 0.9s linear infinite; } }
+@keyframes auth-spin { to { transform: rotate(360deg); } }
+.auth-links { display: flex; justify-content: space-between; gap: 12px; width: 100%; margin-top: 8px; font-size: 12px; }
+.auth-links button { padding: 4px 0; border: 0; background: none; color: var(--steel); font: inherit; text-decoration: underline; text-underline-offset: 4px; cursor: pointer; }
+.auth-links button:hover { color: var(--ink); }
+.auth-done { min-height: 300px; justify-content: center; }
+.auth-stamp { display: grid; place-items: center; width: 76px; height: 76px; margin-bottom: 24px; border-radius: 999px; background: var(--rune); color: var(--on-rune); box-shadow: 0 0 0 8px color-mix(in srgb, var(--rune) 14%, transparent); }
+.auth-verified { display: inline-flex; align-items: center; gap: 6px; margin-top: 4px; padding: 6px 12px; border: 1px solid var(--rule); border-radius: 999px; font-size: 11px; color: var(--steel); }
+/* Our colourful app icon (brand canvas: dark tile, green mark), on the sign-in card and the code step. */
+.auth-appicon { display: grid; place-items: center; width: 56px; height: 56px; padding: 0; border-radius: 14px; border: 1px solid var(--rule); background: #0d131c; color: #4bae24; box-shadow: 0 6px 18px rgba(0, 0, 0, .18); }
+.auth-shield-paper.auth-appicon { gap: 0; }

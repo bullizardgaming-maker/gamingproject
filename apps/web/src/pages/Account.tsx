@@ -6,6 +6,8 @@ import { DemoSignIn } from '../demo/DemoUi';
 import { PushSettings } from '../components/NotificationSettings';
 import { MyBuyerReputation } from '../components/BuyerReputation';
 import { Turnstile } from '../components/Turnstile';
+import { BrandMark, BrandWordmark } from '../components/Brand';
+import { CodeStep as SignInCode, YoureIn } from '../components/AuthSteps';
 import { useSession } from '../session';
 import { currentLocale, t } from '../i18n';
 import { usePageMeta } from '@/lib/seo';
@@ -20,9 +22,14 @@ export function Login() {
   const [params] = useSearchParams();
   const nav = useNavigate();
 
+  const [done, setDone] = useState<string | null>(null);
+  const [codeBusy, setCodeBusy] = useState(false);
+  // Round 25c: "You're in" for a moment, then on to the shop (or where the buyer was going).
   const finish = (token: string, registered = false) => {
     session.set(token);
-    nav(registered ? '/account' : params.get('next') ?? '/market');
+    const to = registered ? '/account' : params.get('next') ?? '/';
+    setDone(registered ? 'Taking you to your account…' : 'Taking you to the shop…');
+    setTimeout(() => nav(to), 1400);
   };
 
   const submit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -45,76 +52,76 @@ export function Login() {
     }
   };
 
-  const submitCode = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const code = String(new FormData(e.currentTarget).get('code') ?? '');
+  const submitCode = async (code: string) => {
     setError('');
+    setCodeBusy(true);
     try {
       const res = await api<{ token: string }>('/auth/mfa', { body: { mfaToken, code } });
       finish(res.token);
     } catch (err: any) {
       setError(err.message);
-      if (err.message.includes('expired')) setMfaToken(null);
+      if (err.code === 'reauth_required') setMfaToken(null); // the 5-minute challenge ran out: start again with the password
+    } finally {
+      setCodeBusy(false);
     }
   };
 
-  if (mfaToken) {
-    return (
-      <form className="card stack" style={{ maxWidth: 440, margin: '24px auto' }} onSubmit={submitCode}>
-        <h1 className="auth-h1">Enter your sign-in code</h1>
-        <p className="muted small">Open your authenticator app and enter the 6-digit code for Bullizard. Lost your phone? Enter one of your recovery codes instead.</p>
-        <input name="code" className="mono" autoComplete="one-time-code" autoFocus required maxLength={20} aria-label="Code" />
-        {error && <div className="alert" role="alert">{error}</div>}
-        <button className="btn" type="submit">Sign in</button>
-      </form>
-    );
-  }
+  if (done) return <YoureIn where={done} />;
+  if (mfaToken) return <SignInCode onSubmit={submitCode} error={error} busy={codeBusy} onBack={() => (setMfaToken(null), setError(''))} />;
 
   return (
-    <div className="stack" style={{ maxWidth: 640, margin: '24px auto' }}>
-    {DEMO && mode === 'login' && <DemoSignIn next={params.get('next') ?? '/market'} />}
-    <div className="card stack" style={{ maxWidth: 440, width: '100%', margin: '0 auto' }}>
-      <h1 className="auth-h1">{mode === 'login' ? 'Sign in' : 'Create an account'}</h1>
-      <form className="stack" onSubmit={submit}>
-        {mode === 'register' && (
-          <label className="field">Display name<input name="displayName" required minLength={2} maxLength={40} /></label>
-        )}
-        {mode === 'register' && (
-          <label className="field">
-            {t('auth.code')}
-            <input name="code" maxLength={20} defaultValue={params.get('ref') ?? params.get('code') ?? ''} placeholder={t('auth.codePlaceholder')} autoCapitalize="characters" />
-            <span className="small muted">{params.get('ref') ? t('auth.codeFromLink', { code: params.get('ref')!.toUpperCase() }) + ' ' : ''}{t('auth.codeHint')}</span>
-          </label>
-        )}
-        <label className="field">Email<input name="email" type="email" required autoComplete="email" /></label>
-        <label className="field">
-          Password
-          <input name="password" type="password" required minLength={10} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
-        </label>
-        {mode === 'register' && (
-          <label className="small" style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 13 }}>
-            <input name="acceptTerms" type="checkbox" required value="true" style={{ marginTop: 3 }} />
-            <span>
-              {t('auth.accept.before')}<Link to="/terms" target="_blank" rel="noopener">{t('auth.accept.terms')}</Link>{t('auth.accept.and')}<Link to="/privacy" target="_blank" rel="noopener">{t('auth.accept.privacy')}</Link>
-            </span>
-          </label>
-        )}
-        {mode === 'register' && (
-          <label className="small" style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 13 }}>
-            {/* Newsletter consent: optional and unticked (Round 23a). */}
-            <input name="newsOptIn" type="checkbox" value="true" defaultChecked={false} style={{ marginTop: 3 }} aria-describedby="news-opt-in-hint" />
-            <span>{t('auth.newsOptIn')} <span id="news-opt-in-hint" className="muted">{t('auth.newsOptIn.hint')}</span></span>
-          </label>
-        )}
-        <Turnstile action={mode === 'login' ? 'signin' : 'signup'} onToken={setCaptchaToken} resetKey={captchaReset} />
-        {error && <div className="alert" role="alert">{error}</div>}
-        <button className="btn" type="submit">{mode === 'login' ? 'Sign in' : 'Create account'}</button>
-      </form>
-      {mode === 'login' && <Link to="/forgot-password" className="small">Forgot your password?</Link>}
-      <button className="btn ghost" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
-        {mode === 'login' ? 'New here? Create an account' : 'Already have an account? Sign in'}
-      </button>
-    </div>
+    <div className="auth-wrap">
+      {DEMO && mode === 'login' && <DemoSignIn next={params.get('next') ?? '/market'} />}
+      <div className="auth-card">
+        {/* Header: our icon and wordmark (Round 25c design) */}
+        <span className="auth-icon auth-appicon" aria-hidden><BrandMark style={{ height: 26, width: 'auto' }} /></span>
+        <h1 className="auth-brand">
+          <span className="sr-only">{mode === 'login' ? 'Sign in to Bullizard' : 'Create a Bullizard account'}</span>
+          <BrandWordmark style={{ height: 22, width: 'auto' }} />
+        </h1>
+        <form className="auth-form" onSubmit={submit}>
+          {mode === 'register' && <input name="displayName" required minLength={2} maxLength={40} placeholder="Display name" aria-label="Display name" autoComplete="nickname" />}
+          {mode === 'register' && (
+            <label className="field">
+              <span className="sr-only">{t('auth.code')}</span>
+              <input name="code" maxLength={20} defaultValue={params.get('ref') ?? params.get('code') ?? ''} placeholder={t('auth.code')} aria-describedby="auth-code-hint" autoCapitalize="characters" />
+              <span id="auth-code-hint" className="small muted">{params.get('ref') ? t('auth.codeFromLink', { code: params.get('ref')!.toUpperCase() }) + ' ' : ''}{t('auth.codeHint')}</span>
+            </label>
+          )}
+          <input name="email" type="email" required autoComplete="email" placeholder="Email" aria-label="Email" />
+          <input name="password" type="password" required minLength={10} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} placeholder="Password" aria-label="Password" />
+          {mode === 'login' && <Link to="/forgot-password" className="auth-forgot">Forgot your password?</Link>}
+          {mode === 'register' && (
+            <label className="auth-check">
+              <input name="acceptTerms" type="checkbox" required value="true" />
+              <span>
+                {t('auth.accept.before')}<Link to="/terms" target="_blank" rel="noopener">{t('auth.accept.terms')}</Link>{t('auth.accept.and')}<Link to="/privacy" target="_blank" rel="noopener">{t('auth.accept.privacy')}</Link>
+              </span>
+            </label>
+          )}
+          {mode === 'register' && (
+            <label className="auth-check">
+              {/* Newsletter consent: optional and unticked (Round 23a). */}
+              <input name="newsOptIn" type="checkbox" value="true" defaultChecked={false} aria-describedby="news-opt-in-hint" />
+              <span>{t('auth.newsOptIn')} <span id="news-opt-in-hint" className="muted">{t('auth.newsOptIn.hint')}</span></span>
+            </label>
+          )}
+          <Turnstile action={mode === 'login' ? 'signin' : 'signup'} onToken={setCaptchaToken} resetKey={captchaReset} />
+          {error && <div className="auth-error" role="alert">{error}</div>}
+          <hr className="auth-rule" />
+          <button className="auth-submit" type="submit">{mode === 'login' ? 'Sign in' : 'Create account'}</button>
+          <p className="auth-switch">
+            {mode === 'login' ? 'Don’t have an account?' : 'Already have an account?'}{' '}
+            <button type="button" onClick={() => (setError(''), setMode(mode === 'login' ? 'register' : 'login'))}>{mode === 'login' ? 'Sign up, it’s free!' : 'Sign in'}</button>
+          </p>
+        </form>
+      </div>
+      <div className="auth-social">
+        <p>Join <b>thousands</b> of Gamers who are already using Bullizard.</p>
+        <span className="auth-faces" aria-hidden>
+          {['K', 'R', 'V', 'N'].map((l) => <span key={l} className="avatar-ini">{l}</span>)}
+        </span>
+      </div>
     </div>
   );
 }

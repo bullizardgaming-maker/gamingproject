@@ -9,7 +9,7 @@ test.describe('copy deck §9', () => {
     await page.locator('input[name=password]').fill('not-the-password');
     await page.locator('form button[type=submit]').click();
     await expect(page.getByRole('alert')).toHaveText('Wrong email or password.'); // err.invalid_credentials
-    await page.getByRole('button', { name: 'New here? Create an account' }).click();
+    await page.getByRole('button', { name: 'Sign up, it’s free!' }).click();
     await expect(page.getByText('Optional. Turn it off any time in Account.')).toBeVisible();
     await expect(page.getByRole('checkbox', { name: /Email me about new games and offers/ })).not.toBeChecked();
     await page.goto('/forgot-password');
