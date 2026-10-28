@@ -43,6 +43,15 @@ export async function detectOpsAlerts(ctx: Ctx): Promise<OpsAlert[]> {
   );
   if (foreign.length) alerts.push({ key: 'non_usd_balances', title: `${foreign.length} balance(s) not in USD`, detail: foreign.map((b) => `user ${b.owner_id}: ${(Number(b.cents) / 100).toFixed(2)} ${b.currency} (${b.kind})`).join('; '), action: 'Withdrawals are USD only: convert each balance to USD with a manual ledger adjustment (Ops → Ledger) at the day\'s rate, and note the rate used.' });
 
+  // Round 25b (M1): EUR crypto invoices whose FX gap (after NOWPayments' expected fee) is above FX_ALERT_BPS of the order,
+  // and deposits held because their fiat value could not be read safely (nothing credited until Finance decides).
+  const gaps = await many<{ payment_id: string; fx_gap_cents: string; fx_gap_bps: number }>(
+    ctx.db, `SELECT payment_id, fx_gap_cents, fx_gap_bps FROM crypto_payments WHERE abs(fx_gap_bps) > $1 AND updated_at > now() - interval '1 hour' ORDER BY updated_at LIMIT 50`, [ctx.cfg.FX_ALERT_BPS],
+  );
+  if (gaps.length) alerts.push({ key: 'crypto_fx_gap', title: `${gaps.length} EUR crypto payment(s) with an FX gap above ${(ctx.cfg.FX_ALERT_BPS / 100).toFixed(2)}%`, detail: gaps.map((g) => `payment ${g.payment_id}: ${(Number(g.fx_gap_cents) / 100).toFixed(2)} USD (${(g.fx_gap_bps / 100).toFixed(2)}%)`).join('; '), action: 'Compare the locked EUR rate with NOWPayments\' conversion; consider FX_SPREAD_BPS (CFO) if the gap repeats. Booked to fx_pnl.' });
+  const held = await many<{ payment_id: string; review_reason: string }>(ctx.db, `SELECT payment_id, review_reason FROM crypto_payments WHERE review_reason IS NOT NULL AND review_resolved_at IS NULL ORDER BY review_flagged_at LIMIT 50`);
+  if (held.length) alerts.push({ key: 'crypto_review', title: `${held.length} crypto deposit(s) held for manual review`, detail: held.map((r) => `payment ${r.payment_id}: ${r.review_reason}`).join('; '), action: 'Check each payment in the NOWPayments dashboard and credit the buyer by a manual ledger adjustment (Ops → Ledger); nothing was credited automatically.' });
+
   const big = await many<{ id: string; user_id: string; amount_cents: string }>(ctx.db, `SELECT id, user_id, amount_cents FROM withdrawals WHERE created_at > now() - interval '1 hour' AND amount_cents >= $1`, [c.alert_withdrawal_cents]);
   if (big.length) alerts.push({ key: 'withdrawals_large', title: `${big.length} large withdrawal request(s)`, detail: big.map((w) => `${(Number(w.amount_cents) / 100).toFixed(2)} USD by user ${w.user_id}`).join('; '), action: 'Finance checks the seller\'s recent sales and disputes before approving (Ops → Payouts).' });
   const repeat = await many<{ user_id: string; n: number }>(ctx.db, `SELECT user_id, count(*)::int AS n FROM withdrawals WHERE created_at > now() - interval '24 hours' GROUP BY user_id HAVING count(*) >= 3`);

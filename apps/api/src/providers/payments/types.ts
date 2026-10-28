@@ -38,6 +38,8 @@ export type PaymentEvent =
         settledAmountCents?: number;
         /** Processing fee the PSP deducted from this payment, in minor units. */
         feeCents?: number;
+        /** Round 25b: crypto EUR invoices: the part of the deposit-to-wallet gap that is FX, not fee (> 0 a loss), booked to fx_pnl. */
+        fxGapCents?: number;
         /** Crypto: what the buyer sent above the order total beyond the tolerance; goes to their balance, never to FX gain (CFO B6). */
         overpaidCents?: number;
         raw?: unknown;

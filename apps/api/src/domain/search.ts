@@ -54,6 +54,26 @@ const LIVE = [
 /** The promised delivery time in minutes; instant delivery is 0. */
 export const DELIVERY_MINUTES_SQL = `(CASE WHEN f.delivery_mode = 'auto' THEN 0 ELSE f.delivery_minutes END)`;
 
+/** Text search: weighted full text plus typo-tolerant matches on game and title. Wildcards in the query are literal. */
+function textFilter(text: string, arg: (v: unknown) => string) {
+  const t = arg(text);
+  // word_similarity (<%) matches a typo'd or partial word inside a longer name: "eldn" -> "Elden Ring".
+  return {
+    where: `(f.search @@ websearch_to_tsquery('simple', ${t}) OR lower(${t}) <% lower(f.game) OR lower(${t}) <% lower(f.title) OR f.title ILIKE '%' || ${arg(text.replace(/[\\%_]/g, '\\$&'))} || '%')`,
+    rank: `ts_rank(f.search, websearch_to_tsquery('simple', ${t})) + word_similarity(lower(${t}), lower(f.game))`,
+  };
+}
+
+/**
+ * Round 25b (L2): a game field filter, with the key as a literal so the expression indexes on
+ * lower(attributes->>'server') / ('league') serve it. Keys are checked against ATTR_KEY before they reach SQL.
+ */
+const SAFE_KEY = /^[a-z][a-z_]{0,29}$/;
+export function attrSql(key: string, arg: (v: unknown) => string, value: string) {
+  if (!SAFE_KEY.test(key)) throw new Error(`bad attribute key ${key}`);
+  return `lower(f.attributes->>'${key}') = lower(${arg(value)})`;
+}
+
 type Filter = 'game' | 'deliveryMethod' | 'category';
 /**
  * The WHERE conditions of a market search (without text and game fields, which searchOffers adds). `skip` leaves out
@@ -106,10 +126,9 @@ export async function searchOffers(q: Queryable, p: SearchParams) {
   const text = p.q?.trim();
   let rank = '0';
   if (text) {
-    const t = arg(text);
-    // word_similarity (<%) matches a typo'd or partial word inside a longer name: "eldn" -> "Elden Ring".
-    where.push(`(f.search @@ websearch_to_tsquery('simple', ${t}) OR lower(${t}) <% lower(f.game) OR lower(${t}) <% lower(f.title) OR f.title ILIKE '%' || ${arg(text.replace(/[\\%_]/g, '\\$&'))} || '%')`); // wildcards in the query are literal
-    rank = `ts_rank(f.search, websearch_to_tsquery('simple', ${t})) + word_similarity(lower(${t}), lower(f.game))`;
+    const t = textFilter(text, arg);
+    where.push(t.where);
+    rank = t.rank;
   }
   const attrs = Object.entries(p.attributes ?? {});
 
@@ -119,7 +138,7 @@ export async function searchOffers(q: Queryable, p: SearchParams) {
   const shop = !!p.sellerId;
   const select = OFFER_LIST_SQL.replace('SELECT f.id,', `SELECT ${rank} AS rank,${shop ? ' (f.featured_until IS NOT NULL AND f.featured_until > now()) AS featured,' : ''} f.id,`);
   // Attribute filters are kept apart so the facet queries can relax them one field at a time.
-  const attrWhere = attrs.map(([k, v]) => ({ key: k, sql: `lower(f.attributes->>${arg(k)}) = lower(${arg(v)})` }));
+  const attrWhere = attrs.map(([k, v]) => ({ key: k, sql: attrSql(k, arg, v) }));
   const base = `${select} WHERE ${[...where, ...attrWhere.map((a) => a.sql)].join(' AND ')}`;
   const baseParams = [...params]; // everything up to here: shared by results, count and facets
 
@@ -275,9 +294,12 @@ export async function searchFacets(q: Queryable, p: SearchParams & { server?: st
       return `$${params.length}`;
     };
     const where = filterSql(p, arg, skip === 'server' ? undefined : skip);
+    // Round 25b (L3): the same text filter as the results.
+    const text = p.q?.trim();
+    if (text) where.push(textFilter(text, arg).where);
     for (const [k, v] of Object.entries(p.attributes ?? {})) {
       if (skip === 'server' && field && k === field.key) continue;
-      where.push(`lower(f.attributes->>${arg(k)}) = lower(${arg(v)})`);
+      where.push(attrSql(k, arg, v));
     }
     return { where: where.join(' AND '), params, arg };
   };
@@ -290,7 +312,7 @@ export async function searchFacets(q: Queryable, p: SearchParams & { server?: st
     many<{ game: string; count: number }>(q, `SELECT f.game, count(*)::int AS count ${FROM} WHERE ${g.where} GROUP BY f.game ORDER BY count DESC, f.game LIMIT 200`, g.params),
     many<{ method: string; count: number }>(q, `SELECT dm AS method, count(*)::int AS count ${FROM} CROSS JOIN LATERAL unnest(f.delivery_methods) dm WHERE ${m.where} GROUP BY dm ORDER BY count DESC, dm`, m.params),
     sv && field
-      ? many<{ name: string; count: number }>(q, `SELECT f.attributes->>${sv.arg(field.key)} AS name, count(*)::int AS count ${FROM} WHERE ${sv.where} AND f.attributes ? ${sv.arg(field.key)} GROUP BY 1 ORDER BY count DESC, 1`, sv.params)
+      ? many<{ name: string; count: number }>(q, `SELECT f.attributes->>${sv.arg(field.key)} AS name, count(*)::int AS count ${FROM} WHERE ${sv.where} AND lower(f.attributes->>'${keyLiteral(field.key)}') IS NOT NULL GROUP BY 1 ORDER BY count DESC, 1`, sv.params)
       : Promise.resolve([]),
   ]);
   // A select field lists every option, with 0 where nothing is listed.
@@ -312,12 +334,31 @@ export const gameSlug = (game: string) =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
 
+const keyLiteral = (k: string) => {
+  if (!SAFE_KEY.test(k)) throw new Error(`bad attribute key ${k}`);
+  return k;
+};
+
+/** Round 25b (L2): the slug → game map, from games with their own fields and games with active listings; cached a minute. */
+let slugCache: { at: number; map: Map<string, string> } | null = null;
+export const GAME_SLUG_CACHE_MS = 60_000;
+export function forgetGameSlugs() {
+  slugCache = null;
+}
+
 /** The game a slug names: a game with its own listing fields, or one with listings. Null when none. */
 export async function gameForSlug(q: Queryable, slug: string): Promise<string | null> {
+  const find = () => slugCache!.map.get(slug) ?? null;
+  if (slugCache && Date.now() - slugCache.at < GAME_SLUG_CACHE_MS) {
+    const hit = find();
+    if (hit) return hit;
+  }
   const { GAME_SETS } = await import('./attributeSets.js');
   const rows = await many<{ game: string }>(q, `SELECT DISTINCT game FROM offers WHERE status = 'active'`);
-  const names = [...rows.map((r) => r.game), ...Object.keys(GAME_SETS)];
-  return names.find((n) => gameSlug(n) === slug) ?? null;
+  const map = new Map<string, string>();
+  for (const n of [...rows.map((r) => r.game), ...Object.keys(GAME_SETS)]) if (!map.has(gameSlug(n))) map.set(gameSlug(n), n);
+  slugCache = { at: Date.now(), map };
+  return find();
 }
 
 /**
@@ -334,7 +375,7 @@ export async function serverSummary(q: Queryable, game: string, category = 'curr
     `WITH live AS (
        SELECT f.attributes->>$3 AS name, f.seller_id, f.sold_count, ${GROSS_SQL('f.price_settlement_micros')} AS micros, u.display_name, u.completed_orders
          FROM offers f JOIN users u ON u.id = f.seller_id
-        WHERE ${LIVE.join(' AND ')} AND f.available > 0 AND lower(f.game) = lower($1) AND f.category_slug = $2 AND f.attributes ? $3
+        WHERE ${LIVE.join(' AND ')} AND f.available > 0 AND lower(f.game) = lower($1) AND f.category_slug = $2 AND lower(f.attributes->>'${keyLiteral(field.key)}') IS NOT NULL
      ), per_seller AS (
        SELECT name, seller_id, max(display_name) AS display_name, max(completed_orders) AS completed, sum(sold_count) AS sold FROM live GROUP BY name, seller_id
      )

@@ -14,7 +14,7 @@ State of the project for whoever picks it up next (a person or another Claude se
 
 | Path | What |
 |---|---|
-| `apps/api` | Fastify 5 + Postgres API and worker. Migrations in `migrations/` (latest 080), business logic in `src/domain/`, routes in `src/routes/`, providers (payments, KYC, email, Steam/Riot…) in `src/providers/` |
+| `apps/api` | Fastify 5 + Postgres API and worker. Migrations in `migrations/` (latest 081), business logic in `src/domain/`, routes in `src/routes/`, providers (payments, KYC, email, Steam/Riot…) in `src/providers/` |
 | `apps/web` | React 19 + Vite + Tailwind v4 web app. `src/demo/` is an in-browser mock of the API used for previews and browser tests |
 | `contracts` | `MarketEscrow.sol` (Hardhat) |
 | `services/fraud-gnn` | Python fraud model service |
@@ -903,6 +903,24 @@ Suites on this commit: API 84 files / 769 tests green (multinode excluded as bef
 --omit=dev` 0 (root, api); image start check: build, runtime imports, migrate through 080, `/readyz` + `/healthz` as
 `APP_ENV=staging` with `PAYMENT_PROVIDER=nowpayments`, `SANDBOX_MODE=false`, `PLATFORM_ACCOUNTS=live` (the build needed
 the agent proxy CA in a scratch copy of the Dockerfile; the repo Dockerfile is unchanged).
+
+## Round 25b (Oct 28, 2026) — fixes from the independent review of cabbfe5
+
+Migration **081** (`081_round25b.sql`). New test file `test/round25b.test.ts` (one block per finding).
+
+| # | What changed |
+|---|---|
+| H1 | An order inside a cart can no longer be quoted or paid on its own: `POST /v1/orders/:id/fx-quote` and `/v1/orders/:id/crypto/pay` on a cart order answer **409 `use_checkout`** with `details.checkoutId` (use `/v1/checkouts/:id/…`). Before a cart is captured (card or crypto), `alignCartOrders` checks that every order has the checkout's presentment currency and that the amounts add up; if not (an order re-quoted alone before this fix), the orders are re-synced to the checkout (its currency, its total split by each order's USD charge), logged, and the capture goes through: the buyer's money is always applied. The review's repro (first order re-quoted in EUR, cart paid with a USD invoice) is a test. |
+| M1 | EUR invoices: of the gap between the USD credited and the USDT that reached the wallet, only NOWPayments' expected fee is `psp_fee` (its IPN `fee` object, else `NOWPAYMENTS_FEE_BPS`, default 50); the rest is booked `crypto_fx` (gateway ↔ `fx_pnl`, either sign), so the gateway still ends at the wallet's amount. `crypto_payments.fx_gap_cents` / `fx_gap_bps`; Ops alert `crypto_fx_gap` above `FX_ALERT_BPS` (default 100). `FX_SPREAD_BPS` (default 0, CFO decision) applies to EUR quotes. `actually_paid_at_fiat` on an EUR invoice is assumed to be EUR and is cross-checked against the coins sent: a USD value is recognised and credited as USD; an unreadable value, or an IPN whose `price_currency` is not the invoice's, is **held**: nothing credited or captured, `crypto_payments.review_reason` set, Ops alert `crypto_review`. To check on the NOWPayments sandbox: `docs/STAGING-CHECKLIST.md` step 7b. |
+| L1 | `offers.stock`, `offers.available`, `offers.min_qty` and `orders.quantity` are bigint; `offer_available` / `offer_available_of` return bigint. A cancel that restocks above 2^31 works. |
+| L2 | The unused `offers_attributes_gin` is replaced by `offers_server` and `offers_league` (`lower(game), category_slug, lower(attributes->>'server'|'league')`, active only); the market writes game-field filters with the key as a checked literal so they use them. `gameForSlug` caches the slug → game map for a minute (a miss re-reads it). |
+| L3 | `GET /v1/offers/facets` applies `q` like `/v1/offers`. |
+
+Contract changes for the front end: only the new 409 `use_checkout` on the two order-level endpoints for cart orders.
+
+Suites: API 85 files / 778 tests green (multinode excluded), typecheck clean, `npm audit --omit=dev` 0 (root, api);
+image start check: build, runtime imports, migrate through 081, `/readyz` + `/healthz` as `APP_ENV=staging` with
+`PAYMENT_PROVIDER=nowpayments` and `SANDBOX_MODE=false` (proxy CA in a scratch Dockerfile copy, repo Dockerfile unchanged).
 
 ## Suggested next round
 

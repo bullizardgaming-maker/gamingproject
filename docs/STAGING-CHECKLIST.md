@@ -71,6 +71,13 @@ Vercel production environment: `VITE_DEMO=false`, `VITE_API_URL=https://api.<dom
 7. Kill switches: Actions → **staging kill switches** (or by hand: Ops → Controls → pause each switch, confirm the banner
    and the 503, resume). Load: Actions → **staging load test**. Alerts: Ops → Controls
    thresholds; the `ops_alerts` job runs every 15 minutes and emails admins + finance (on staging emails go to the log).
+7b. EUR crypto invoice (Round 25b, **must be checked on the NOWPayments sandbox**): pay one order with
+   `priceCurrency: "EUR"` and read the IPN in the log. The API assumes `actually_paid_at_fiat` is in the invoice's
+   `price_currency` (EUR) and cross-checks it against the coins sent: an EUR value is credited at the locked rate, a USD
+   value is recognised and credited as USD, anything else is held (`crypto_payments.review_reason`, Ops alert
+   `crypto_review`) and nothing is credited. Note which case the sandbox gives; if it is the held case, tell the back end.
+   The fee/FX split: `psp_fee` = NOWPayments' `fee` object (or `NOWPAYMENTS_FEE_BPS`), the rest of the gap is
+   `crypto_fx` (fx_pnl); above `FX_ALERT_BPS` (100 = 1 %) Ops gets `crypto_fx_gap`.
 8. Security scan: Actions → **staging ZAP scan** (`security/zap/README.md`). Fix every High, re-run.
 9. Backup drill (gate §4): Neon → Branches → "Restore" the staging branch to a point in time an hour back, confirm the
    app still answers; note the date in the launch gate's Results table.

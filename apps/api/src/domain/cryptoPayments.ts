@@ -98,6 +98,8 @@ interface Payable {
   /** The checkout quote: units of presentment currency per USD and when it was locked (Round 25, B6). */
   fx_rate: number;
   fx_locked_at: string | null;
+  /** An order that belongs to a cart checkout (Round 25b: it is paid and quoted through the checkout only). */
+  checkout_id: string | null;
   title: string;
 }
 
@@ -105,7 +107,7 @@ async function payable(q: Queryable, ref: PayableRef, buyerId: string, forPaying
   let p: Payable | null;
   if ('orderId' in ref) {
     const o = await maybeOne<any>(q, 'SELECT o.*, f.title FROM orders o JOIN offers f ON f.id = o.offer_id WHERE o.id = $1', [ref.orderId]);
-    p = o && { kind: 'order', id: o.id, buyer_id: o.buyer_id, status: o.status, payment_provider: o.payment_provider, payment_ref: o.payment_ref, charged_cents: Number(o.charged_cents), currency: o.currency, presentment_amount_cents: Number(o.presentment_amount_cents), presentment_currency: o.presentment_currency, fx_rate: Number(o.fx_rate ?? 1), fx_locked_at: o.fx_locked_at ?? null, title: `${o.title} x${o.quantity}` };
+    p = o && { kind: 'order', id: o.id, buyer_id: o.buyer_id, status: o.status, payment_provider: o.payment_provider, payment_ref: o.payment_ref, charged_cents: Number(o.charged_cents), currency: o.currency, presentment_amount_cents: Number(o.presentment_amount_cents), presentment_currency: o.presentment_currency, fx_rate: Number(o.fx_rate ?? 1), fx_locked_at: o.fx_locked_at ?? null, checkout_id: o.checkout_id ?? null, title: `${o.title} x${o.quantity}` };
   } else {
     const c = await maybeOne<any>(
       q,
@@ -119,7 +121,7 @@ async function payable(q: Queryable, ref: PayableRef, buyerId: string, forPaying
     );
     // A cart whose orders all lapsed is closed even if the checkout row was never updated: a late deposit must not fund it.
     const status = c && c.status === 'awaiting_payment' && c.n > 0 && c.open_n === 0 ? 'cancelled' : c?.status;
-    p = c && { kind: 'checkout', id: c.id, buyer_id: c.buyer_id, status, payment_provider: c.payment_provider, payment_ref: c.payment_ref, charged_cents: Number(c.charged_cents ?? 0), currency: c.currency ?? 'USD', presentment_amount_cents: Number(c.presentment_amount_cents ?? 0), presentment_currency: c.presentment_currency ?? 'USD', fx_rate: Number(c.fx_rate ?? 1), fx_locked_at: c.fx_locked_at ?? null, title: `Bullizard order: ${c.n} item${c.n === 1 ? '' : 's'}` };
+    p = c && { kind: 'checkout', id: c.id, buyer_id: c.buyer_id, status, payment_provider: c.payment_provider, payment_ref: c.payment_ref, charged_cents: Number(c.charged_cents ?? 0), currency: c.currency ?? 'USD', presentment_amount_cents: Number(c.presentment_amount_cents ?? 0), presentment_currency: c.presentment_currency ?? 'USD', fx_rate: Number(c.fx_rate ?? 1), fx_locked_at: c.fx_locked_at ?? null, checkout_id: null, title: `Bullizard order: ${c.n} item${c.n === 1 ? '' : 's'}` };
   }
   if (!p || p.buyer_id !== buyerId) throw notFound('orderId' in ref ? 'Order' : 'Checkout');
   if (forPaying) {
@@ -127,6 +129,16 @@ async function payable(q: Queryable, ref: PayableRef, buyerId: string, forPaying
     if (p.payment_provider !== 'nowpayments') throw conflict('not_crypto', `This ${p.kind} is not paid with crypto`);
   }
   return p;
+}
+
+/**
+ * Round 25b (H1): an order inside a cart is quoted and paid through its checkout only. Paying or re-quoting it on its own
+ * would leave the cart's orders in different currencies, and the cart's capture would be refused.
+ */
+function refuseCartOrder(p: Payable) {
+  if (p.kind === 'order' && p.checkout_id) {
+    throw new AppError(409, 'use_checkout', 'This order is part of a cart: pay and quote it through the cart checkout', { checkoutId: p.checkout_id });
+  }
 }
 
 const whereRef = (p: { kind: string; id: string }) => (p.kind === 'order' ? 'order_id = $1' : 'checkout_id = $1');
@@ -229,6 +241,7 @@ export async function quoteFx(ctx: Ctx, ref: PayableRef, buyerId: string, curren
   if (!cryptoPriceCurrencies(ctx).includes(currency)) throw badRequest('unsupported_currency', `Crypto payments are priced in ${cryptoPriceCurrencies(ctx).join(' or ')}`);
   return withTx(ctx.db, async (tx) => {
     const p = await payable(tx, ref, buyerId);
+    refuseCartOrder(p);
     await lockPayable(tx, p);
     const q = await lockFxQuote(ctx, tx, p, currency);
     return { ...q, usdCents: p.charged_cents };
@@ -250,6 +263,7 @@ export async function startCryptoPayment(ctx: Ctx, ref: PayableRef, buyerId: str
   const np = provider(ctx);
   if (!cryptoPriceCurrencies(ctx).includes(priceCurrency)) throw badRequest('unsupported_currency', `Crypto payments are priced in ${cryptoPriceCurrencies(ctx).join(' or ')}`);
   const o = await payable(ctx.db, ref, buyerId);
+  refuseCartOrder(o);
   const open = await maybeOne<{ id: string; payment_id: string; pay_currency: string; expires_at: string | null }>(
     ctx.db,
     `SELECT id, payment_id, pay_currency, expires_at FROM crypto_payments WHERE ${whereRef(o)} AND status IN ('waiting', 'confirming', 'confirmed', 'sending') ORDER BY created_at DESC LIMIT 1`,
@@ -356,9 +370,18 @@ export async function applyCryptoPayment(ctx: Ctx, ev: Extract<PaymentEvent, { t
   // A deposit's value in the invoice's currency: NOWPayments reports it when it has one; otherwise value the coins at the
   // payment's own rate. Round 25: an EUR invoice is valued in USD in proportion to the invoice (paid EUR / invoiced EUR ×
   // the USD it covered), so paying the EUR shown settles exactly the USD owed. Settlement stays USD.
-  const inv = await one<{ price_usd: string; price_amount: string | null; price_currency: string }>(ctx.db, 'SELECT price_usd::text, price_amount::text, price_currency FROM crypto_payments WHERE id = $1', [row0.id]);
-  const paidFiat = ev.actuallyPaidUsd ?? (ev.payAmount > 0 ? (ev.actuallyPaid / ev.payAmount) * ev.priceUsd : 0);
-  const paidUsd = inv.price_currency === 'USD' || !Number(inv.price_amount) ? paidFiat : Math.round(((paidFiat * Number(inv.price_usd)) / Number(inv.price_amount)) * 100) / 100;
+  const inv = await one<{ price_usd: string; price_amount: string | null; price_currency: string; fx_rate: string }>(ctx.db, 'SELECT price_usd::text, price_amount::text, price_currency, fx_rate::text FROM crypto_payments WHERE id = $1', [row0.id]);
+  const valued = depositUsd(inv, ev);
+  if (!valued.ok) {
+    // Round 25b (M1): we can't tell what currency NOWPayments valued an EUR deposit in. Never guess (over-crediting is
+    // the risk): nothing is credited or captured, the row is flagged for manual review and Ops is alerted.
+    await ctx.db.query(`UPDATE crypto_payments SET status = $2, actually_paid = $3, actually_paid_usd = NULL, outcome_amount = $4, outcome_currency = $5, raw = $6,
+                               review_reason = $7, review_flagged_at = COALESCE(review_flagged_at, now()), updated_at = now() WHERE id = $1`,
+      [row0.id, ev.status, ev.actuallyPaid, ev.outcomeAmount, ev.outcomeCurrency, JSON.stringify(ev.raw ?? {}), valued.reason]);
+    ctx.log.error({ paymentId: ev.paymentId, reason: valued.reason }, 'crypto deposit held for manual review');
+    return payable(ctx.db, ref, buyerId, false);
+  }
+  const paidUsd = valued.usd;
 
   // Round 22 (7): one transaction from the decision to the capture, holding the order row(s) and then the payment row —
   // the same order the unpaid-order reaper takes them in (cancelOrder → creditPartialPayments) — so an IPN and the reaper
@@ -399,7 +422,20 @@ export async function applyCryptoPayment(ctx: Ctx, ev: Extract<PaymentEvent, { t
     // is the net; the gap is NOWPayments' fee — booked once, as psp_fee (CFO B1). Anything above the order total beyond the
     // tolerance is the buyer's money: it goes to their balance (CFO B6), not to FX gain.
     const settled = await settledCents(s.tx, target, paid);
-    const fee = Math.max(0, paid - settled);
+    // The deposits that fund this order are marked with what each was worth, so anything arriving later is treated as extra.
+    const funding = await many<{ id: string; actually_paid_usd: string | null; outcome_amount: string | null; outcome_currency: string | null; price_currency: string; raw: any }>(
+      s.tx, `SELECT id, actually_paid_usd::text, outcome_amount::text, outcome_currency, price_currency, raw FROM crypto_payments WHERE ${whereRef(target)} AND applied_at IS NULL AND status IN ('finished', 'confirmed', 'sending', 'partially_paid') FOR UPDATE`, [target.id],
+    );
+    // USD invoices: the whole gap between what the buyer sent and what reached the wallet is NOWPayments' fee (CFO B1).
+    // Round 25b (M1): with an EUR invoice the gap also holds the EUR→USD conversion: only the expected fee is psp_fee,
+    // the rest is FX gain/loss (fx_pnl), and a gap above FX_ALERT_BPS of the order raises an Ops alert.
+    const gap = paid - settled;
+    const eur = funding.some((f) => f.price_currency !== 'USD');
+    const fee = eur ? Math.max(0, Math.min(expectedFeeCents(ctx, funding), Math.max(gap, 0))) : Math.max(0, gap);
+    const fxGap = eur ? gap - fee : 0; // > 0: FX loss, < 0: FX gain
+    const fxGapBps = target.charged_cents > 0 ? Math.round((fxGap * 10_000) / target.charged_cents) : 0;
+    if (eur) await s.tx.query('UPDATE crypto_payments SET fx_gap_cents = $2, fx_gap_bps = $3 WHERE id = $1', [row.id, fxGap, fxGapBps]);
+    if (eur && Math.abs(fxGapBps) > ctx.cfg.FX_ALERT_BPS) ctx.log.error({ paymentId: ev.paymentId, fxGapCents: fxGap, fxGapBps }, 'crypto EUR invoice: FX gap above FX_ALERT_BPS');
     const overpaid = paid - target.charged_cents > tolerance ? paid - target.charged_cents : 0;
     const captured: Extract<PaymentEvent, { type: 'payment.captured' }> = {
       type: 'payment.captured',
@@ -407,16 +443,60 @@ export async function applyCryptoPayment(ctx: Ctx, ev: Extract<PaymentEvent, { t
       orderId: target.id,
       amountCents: target.presentment_amount_cents,
       currency: target.presentment_currency,
-      details: { settledAmountCents: paid, feeCents: fee, overpaidCents: overpaid, raw: { payments: await paymentsFor(s.tx, ref) } },
+      details: { settledAmountCents: paid, feeCents: fee, fxGapCents: fxGap, overpaidCents: overpaid, raw: { payments: await paymentsFor(s.tx, ref) } },
     };
-    // The deposits that fund this order are marked with what each was worth, so anything arriving later is treated as extra.
-    const funding = await many<{ id: string; actually_paid_usd: string | null; outcome_amount: string | null; outcome_currency: string | null }>(
-      s.tx, `SELECT id, actually_paid_usd::text, outcome_amount::text, outcome_currency FROM crypto_payments WHERE ${whereRef(target)} AND applied_at IS NULL AND status IN ('finished', 'confirmed', 'sending', 'partially_paid') FOR UPDATE`, [target.id],
-    );
     for (const f of funding) await s.tx.query('UPDATE crypto_payments SET applied_at = now(), applied_cents = $2 WHERE id = $1', [f.id, settledOf(f)]);
     if (target.kind === 'checkout' && (await checkoutByRef(s.tx, target.payment_ref!))) return handleCheckoutCapturedIn(ctx, s, captured);
     return handlePaymentCapturedIn(ctx, s, captured);
   });
+}
+
+/**
+ * NOWPayments' fee on the funding deposits, in USD cents: the `fee` object of its IPN (depositFee + withdrawalFee +
+ * serviceFee, in the outcome stablecoin) when it sends one, else NOWPAYMENTS_FEE_BPS of the deposit.
+ */
+function expectedFeeCents(ctx: Ctx, rows: Array<{ actually_paid_usd: string | null; raw: any }>) {
+  let cents = 0;
+  for (const r of rows) {
+    const f = r.raw?.fee;
+    const parts = f && typeof f === 'object' ? [f.depositFee, f.withdrawalFee, f.serviceFee].map(Number).filter((n) => Number.isFinite(n) && n >= 0) : [];
+    cents += parts.length ? toCents(parts.reduce((a, b) => a + b, 0)) : Math.round((toCents(Number(r.actually_paid_usd ?? 0)) * ctx.cfg.NOWPAYMENTS_FEE_BPS) / 10_000);
+  }
+  return cents;
+}
+
+/**
+ * A deposit's value in USD. USD invoice: what NOWPayments reports (`actually_paid_at_fiat`), else the coins at the
+ * payment's own rate. EUR invoice (Round 25): in proportion to the invoice (paid EUR / invoiced EUR × the USD it
+ * covered), so paying the EUR shown settles exactly the USD owed.
+ *
+ * Round 25b (M1) — CHECK AGAINST THE NOWPAYMENTS SANDBOX: we expect `actually_paid_at_fiat` in the invoice's
+ * `price_currency` (EUR). Since that is not documented, it is cross-checked against the coins sent (actually_paid /
+ * pay_amount × the invoiced EUR): within 2 % it is EUR; within 2 % of that value in USD (÷ the locked rate) it is taken as
+ * USD; anything else, or an IPN whose price_currency is not the invoice's, is refused and held for manual review.
+ */
+export function depositUsd(
+  inv: { price_usd: string; price_amount: string | null; price_currency: string; fx_rate: string },
+  ev: { actuallyPaidUsd: number | null; actuallyPaid: number; payAmount: number; priceUsd: number; raw?: unknown },
+): { ok: true; usd: number } | { ok: false; reason: string } {
+  const coinShare = ev.payAmount > 0 ? ev.actuallyPaid / ev.payAmount : 0;
+  if (inv.price_currency === 'USD' || !Number(inv.price_amount)) return { ok: true, usd: ev.actuallyPaidUsd ?? coinShare * ev.priceUsd };
+  const invoiced = Number(inv.price_amount);
+  const usdPerInvoiced = Number(inv.price_usd) / invoiced;
+  const raw = (ev.raw ?? {}) as Record<string, unknown>;
+  if (typeof raw.price_currency === 'string' && raw.price_currency.toUpperCase() !== inv.price_currency) {
+    return { ok: false, reason: `ipn_price_currency_${raw.price_currency.toLowerCase()}` };
+  }
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  if (ev.actuallyPaidUsd == null) return { ok: true, usd: round2(coinShare * invoiced * usdPerInvoiced) };
+  const fiat = ev.actuallyPaidUsd;
+  if (fiat === 0) return { ok: true, usd: 0 };
+  if (!(coinShare > 0)) return { ok: false, reason: 'fiat_value_without_coins' };
+  const asEur = coinShare * invoiced;
+  const near = (a: number, b: number) => Math.abs(a - b) <= Math.max(0.02 * b, 0.01);
+  if (near(fiat, asEur)) return { ok: true, usd: round2(fiat * usdPerInvoiced) };
+  if (near(fiat, asEur / Number(inv.fx_rate))) return { ok: true, usd: round2(fiat) };
+  return { ok: false, reason: 'fiat_value_currency_unknown' };
 }
 
 /** USD cents a payment row is worth: what reached the wallet in USDT/USDC, else NOWPayments' valuation of the deposit. */

@@ -359,7 +359,7 @@ export async function updateOffer(ctx: Ctx, sellerId: string, offerId: string, v
         delivery_hours = COALESCE($10, delivery_hours), attributes = COALESCE($11::jsonb, attributes), price_tiers = COALESCE($12::jsonb, price_tiers),
         warranty_days = COALESCE($15, warranty_days),
         unit_label = CASE WHEN $16::boolean THEN $17 ELSE unit_label END, unit_size = CASE WHEN $16::boolean THEN $18::bigint ELSE unit_size END,
-        min_qty = CASE WHEN $16::boolean THEN $19::int ELSE min_qty END,
+        min_qty = CASE WHEN $16::boolean THEN $19::bigint ELSE min_qty END,
         linked_account_id = CASE WHEN $20::boolean THEN $21::uuid ELSE linked_account_id END,
         delivery_methods = CASE WHEN $22::boolean THEN $23::text[] ELSE delivery_methods END,
         unit_price_micros = COALESCE($24::bigint, unit_price_micros), volume_discounts = COALESCE($25::jsonb, volume_discounts),

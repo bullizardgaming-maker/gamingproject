@@ -621,13 +621,13 @@ async function capturePayment(ctx: Ctx, s: TxScope, ev: Extract<PaymentEvent, { 
   if (order.status !== 'awaiting_payment') {
     if (order.status === 'cancelled' && !(await hasLedgerTxn(s.tx, order.id, 'payment_captured'))) {
       // Paid after the reservation expired: record the money (with the provider's fee, Round 22) and refund it.
-      await postCapture(s.tx, order, ev.details.feeCents, settled, ev.details.overpaidCents ?? 0);
+      await postCapture(s.tx, order, ev.details.feeCents, settled, ev.details.overpaidCents ?? 0, ev.details.fxGapCents ?? 0);
       return { order, refundNeeded: order };
     }
     return { order, refundNeeded: null }; // idempotent replay
   }
 
-  await postCapture(s.tx, order, ev.details.feeCents, settled, ev.details.overpaidCents ?? 0);
+  await postCapture(s.tx, order, ev.details.feeCents, settled, ev.details.overpaidCents ?? 0, ev.details.fxGapCents ?? 0);
   if (ev.details.overpaidCents) {
     const room = await roomOf(s.tx, order.id);
     await appendMessage(s, room.id, null, 'system', `The payment arrived ${(ev.details.overpaidCents / 100).toFixed(2)} ${order.currency} above the order total. The extra is in the buyer's balance.`, [], undefined, { code: 'overpaid', params: { amount_cents: ev.details.overpaidCents, currency: order.currency } });
@@ -653,7 +653,7 @@ async function hasLedgerTxn(q: Queryable, orderId: string, memo: string) {
   return !!(await maybeOne(q, 'SELECT 1 FROM ledger_entries WHERE order_id = $1 AND memo = $2 LIMIT 1', [orderId, memo]));
 }
 
-async function postCapture(tx: Tx, order: Order, feeCents = 0, settledCents = order.charged_cents, overpaidCents = 0) {
+async function postCapture(tx: Tx, order: Order, feeCents = 0, settledCents = order.charged_cents, overpaidCents = 0, fxGapCents = 0) {
   const cur = order.currency;
   if (order.charged_cents > 0) {
     // settledCents is gross (before the PSP fee). An overpayment beyond the tolerance is the buyer's credit (CFO B6);
@@ -683,6 +683,19 @@ async function postCapture(tx: Tx, order: Order, feeCents = 0, settledCents = or
         { account: await accountId(tx, 'treasury', cur), amountCents: -feeCents },
       ],
       'psp_fee',
+      order.id,
+    );
+  }
+  // Round 25b (M1): an EUR invoice's conversion gap (what the buyer's EUR was worth in USD against what reached the
+  // wallet, after the fee) is FX gain/loss, so the gateway still ends at exactly what is in the wallet.
+  if (fxGapCents) {
+    await post(
+      tx,
+      [
+        { account: await accountId(tx, 'gateway_clearing', cur), amountCents: fxGapCents },
+        { account: await accountId(tx, 'fx_pnl', cur), amountCents: -fxGapCents },
+      ],
+      'crypto_fx',
       order.id,
     );
   }

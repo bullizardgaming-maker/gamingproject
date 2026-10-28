@@ -114,6 +114,29 @@ export async function cartView(q: Queryable, checkoutId: string) {
   return { checkout, orders };
 }
 
+/**
+ * Round 25b (H1): every order of a cart must carry the checkout's presentment currency, and their amounts must add up
+ * to the checkout's, or a capture would be refused per order and the buyer's money left unapplied. Normally they do
+ * (quotes and payments go through the checkout); if they don't (an order re-quoted alone before Round 25b), the orders
+ * are re-synced to the checkout: its currency, its total split by what each order charges in USD. Logged.
+ */
+export async function alignCartOrders(q: Queryable, log: Ctx['log'], checkout: { id: string; presentment_currency: string; presentment_amount_cents: number | string }) {
+  const orders = await many<{ id: string; presentment_amount_cents: number; presentment_currency: string; charged_cents: number }>(
+    q, 'SELECT id, presentment_amount_cents, presentment_currency, charged_cents FROM orders WHERE checkout_id = $1 ORDER BY created_at', [checkout.id],
+  );
+  const total = Number(checkout.presentment_amount_cents);
+  const sum = orders.reduce((s, o) => s + Number(o.presentment_amount_cents), 0);
+  if (orders.every((o) => o.presentment_currency === checkout.presentment_currency) && sum === total) return orders;
+  const parts = splitProportional(total, orders.map((o) => Number(o.charged_cents)));
+  for (const [i, o] of orders.entries()) {
+    await q.query('UPDATE orders SET presentment_currency = $2, presentment_amount_cents = $3 WHERE id = $1', [o.id, checkout.presentment_currency, parts[i]]);
+    o.presentment_currency = checkout.presentment_currency;
+    o.presentment_amount_cents = parts[i]!;
+  }
+  log.warn({ checkoutId: checkout.id, orders: orders.length }, 'cart orders re-synced to the checkout currency before capture');
+  return orders;
+}
+
 /** A captured cart payment: verify the total, then capture each order with its share. */
 export async function handleCheckoutCaptured(ctx: Ctx, ev: Extract<PaymentEvent, { type: 'payment.captured' }>) {
   const checkout = await checkoutByRef(ctx.db, ev.ref);
@@ -121,15 +144,12 @@ export async function handleCheckoutCaptured(ctx: Ctx, ev: Extract<PaymentEvent,
   if (Number(checkout.presentment_amount_cents) !== ev.amountCents || checkout.presentment_currency !== ev.currency) {
     throw badRequest('amount_mismatch', 'Captured amount does not match checkout');
   }
-  const orders = await many<{ id: string; presentment_amount_cents: number; charged_cents: number }>(
-    ctx.db,
-    'SELECT id, presentment_amount_cents, charged_cents FROM orders WHERE checkout_id = $1 ORDER BY created_at',
-    [checkout.id],
-  );
+  const orders = await alignCartOrders(ctx.db, ctx.log, checkout);
   const weights = orders.map((o) => Number(o.presentment_amount_cents));
   const settled = ev.details.settledAmountCents != null ? splitProportional(ev.details.settledAmountCents, weights) : null;
   const fees = ev.details.feeCents != null ? splitProportional(ev.details.feeCents, weights) : null;
   const over = ev.details.overpaidCents ? splitProportional(ev.details.overpaidCents, weights) : null;
+  const fxGap = ev.details.fxGapCents ? splitProportional(ev.details.fxGapCents, weights) : null;
   // Each order is captured in its own transaction and is idempotent, so a replayed webhook (or one
   // that failed halfway) completes the rest without double-capturing.
   for (const [i, o] of orders.entries()) {
@@ -137,7 +157,7 @@ export async function handleCheckoutCaptured(ctx: Ctx, ev: Extract<PaymentEvent,
       ...ev,
       orderId: o.id,
       amountCents: Number(o.presentment_amount_cents),
-      details: { ...ev.details, settledAmountCents: settled?.[i], feeCents: fees?.[i], overpaidCents: over?.[i] },
+      details: { ...ev.details, settledAmountCents: settled?.[i], feeCents: fees?.[i], overpaidCents: over?.[i], fxGapCents: fxGap?.[i] },
     });
   }
   await ctx.db.query(`UPDATE checkouts SET status = 'paid', paid_at = COALESCE(paid_at, now()) WHERE id = $1`, [checkout.id]);
@@ -151,17 +171,18 @@ export async function handleCheckoutCapturedIn(ctx: Ctx, s: TxScope, ev: Extract
   if (Number(checkout.presentment_amount_cents) !== ev.amountCents || checkout.presentment_currency !== ev.currency) {
     throw badRequest('amount_mismatch', 'Captured amount does not match checkout');
   }
-  const orders = await many<{ id: string; presentment_amount_cents: number }>(s.tx, 'SELECT id, presentment_amount_cents FROM orders WHERE checkout_id = $1 ORDER BY created_at', [checkout.id]);
+  const orders = await alignCartOrders(s.tx, ctx.log, checkout);
   const weights = orders.map((o) => Number(o.presentment_amount_cents));
   const settled = ev.details.settledAmountCents != null ? splitProportional(ev.details.settledAmountCents, weights) : null;
   const fees = ev.details.feeCents != null ? splitProportional(ev.details.feeCents, weights) : null;
   const over = ev.details.overpaidCents ? splitProportional(ev.details.overpaidCents, weights) : null;
+  const fxGap = ev.details.fxGapCents ? splitProportional(ev.details.fxGapCents, weights) : null;
   for (const [i, o] of orders.entries()) {
     await handlePaymentCapturedIn(ctx, s, {
       ...ev,
       orderId: o.id,
       amountCents: Number(o.presentment_amount_cents),
-      details: { ...ev.details, settledAmountCents: settled?.[i], feeCents: fees?.[i], overpaidCents: over?.[i] },
+      details: { ...ev.details, settledAmountCents: settled?.[i], feeCents: fees?.[i], overpaidCents: over?.[i], fxGapCents: fxGap?.[i] },
     });
   }
   await s.tx.query(`UPDATE checkouts SET status = 'paid', paid_at = COALESCE(paid_at, now()) WHERE id = $1`, [checkout.id]);

@@ -155,6 +155,10 @@ const Env = z.object({
   FX_MAX_AGE_HOURS: z.coerce.number().default(48),
   // Round 25 (B6): a checkout price in EUR is held this long; after it the order gets a new quote before paying.
   FX_QUOTE_TTL_MINUTES: z.coerce.number().int().min(1).max(60).default(15),
+  // Round 25b (M1): Ops is alerted when an EUR crypto invoice's FX gap (after the expected fee) exceeds this share of the order.
+  FX_ALERT_BPS: z.coerce.number().int().min(1).max(10_000).default(100),
+  // NOWPayments' fee when its IPN carries no fee object (0.5 %); only used to split an EUR invoice's gap into fee and FX.
+  NOWPAYMENTS_FEE_BPS: z.coerce.number().int().min(0).max(1000).default(50),
   // Round 25 (B5): payment methods per viewer currency (domain/paymentMethods.ts). Empty = crypto in USD and EUR.
   PAYMENT_METHODS_JSON: z.string().optional(),
   // Buying EUR/EGP ahead of seller payouts (domain/fxtopups.ts). none = planning only, record conversions by hand.
