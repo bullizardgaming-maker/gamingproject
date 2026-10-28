@@ -78,7 +78,7 @@ export interface NowPaymentsOptions {
   password?: string;
   /** The account's 2FA secret (base32): payouts are verified automatically with a TOTP code. */
   twoFactorSecret?: string;
-  /** Wallet the store converts into, e.g. usdttrc20; sets the pair for minimum amounts. */
+  /** Wallet the store converts into, e.g. usdtbsc (USDT BEP-20); sets the pair for minimum amounts. */
   outcomeCurrency?: string;
   fetch?: typeof fetch;
   /** Deadline per call in ms (default 10 000). */
@@ -113,7 +113,7 @@ export class NowPaymentsProvider implements PaymentProvider {
   }
 
   get outcomeCurrency() {
-    return this.opts.outcomeCurrency ?? 'usdttrc20';
+    return this.opts.outcomeCurrency ?? 'usdtbsc';
   }
 
   /**

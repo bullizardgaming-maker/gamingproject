@@ -74,7 +74,7 @@ const Env = z.object({
   NOWPAYMENTS_EMAIL: z.string().optional(),            // account login, needed for payouts
   NOWPAYMENTS_PASSWORD: z.string().optional(),
   NOWPAYMENTS_2FA_SECRET: z.string().optional(),       // base32; payouts are verified automatically with it
-  NOWPAYMENTS_OUTCOME_CURRENCY: z.string().default('usdttrc20'),
+  NOWPAYMENTS_OUTCOME_CURRENCY: z.string().default('usdtbsc'),
   NOWPAYMENTS_SANDBOX_CASE: z.string().optional(),     // sandbox only: success | partially_paid | failed
   NOWPAYMENTS_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60_000).default(10_000), // Round 25: deadline per provider call
   /** Seller withdrawals: fee in basis points, with a floor in settlement minor units (6%, at least $1.50). */

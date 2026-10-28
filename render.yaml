@@ -40,6 +40,8 @@ envVarGroups:
         value: "1" # Render's load balancer; behind Cloudflare the client IP is CF-Connecting-IP (ORIGIN_SHARED_SECRET)
       - key: NOWPAYMENTS_API_URL
         value: https://api-sandbox.nowpayments.io # sandbox: keep it on staging
+      - key: NOWPAYMENTS_OUTCOME_CURRENCY
+        value: usdtbsc # settlement: USDT BEP-20 (CEO 2026-10-28)
       - key: AUTO_REFUND_LATE_ORDERS
         value: "false"
       - key: CARD_REFUNDS_ENABLED

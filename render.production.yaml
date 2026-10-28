@@ -11,6 +11,8 @@ envVarGroups:
         value: "false"
       - key: PAYMENT_PROVIDER
         value: nowpayments
+      - key: NOWPAYMENTS_OUTCOME_CURRENCY
+        value: usdtbsc # settlement: USDT BEP-20 (CEO 2026-10-28)
       - key: KYC_PROVIDER
         value: sumsub
       - key: APP_ENV
