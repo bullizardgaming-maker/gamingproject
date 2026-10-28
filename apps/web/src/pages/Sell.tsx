@@ -181,13 +181,6 @@ export function Sell() {
     if (user) load().catch(() => {});
   }, [user, load]);
 
-  // Returning from the payment partner's onboarding page: sync payout status.
-  useEffect(() => {
-    if (user && !user.payouts_enabled && new URLSearchParams(window.location.search).get('payouts')) {
-      api<{ payoutsEnabled: boolean }>('/seller/payout-account').then((s) => { if (s.payoutsEnabled) refresh(); }).catch(() => {});
-    }
-  }, [user, refresh]);
-
   if (!user) return <p className="muted"><Link to="/login?next=/sell">{t('sell.signIn')}</Link></p>;
   // Onboarding: Tier 1 (a verified email; no phone), then the rules test, then the hub; identity within 30 days.
   if (user.kyc_tier < 1) {

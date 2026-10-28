@@ -158,4 +158,27 @@ test.describe('crypto checkout, Round 25', () => {
     await page.getByRole('button', { name: 'Retry' }).click();
     await expect(page.getByRole('heading', { name: 'Choose payment method' })).toBeVisible();
   });
+
+  test('an EUR price that lapsed comes back as a new price to confirm before paying (409 fx_quote_expired)', async ({ page }) => {
+    await page.clock.install(); // time flows normally; fast-forwarded below past the 15-minute hold
+    await page.addInitScript(() => localStorage.setItem('bz.currency', 'EUR'));
+    await signIn(page, 'Buyer');
+    await page.goto('/offers/offer-1');
+    await buyNow(page);
+    await page.waitForURL(/pay=crypto/);
+    const checkout = page.locator('.crypto-checkout');
+    await checkout.getByTestId('method-crypto').click();
+    await checkout.getByTestId('invoice-EUR').click();
+    await expect(checkout.getByTestId('pay-due')).toContainText('held until');
+    await page.clock.fastForward('16:00');
+    await checkout.getByRole('button', { name: /Tether \(TRC-20\)/ }).click();
+    const requote = page.getByTestId('fx-requote');
+    await expect(requote).toContainText(/New price: €[\d.,]+/);
+    await expect(requote).toContainText('This one holds until');
+    await expect(checkout.getByTestId('pay-address')).toHaveCount(0); // nothing charged until the buyer confirms
+    await requote.getByRole('button', { name: 'Pay this price' }).click();
+    await expect(checkout.getByTestId('pay-address')).toBeVisible();
+    await expect(checkout.getByTestId('pay-breakdown')).toContainText('Invoice: €');
+    await expect(requote).toHaveCount(0);
+  });
 });

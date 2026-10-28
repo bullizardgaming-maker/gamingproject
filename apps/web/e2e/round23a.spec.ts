@@ -42,6 +42,7 @@ test.describe('newsletter consent', () => {
     await signOut(page);
     await page.goto('/login');
     await page.getByLabel('Language', { exact: true }).first().selectOption('ar');
+    await expect(page.locator('html')).toHaveAttribute('dir', 'rtl'); // the Arabic strings are in before the click
     await page.getByRole('button', { name: 'New here? Create an account' }).click(); // the auth chrome is English-only
     await expect(page.getByText(/راسلني عن الألعاب الجديدة والعروض\./)).toBeVisible();
   });

@@ -2424,15 +2424,6 @@ route('DELETE', '/seller/linked-accounts/:id', ({ me, params }) => {
   for (const o of state.offers) if (o.linked_account_id === a.id) o.linked_account_id = null;
   return linkedOf(u.id);
 });
-route('POST', '/seller/payout-account', ({ me }) => {
-  const u = needSeller(me);
-  u.payouts_enabled = true; // the payment partner's onboarding completes instantly in the demo
-  return { url: '/sell?payouts=1' };
-});
-route('GET', '/seller/payout-account', ({ me }) => {
-  const u = need(me);
-  return { connected: u.payouts_enabled, payoutsEnabled: u.payouts_enabled };
-});
 route('POST', '/seller/withdrawals', ({ me, body }) => {
   const u = needSeller(me);
   // Round 22b: withdrawals are USD only.

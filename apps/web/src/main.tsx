@@ -8,6 +8,7 @@ import { WalletPage } from './pages/Wallet';
 import { Market } from './pages/Market';
 import { OfferPage } from './pages/OfferPage';
 import { OrderPage } from './pages/OrderPage';
+import { CartPayPage } from './pages/Cart';
 import { InquiryChat, Orders } from './pages/Orders';
 import { Sell } from './pages/Sell';
 import { CreateOffer } from './pages/CreateOffer';
@@ -111,6 +112,7 @@ function App() {
           <Route path="/orders" element={<Orders />} />
           <Route path="/wallet" element={<WalletPage />} />
           <Route path="/orders/:id" element={<OrderPage />} />
+          <Route path="/checkouts/:id/pay" element={<CartPayPage />} />
           <Route path="/chat/:id" element={<InquiryChat />} />
           <Route path="/messages" element={<Messages />} />
           <Route path="/sell" element={<Sell />} />

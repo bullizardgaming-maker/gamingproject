@@ -15,11 +15,18 @@ export function Orders() {
   const [params, setParams] = useSearchParams();
   const as = params.get('as') === 'seller' ? 'seller' : 'buyer';
   const [orders, setOrders] = useState<any[] | null>(null);
+  const [error, setError] = useState('');
+  const { user, loading } = useSession();
 
+  // Round 25c: wait for the session (a reload restores it from the refresh cookie) before asking for the orders.
   useEffect(() => {
+    if (loading || !user) return;
     setOrders(null);
-    api<any[]>(`/orders?as=${as}`).then(setOrders).catch(() => setOrders([]));
-  }, [as]);
+    setError('');
+    api<any[]>(`/orders?as=${as}`).then(setOrders).catch((e) => (setError(e.message), setOrders([])));
+  }, [as, loading, user?.id]);
+
+  if (!loading && !user) return <p className="muted"><Link to="/login?next=/orders">{t('nav.signIn')}</Link></p>;
 
   return (
     <div className="stack">
@@ -30,6 +37,8 @@ export function Orders() {
       </div>
       {orders === null ? (
         <p className="muted">{t('common.loading')}</p>
+      ) : error ? (
+        <div className="alert" role="alert">{error}</div>
       ) : orders.length === 0 ? (
         <div className="card"><p className="muted">{t('orders.empty')} {as === 'buyer' ? <Link to="/market">{t('orders.browse')}</Link> : <Link to="/sell">{t('orders.create')}</Link>}</p></div>
       ) : (

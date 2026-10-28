@@ -197,6 +197,13 @@ export function refreshAccessToken(): Promise<boolean> {
 }
 
 export async function api<T = any>(path: string, init: { method?: string; body?: unknown; headers?: Record<string, string> } = {}, retried = false): Promise<T> {
+  // Round 25c: on a reload or a new tab the access token is not there yet (it isn't persisted). A call made before the
+  // refresh-cookie exchange finishes would go out unauthenticated and get 401 (e.g. /orders showing "No orders yet"),
+  // so it waits for the refresh that is running, or starts one when this browser may be signed in.
+  if (!session.token && !DEMO && !path.startsWith('/auth/')) {
+    if (refreshing) await refreshing;
+    else if (session.maybeSignedIn) await refreshAccessToken();
+  }
   const headers: Record<string, string> = { 'X-Device-Fingerprint': deviceFingerprint(), ...init.headers };
   if (init.body !== undefined) headers['Content-Type'] = 'application/json';
   if (session.token) headers.Authorization = `Bearer ${session.token}`;

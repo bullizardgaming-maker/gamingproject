@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import QRCode from 'qrcode';
 import { ApiError, api, money } from '../api';
 import { t, type MessageKey } from '../i18n';
@@ -52,6 +53,7 @@ const hm = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digi
  */
 export function CryptoCheckout({ base, amountCents, currency, onPaid }: { base: string; amountCents: number; currency: string; onPaid: () => void }) {
   const viewer = useDisplayCurrency();
+  const nav = useNavigate();
   const [coins, setCoins] = useState<Coins | null>(null);
   const [payments, setPayments] = useState<CryptoPayment[] | null>(null);
   const [methods, setMethods] = useState<PaymentMethod[] | null>(null);
@@ -129,6 +131,7 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid }: { base: 
       setQuote(await api<FxQuote>(`${base}/fx-quote`, { body: { currency: c } }));
     } catch (e: any) {
       // Round 25b: an order inside a cart is quoted and paid through its checkout only (409 use_checkout).
+      if (e?.code === 'use_checkout' && e.details?.checkoutId) return nav(`/checkouts/${e.details.checkoutId}/pay`, { replace: true });
       setError(e?.code === 'use_checkout' ? t('crypto.useCheckout') : e.message);
       setInvoice(null);
     } finally {
@@ -148,7 +151,8 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid }: { base: 
         const q = e.details as FxQuote;
         setQuote(q);
         setRequote({ coin, quote: q });
-      } else setError(e?.code === 'payment_provider_unavailable' ? t('crypto.unavailable') : e?.code === 'use_checkout' ? t('crypto.useCheckout') : e.message);
+      } else if (e?.code === 'use_checkout' && e.details?.checkoutId) nav(`/checkouts/${e.details.checkoutId}/pay`, { replace: true });
+      else setError(e?.code === 'payment_provider_unavailable' ? t('crypto.unavailable') : e?.code === 'use_checkout' ? t('crypto.useCheckout') : e.message);
     } finally {
       setBusy(false);
     }

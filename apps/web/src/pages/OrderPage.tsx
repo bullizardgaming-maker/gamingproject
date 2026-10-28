@@ -2,7 +2,7 @@ import { ShieldCheck, Star } from '@phosphor-icons/react';
 import { BuyerProtection } from '../components/Brand';
 import { StatusEye } from '../components/StatusEye';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, money, realtime, uploadChatFile } from '../api';
 import { Chat } from '../components/Chat';
 import { BoostProgress, type ProgressUpdate } from '../components/BoostProgress';
@@ -17,6 +17,8 @@ import { usePrice } from '@/lib/prefs';
 import { attributePairs } from '@/lib/attributes';
 
 interface OrderDetail {
+  /** Set when the order was bought in a cart: it is paid through that checkout only (Round 25b/25c). */
+  checkout_id?: string | null;
   tos_version?: string | null;
   tos_accepted_at?: string | null;
   created_at: string;
@@ -311,6 +313,8 @@ export function OrderPage() {
   ];
   const checkoutMode = order.status === 'awaiting_payment' && isBuyer && order.payment_provider === 'nowpayments';
 
+  // Round 25c: a cart order is quoted and paid through its checkout (the API answers 409 use_checkout otherwise).
+  if (checkoutMode && order.checkout_id) return <Navigate to={`/checkouts/${order.checkout_id}/pay`} replace />;
   if (checkoutMode) {
     return (
       <div className="stack pg-checkout">
