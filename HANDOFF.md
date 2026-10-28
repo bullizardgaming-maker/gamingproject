@@ -14,7 +14,7 @@ State of the project for whoever picks it up next (a person or another Claude se
 
 | Path | What |
 |---|---|
-| `apps/api` | Fastify 5 + Postgres API and worker. Migrations in `migrations/` (latest 079), business logic in `src/domain/`, routes in `src/routes/`, providers (payments, KYC, email, Steam/Riot…) in `src/providers/` |
+| `apps/api` | Fastify 5 + Postgres API and worker. Migrations in `migrations/` (latest 080), business logic in `src/domain/`, routes in `src/routes/`, providers (payments, KYC, email, Steam/Riot…) in `src/providers/` |
 | `apps/web` | React 19 + Vite + Tailwind v4 web app. `src/demo/` is an in-browser mock of the API used for previews and browser tests |
 | `contracts` | `MarketEscrow.sol` (Hardhat) |
 | `services/fraud-gnn` | Python fraud model service |
@@ -777,6 +777,132 @@ as staging, and `/readyz` as `APP_ENV=production` with no SMS settings at all) p
 `games.test.ts` (remembered name needs `saveInfo: true`), `crypto-payments.test.ts` (payout code by email even with a
 verified phone). Docker Hub was reachable; the build here needed the agent proxy CA in a scratch copy of the Dockerfile
 (the repo Dockerfile is unchanged).
+
+## Round 25 (Oct 28, 2026) — back end B1–B8: currency unit prices, market search, crypto in EUR, review fixes
+
+Migration **080** (`080_round25.sql`). New shared, import-free module `apps/api/src/domain/unitPrice.ts` (the web may
+import it like `delivery.ts`): `parseUnitPrice`, `formatUnitPrice`, `totalCentsFor`, `unitMicrosFor`, `grossMicros`,
+`checkVolumeDiscounts`, `DELIVERY_TIMES`, `MIN_CURRENCY_ORDER_USD_CENTS`. New tests `test/round25.test.ts` and
+`test/round25-crypto.test.ts`. The demo mock (`apps/web/src/demo/mock.ts`) was not touched: the web team adds the routes
+below to it.
+
+### API contract for the front end (Round 25)
+
+All money is USD unless a field says otherwise. **Micro-units**: integer, 6 decimals (`123` = 0.000123). Buyer-facing
+prices are grossed up by the seller's commission, as before.
+
+**B1 `GET /v1/games/:slug/servers?category=currency`** (slug = the web's `slugify(game)`; category default `currency`;
+404 `not_found` for an unknown game). Every server of the game's first listing field (server, region or league; a
+select field lists all its options, a free-text field the values sellers used), active, in-stock, visible listings
+only, no paging:
+```json
+[{ "name": "Europe", "offers": 5, "sellers": [{ "id": "uuid", "name": "Silver seller 0", "avatar": null }],
+   "sellers_count": 5, "sold": 12, "from_unit_price": "0.002106", "from_unit_price_micros": 2106 },
+ { "name": "Americas", "offers": 0, "sellers": [], "sellers_count": 0, "sold": 0, "from_unit_price": null, "from_unit_price_micros": null }]
+```
+`sellers`: at most 4 (most sales first). `avatar` is always `null` (users have no avatar yet). `sold` = completed orders
+of those listings. `from_unit_price` = lowest buyer unit price.
+
+**B2/B3 currency listings.** `POST /v1/offers` (currency category):
+```json
+{ "categorySlug": "currency", "game": "Albion Online", "title": "Silver", "deliveryMode": "manual",
+  "attributes": { "server": "Europe" }, "stock": 50000000, "unitPrice": "0.000123",
+  "deliveryMethods": ["f2f", "market"], "deliveryTime": "1h",
+  "volumeDiscounts": [{ "minQty": 2000000, "percentOff": 5 }] }
+```
+- `unitPrice` (string, ≤ 6 dp) or `unitPriceMicros` (integer); both may be sent if equal (400 `invalid_unit_price`).
+- With a unit price the body must also give: the game's server/region field (400 `server_required` with
+  `details.field`, or `invalid_attributes` for a required select), `stock` ≥ 1 for manual (400 `stock_required`),
+  `deliveryMethods` from the game's list in `domain/delivery.ts` (400 `invalid_delivery_method`), `deliveryTime` one of
+  `15m 1h 3h 6h 12h 24h` (400 `delivery_time_required` / `validation_error`).
+- `volumeDiscounts`: 0–4 tiers, `minQty` rising and above `minQty` of the listing, `percentOff` 1–50 and rising
+  (400 `invalid_volume_discounts`; shape errors `validation_error`). `[]` removes them. `priceTiers` are refused on
+  this form (400 `invalid_tiers`).
+- An older body (`priceCents`, no unit price) still works: unit price = that many cents, 24 h, all methods.
+- `minBuyerReputation` / `establishedBuyersOnly` are ignored if sent; nothing gates on them (080 cleared the column).
+- `PATCH /v1/offers/:id` takes the same fields (`unitPrice`/`unitPriceMicros`, `volumeDiscounts`, `deliveryTime`;
+  `deliveryHours` on a currency listing must be 1, 3, 6, 12 or 24). A 409 `version_conflict` changes nothing.
+- Listing reads (`/offers`, `/offers/:id`) add: `unit_price_micros` (buyer, null on non-currency), `volume_discounts`,
+  `delivery_minutes`, `delivery_time` (null = instant or over 24 h), `price_settlement_micros`, and on `/offers` lists
+  `display_unit_price_micros` (in `currency=`). Owner/staff only: `seller_unit_price_micros`, `featured_until`.
+  `min_buyer_reputation` and `featured` are gone from every read except as below.
+- Orders: total = quantity × unit price (after the volume discount, rounded up to the micro-unit), **rounded up to the
+  cent**, then the commission is grossed up on that as before. Minimum $1.00 buyer total (400 `below_minimum_order`,
+  `details: { minCents: 100, currency: "USD" }`). `POST /v1/orders/quote` returns, in addition: `listingUnitPriceMicros`,
+  `volumePercentOff`, `unitPriceMicros` (buyer per unit, rounded). Show the quote's `amountCents` as the total; the
+  per-unit numbers are for display. Order rows add `unit_price_micros`, `listing_unit_price_micros`, `amount_usd_cents`.
+  `quantity` may now be up to 2,000,000,000 (stock and `minQty` too).
+
+**B4 market.** `GET /v1/offers` new query parameters: `server` (needs `game`; the game's first field),
+`minUnitPrice` / `maxUnitPrice` (decimal strings, display currency), `deliveryMethod` (`f2f|mail|market|uid`),
+`maxDeliveryTime` (`15m…24h`; instant counts as 0), `online=true`, `minLevel` (seller level), plus the existing ones.
+New sorts: `most_sold`, `fastest_delivery` (`recommended`, `price_asc`, `price_desc`, `newest` as before; `price_*`
+now sort by unit price). `pageSize` is still at most 60.
+`GET /v1/offers/facets` (same parameters):
+```json
+{ "games": [{ "game": "Albion Online", "count": 12 }],
+  "servers": { "key": "server", "label": "Server", "values": [{ "name": "Americas", "count": 1 }, { "name": "Europe", "count": 0 }] },
+  "delivery_methods": [{ "method": "f2f", "count": 9 }] }
+```
+Each facet ignores its own filter. `servers` is `null` without `game`.
+
+**Featured (CEO):** only `GET /v1/offers?seller=<id>` (the seller's shop page) returns `featured: true|false` and pins
+featured listings first. No other read has `featured`, and nothing else boosts them.
+
+**B5 `GET /v1/payment-methods?currency=EGP`** → `[{ "id": "crypto", "currencies": ["USD", "EUR"], "enabled": true,
+"pay_currency": "USD" }]` (`pay_currency`: what this viewer is charged in; EUR viewers get `EUR`). Config
+`PAYMENT_METHODS_JSON` (array of `{ id, currencies, enabled, viewerCurrencies? }`) adds methods; only enabled ones are
+listed. Unknown currency: 400 `unsupported_currency`.
+`POST /v1/orders/:id/crypto/pay` and `/v1/checkouts/:id/crypto/pay`: `{ "coin": "usdttrc20", "priceCurrency": "USD" | "EUR" }`
+(default USD; anything else 400). The payment view adds `price_currency`, `price_amount` (string, in that currency),
+`fx_rate` (EUR per USD, string). Provider down, erroring or slow (10 s deadline): **503 `payment_provider_unavailable`**
+on `/crypto/coins` and `/crypto/pay` (`details.retryable: true`).
+
+**B6** `GET /v1/fx/rates` (no-store):
+```json
+{ "base": "USD", "settlement": "USD", "spreadBps": 0, "quote_ttl_seconds": 900, "as_of": "2026-10-28T00:00:00.000Z",
+  "exact": { "EGP": "48.50000000", "EUR": "0.92000000" },
+  "rates": [{ "currency": "EUR", "rate": "0.92000000", "fetched_at": "…", "as_of": "…", "source": "static" }] }
+```
+The order's quote (`presentment_currency`, `presentment_amount_cents`, `fx_rate`, `fx_locked_at`) holds 15 minutes.
+`POST /v1/orders/:id/fx-quote` (and `/v1/checkouts/:id/fx-quote`) `{ "currency": "EUR" }` →
+`{ currency, rate, amountCents, usdCents, lockedUntil, fresh }`. Paying in EUR after the hold (or in a currency the
+order was not quoted in) answers **409 `fx_quote_expired`** with `details { currency, rate, amountCents, usdCents,
+lockedUntil }`: show the new price, then send pay again. An EUR invoice is exactly `amountCents`; settlement, balances
+and payouts stay USD.
+
+**B7** `/v1/me/saved-searches*` are gone (404); no digest job or email. The table stays.
+
+**Card path:** `GET|POST /v1/seller/payout-account` are gone (404). `POST /v1/seller/withdrawals` is always the USDT
+request (6 %, min $1.50, CFO approval).
+
+### What changed
+
+| § | Change |
+|---|---|
+| B1 | `serverSummary` / `gameForSlug` (`domain/search.ts`), route in `routes/public.ts`. |
+| B2 | `offers.unit_price_micros` (backfill `price_cents × 10,000` on currency listings), `price_settlement_micros` (trigger + FX refresh), `orders.unit_price_micros` / `listing_unit_price_micros` (backfill `× 10,000`). `priceOrder` prices micro listings with BigInt totals rounded up; seller code, FX, gross-up, promo, credit, cart, refunds, ranks (seller_net) and referral (commission) are unchanged downstream and covered end to end in `round25.test.ts`. Snapshot keeps `unit_price_micros`, `price_cents`, `volume_discounts`, `unit_label/size`, `delivery_minutes`; the price part keeps `listingUnitPriceMicros` and cents. |
+| B3 | `offers.volume_discounts`, `offers.delivery_minutes` (delivery deadline uses it). `checkMinBuyerReputation` and the order gate removed. In-game listings now store their methods (backfilled; `null` on PATCH stores all). |
+| B4 | `filterSql` + `searchFacets`; indexes `offers_market`, `offers_delivery_methods` (GIN), `offers_attributes_gin`, `offers_live_sold`, `users_completed_orders`. Featured weighting removed from every sort; `featured` only with `seller=`. |
+| B5 | `domain/paymentMethods.ts`, config `PAYMENT_METHODS_JSON` (checked at start), `NOWPAYMENTS_TIMEOUT_MS` (10 s); every NOWPayments call has a deadline; `viaProvider` logs `{ provider, op, providerStatus, error }` only. EUR invoices: `crypto_payments.price_currency / price_amount / fx_rate`; a deposit is valued in USD in proportion to its invoice. |
+| B6 | `currentRates` shape above; `FX_QUOTE_TTL_MINUTES` (15); `lockFxQuote` / `quoteFx`. `SETTLEMENT_CURRENCY` other than USD is refused at start. |
+| B7 | `domain/savedSearches.ts`, routes, worker job and `saved_search_digest` (all languages) removed. |
+| B8 M2 | `orders.amount_usd_cents` (stored at order time, backfilled); `isLeadOrder` and every `lead_review` / `orders.lead` check use it (`admin.ts`, `orders.ts`). |
+| B8 L1 | 080 sets `kyc_tier = 0` for banned or deleted accounts at level 1 without a verified phone (079's promotions); `confirmVerificationCode` no longer lifts banned/deleted accounts. |
+| B8 L3 | `updateOffer`: every check first, then one versioned UPDATE writes all columns (methods, units, linked account, unit price, tiers, delivery time). |
+| B8 staging | `render.yaml`: `SANDBOX_MODE "false"`, `PAYMENT_PROVIDER nowpayments`, `PLATFORM_ACCOUNTS live`, sandbox `NOWPAYMENTS_API_URL` kept; header rewritten; optional payout login and Steam/Riot keys listed. |
+| B8 card | `requestWithdrawal` (users.ts), `domain/payouts.ts`, `/seller/payout-account`, the mock onboarding page, `payout_account.updated`, and `payout` / `createPayoutAccount` / `payoutOnboardingLink` / `payoutAccountStatus` on every payment provider removed. A USDT withdrawal request no longer needs NOWPayments configured (sending it does). |
+
+Adjusted existing tests: `helpers.ts` (`makeOffer` gives manual currency listings `deliveryTime: '24h'`),
+`buyer-reputation` (the gate is gone), `launch-phase` (featured only on the shop), `round24` (null methods store all),
+`round22b`, `risk-and-chargebacks`, `notification-centre`, `onboarding` and the withdrawal setups in `aml`, `clawback`,
+`debts`, `exports`, `payout-holds`, `round20`, `seller-currency` (a USDT payout address instead of a Connect account);
+`saved-searches.test.ts` deleted.
+
+Suites on this commit: API 84 files / 769 tests green (multinode excluded as before), typecheck clean, `npm audit
+--omit=dev` 0 (root, api); image start check: build, runtime imports, migrate through 080, `/readyz` + `/healthz` as
+`APP_ENV=staging` with `PAYMENT_PROVIDER=nowpayments`, `SANDBOX_MODE=false`, `PLATFORM_ACCOUNTS=live` (the build needed
+the agent proxy CA in a scratch copy of the Dockerfile; the repo Dockerfile is unchanged).
 
 ## Suggested next round
 

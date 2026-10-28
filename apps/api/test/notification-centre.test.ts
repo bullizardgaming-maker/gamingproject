@@ -99,23 +99,20 @@ describe('notification centre', () => {
 describe('payout and invoice notifications', () => {
   it('tells sellers when payouts succeed or fail and when invoices are issued', async () => {
     const seller = await makeUser(h, { tier: 2 });
-    await h.ctx.db.query(`UPDATE users SET stripe_account_id = 'acct_w', payouts_enabled = true, payout_hold_days = 0 WHERE id = $1`, [seller.id]);
+    await h.ctx.db.query(`UPDATE users SET payout_address = 'TTestPayoutAddress123456', payout_address_currency = 'usdttrc20', payout_address_set_at = now(), payouts_enabled = true, payout_hold_days = 0 WHERE id = $1`, [seller.id]);
     const buyer = await makeUser(h, { tier: 1 });
     const offer = await makeOffer(seller, { categorySlug: 'boosting', deliveryMode: 'manual', stock: 1, priceCents: 30_00 });
     const order = await buyAndPay(h, buyer, offer.id);
     await seller.api.post(`/v1/orders/${order.id}/deliver`, { payload: 'done' });
     await buyer.api.post(`/v1/orders/${order.id}/confirm`);
 
-    const mock = h.ctx.payments as MockPaymentProvider;
-    mock.faults.payout = 'account_closed';
-    expect((await seller.api.post('/v1/seller/withdrawals', { amountCents: 10_00 })).body.error.code).toBe('payout_failed');
-    mock.faults = {};
+    // Round 25: a withdrawal is a USDT request for the CFO's approval (no card-era transfer that pays or fails at once).
     const w = await seller.api.post('/v1/seller/withdrawals', { amountCents: 10_00 });
     expect(w.status).toBe(201);
     await issueMonthlyInvoices(h.ctx, monthStart(new Date()));
 
     const titles = (await seller.api.get('/v1/me/notifications')).body.items.map((i: any) => i.template);
-    expect(titles).toEqual(expect.arrayContaining(['withdrawal_failed', 'withdrawal_paid', 'invoice_issued']));
+    expect(titles).toEqual(expect.arrayContaining(['withdrawal_requested', 'invoice_issued']));
 
     const invoices = (await seller.api.get('/v1/seller/invoices')).body;
     expect(invoices).toHaveLength(1);

@@ -81,9 +81,10 @@ export const BUYER_ONLY_FIELDS = new Set(['payment_ref', 'idempotency_key']);
 export const ORDER_STAFF_FIELDS = new Set(['released_by', 'release_note', 'tax_country']);
 /**
  * A seller's commission rate is their business, not the catalogue's (item 13); Round 23e (item 7): so is every price
- * from which it can be derived (what the seller entered next to what the buyer pays).
+ * from which it can be derived (what the seller entered next to what the buyer pays). Round 25: the seller's unit price in
+ * micro-units too, and `featured_until` (a featured listing shows as such only on the seller's own shop page).
  */
-export const SELLER_ONLY_FIELDS = new Set(['seller_rate_bps', 'seller_price_cents', 'seller_price_tiers']);
+export const SELLER_ONLY_FIELDS = new Set(['seller_rate_bps', 'seller_price_cents', 'seller_price_tiers', 'seller_unit_price_micros', 'featured_until']);
 /** On an order (a row with both buyer_id and seller_id) the seller's side of the money is the seller's (item 7). */
 export const ORDER_SELLER_FIELDS = new Set(['commission_bps', 'commission_cents', 'seller_net_cents', 'commission_tax_cents', 'seller_received_cents']);
 /** Round 24: what the buyer gave for delivery (method, character, city, UID) is for the two parties and staff only. */

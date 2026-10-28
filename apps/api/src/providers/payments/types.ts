@@ -53,7 +53,6 @@ export type PaymentEvent =
       amountCents: number;
     }
   | { type: 'chargeback.closed'; disputeRef: string; won: boolean }
-  | { type: 'payout_account.updated'; accountRef: string; payoutsEnabled: boolean }
   /** A crypto payment's status changed (NOWPayments IPN); domain/cryptoPayments.ts maps it to the order. */
   | {
       type: 'crypto.payment';
@@ -88,14 +87,9 @@ export interface PaymentProvider {
   /** Refund in the currency the card was charged in. settledAmountCents = what the PSP debited in the settlement currency, when known. */
   /** `idempotencyKey` must differ for each separate (partial) refund of the same payment. */
   refund(paymentRef: string, amountCents: number, currency: string, idempotencyKey?: string): Promise<{ ref: string; settledAmountCents?: number }>;
-  /** Transfer a seller's released funds to their connected account. */
-  payout(destination: string, amountCents: number, currency: string, idempotencyKey: string): Promise<{ ref: string }>;
   submitChargebackEvidence(disputeRef: string, evidence: { summary: string; pdf: Buffer }): Promise<void>;
-  /** Create the seller's payout account (Stripe Connect Express). Identity/bank details are collected by the PSP. */
-  createPayoutAccount(seller: { id: string; email: string }): Promise<{ accountRef: string }>;
-  /** A one-time link to the PSP-hosted onboarding flow. */
-  payoutOnboardingLink(accountRef: string, returnUrl: string, refreshUrl: string): Promise<{ url: string }>;
-  payoutAccountStatus(accountRef: string): Promise<{ payoutsEnabled: boolean; requirementsDue: string[] }>;
+  // Round 25: no seller payouts through the payment provider's card side (Connect accounts, transfers). Cards are banned
+  // and withdrawals are USDT only, through NOWPayments payouts (domain/cryptoPayouts.ts).
   /** Send platform revenue to the company's own bank account. */
   platformPayout(amountCents: number, currency: string, idempotencyKey: string): Promise<{ ref: string }>;
   /** Total platform balance held at the PSP (available + pending), or null if unsupported. */

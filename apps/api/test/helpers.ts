@@ -115,6 +115,8 @@ export async function makeOffer(
     title: 'Test Key',
     priceCents: 10_00,
     deliveryMode: 'auto',
+    // Round 25: a currency listing names its delivery time from the fixed list.
+    ...(body.categorySlug === 'currency' && body.deliveryMode === 'manual' ? { deliveryTime: '24h' } : {}),
     ...body,
   });
   if (res.status !== 201) throw new Error(`offer failed: ${JSON.stringify(res.body)}`);

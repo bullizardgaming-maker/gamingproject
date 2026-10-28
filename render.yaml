@@ -1,5 +1,7 @@
 # Staging blueprint for Render (https://render.com/docs/blueprint-spec).
-# Runs the real API against mock payments and mock KYC (SANDBOX_MODE), so nothing here moves money.
+# Round 25: staging runs like production against the NOWPayments SANDBOX (api-sandbox.nowpayments.io, sandbox keys) with
+# live Steam/Riot sign-in and mock KYC. SANDBOX_MODE is off (no /v1/sandbox/* routes). Payments use sandbox coins only, so
+# nothing here moves real money; never put production NOWPayments keys in this group.
 # APP_ENV=staging with NODE_ENV=production: every production check applies (real email through Resend,
 # Turnstile, explicit encryption keys) except that there is no ClamAV service (MALWARE_SCANNER=dev).
 # Everything runs in Frankfurt, next to the Neon database (eu-central-1); an env group has no region.
@@ -13,9 +15,9 @@ envVarGroups:
       - key: APP_ENV
         value: staging
       - key: SANDBOX_MODE
-        value: "true"
+        value: "false"
       - key: PAYMENT_PROVIDER
-        value: mock
+        value: nowpayments # with the sandbox URL and sandbox keys below
       - key: KYC_PROVIDER
         value: mock
       - key: EMAIL_PROVIDER
@@ -33,11 +35,11 @@ envVarGroups:
       - key: MALWARE_SCANNER
         value: dev # no ClamAV on staging (allowed only with APP_ENV=staging); detects the EICAR test file only
       - key: PLATFORM_ACCOUNTS
-        value: mock # Steam/Riot linking completes without leaving the site
+        value: live # real Steam/Riot sign-in (mock is only allowed with SANDBOX_MODE)
       - key: TRUST_PROXY
         value: "1" # Render's load balancer; behind Cloudflare the client IP is CF-Connecting-IP (ORIGIN_SHARED_SECRET)
       - key: NOWPAYMENTS_API_URL
-        value: https://api-sandbox.nowpayments.io
+        value: https://api-sandbox.nowpayments.io # sandbox: keep it on staging
       - key: AUTO_REFUND_LATE_ORDERS
         value: "false"
       - key: CARD_REFUNDS_ENABLED
@@ -91,10 +93,24 @@ envVarGroups:
         sync: false
       - key: BREVO_LIST_ID_AR
         sync: false
-      # NOWPayments sandbox keys, for when staging switches to PAYMENT_PROVIDER=nowpayments (blank while it uses mock)
+      # NOWPayments SANDBOX keys (required: PAYMENT_PROVIDER=nowpayments refuses to start without them)
       - key: NOWPAYMENTS_API_KEY
         sync: false
       - key: NOWPAYMENTS_IPN_SECRET
+        sync: false
+      # Sandbox account login and 2FA secret, for testing payouts (blank: withdrawals wait for approval and are not sent)
+      - key: NOWPAYMENTS_EMAIL
+        sync: false
+      - key: NOWPAYMENTS_PASSWORD
+        sync: false
+      - key: NOWPAYMENTS_2FA_SECRET
+        sync: false
+      # Steam/Riot sign-in (PLATFORM_ACCOUNTS=live). Steam works without a key; Riot linking needs the approved app.
+      - key: STEAM_WEB_API_KEY
+        sync: false
+      - key: RIOT_CLIENT_ID
+        sync: false
+      - key: RIOT_CLIENT_SECRET
         sync: false
       # Staging test workflows (.github/workflows/staging-*.yml): requests with X-Staging-Test-Token = this value skip
       # Turnstile on sign-in. openssl rand -hex 32, the same value as the GitHub secret STAGING_TEST_TOKEN. Staging only:

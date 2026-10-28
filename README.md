@@ -115,7 +115,6 @@ Highlights of what the tests prove: exactly one of 25 simultaneous buyers gets a
 - Bundles: `bundle: [{ offerId, quantity }]` on `POST /v1/offers`; `bundle` on the listing
 - Trust levels: `seller_trust_level` on listings, `sort=trust`; `GET /v1/seller/trust` (progress to the next level)
 - Disputes: `POST /v1/orders/:id/dispute/statements`; staff `GET /v1/admin/disputes/:id/case`
-- Saved searches: `GET|POST /v1/me/saved-searches`, `PATCH|DELETE /v1/me/saved-searches/:id`
 - Price history: `GET /v1/offers/:id/price-history?days=`, `GET /v1/catalog/price-history?game=&category=&days=`; recommendations: `GET /v1/offers/:id/also-bought`
 - Storefront: `GET|PUT /v1/seller/storefront`, `POST|DELETE /v1/seller/storefront/banner` (raw image body), `GET /v1/sellers/:id/banner`; staff `POST /v1/admin/sellers/:id/storefront/clear`
 - Bulk listings: `GET /v1/seller/listings/export.csv`, `POST /v1/seller/listings/import` (`dryRun` preview first)

@@ -82,8 +82,9 @@ describe('§2 delivery methods per game', () => {
     expect(patched.body.delivery_methods).toEqual(['f2f', 'market']);
     expect((await seller.api.patch(`/v1/offers/${made.body.id}`, { version: patched.body.version, deliveryMethods: ['uid'] })).body.error.code).toBe('invalid_delivery_method');
     const reset = await seller.api.patch(`/v1/offers/${made.body.id}`, { version: patched.body.version, deliveryMethods: null });
-    expect(reset.body.delivery_methods).toBeNull();
-    expect((await client(h.app).get(`/v1/offers/${made.body.id}`)).body.delivery_methods).toBeNull();
+    // Round 25: null stores every method of the game (the market filters on the stored list).
+    expect(reset.body.delivery_methods).toEqual(['f2f', 'market']);
+    expect((await client(h.app).get(`/v1/offers/${made.body.id}`)).body.delivery_methods).toEqual(['f2f', 'market']);
   });
 });
 

@@ -4,7 +4,10 @@ import type { Ctx } from '../context.js';
 import { many, maybeOne, one } from '../db.js';
 import { commissionSettings, listRanks } from '../domain/commission.js';
 import { getOffer } from '../domain/offers.js';
-import { SORTS, gameDirectory, searchOffers, suggestGames, withDisplayPrices } from '../domain/search.js';
+import { SORTS, gameDirectory, gameForSlug, searchFacets, searchOffers, serverFieldFor, serverSummary, suggestGames, withDisplayPrices, type SearchParams } from '../domain/search.js';
+import { DELIVERY_METHOD_KEYS } from '../domain/delivery.js';
+import { DELIVERY_TIMES, DELIVERY_TIME_KEYS, parseUnitPrice, type DeliveryTime } from '../domain/unitPrice.js';
+import { paymentMethodsFor } from '../domain/paymentMethods.js';
 import { currentRates, getRate } from '../domain/fx.js';
 import { availableCredit, referralSummary } from '../domain/referrals.js';
 import { userCredit } from '../domain/ledger.js';
@@ -32,7 +35,6 @@ import { MAX_HISTORY_DAYS, marketPriceHistory, offerPriceHistory } from '../doma
 import { alsoBought } from '../domain/recommendations.js';
 import { completeLink } from '../domain/linkedAccounts.js';
 import { LOCALES } from '../domain/locales/index.js';
-import { createSavedSearch, deleteSavedSearch, listSavedSearches, updateSavedSearch } from '../domain/savedSearches.js';
 import { TICKET_CATEGORIES, createTicket, customerReply, customerResolve, getTicket, listMyTickets } from '../domain/support.js';
 import { createWatch, deleteWatch, listWatches, updateWatch } from '../domain/watches.js';
 import { confirmSubscription, getIncident, statusSummary, subscribe, unsubscribe } from '../domain/status.js';
@@ -327,26 +329,36 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   });
   app.get('/ranks', async () => ({ ranks: await listRanks(ctx.dbRead), settings: await commissionSettings(ctx.dbRead) }));
 
-  app.get('/offers', async (req) => {
-    const bool = z.enum(['true', 'false']).transform((v) => v === 'true');
-    const q = z
-      .object({
-        q: z.string().max(100).optional(),
-        category: z.string().max(40).optional(),
-        game: z.string().max(80).optional(),
-        minPrice: z.coerce.number().int().min(0).optional(),
-        maxPrice: z.coerce.number().int().min(0).optional(),
-        delivery: z.enum(['instant', 'manual']).optional(),
-        ownerVerified: bool.optional(),
-        minRating: z.coerce.number().min(1).max(5).optional(),
-        inStock: bool.optional(),
-        seller: z.string().uuid().optional(),
-        sort: z.enum(SORTS).optional(),
-        currency: z.string().length(3).toUpperCase().optional().describe('Show prices converted to this currency; price filters are in it too'),
-        page: z.coerce.number().int().min(1).max(500).optional(),
-        pageSize: z.coerce.number().int().min(1).max(60).optional(),
-      })
-      .parse(req.query);
+  /**
+   * Market search query (Round 25, B4). Prices are in the display currency (`currency`, default USD) and compared in
+   * USD: minPrice/maxPrice in cents for the listing price, minUnitPrice/maxUnitPrice as decimals (6 dp) per unit.
+   */
+  const bool = z.enum(['true', 'false']).transform((v) => v === 'true');
+  const MarketQuery = z.object({
+    q: z.string().max(100).optional(),
+    category: z.string().max(40).optional(),
+    game: z.string().max(80).optional(),
+    server: z.string().trim().min(1).max(60).optional().describe('The game\'s first field (server, region or league); needs game'),
+    minPrice: z.coerce.number().int().min(0).optional(),
+    maxPrice: z.coerce.number().int().min(0).optional(),
+    minUnitPrice: z.string().max(20).optional(),
+    maxUnitPrice: z.string().max(20).optional(),
+    delivery: z.enum(['instant', 'manual']).optional(),
+    deliveryMethod: z.enum(DELIVERY_METHOD_KEYS).optional(),
+    maxDeliveryTime: z.enum(DELIVERY_TIME_KEYS as [DeliveryTime, ...DeliveryTime[]]).optional(),
+    online: bool.optional(),
+    minLevel: z.coerce.number().int().min(1).max(1000).optional(),
+    ownerVerified: bool.optional(),
+    minRating: z.coerce.number().min(1).max(5).optional(),
+    inStock: bool.optional(),
+    seller: z.string().uuid().optional(),
+    sort: z.enum(SORTS).optional(),
+    currency: z.string().length(3).toUpperCase().optional().describe('Show prices converted to this currency; price filters are in it too'),
+    page: z.coerce.number().int().min(1).max(500).optional(),
+    pageSize: z.coerce.number().int().min(1).max(60).optional(),
+  });
+  const marketParams = async (req: FastifyRequest) => {
+    const q = MarketQuery.parse(req.query);
     // Game-specific fields come as attr.<key>=<value>, e.g. attr.server=EUW&attr.rank=Gold.
     const attributes: Record<string, string> = {};
     for (const [k, v] of Object.entries(req.query as Record<string, unknown>)) {
@@ -355,19 +367,57 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
       if (!ATTR_KEY.test(key) || typeof v !== 'string' || !v.trim() || v.length > ATTR_VALUE_MAX) throw badRequest('invalid_attribute_filter', `Bad filter ${k}`);
       attributes[key] = v.trim();
     }
+    if (q.server) {
+      if (!q.game) throw badRequest('invalid_attribute_filter', 'server needs game');
+      attributes[serverFieldFor(q.game, q.category ?? 'currency')?.key ?? 'server'] = q.server;
+    }
     if (Object.keys(attributes).length > 6) throw badRequest('invalid_attribute_filter', 'At most 6 field filters');
     // Price filters are given in the display currency and compared in the settlement currency.
     const display = q.currency ?? ctx.cfg.SETTLEMENT_CURRENCY;
     const rate = await getRate(ctx, ctx.db, display);
     const toSettlement = (v?: number) => (v == null ? undefined : Math.round(v / rate));
-    const res = await searchOffers(ctx.dbRead, {
+    const micros = (v: string | undefined, name: string) => {
+      if (v == null) return undefined;
+      const m = parseUnitPrice(v);
+      if (m == null) throw badRequest('invalid_price_filter', `${name} is a number with up to 6 decimals`);
+      return Math.round(m / rate);
+    };
+    const params: SearchParams = {
       ...q,
       minPriceCents: toSettlement(q.minPrice),
       maxPriceCents: toSettlement(q.maxPrice),
+      minUnitPriceMicros: micros(q.minUnitPrice, 'minUnitPrice'),
+      maxUnitPriceMicros: micros(q.maxUnitPrice, 'maxUnitPrice'),
+      maxDeliveryMinutes: q.maxDeliveryTime ? DELIVERY_TIMES[q.maxDeliveryTime] : undefined,
+      sellerOnline: q.online,
+      minSellerLevel: q.minLevel,
       sellerId: q.seller,
       attributes,
-    });
-    return withDisplayPrices(ctx, res, display);
+    };
+    return { params, display };
+  };
+
+  app.get('/offers', async (req) => {
+    const { params, display } = await marketParams(req);
+    return withDisplayPrices(ctx, await searchOffers(ctx.dbRead, params), display);
+  });
+  /** Round 25 (B4): counts per game, server (needs game) and delivery method for the same filters. */
+  app.get('/offers/facets', async (req) => {
+    const { params } = await marketParams(req);
+    return searchFacets(ctx.dbRead, params);
+  });
+  /** Round 25 (B1): one row per server of the game (every server of its list), active listings only, no page limit. */
+  app.get('/games/:slug/servers', async (req) => {
+    const { slug } = z.object({ slug: z.string().min(1).max(100) }).parse(req.params);
+    const { category } = z.object({ category: z.string().max(40).default('currency') }).parse(req.query);
+    const game = await gameForSlug(ctx.dbRead, slug.toLowerCase());
+    if (!game) throw notFound('Game');
+    return (await serverSummary(ctx.dbRead, game, category)).servers;
+  });
+  /** Round 25 (B5): how a viewer in this currency can pay (config PAYMENT_METHODS_JSON; only enabled methods). */
+  app.get('/payment-methods', async (req) => {
+    const { currency } = z.object({ currency: z.string().length(3).toUpperCase().optional() }).parse(req.query);
+    return paymentMethodsFor(ctx, currency);
   });
 
   /** Withdraw credit (kept underpayments, promo credit) to the confirmed payout address, under the usual fee. */
@@ -426,31 +476,6 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // --- Help centre support tickets --------------------------------------------------------------
   const Body = z.string().trim().min(2).max(5_000);
-  // ---- Saved searches (digests of new matching listings) ----
-  const SavedParams = z.object({
-    q: z.string().max(100).optional(),
-    game: z.string().max(80).optional(),
-    category: z.string().max(40).optional(),
-    maxPriceCents: z.number().int().min(0).optional(),
-    delivery: z.enum(['instant', 'manual']).optional(),
-    ownerVerified: z.boolean().optional(),
-    minRating: z.number().min(1).max(5).optional(),
-    attributes: z.record(z.string().max(30), z.string().max(60)).optional(),
-  });
-  app.get('/me/saved-searches', async (req) => listSavedSearches(ctx.db, me(req).id));
-  app.post('/me/saved-searches', async (req, reply) => {
-    const body = z.object({ name: z.string().trim().min(1).max(80), params: SavedParams, frequency: z.enum(['hourly', 'daily']).default('daily') }).parse(req.body);
-    return reply.status(201).send(await createSavedSearch(ctx, me(req).id, body));
-  });
-  app.patch('/me/saved-searches/:id', async (req) => {
-    const body = z.object({ frequency: z.enum(['hourly', 'daily']).optional(), name: z.string().trim().min(1).max(80).optional() }).parse(req.body);
-    return updateSavedSearch(ctx.db, me(req).id, z.object({ id: z.string().uuid() }).parse(req.params).id, body);
-  });
-  app.delete('/me/saved-searches/:id', async (req, reply) => {
-    await deleteSavedSearch(ctx.db, me(req).id, z.object({ id: z.string().uuid() }).parse(req.params).id);
-    return reply.status(204).send();
-  });
-
   app.get('/support/tickets', async (req) => listMyTickets(ctx.db, me(req).id));
   app.post('/support/tickets', async (req, reply) => {
     const body = z
@@ -498,7 +523,10 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     return reply.status(204).send();
   });
 
-  app.get('/fx/rates', async () => currentRates(ctx));
+  app.get('/fx/rates', async (_req, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    return currentRates(ctx);
+  });
 
   // Game-specific listing fields: the sell form and game-page filters read these.
   app.get('/catalog/attributes', async (req, reply) => {

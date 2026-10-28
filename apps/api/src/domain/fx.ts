@@ -98,7 +98,9 @@ export async function refreshRates(ctx: Ctx): Promise<number> {
       [c, rate, ctx.fx.name],
     );
     await ctx.db.query(
-      `UPDATE offers SET price_settlement_cents = round(CASE WHEN sale_active AND sale_price_cents IS NOT NULL THEN sale_price_cents ELSE price_cents END / $2::numeric) WHERE currency = $1`,
+      `UPDATE offers SET price_settlement_cents = round(CASE WHEN sale_active AND sale_price_cents IS NOT NULL THEN sale_price_cents ELSE price_cents END / $2::numeric),
+              price_settlement_micros = round(CASE WHEN sale_active AND sale_price_cents IS NOT NULL THEN sale_price_cents * 10000 ELSE COALESCE(unit_price_micros, price_cents * 10000) END / $2::numeric)
+        WHERE currency = $1`,
       [c, rate],
     );
     n++;
@@ -128,7 +130,20 @@ export async function getRate(ctx: Ctx, q: Queryable, currency: string): Promise
   return Number(row.rate);
 }
 
+/**
+ * Round 25 (B6): the rates in use, exactly as stored (8 decimals, as strings), against USD, with when each was fetched
+ * (`as_of`). A checkout price in another currency is held for `quote_ttl_seconds` once locked on the order.
+ */
 export async function currentRates(ctx: Ctx) {
-  const rows = await many<{ currency: string; rate: number; fetched_at: string }>(ctx.db, 'SELECT currency, rate, fetched_at FROM fx_rates ORDER BY currency');
-  return { settlement: ctx.cfg.SETTLEMENT_CURRENCY, spreadBps: ctx.cfg.FX_SPREAD_BPS, rates: rows };
+  const rows = await many<{ currency: string; rate: string; fetched_at: string; source: string }>(ctx.db, 'SELECT currency, rate::text AS rate, fetched_at, source FROM fx_rates ORDER BY currency');
+  const asOf = rows.length ? rows.map((r) => new Date(r.fetched_at).getTime()).reduce((a, b) => Math.min(a, b)) : null;
+  return {
+    base: ctx.cfg.SETTLEMENT_CURRENCY,
+    settlement: ctx.cfg.SETTLEMENT_CURRENCY,
+    spreadBps: ctx.cfg.FX_SPREAD_BPS,
+    quote_ttl_seconds: ctx.cfg.FX_QUOTE_TTL_MINUTES * 60,
+    as_of: asOf != null ? new Date(asOf).toISOString() : null,
+    exact: Object.fromEntries(rows.map((r) => [r.currency, r.rate])),
+    rates: rows.map((r) => ({ currency: r.currency, rate: r.rate, fetched_at: r.fetched_at, as_of: r.fetched_at, source: r.source })),
+  };
 }

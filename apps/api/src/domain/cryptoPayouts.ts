@@ -135,7 +135,7 @@ export async function removePayoutAddress(ctx: Ctx, userId: string) {
 export async function requestCryptoWithdrawal(ctx: Ctx, userId: string, amountCents: number, currency = ctx.cfg.SETTLEMENT_CURRENCY, opts: { source?: 'balance' | 'credit' } = {}) {
   const source = opts.source ?? 'balance';
   assertUsdWithdrawal(currency);
-  if (!(ctx.payments instanceof NowPaymentsProvider)) throw new AppError(503, 'payouts_unavailable', 'Crypto payouts are not configured');
+  // Round 25: the request only books the money for the CFO's approval; sending it (decideWithdrawal) needs NOWPayments.
   await ensureScreenedForPayout(ctx, userId);
   return withScope(ctx, async (s) => {
     const user = await one<User & { payout_address: string | null; payout_address_currency: string | null }>(

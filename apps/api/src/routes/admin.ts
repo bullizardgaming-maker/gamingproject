@@ -6,7 +6,7 @@ import { many, maybeOne, one, withTx } from '../db.js';
 import { receiveChargeback } from '../domain/chargebacks.js';
 import { withScope } from '../domain/events.js';
 import { reviewOwnerProof } from '../domain/offers.js';
-import { LEAD_REVIEW_ABOVE_CENTS, openDisputeFromTicket, releaseByStaff, resolveDispute, unconfirmedDeliveries } from '../domain/orders.js';
+import { LEAD_REVIEW_ABOVE_CENTS, isLeadOrder, openDisputeFromTicket, releaseByStaff, resolveDispute, unconfirmedDeliveries } from '../domain/orders.js';
 import { controls, updateControls } from '../domain/controls.js';
 import { setReviewHidden } from '../domain/reviews.js';
 import { reconciliationSnapshots, runReconciliation } from '../domain/reconciliation.js';
@@ -80,8 +80,9 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   /** Orders above the Lead threshold ($200, playbook): only the Support Lead (or an admin) releases or decides them. */
   async function requireLeadForLargeOrder(req: FastifyRequest, orderId: string) {
-    const o = await maybeOne<{ amount_cents: string }>(ctx.db, 'SELECT amount_cents FROM orders WHERE id = $1', [orderId]);
-    if (o && Number(o.amount_cents) > LEAD_REVIEW_ABOVE_CENTS) requirePermission(req, 'orders.lead');
+    // Round 25 (M2): the order's USD value, whatever currency it is in.
+    const o = await maybeOne<{ amount_cents: string; amount_usd_cents: string; currency: string }>(ctx.db, 'SELECT amount_cents, amount_usd_cents, currency FROM orders WHERE id = $1', [orderId]);
+    if (o && isLeadOrder(o)) requirePermission(req, 'orders.lead');
   }
 
   // ---- Kill switches and beta limits (launch gate §4) ----
@@ -111,7 +112,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return many(
       ctx.db,
       `SELECT d.*, o.amount_cents, o.currency, o.buyer_id, o.seller_id, r.id AS room_id, f.title AS offer_title,
-              (o.amount_cents > $1) AS lead_review,
+              (o.amount_usd_cents > $1) AS lead_review,
               (SELECT count(*)::int FROM dispute_statements s WHERE s.dispute_id = d.id) AS statements
          FROM disputes d JOIN orders o ON o.id = d.order_id JOIN chat_rooms r ON r.order_id = o.id JOIN offers f ON f.id = o.offer_id
         WHERE d.status = 'open' ORDER BY d.created_at LIMIT 200`,
@@ -832,9 +833,9 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
       .parse(req.body ?? {});
     const dispute = await openDisputeFromTicket(ctx, id, staff.id, body);
     await audit(ctx.db, req, 'dispute.open_from_ticket', { type: 'dispute', id: dispute.id }, { ticketId: id, orderId: dispute.order_id, category: body.category });
-    const amount = await maybeOne<{ amount_cents: string }>(ctx.db, 'SELECT amount_cents FROM orders WHERE id = $1', [dispute.order_id]);
+    const amount = await maybeOne<{ amount_cents: string; amount_usd_cents: string; currency: string }>(ctx.db, 'SELECT amount_cents, amount_usd_cents, currency FROM orders WHERE id = $1', [dispute.order_id]);
     return reply.status(201).send({
-      dispute: { ...dispute, lead_review: Number(amount?.amount_cents ?? 0) > LEAD_REVIEW_ABOVE_CENTS },
+      dispute: { ...dispute, lead_review: !!amount && isLeadOrder(amount) },
       // The ticket thread (with internal notes) only for staff who work the support queue.
       ticket: hasPermission(staff, 'support.manage') ? await getTicket(ctx.db, id, { id: staff.id, staff: true }) : null,
     });

@@ -43,6 +43,7 @@ export class NowPaymentsError extends Error {
   }
   /** The provider definitely did not act (bad request, auth, not found): safe to reverse. */
   get rejected() {
+    // 0: no answer at all (network, timeout): the outcome is unknown, never "rejected".
     return this.status >= 400 && this.status < 500 && this.status !== 408 && this.status !== 429;
   }
 }
@@ -80,6 +81,8 @@ export interface NowPaymentsOptions {
   /** Wallet the store converts into, e.g. usdttrc20; sets the pair for minimum amounts. */
   outcomeCurrency?: string;
   fetch?: typeof fetch;
+  /** Deadline per call in ms (default 10 000). */
+  timeoutMs?: number;
 }
 
 /** Recursively sort object keys: the IPN signature is computed over this canonical form. */
@@ -113,13 +116,25 @@ export class NowPaymentsProvider implements PaymentProvider {
     return this.opts.outcomeCurrency ?? 'usdttrc20';
   }
 
+  /**
+   * Round 25 (B5): every call has a deadline (NOWPAYMENTS_TIMEOUT_MS, 10 s), so a provider that does not answer fails
+   * fast instead of holding the buyer's request. A network failure or timeout is a NowPaymentsError with status 0.
+   */
   private async call<T>(method: 'GET' | 'POST', path: string, body?: unknown, extraHeaders: Record<string, string> = {}): Promise<T> {
-    const res = await this.fetchFn(`${this.apiUrl}${path}`, {
-      method,
-      headers: { 'x-api-key': this.opts.apiKey, 'content-type': 'application/json', ...extraHeaders },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    const text = await res.text();
+    let res: Response;
+    let text: string;
+    try {
+      res = await this.fetchFn(`${this.apiUrl}${path}`, {
+        method,
+        headers: { 'x-api-key': this.opts.apiKey, 'content-type': 'application/json', ...extraHeaders },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: AbortSignal.timeout(this.opts.timeoutMs ?? 10_000),
+      });
+      text = await res.text();
+    } catch (err) {
+      const name = err instanceof Error ? err.name : 'Error';
+      throw new NowPaymentsError(`NOWPayments ${method} ${path.split('?')[0]} failed (${name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'network'})`, 0);
+    }
     let json: any = null;
     try {
       json = text ? JSON.parse(text) : null;
@@ -178,10 +193,11 @@ export class NowPaymentsProvider implements PaymentProvider {
   }
 
   /** Creates a payment the buyer sends to; `purchaseId` groups a top-up with the first payment of the same order. */
-  async createPayment(input: { amountUsd: number; coin: string; orderId: string; description: string; ipnCallbackUrl: string; purchaseId?: string | null; sandboxCase?: string }): Promise<NowPayment> {
+  /** Round 25: priced in USD or EUR (`priceCurrency`); NOWPayments converts, the store wallet is credited in USDT/USDC. */
+  async createPayment(input: { amount: number; priceCurrency?: string; coin: string; orderId: string; description: string; ipnCallbackUrl: string; purchaseId?: string | null; sandboxCase?: string }): Promise<NowPayment> {
     return this.call<NowPayment>('POST', '/v1/payment', {
-      price_amount: input.amountUsd,
-      price_currency: 'usd',
+      price_amount: input.amount,
+      price_currency: (input.priceCurrency ?? 'USD').toLowerCase(),
       pay_currency: input.coin,
       order_id: input.orderId,
       order_description: input.description,
@@ -322,14 +338,6 @@ export class NowPaymentsProvider implements PaymentProvider {
     return null;
   }
 
-  /** Legacy interface: used by the old synchronous withdrawal path; the new flow goes through createPayout. */
-  async payout(destination: string, amountCents: number, currency: string, _idempotencyKey: string) {
-    const [address, coin] = destination.split('|');
-    const { batchId } = await this.createPayout({ address: address!, currency: coin ?? this.outcomeCurrency, amount: amountCents / 100, ipnCallbackUrl: '' });
-    void currency;
-    return { ref: batchId };
-  }
-
   async platformPayout(amountCents: number, currency: string, idempotencyKey: string) {
     return { ref: `manual:${idempotencyKey}:${amountCents}:${currency}` };
   }
@@ -363,14 +371,5 @@ export class NowPaymentsProvider implements PaymentProvider {
   // --- Card-era parts with no crypto equivalent ---------------------------------------------
   async submitChargebackEvidence() {
     throw new Error('Chargebacks do not exist for crypto payments');
-  }
-  async createPayoutAccount(seller: { id: string }) {
-    return { accountRef: `crypto:${seller.id}` };
-  }
-  async payoutOnboardingLink(_accountRef: string, returnUrl: string) {
-    return { url: returnUrl };
-  }
-  async payoutAccountStatus() {
-    return { payoutsEnabled: false, requirementsDue: ['payout_address'] };
   }
 }

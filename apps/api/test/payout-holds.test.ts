@@ -10,7 +10,7 @@ afterAll(async () => h.close());
 
 async function sellerWithSale(priceCents = 50_00) {
   const seller = await makeUser(h, { tier: 2 });
-  await h.ctx.db.query(`UPDATE users SET stripe_account_id = 'acct_test', payouts_enabled = true WHERE id = $1`, [seller.id]);
+  await h.ctx.db.query(`UPDATE users SET payout_address = 'TTestPayoutAddress123456', payout_address_currency = 'usdttrc20', payout_address_set_at = now(), payouts_enabled = true WHERE id = $1`, [seller.id]);
   const buyer = await makeUser(h, { tier: 1 });
   const offer = await makeOffer(seller, { categorySlug: 'boosting', deliveryMode: 'manual', stock: 5, priceCents });
   const order = await buyAndPay(h, buyer, offer.id);

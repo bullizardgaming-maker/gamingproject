@@ -271,9 +271,7 @@ describe('Round 22b, third pass', () => {
     expect(r.status).toBe(400);
     expect(r.body.error.code).toBe('unsupported_currency');
     const { requestCryptoWithdrawal } = await import('../src/domain/cryptoPayouts.js');
-    const { requestWithdrawal } = await import('../src/domain/users.js');
     await expect(requestCryptoWithdrawal(h.ctx, seller.id, 10_00, 'EGP', { source: 'credit' })).rejects.toMatchObject({ code: 'unsupported_currency' });
-    await expect(requestWithdrawal(h.ctx, seller.id, 10_00, 'EUR')).rejects.toMatchObject({ code: 'unsupported_currency' });
     expect((await seller.api.post('/v1/seller/withdrawals', { amountCents: 10_00 })).status).toBe(201); // USD still works
     // A left-over EUR balance is reported for a manual ledger adjustment, never converted automatically.
     await withTx(h.ctx.db, async (tx) => {

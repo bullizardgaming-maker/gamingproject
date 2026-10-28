@@ -229,7 +229,7 @@ describe('damage limits (launch gate §4)', () => {
     expect((await old.api.post('/v1/orders', { offerId: big.id, quantity: 1, acceptTos: true })).body.error.code).toBe('order_too_large');
 
     // Withdrawals: $100 per day per user.
-    await h.ctx.db.query(`UPDATE users SET stripe_account_id = 'acct_limit', payouts_enabled = true, payout_hold_days = 0 WHERE id = $1`, [seller.id]);
+    await h.ctx.db.query(`UPDATE users SET payout_address = 'TTestPayoutAddress123456', payout_address_currency = 'usdttrc20', payout_address_set_at = now(), payouts_enabled = true, payout_hold_days = 0 WHERE id = $1`, [seller.id]);
     for (let i = 0; i < 3; i++) {
       const o = await buyAndPay(h, old, small.id);
       await seller.api.post(`/v1/orders/${o.id}/deliver`, { payload: 'x' });

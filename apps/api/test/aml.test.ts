@@ -51,7 +51,7 @@ describe('screening', () => {
 
     const { rows: [user] } = await h.ctx.db.query('SELECT aml_hold FROM users WHERE id = $1', [u.id]);
     expect(user.aml_hold).toBe(true);
-    await h.ctx.db.query(`UPDATE users SET stripe_account_id = 'acct_x', payouts_enabled = true WHERE id = $1`, [u.id]);
+    await h.ctx.db.query(`UPDATE users SET payout_address = 'TTestPayoutAddress123456', payout_address_currency = 'usdttrc20', payout_address_set_at = now(), payouts_enabled = true WHERE id = $1`, [u.id]);
     const w = await u.api.post('/v1/seller/withdrawals', { amountCents: 100 });
     expect(w.body.error).toMatchObject({ code: 'withdrawals_frozen', message: 'Withdrawals are paused while we complete a routine review' });
     expect(JSON.stringify((await u.api.get('/v1/me/notifications')).body)).not.toMatch(/aml|sanction|compliance/i);

@@ -108,11 +108,6 @@ Abrir cartera: ${link('/sell/money')}`,
       subject: (d) => `De nuevo en stock: ${d.title}`,
       body: (d, link, h) => `${d.title} vuelve a estar disponible a ${h.money(d.price_cents, d.currency)}.\n\n${link(`/offers/${d.offer_id}`)}`,
     },
-    saved_search_digest: {
-      subject: (d) => `${d.count} ${d.count === 1 ? 'oferta nueva' : 'ofertas nuevas'} para «${d.name}»`,
-      body: (d, link, h) =>
-        `Novedades desde la última vez, la más barata primero:\n\n${(d.top as any[]).map((o) => `- ${o.title}: ${h.money(o.price_cents, o.currency)}`).join('\n')}\n\nVer las ${d.count}: ${link(d.path)}\n\nCambia o detén este resumen en tu lista de seguimiento: ${link('/watchlist')}`,
-    },
     watch_game_low: {
       subject: (d, h) => `${d.game}${d.attributes && Object.keys(d.attributes).length ? ` (${Object.values(d.attributes).join(', ')})` : ''}: desde ${h.money(d.price_cents, d.currency)}`,
       body: (d, link, h) =>

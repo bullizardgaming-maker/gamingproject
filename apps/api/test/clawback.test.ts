@@ -25,7 +25,7 @@ describe('refunds after release', () => {
   it('claws the seller’s share back (into debt if needed), returns commission and tax, and issues a credit note', async () => {
     const arbiter = await makeUser(h, { role: 'arbiter' });
     const seller = await makeUser(h, { tier: 2 });
-    await h.ctx.db.query(`UPDATE users SET stripe_account_id = 'acct_c', payouts_enabled = true, payout_hold_days = 0 WHERE id = $1`, [seller.id]);
+    await h.ctx.db.query(`UPDATE users SET payout_address = 'TTestPayoutAddress123456', payout_address_currency = 'usdttrc20', payout_address_set_at = now(), payouts_enabled = true, payout_hold_days = 0 WHERE id = $1`, [seller.id]);
     const { buyer, order } = await completedSale(seller);
     // The seller already withdrew everything.
     expect((await seller.api.post('/v1/seller/withdrawals', { amountCents: Number(order.seller_net_cents) })).status).toBe(201);

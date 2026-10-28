@@ -60,18 +60,22 @@ describe('launch phases', () => {
     const later = await makeUser(h, { tier: 2 });
     const newest = await makeOffer(later, { categorySlug: 'currency', game: 'Founding Game', title: 'Latecomer gold', deliveryMode: 'manual', stock: 5 } as any);
 
-    expect((await client(h.app).get(`/v1/offers/${a.id}`)).body).toMatchObject({ seller_founding: true, featured: false });
+    expect((await client(h.app).get(`/v1/offers/${a.id}`)).body).toMatchObject({ seller_founding: true });
+    expect((await client(h.app).get(`/v1/offers/${a.id}`)).body).not.toHaveProperty('featured'); // Round 25: featured shows on the shop only
     const dash = (await founder.api.get('/v1/seller/dashboard')).body.founding;
     expect(dash).toMatchObject({ founding: true, windowOpen: true, featuredSlots: 2, featuredUsed: 0, featuredDays: 7 });
     expect((await client(h.app).get(`/v1/sellers/${founder.id}`)).body.founding).toBe(true);
 
-    // Two free spots; the third needs one freed. Featured listings come first regardless of age.
+    // Two free spots; the third needs one freed. Round 25 (CEO): featured listings come first on the seller's own shop
+    // only; the market keeps its order with no boost.
     expect((await founder.api.post(`/v1/offers/${a.id}/feature`)).body).toMatchObject({ featuredUsed: 1 });
     expect((await founder.api.post(`/v1/offers/${b.id}/feature`)).body).toMatchObject({ featuredUsed: 2 });
     expect((await founder.api.post(`/v1/offers/${c.id}/feature`)).body.error.code).toBe('no_slots');
     const titles = (await client(h.app).get('/v1/offers?game=Founding%20Game&sort=newest')).body.items.map((o: any) => o.title);
-    expect(titles.slice(0, 2).sort()).toEqual(['Founder gold A', 'Founder gold B']);
-    expect(titles[2]).toBe('Latecomer gold');
+    expect(titles[0]).toBe('Latecomer gold');
+    const shop = (await client(h.app).get(`/v1/offers?seller=${founder.id}&sort=newest`)).body.items;
+    expect(shop.slice(0, 2).map((o: any) => o.title).sort()).toEqual(['Founder gold A', 'Founder gold B']);
+    expect(shop.map((o: any) => o.featured)).toEqual([true, true, false]);
     expect((await founder.api.del(`/v1/offers/${a.id}/feature`)).body).toMatchObject({ featuredUsed: 1 });
     expect((await founder.api.post(`/v1/offers/${c.id}/feature`)).status).toBe(200);
 

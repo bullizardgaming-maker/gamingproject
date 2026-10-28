@@ -14,17 +14,7 @@ export const BUYER_TAGS = ['clear_communication', 'quick_confirmation', 'patient
 export type BuyerTag = (typeof BUYER_TAGS)[number];
 const POSITIVE_TAGS: BuyerTag[] = ['clear_communication', 'quick_confirmation', 'patient'];
 export const RATE_WITHIN_DAYS = 30;
-/** Listings at or above this price may require an established buyer (`min_buyer_reputation`). */
-export const HIGH_VALUE_CENTS = 100_00;
-export const MIN_BUYER_REPUTATIONS = ['good'] as const;
-export type MinBuyerReputation = (typeof MIN_BUYER_REPUTATIONS)[number];
-
-/** Validates a listing's buyer-reputation requirement against its price. */
-export function checkMinBuyerReputation(min: MinBuyerReputation | null | undefined, priceCents: number) {
-  if (min && priceCents < HIGH_VALUE_CENTS) {
-    throw badRequest('not_high_value', `A minimum buyer reputation can only be set on listings of ${(HIGH_VALUE_CENTS / 100).toFixed(0)} or more`);
-  }
-}
+// Round 25 (B3): "established buyers only" on a listing is gone; offers.min_buyer_reputation stays NULL and gates nothing.
 
 export interface BuyerReputation {
   level: 'new' | 'good' | 'caution';

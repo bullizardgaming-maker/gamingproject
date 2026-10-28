@@ -76,6 +76,7 @@ const Env = z.object({
   NOWPAYMENTS_2FA_SECRET: z.string().optional(),       // base32; payouts are verified automatically with it
   NOWPAYMENTS_OUTCOME_CURRENCY: z.string().default('usdttrc20'),
   NOWPAYMENTS_SANDBOX_CASE: z.string().optional(),     // sandbox only: success | partially_paid | failed
+  NOWPAYMENTS_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60_000).default(10_000), // Round 25: deadline per provider call
   /** Seller withdrawals: fee in basis points, with a floor in settlement minor units (6%, at least $1.50). */
   WITHDRAWAL_FEE_BPS: z.coerce.number().int().min(0).max(5000).default(600),
   WITHDRAWAL_FEE_MIN_CENTS: z.coerce.number().int().min(0).default(150),
@@ -144,7 +145,7 @@ const Env = z.object({
   DEBT_CHECK_MINUTES: z.coerce.number().min(1).default(60),
   WATCH_CHECK_MINUTES: z.coerce.number().min(1).default(15).describe('How often price alerts are checked'),
   // Currencies & FX. Everything internal (escrow, ledger, balances) is in SETTLEMENT_CURRENCY.
-  SETTLEMENT_CURRENCY: z.string().length(3).default('USD'),
+  SETTLEMENT_CURRENCY: z.string().length(3).default('USD').refine((v: string) => ['USD'].includes(v), 'SETTLEMENT_CURRENCY is USD: settlement and payouts stay in USD (Round 25)'),
   SUPPORTED_CURRENCIES: z.string().default('USD,EUR,EGP'),
   // ecb covers EUR; EGP is not an ECB currency, so 'live' merges ECB with the open exchange-rate API.
   FX_PROVIDER: z.enum(['static', 'ecb', 'live']).default('static'),
@@ -152,6 +153,10 @@ const Env = z.object({
   PAYOUT_CURRENCIES: z.string().default('USD'), // CFO B12: payout currency locked to USD at launch (comma list to widen later)
   FX_SPREAD_BPS: z.coerce.number().int().min(0).max(1000).default(0), // CFO B12: no spread while everything is charged in USD; EUR/EGP are shown as approximate
   FX_MAX_AGE_HOURS: z.coerce.number().default(48),
+  // Round 25 (B6): a checkout price in EUR is held this long; after it the order gets a new quote before paying.
+  FX_QUOTE_TTL_MINUTES: z.coerce.number().int().min(1).max(60).default(15),
+  // Round 25 (B5): payment methods per viewer currency (domain/paymentMethods.ts). Empty = crypto in USD and EUR.
+  PAYMENT_METHODS_JSON: z.string().optional(),
   // Buying EUR/EGP ahead of seller payouts (domain/fxtopups.ts). none = planning only, record conversions by hand.
   FX_EXCHANGE_PROVIDER: z.enum(['none', 'mock', 'wise']).default('none'),
   WISE_API_URL: z.string().default('https://api.transferwise.com'),

@@ -7,6 +7,7 @@ import { createPubSub } from './lib/pubsub.js';
 import { MockPaymentProvider } from './providers/payments/mock.js';
 import { StripePaymentProvider } from './providers/payments/stripe.js';
 import { NowPaymentsProvider } from './providers/payments/nowpayments.js';
+import { paymentMethodConfig } from './domain/paymentMethods.js';
 import type { PaymentProvider } from './providers/payments/types.js';
 import { MockKycProvider } from './providers/kyc/mock.js';
 import { SumsubKycProvider } from './providers/kyc/sumsub.js';
@@ -70,6 +71,7 @@ export interface Ctx {
 
 export function createContext(cfg: Config, log: Logger, overrides: Partial<Ctx> = {}): Ctx {
   const apiBaseUrl = cfg.PUBLIC_API_URL ?? `http://localhost:${cfg.PORT}`;
+  paymentMethodConfig(cfg.PAYMENT_METHODS_JSON); // Round 25: a malformed PAYMENT_METHODS_JSON stops the start, not a checkout
   const keyring = overrides.keyring ?? new Keyring(cfg.DATA_ENCRYPTION_KEYS);
   const payments =
     overrides.payments ??
@@ -84,6 +86,7 @@ export function createContext(cfg: Config, log: Logger, overrides: Partial<Ctx> 
             password: cfg.NOWPAYMENTS_PASSWORD,
             twoFactorSecret: cfg.NOWPAYMENTS_2FA_SECRET,
             outcomeCurrency: cfg.NOWPAYMENTS_OUTCOME_CURRENCY,
+            timeoutMs: cfg.NOWPAYMENTS_TIMEOUT_MS,
           })
         : new MockPaymentProvider(cfg.JWT_SECRET, apiBaseUrl));
   const kyc =

@@ -18,7 +18,7 @@ import { CLAIM_REASONS, buyerRespond, openClaim, sellerRespond } from '../domain
 import { postProgress } from '../domain/progress.js';
 import { startHandover } from '../domain/linkedAccounts.js';
 import { createTicket } from '../domain/support.js';
-import { coinsFor, paymentsFor, refreshCryptoPayment, setRefundAddress, startCryptoPayment } from '../domain/cryptoPayments.js';
+import { coinsFor, paymentsFor, quoteFx, refreshCryptoPayment, setRefundAddress, startCryptoPayment } from '../domain/cryptoPayments.js';
 import { BUYER_TAGS, buyerReputation, rateBuyer } from '../domain/buyerReputation.js';
 import { createReview, replyToReview, sellerProfile } from '../domain/reviews.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
@@ -46,7 +46,7 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
     const body = z
       .object({
         offerId: z.string().uuid(),
-        quantity: z.number().int().positive().max(1_000_000).default(1),
+        quantity: z.number().int().positive().max(2_000_000_000).default(1),
         rail: z.enum(['fiat', 'crypto']).default('fiat'),
         acceptTos: z.literal(true),
         tosVersion: z.string().trim().min(1).max(40).optional(),
@@ -77,7 +77,7 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/orders/cart', async (req, reply) => {
     const body = z
       .object({
-        items: z.array(z.object({ offerId: z.string().uuid(), quantity: z.number().int().positive().max(1_000_000).default(1), characterName: z.string().trim().min(1).max(60).optional(), ...DeliveryChoice })).min(1).max(MAX_CART_ITEMS),
+        items: z.array(z.object({ offerId: z.string().uuid(), quantity: z.number().int().positive().max(2_000_000_000).default(1), characterName: z.string().trim().min(1).max(60).optional(), ...DeliveryChoice })).min(1).max(MAX_CART_ITEMS),
         acceptTos: z.literal(true),
         tosVersion: z.string().trim().min(1).max(40).optional(),
         currency: z.string().length(3).toUpperCase().optional(),
@@ -106,7 +106,7 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
     const body = z
       .object({
         offerId: z.string().uuid(),
-        quantity: z.number().int().positive().max(1_000_000).default(1),
+        quantity: z.number().int().positive().max(2_000_000_000).default(1),
         rail: z.enum(['fiat', 'crypto']).default('fiat'),
         promoCode: z.string().trim().min(1).max(40).optional(),
         sellerCode: z.string().trim().min(1).max(40).optional(),
@@ -180,14 +180,22 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   // --- Crypto checkout (NOWPayments): coin picker, payment address, status, refund address ----------
-  const Coin = z.object({ coin: z.string().min(2).max(20).toLowerCase() });
+  const Coin = z.object({
+    coin: z.string().min(2).max(20).toLowerCase(),
+    priceCurrency: z.enum(['USD', 'EUR']).default('USD').describe('Round 25: what the invoice is priced in; an EGP viewer pays in USD'),
+  });
   const PayId = z.object({ id: z.string().uuid(), pid: z.string().max(40) });
   for (const kind of ['orders', 'checkouts'] as const) {
     const refOf = (id: string) => (kind === 'orders' ? { orderId: id } : { checkoutId: id });
     app.get(`/${kind}/:id/crypto/coins`, async (req) => coinsFor(ctx, refOf(Id.parse(req.params).id), me(req).id));
     app.post(`/${kind}/:id/crypto/pay`, async (req, reply) => {
-      const { coin } = Coin.parse(req.body);
-      return reply.status(201).send(await startCryptoPayment(ctx, refOf(Id.parse(req.params).id), me(req).id, coin));
+      const { coin, priceCurrency } = Coin.parse(req.body);
+      return reply.status(201).send(await startCryptoPayment(ctx, refOf(Id.parse(req.params).id), me(req).id, coin, priceCurrency));
+    });
+    /** Round 25 (B6): lock (or refresh) the checkout price in USD or EUR for 15 minutes. */
+    app.post(`/${kind}/:id/fx-quote`, async (req) => {
+      const { currency } = z.object({ currency: z.enum(['USD', 'EUR']) }).parse(req.body);
+      return quoteFx(ctx, refOf(Id.parse(req.params).id), me(req).id, currency);
     });
     app.get(`/${kind}/:id/crypto/payments`, async (req) => {
       const { id } = Id.parse(req.params);

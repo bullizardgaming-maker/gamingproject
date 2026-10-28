@@ -4,15 +4,16 @@ import { many, maybeOne, one, withTx } from '../db.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { addInventory, parseBulkUpload } from './inventory.js';
 import { getRate } from './fx.js';
-import { cleanAttributes, handoverFieldFor } from './attributeSets.js';
+import { GAME_SETS, attributesFor, cleanAttributes, handoverFieldFor } from './attributeSets.js';
 import { cleanDeliveryMethods } from './delivery.js';
 import { checkTiers, type PriceTier } from './priceTiers.js';
+import { DELIVERY_TIMES, centsForMicros, checkVolumeDiscounts, type DeliveryTime, type VolumeDiscount } from './unitPrice.js';
+import { allowedMethods } from './delivery.js';
 import { listingStatusFor } from './moderation.js';
 import { notify } from './notifications.js';
 import { ONLINE_SQL } from './presence.js';
-import { EFFECTIVE_PRICE_SQL } from './discounts.js';
+import { EFFECTIVE_MICROS_SQL, EFFECTIVE_PRICE_SQL } from './discounts.js';
 import { checkAttach } from './linkedAccounts.js';
-import { checkMinBuyerReputation, type MinBuyerReputation } from './buyerReputation.js';
 import { GROSS_SQL, markSellerSince } from './commission.js';
 export { unitPriceFor, type PriceTier } from './priceTiers.js';
 
@@ -21,7 +22,8 @@ export interface OfferInput {
   game: string;
   title: string;
   description?: string;
-  priceCents: number;
+  /** Required except for currency listings (unitPriceMicros). */
+  priceCents?: number;
   currency?: string;
   deliveryMode: 'auto' | 'manual';
   stock?: number;
@@ -31,8 +33,6 @@ export interface OfferInput {
   warrantyDays?: number;
   /** Account listings: a Steam/Riot account the seller linked by signing in (linkedAccounts.ts); null detaches. */
   linkedAccountId?: string | null;
-  /** High-value listings (HIGH_VALUE_CENTS and up): require an established buyer; null removes the requirement. */
-  minBuyerReputation?: MinBuyerReputation | null;
   /** Game-specific fields (server, region, rank…); see attributeSets.ts. */
   attributes?: Record<string, string>;
   /** Cheaper unit prices for larger orders. */
@@ -45,6 +45,12 @@ export interface OfferInput {
   minQty?: number;
   /** Round 24: the delivery methods this listing offers, from the game's fixed list (domain/delivery.ts). Null/absent: all of them. */
   deliveryMethods?: string[] | null;
+  /** Round 25, currency listings: the unit price in micro-units of the listing currency (123 = 0.000123 per unit). */
+  unitPriceMicros?: number;
+  /** Round 25, currency listings: up to four volume discounts (min quantity → % off). */
+  volumeDiscounts?: VolumeDiscount[];
+  /** Round 25: the promised delivery time from the fixed list (15m … 24h); replaces deliveryHours. */
+  deliveryTime?: DeliveryTime;
 }
 
 /** Round 24: a 400 unless the methods are a non-empty subset of what this game and category allow. */
@@ -105,6 +111,10 @@ export function cleanTiers(basePriceCents: number, tiers: PriceTier[] | undefine
   return r.value;
 }
 
+/** Round 25: the listing's delivery time as its key on the fixed list (null for instant delivery, and above 24 hours: older non-currency listings). */
+export const DELIVERY_TIME_SQL = `(CASE WHEN f.delivery_mode = 'auto' THEN NULL WHEN f.delivery_minutes <= 15 THEN '15m' WHEN f.delivery_minutes <= 60 THEN '1h' WHEN f.delivery_minutes <= 180 THEN '3h'
+  WHEN f.delivery_minutes <= 360 THEN '6h' WHEN f.delivery_minutes <= 720 THEN '12h' WHEN f.delivery_minutes <= 1440 THEN '24h' END)`;
+
 /**
  * Prices in this view are what the BUYER pays: the seller's price grossed up by the seller's
  * current commission rate (commission.ts). `seller_price_cents` is what the seller entered and
@@ -116,9 +126,9 @@ export const OFFER_LIST_SQL = `
          CASE WHEN ${EFFECTIVE_PRICE_SQL} < f.price_cents THEN f.sale_ends_at END AS sale_ends_at, f.currency, ${GROSS_SQL('f.price_settlement_cents')} AS price_settlement_cents, f.delivery_mode,
          f.status, f.owner_proof_status, f.version, f.attributes,
          COALESCE((SELECT jsonb_agg(jsonb_set(t, '{priceCents}', to_jsonb(${GROSS_SQL("(t->>'priceCents')::numeric")})) ORDER BY (t->>'minQty')::int) FROM jsonb_array_elements(f.price_tiers) t), '[]'::jsonb) AS price_tiers,
-         f.price_tiers AS seller_price_tiers, f.reserved_for, f.request_id, f.warranty_days, f.min_buyer_reputation, la.provider AS linked_platform, la.account_created_at AS linked_account_created_at, f.review_reasons, f.review_note, f.created_at, f.updated_at, f.low_stock_threshold,
+         f.price_tiers AS seller_price_tiers, f.reserved_for, f.request_id, f.warranty_days, la.provider AS linked_platform, la.account_created_at AS linked_account_created_at, f.review_reasons, f.review_note, f.created_at, f.updated_at, f.low_stock_threshold,
          c.kind AS category_kind, c.risk_class, category_open(c.slug) AS category_open, u.display_name AS seller_name, f.delivery_hours,
-         u.founding AS seller_founding, u.seller_rank, (f.featured_until IS NOT NULL AND f.featured_until > now()) AS featured, f.featured_until,
+         u.founding AS seller_founding, u.seller_rank, f.featured_until,
          (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now())) AS shop_paused,
          u.shop_paused_until, u.shop_pause_message, ${ONLINE_SQL} AS seller_online, u.response_minutes AS seller_response_minutes, u.trust_level AS seller_trust_level,
          f.available AS stock, f.is_bundle,
@@ -128,7 +138,10 @@ export const OFFER_LIST_SQL = `
          u.completed_orders AS seller_completed_orders, u.rating_avg AS seller_rating, u.review_count AS seller_review_count,
          (1 + floor(2 * sqrt(GREATEST(u.completed_orders, 0))))::int AS seller_level,
          CASE WHEN u.review_count > 0 THEN round(100.0 * u.positive_review_count / u.review_count, 1)::float8 END AS seller_positive_pct,
-         f.sold_count, f.public_id, f.delivery_methods
+         f.sold_count, f.public_id, f.delivery_methods,
+         CASE WHEN f.unit_price_micros IS NOT NULL THEN ${GROSS_SQL(EFFECTIVE_MICROS_SQL)} END AS unit_price_micros,
+         f.unit_price_micros AS seller_unit_price_micros, f.volume_discounts, ${GROSS_SQL('f.price_settlement_micros')} AS price_settlement_micros,
+         f.delivery_minutes, ${DELIVERY_TIME_SQL} AS delivery_time
     FROM offers f JOIN categories c ON c.slug = f.category_slug JOIN users u ON u.id = f.seller_id
     LEFT JOIN linked_accounts la ON la.id = f.linked_account_id AND la.unlinked_at IS NULL`;
 
@@ -151,6 +164,40 @@ export function requireSeller(user: { kyc_tier: number; status: string; rules_pa
   if (idDeadlinePassed(user, idDueDays)) throw forbidden('kyc_overdue', 'Verify your identity to keep selling: the 30-day deadline has passed');
 }
 
+/** Round 25: the delivery time in minutes: one of the fixed list, or (older clients) a whole number of hours that is on it. */
+export function deliveryMinutesFrom(input: { deliveryTime?: DeliveryTime; deliveryHours?: number }, required: boolean): number | null {
+  if (input.deliveryTime) {
+    if (!(input.deliveryTime in DELIVERY_TIMES)) throw badRequest('invalid_delivery_time', `Pick a delivery time: ${Object.keys(DELIVERY_TIMES).join(', ')}`);
+    return DELIVERY_TIMES[input.deliveryTime];
+  }
+  if (input.deliveryHours != null) {
+    const minutes = input.deliveryHours * 60;
+    if (required && !Object.values(DELIVERY_TIMES).includes(minutes as never)) throw badRequest('invalid_delivery_time', `Pick a delivery time: ${Object.keys(DELIVERY_TIMES).join(', ')}`);
+    return minutes;
+  }
+  if (required) throw badRequest('delivery_time_required', `Pick a delivery time: ${Object.keys(DELIVERY_TIMES).join(', ')}`);
+  return null;
+}
+
+/** Round 25: a currency listing's unit price (micro-units) and volume discounts, checked. `priceCents` from older clients is a unit price of that many cents. */
+export function currencyPricing(input: { unitPriceMicros?: number; priceCents?: number; volumeDiscounts?: VolumeDiscount[] }, minQty: number) {
+  const micros = input.unitPriceMicros ?? (input.priceCents != null ? input.priceCents * 10_000 : undefined);
+  if (micros == null) throw badRequest('unit_price_required', 'Give the price of one unit (up to 6 decimals)');
+  if (!Number.isSafeInteger(micros) || micros < 1) throw badRequest('invalid_unit_price', 'The unit price is at least 0.000001');
+  const vd = checkVolumeDiscounts(input.volumeDiscounts, minQty);
+  if (!vd.ok) throw badRequest('invalid_volume_discounts', vd.error);
+  return { micros, priceCents: centsForMicros(micros), discounts: vd.value };
+}
+
+/** Round 25: the field a currency buyer picks first (server, region or league): the game's first listing field, required. */
+function requireServer(game: string, categorySlug: string, attrs: Record<string, string>) {
+  // Only games with their own fields for the category (Albion's server, a PoE league, a WoW region…); a game on the
+  // generic defaults has no server list to pick from.
+  if (!GAME_SETS[game.trim().toLowerCase()]?.[categorySlug]) return;
+  const def = attributesFor(game, categorySlug)[0];
+  if (def && !attrs[def.key]) throw badRequest('server_required', `${def.label} is required for ${game} currency listings`, { field: def.key });
+}
+
 export async function createOffer(ctx: Ctx, seller: { id: string; kyc_tier: number; status: string }, input: OfferInput) {
   requireSeller(seller);
   // Loads (or refreshes) the listing currency's rate so the settlement price used by search is right.
@@ -165,7 +212,6 @@ export async function createOffer(ctx: Ctx, seller: { id: string; kyc_tier: numb
     throw badRequest('invalid_stock', 'Account listings with auto-delivery take stock from uploaded inventory');
   }
   if (input.warrantyDays && cat.kind !== 'account') throw badRequest('invalid_warranty', 'Only account listings can carry a warranty');
-  checkMinBuyerReputation(input.minBuyerReputation, input.priceCents);
   if (input.linkedAccountId) await checkAttach(ctx.db, seller.id, input.linkedAccountId, input.game, cat.kind);
   if (input.bundle) {
     if (cat.kind === 'account') throw badRequest('invalid_bundle', 'Accounts are sold one at a time and can’t be bundled');
@@ -174,19 +220,41 @@ export async function createOffer(ctx: Ctx, seller: { id: string; kyc_tier: numb
   }
   const attrs = cleanAttributes(input.game, input.categorySlug, input.attributes);
   if (!attrs.ok) throw badRequest('invalid_attributes', attrs.error);
+  const currency = cat.kind === 'currency';
+  // Round 25 (B3): a currency listing in the Round 25 form (a unit price in micro-units) must give game, server/region,
+  // stock, delivery methods and a delivery time. An older client's body (priceCents only) keeps working with the old
+  // defaults (24 hours, every method of the game).
+  const strict = currency && input.unitPriceMicros != null;
+  if (currency) {
+    if (strict) requireServer(input.game, input.categorySlug, attrs.value);
+    if (strict && input.deliveryMode === 'manual' && !(input.stock && input.stock > 0)) throw badRequest('stock_required', 'Give the amount you have in stock');
+    if (strict && input.priceTiers?.length) throw badRequest('invalid_tiers', 'Currency listings use volume discounts (volumeDiscounts) instead of quantity prices');
+  } else if (input.unitPriceMicros != null || input.volumeDiscounts?.length) {
+    throw badRequest('invalid_unit', 'Only currency listings have a unit price in micro-units and volume discounts');
+  }
   const stock = input.deliveryMode === 'manual' ? (cat.kind === 'account' ? 1 : input.stock ?? 1) : 0;
-  const tiers = cleanTiers(input.priceCents, input.priceTiers, cat.kind);
   const unit = cleanUnit(input, cat.kind, stock);
-  const deliveryMethods = checkDeliveryMethods(input.game, input.categorySlug, input.deliveryMethods);
+  const pricing = currency ? currencyPricing(input, unit.minQty) : null;
+  if (!pricing && input.priceCents == null) throw badRequest('validation_error', 'priceCents is required');
+  const priceCents = pricing ? pricing.priceCents : input.priceCents!;
+  const tiers = cleanTiers(priceCents, input.priceTiers, cat.kind);
+  const minutes = deliveryMinutesFrom(input, strict && input.deliveryMode === 'manual') ?? 1440;
+  const handover = handoverFieldFor(input.game, input.categorySlug)?.key ?? null;
+  // Round 25: in-game listings store the methods they offer (all of the game's when none are given); currency listings must pick.
+  if (strict && allowedMethods(input.game, handover).length && !input.deliveryMethods?.length) {
+    throw badRequest('invalid_delivery_method', `Pick at least one delivery method: ${allowedMethods(input.game, handover).join(', ')}`);
+  }
+  const deliveryMethods = checkDeliveryMethods(input.game, input.categorySlug, input.deliveryMethods) ?? (allowedMethods(input.game, handover).length ? allowedMethods(input.game, handover) : null);
   const screen = await listingStatusFor(ctx.db, input.title, input.description ?? '');
   const offer = await one(
     ctx.db,
     `INSERT INTO offers (seller_id, category_slug, game, title, description, price_cents, currency, delivery_mode, stock, low_stock_threshold, delivery_hours, attributes, price_tiers,
-                         status, review_reasons, unit_label, unit_size, min_qty, delivery_methods)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING id`,
-    [seller.id, input.categorySlug, input.game, input.title, input.description ?? '', input.priceCents, (input.currency ?? ctx.cfg.SETTLEMENT_CURRENCY).toUpperCase(),
-     input.deliveryMode, stock, input.lowStockThreshold ?? 5, input.deliveryHours ?? 24, JSON.stringify(attrs.value), JSON.stringify(tiers),
-     screen.review ? 'review' : 'active', screen.reasons, unit.label, unit.size, unit.minQty, deliveryMethods],
+                         status, review_reasons, unit_label, unit_size, min_qty, delivery_methods, unit_price_micros, volume_discounts, delivery_minutes)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22) RETURNING id`,
+    [seller.id, input.categorySlug, input.game, input.title, input.description ?? '', priceCents, (input.currency ?? ctx.cfg.SETTLEMENT_CURRENCY).toUpperCase(),
+     input.deliveryMode, stock, input.lowStockThreshold ?? 5, Math.max(1, Math.ceil(minutes / 60)), JSON.stringify(attrs.value), JSON.stringify(tiers),
+     screen.review ? 'review' : 'active', screen.reasons, unit.label, unit.size, unit.minQty, deliveryMethods,
+     pricing?.micros ?? null, JSON.stringify(pricing?.discounts ?? []), minutes],
   );
   if (input.bundle) {
     await ctx.db.query('UPDATE offers SET is_bundle = true WHERE id = $1', [offer.id]);
@@ -195,7 +263,6 @@ export async function createOffer(ctx: Ctx, seller: { id: string; kyc_tier: numb
     }
   }
   if (input.warrantyDays) await ctx.db.query('UPDATE offers SET warranty_days = $2 WHERE id = $1', [offer.id, input.warrantyDays]);
-  if (input.minBuyerReputation) await ctx.db.query('UPDATE offers SET min_buyer_reputation = $2 WHERE id = $1', [offer.id, input.minBuyerReputation]);
   if (input.linkedAccountId) await ctx.db.query('UPDATE offers SET linked_account_id = $2 WHERE id = $1', [offer.id, input.linkedAccountId]);
   await markSellerSince(ctx.db, seller.id); // first listing starts the launch-promo clock
   if (screen.review) await notify(ctx.db, seller.id, 'listing_review', { offer_id: offer.id, title: input.title }, `listing:${offer.id}:review:${Date.now()}`);
@@ -209,76 +276,77 @@ export async function getOffer(q: Queryable, id: string) {
   return offer;
 }
 
+export type OfferPatch = Partial<Pick<OfferInput, 'title' | 'description' | 'priceCents' | 'stock' | 'lowStockThreshold' | 'deliveryHours' | 'attributes' | 'priceTiers' | 'warrantyDays' | 'linkedAccountId' | 'unitLabel' | 'unitSize' | 'minQty' | 'deliveryMethods' | 'unitPriceMicros' | 'volumeDiscounts' | 'deliveryTime'>> & { status?: 'active' | 'paused' | 'removed' };
+
 /**
  * Update an offer with optimistic concurrency. Clients send the version they
  * read; a concurrent edit (or a purchase that moved manual stock) bumps the
  * version and the stale update is rejected with 409.
+ *
+ * Round 25 (L3): every check runs first and every column is written by the one versioned UPDATE, so a 409 changes
+ * nothing (delivery methods, units, linked account included).
  */
-export async function updateOffer(
-  ctx: Ctx,
-  sellerId: string,
-  offerId: string,
-  version: number,
-  patch: Partial<Pick<OfferInput, 'title' | 'description' | 'priceCents' | 'stock' | 'lowStockThreshold' | 'deliveryHours' | 'attributes' | 'priceTiers' | 'warrantyDays' | 'linkedAccountId' | 'minBuyerReputation' | 'unitLabel' | 'unitSize' | 'minQty' | 'deliveryMethods'>> & { status?: 'active' | 'paused' | 'removed' },
-) {
-  let attributes: string | null = null;
+export async function updateOffer(ctx: Ctx, sellerId: string, offerId: string, version: number, patch: OfferPatch) {
+  const cur = await maybeOne(
+    ctx.db,
+    `SELECT f.seller_id, f.game, f.category_slug, f.stock, f.unit_label, f.unit_size, f.min_qty, f.price_cents, f.unit_price_micros, f.volume_discounts,
+            f.reserved_for, f.title, f.description, f.delivery_mode, c.kind
+       FROM offers f JOIN categories c ON c.slug = f.category_slug WHERE f.id = $1`,
+    [offerId],
+  );
+  if (!cur || cur.seller_id !== sellerId) throw notFound('Offer');
+  const currency = cur.kind === 'currency';
+  if (patch.priceCents != null || patch.attributes || patch.title || patch.stock != null || patch.priceTiers || patch.warrantyDays != null || patch.unitPriceMicros != null || patch.volumeDiscounts) {
+    // The terms of an accepted buyer request are fixed; the seller can only pause or remove it.
+    if (cur.reserved_for) throw conflict('reserved_offer', 'This listing was agreed with a buyer and its terms can’t be changed');
+  }
+  let unit: { label: string | null; size: number | null; minQty: number } | null = null;
   if (patch.unitLabel !== undefined || patch.unitSize !== undefined || patch.minQty !== undefined) {
-    const cur = await maybeOne(ctx.db, 'SELECT f.seller_id, f.stock, f.unit_label, f.unit_size, f.min_qty, c.kind FROM offers f JOIN categories c ON c.slug = f.category_slug WHERE f.id = $1', [offerId]);
-    if (!cur || cur.seller_id !== sellerId) throw notFound('Offer');
-    const unit = cleanUnit(
+    unit = cleanUnit(
       { unitLabel: patch.unitLabel === undefined ? cur.unit_label : patch.unitLabel, unitSize: patch.unitSize === undefined ? cur.unit_size : patch.unitSize, minQty: patch.minQty ?? cur.min_qty },
       cur.kind,
       patch.stock ?? Number(cur.stock),
     );
-    await ctx.db.query('UPDATE offers SET unit_label = $2, unit_size = $3, min_qty = $4 WHERE id = $1 AND seller_id = $5', [offerId, unit.label, unit.size, unit.minQty, sellerId]);
   }
-  if (patch.priceCents != null || patch.attributes || patch.title || patch.stock != null || patch.priceTiers || patch.warrantyDays != null) {
-    // The terms of an accepted buyer request are fixed; the seller can only pause or remove it.
-    const cur = await maybeOne(ctx.db, 'SELECT reserved_for FROM offers WHERE id = $1 AND seller_id = $2', [offerId, sellerId]);
-    if (cur?.reserved_for) throw conflict('reserved_offer', 'This listing was agreed with a buyer and its terms can’t be changed');
-  }
-  if (patch.linkedAccountId !== undefined) {
-    const cur = await maybeOne(ctx.db, 'SELECT f.seller_id, f.game, c.kind FROM offers f JOIN categories c ON c.slug = f.category_slug WHERE f.id = $1', [offerId]);
-    if (!cur || cur.seller_id !== sellerId) throw notFound('Offer');
-    if (patch.linkedAccountId) await checkAttach(ctx.db, sellerId, patch.linkedAccountId, cur.game, cur.kind, offerId);
-    await ctx.db.query('UPDATE offers SET linked_account_id = $2 WHERE id = $1 AND seller_id = $3', [offerId, patch.linkedAccountId, sellerId]);
-  }
-  if (patch.minBuyerReputation !== undefined || patch.priceCents != null) {
-    const cur = await maybeOne(ctx.db, 'SELECT seller_id, price_cents, min_buyer_reputation FROM offers WHERE id = $1', [offerId]);
-    if (!cur || cur.seller_id !== sellerId) throw notFound('Offer');
-    checkMinBuyerReputation(patch.minBuyerReputation === undefined ? cur.min_buyer_reputation : patch.minBuyerReputation, patch.priceCents ?? cur.price_cents);
-    if (patch.minBuyerReputation !== undefined) await ctx.db.query('UPDATE offers SET min_buyer_reputation = $2 WHERE id = $1 AND seller_id = $3', [offerId, patch.minBuyerReputation, sellerId]);
-  }
-  if (patch.warrantyDays) {
-    const cur = await maybeOne(ctx.db, 'SELECT f.seller_id, c.kind FROM offers f JOIN categories c ON c.slug = f.category_slug WHERE f.id = $1', [offerId]);
-    if (!cur || cur.seller_id !== sellerId) throw notFound('Offer');
-    if (cur.kind !== 'account') throw badRequest('invalid_warranty', 'Only account listings can carry a warranty');
-  }
+  if (patch.linkedAccountId) await checkAttach(ctx.db, sellerId, patch.linkedAccountId, cur.game, cur.kind, offerId);
+  if (patch.warrantyDays && cur.kind !== 'account') throw badRequest('invalid_warranty', 'Only account listings can carry a warranty');
+  // Round 24: a list must be a non-empty subset of the game's methods. Round 25: null stores all of them.
+  let methods: string[] | null | undefined;
   if (patch.deliveryMethods !== undefined) {
-    // Round 24: null resets to every method of the game; a list must be a non-empty subset of it.
-    const cur = await maybeOne(ctx.db, 'SELECT seller_id, game, category_slug FROM offers WHERE id = $1', [offerId]);
-    if (!cur || cur.seller_id !== sellerId) throw notFound('Offer');
-    const methods = patch.deliveryMethods === null ? null : checkDeliveryMethods(cur.game, cur.category_slug, patch.deliveryMethods);
-    await ctx.db.query('UPDATE offers SET delivery_methods = $2 WHERE id = $1 AND seller_id = $3', [offerId, methods, sellerId]);
+    const handover = handoverFieldFor(cur.game, cur.category_slug)?.key ?? null;
+    methods = patch.deliveryMethods === null ? (allowedMethods(cur.game, handover).length ? allowedMethods(cur.game, handover) : null) : checkDeliveryMethods(cur.game, cur.category_slug, patch.deliveryMethods);
   }
+  // Currency listings: unit price in micro-units (priceCents from older clients means that many cents) and volume discounts.
+  let micros: number | null = null;
+  let priceCents = patch.priceCents ?? null;
+  let discounts: string | null = null;
+  if (currency) {
+    if (patch.priceTiers?.length && (patch.unitPriceMicros != null || patch.volumeDiscounts?.length || (cur.volume_discounts ?? []).length)) {
+      throw badRequest('invalid_tiers', 'Currency listings use volume discounts (volumeDiscounts) instead of quantity prices');
+    }
+    if (patch.unitPriceMicros != null || patch.priceCents != null || patch.volumeDiscounts) {
+      const p = currencyPricing(
+        { unitPriceMicros: patch.unitPriceMicros ?? (patch.priceCents == null ? Number(cur.unit_price_micros ?? Number(cur.price_cents) * 10_000) : undefined), priceCents: patch.priceCents, volumeDiscounts: patch.volumeDiscounts ?? cur.volume_discounts },
+        unit?.minQty ?? cur.min_qty,
+      );
+      micros = p.micros;
+      priceCents = p.priceCents;
+      discounts = JSON.stringify(p.discounts);
+    }
+  } else if (patch.unitPriceMicros != null || patch.volumeDiscounts?.length) {
+    throw badRequest('invalid_unit', 'Only currency listings have a unit price in micro-units and volume discounts');
+  }
+  const minutes = patch.deliveryTime !== undefined || patch.deliveryHours !== undefined ? deliveryMinutesFrom(patch, currency) : null;
   let tiers: string | null = null;
-  if (patch.priceTiers) {
-    const cur = await maybeOne(ctx.db, 'SELECT f.seller_id, f.price_cents, c.kind FROM offers f JOIN categories c ON c.slug = f.category_slug WHERE f.id = $1', [offerId]);
-    if (!cur || cur.seller_id !== sellerId) throw notFound('Offer');
-    tiers = JSON.stringify(cleanTiers(patch.priceCents ?? cur.price_cents, patch.priceTiers, cur.kind));
-  }
+  if (patch.priceTiers) tiers = JSON.stringify(cleanTiers(priceCents ?? Number(cur.price_cents), patch.priceTiers, cur.kind));
   // Edited text is screened again; a listing in review can only be removed until staff decide.
   let screen: { review: boolean; reasons: string[] } = { review: false, reasons: [] };
-  if (patch.title != null || patch.description != null) {
-    const cur = await maybeOne(ctx.db, 'SELECT seller_id, title, description FROM offers WHERE id = $1', [offerId]);
-    if (!cur || cur.seller_id !== sellerId) throw notFound('Offer');
-    screen = await listingStatusFor(ctx.db, patch.title ?? cur.title, patch.description ?? cur.description);
-  }
+  if (patch.title != null || patch.description != null) screen = await listingStatusFor(ctx.db, patch.title ?? cur.title, patch.description ?? cur.description);
+  let attributes: string | null = null;
   if (patch.attributes) {
-    const cur = await maybeOne(ctx.db, 'SELECT seller_id, game, category_slug FROM offers WHERE id = $1', [offerId]);
-    if (!cur || cur.seller_id !== sellerId) throw notFound('Offer');
     const attrs = cleanAttributes(cur.game, cur.category_slug, patch.attributes);
     if (!attrs.ok) throw badRequest('invalid_attributes', attrs.error);
+    if (currency && patch.unitPriceMicros != null) requireServer(cur.game, cur.category_slug, attrs.value);
     attributes = JSON.stringify(attrs.value);
   }
   const res = await ctx.db.query(
@@ -289,14 +357,26 @@ export async function updateOffer(
         status = CASE WHEN $13::boolean THEN 'review' WHEN status = 'review' AND $9 IS DISTINCT FROM 'removed' THEN 'review' ELSE COALESCE($9, status) END,
         review_reasons = CASE WHEN $13::boolean THEN $14::text[] ELSE review_reasons END,
         delivery_hours = COALESCE($10, delivery_hours), attributes = COALESCE($11::jsonb, attributes), price_tiers = COALESCE($12::jsonb, price_tiers),
-        warranty_days = COALESCE($15, warranty_days), version = version + 1, updated_at = now()
+        warranty_days = COALESCE($15, warranty_days),
+        unit_label = CASE WHEN $16::boolean THEN $17 ELSE unit_label END, unit_size = CASE WHEN $16::boolean THEN $18::bigint ELSE unit_size END,
+        min_qty = CASE WHEN $16::boolean THEN $19::int ELSE min_qty END,
+        linked_account_id = CASE WHEN $20::boolean THEN $21::uuid ELSE linked_account_id END,
+        delivery_methods = CASE WHEN $22::boolean THEN $23::text[] ELSE delivery_methods END,
+        unit_price_micros = COALESCE($24::bigint, unit_price_micros), volume_discounts = COALESCE($25::jsonb, volume_discounts),
+        delivery_minutes = COALESCE($26::int, delivery_minutes),
+        version = version + 1, updated_at = now()
       WHERE id = $1 AND seller_id = $2 AND version = $3 RETURNING id`,
-    [offerId, sellerId, version, patch.title, patch.description, patch.priceCents, patch.stock, patch.lowStockThreshold, patch.status, patch.deliveryHours, attributes, tiers, screen.review, screen.reasons, patch.warrantyDays ?? null],
+    [offerId, sellerId, version, patch.title, patch.description, priceCents, patch.stock, patch.lowStockThreshold, patch.status,
+     minutes != null ? Math.max(1, Math.ceil(minutes / 60)) : null, attributes, tiers, screen.review, screen.reasons, patch.warrantyDays ?? null,
+     !!unit, unit?.label ?? null, unit?.size ?? null, unit?.minQty ?? null,
+     patch.linkedAccountId !== undefined, patch.linkedAccountId ?? null,
+     methods !== undefined, methods ?? null,
+     micros, discounts, minutes],
   );
   if (res.rowCount === 0) {
-    const cur = await maybeOne(ctx.db, 'SELECT seller_id, version FROM offers WHERE id = $1', [offerId]);
-    if (!cur || cur.seller_id !== sellerId) throw notFound('Offer');
-    throw conflict('version_conflict', `Offer was modified concurrently (current version ${cur.version})`);
+    const now = await maybeOne(ctx.db, 'SELECT seller_id, version FROM offers WHERE id = $1', [offerId]);
+    if (!now || now.seller_id !== sellerId) throw notFound('Offer');
+    throw conflict('version_conflict', `Offer was modified concurrently (current version ${now.version})`);
   }
   if (screen.review) await notify(ctx.db, sellerId, 'listing_review', { offer_id: offerId, title: patch.title ?? '' }, `listing:${offerId}:review:${Date.now()}`);
   return getOffer(ctx.db, offerId);

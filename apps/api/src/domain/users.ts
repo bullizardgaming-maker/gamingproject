@@ -398,7 +398,8 @@ export async function confirmVerificationCode(ctx: Ctx, user: User, channel: 'em
       }
     }
     await s.tx.query(
-      `UPDATE users SET kyc_tier = GREATEST(kyc_tier, 1) WHERE id = $1 AND email_verified_at IS NOT NULL`, // Round 24: email only
+      // Round 24: email only. Round 25 (L1): never for a banned or deleted account.
+      `UPDATE users SET kyc_tier = GREATEST(kyc_tier, 1) WHERE id = $1 AND email_verified_at IS NOT NULL AND status <> 'banned' AND deleted_at IS NULL`,
       [user.id],
     );
     return one<User>(s.tx, `SELECT ${PUBLIC_USER_COLUMNS} FROM users WHERE id = $1`, [user.id]);
@@ -438,79 +439,8 @@ export async function applyKycResult(ctx: Ctx, result: { externalId: string; sta
   });
 }
 
-// ---------------------------------------------------------------------------
-// Withdrawals (Tier 2 only)
-// ---------------------------------------------------------------------------
-export async function requestWithdrawal(ctx: Ctx, userId: string, amountCents: number, currency = ctx.cfg.SETTLEMENT_CURRENCY) {
-  assertUsdWithdrawal(currency); // Round 22b: USD only on every withdrawal path
-  await ensureScreenedForPayout(ctx, userId);
-  const w = await withScope(ctx, async (s) => {
-    // Lock the user row to serialize concurrent withdrawals against the same balance.
-    const user = await one<User>(s.tx, `SELECT ${PUBLIC_USER_COLUMNS} FROM users WHERE id = $1 FOR UPDATE`, [userId]);
-    if (user.kyc_tier < 2) throw new AppError(403, 'kyc_required', 'Tier 2 identity verification is required to withdraw');
-    await assertNotPaused(s.tx, 'withdrawals');
-    await assertWithdrawalWithinLimits(s.tx, userId, amountCents);
-    if (user.withdrawals_frozen || user.status !== 'active') throw new AppError(423, 'withdrawals_frozen', 'Withdrawals are frozen pending a security review');
-    // Compliance hold: deliberately the same generic wording, never mentioning AML (no tipping off).
-    const { aml_hold } = await one<{ aml_hold: boolean }>(s.tx, 'SELECT aml_hold FROM users WHERE id = $1', [userId]);
-    if (aml_hold) throw new AppError(423, 'withdrawals_frozen', 'Withdrawals are paused while we complete a routine review');
-    if (!user.stripe_account_id || !user.payouts_enabled) throw badRequest('no_payout_account', 'Set up your payout account first');
-    // A balance below zero in any currency must be settled first (see domain/debts.ts).
-    const owing = await maybeOne<{ currency: string }>(
-      s.tx,
-      `SELECT a.currency FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id
-        WHERE a.kind = 'seller_available' AND a.owner_id = $1 GROUP BY a.currency HAVING SUM(e.amount_cents) < 0 LIMIT 1`,
-      [userId],
-    );
-    if (owing) throw new AppError(409, 'debt_outstanding', `Your ${owing.currency} balance is below zero; settle it before withdrawing`);
-    const bal = await withdrawable(ctx, s.tx, userId, currency);
-    if (amountCents > bal.withdrawableCents) {
-      throw badRequest(
-        'insufficient_funds',
-        bal.heldCents
-          ? `You can withdraw ${bal.withdrawableCents} cents now; ${bal.heldCents} cents from recent sales is on a ${bal.holdDays}-day payout hold`
-          : `Available balance is ${bal.availableCents} cents`,
-        { withdrawableCents: bal.withdrawableCents, heldCents: bal.heldCents, upcoming: bal.upcoming },
-      );
-    }
-    const w = await one(s.tx, 'INSERT INTO withdrawals (user_id, amount_cents, currency) VALUES ($1, $2, $3) RETURNING *', [userId, amountCents, currency]);
-    await post(
-      s.tx,
-      [
-        { account: await accountId(s.tx, 'seller_available', currency, userId), amountCents: -amountCents },
-        { account: await accountId(s.tx, 'payouts', currency), amountCents },
-      ],
-      `withdrawal:${w.id}`,
-    );
-    return { ...w, destination: user.stripe_account_id };
-  });
-
-  try {
-    const { ref } = await ctx.payments.payout(w.destination, amountCents, currency, `withdrawal_${w.id}`);
-    return await withTx(ctx.db, async (tx) => {
-      const paid = await one(tx, `UPDATE withdrawals SET status = 'paid', provider_ref = $2 WHERE id = $1 RETURNING *`, [w.id, ref]);
-      await enqueueEmail(tx, userId, 'withdrawal_paid', { amount_cents: amountCents, currency, provider_ref: ref });
-      return paid;
-    });
-  } catch (err) {
-    // Payout failed: return the funds to the seller's balance.
-    await withScope(ctx, async (s) => {
-      await s.tx.query(`UPDATE withdrawals SET status = 'failed' WHERE id = $1`, [w.id]);
-      await post(
-        s.tx,
-        [
-          { account: await accountId(s.tx, 'payouts', currency), amountCents: -amountCents },
-          { account: await accountId(s.tx, 'seller_available', currency, userId), amountCents },
-        ],
-        `withdrawal_failed:${w.id}`,
-      );
-      // Round 23f (§9.6): a reason code, worded in the reader's language (the provider's text stays in the logs).
-      ctx.log.warn({ withdrawalId: w.id, err: (err as Error).message.slice(0, 200) }, 'payout failed');
-      await enqueueEmail(s.tx, userId, 'withdrawal_failed', { amount_cents: amountCents, currency, reason: 'provider_failed' });
-    });
-    throw new AppError(502, 'payout_failed', 'The payment provider rejected this payout; the amount is back in your balance', { reason: (err as Error).message.slice(0, 200) });
-  }
-}
+// Round 25: the card-era withdrawal (a PSP transfer to a connected account) is gone; withdrawals are USDT only
+// (domain/cryptoPayouts.ts).
 
 export async function getUser(q: Queryable, id: string) {
   return maybeOne<User>(q, `SELECT ${PUBLIC_USER_COLUMNS} FROM users WHERE id = $1`, [id]);

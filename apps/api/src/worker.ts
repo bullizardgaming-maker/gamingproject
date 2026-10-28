@@ -21,7 +21,6 @@ import { expireEndedLeagueListings } from './domain/leagues.js';
 import { enforceIdDeadlines } from './domain/onboarding.js';
 import { sendReferralDigests } from './domain/referrals.js';
 import { maybeRefreshTrustLevels } from './domain/trust.js';
-import { maybeSendDigests } from './domain/savedSearches.js';
 import { maybeRepairCounters } from './domain/counters.js';
 import { maybeSnapshotMarketPrices } from './domain/priceHistory.js';
 import { expireClaims } from './domain/warranty.js';
@@ -71,7 +70,6 @@ export async function runJobsOnce(ctx: Ctx) {
     job(ctx, 'requests_expire', () => expireRequests(ctx), 0),
     job(ctx, 'sales', () => syncSales(ctx), 0),
     job(ctx, 'trust_levels', () => maybeRefreshTrustLevels(ctx), null),
-    job(ctx, 'saved_search_digests', () => maybeSendDigests(ctx), null),
     job(ctx, 'search_counters', () => maybeRepairCounters(ctx), null),
     job(ctx, 'market_prices', () => maybeSnapshotMarketPrices(ctx), null),
     job(ctx, 'warranty_claims', () => expireClaims(ctx), 0),

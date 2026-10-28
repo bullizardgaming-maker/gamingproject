@@ -37,12 +37,7 @@ export class MockPaymentProvider implements PaymentProvider {
   }
 
   /** Fault injection for tests and failover drills: the next calls of that kind throw this message. */
-  faults: { payout?: string; refund?: string } = {};
-
-  async payout(_destination: string, _amount: number, _currency: string, idempotencyKey: string) {
-    if (this.faults.payout) throw new Error(this.faults.payout);
-    return { ref: `mock_tr_${idempotencyKey}` };
-  }
+  faults: { refund?: string } = {};
 
   async submitChargebackEvidence(disputeRef: string, evidence: { summary: string; pdf: Buffer }) {
     this.submittedEvidence.push({ disputeRef, summary: evidence.summary, bytes: evidence.pdf.length });
@@ -63,21 +58,5 @@ export class MockPaymentProvider implements PaymentProvider {
     if (o === null) return null;
     if (typeof o === 'number') return currency === 'USD' ? o : null;
     return o[currency] ?? null;
-  }
-
-  /** Mock accounts become payout-enabled when the mock onboarding page is completed. */
-  readonly enabledAccounts = new Set<string>();
-
-  async createPayoutAccount(seller: { id: string }) {
-    return { accountRef: `mock_acct_${seller.id.slice(0, 8)}` };
-  }
-
-  async payoutOnboardingLink(accountRef: string, returnUrl: string) {
-    return { url: `${this.apiBaseUrl}/v1/payments/mock/onboarding/${accountRef}?return=${encodeURIComponent(returnUrl)}` };
-  }
-
-  async payoutAccountStatus(accountRef: string) {
-    const enabled = this.enabledAccounts.has(accountRef);
-    return { payoutsEnabled: enabled, requirementsDue: enabled ? [] : ['external_account'] };
   }
 }

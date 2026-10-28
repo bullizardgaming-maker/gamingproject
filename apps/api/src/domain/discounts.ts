@@ -15,6 +15,9 @@ export { effectivePrice, type SaleFields } from './priceTiers.js';
 /** SQL for the same, on an offers row aliased `f`. */
 export const EFFECTIVE_PRICE_SQL = `(CASE WHEN f.sale_price_cents IS NOT NULL AND f.sale_starts_at <= now() AND f.sale_ends_at > now() THEN f.sale_price_cents ELSE f.price_cents END)`;
 
+/** Round 25: the same in micro-units: a currency listing's unit price (sale prices are whole cents). */
+export const EFFECTIVE_MICROS_SQL = `(CASE WHEN f.sale_price_cents IS NOT NULL AND f.sale_starts_at <= now() AND f.sale_ends_at > now() THEN f.sale_price_cents * 10000 ELSE COALESCE(f.unit_price_micros, f.price_cents * 10000) END)`;
+
 export async function setSale(ctx: Ctx, sellerId: string, offerId: string, input: { salePriceCents: number; startsAt?: string; endsAt: string }) {
   const f = await maybeOne(ctx.db, 'SELECT seller_id, price_cents, reserved_for, status FROM offers WHERE id = $1', [offerId]);
   if (!f || f.seller_id !== sellerId || f.status === 'removed') throw notFound('Offer');

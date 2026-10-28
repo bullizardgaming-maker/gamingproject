@@ -69,7 +69,8 @@ describe('seller onboarding', () => {
     expect((await client(h.app).get(`/v1/offers/${offer.id}`)).body.status).toBe('paused');
     expect((await s.api.post('/v1/offers', { categorySlug: 'currency', game: 'Test Game', title: 'More', priceCents: 5_00, deliveryMode: 'manual', stock: 1 })).body.error.code).toBe('kyc_overdue');
     expect((await s.api.get('/v1/seller/dashboard')).body.onboarding).toMatchObject({ canSell: false, identityVerified: false });
-    expect((await s.api.post('/v1/seller/withdrawals', { amountCents: 100 })).body.error.code).toBe('kyc_required');
+    await h.ctx.db.query(`UPDATE users SET payout_address = 'TTestPayoutAddress123456', payout_address_currency = 'usdttrc20', payout_address_set_at = now() WHERE id = $1`, [s.id]);
+    expect((await s.api.post('/v1/seller/withdrawals', { amountCents: 100 })).body.error.code).toBe('kyc_overdue'); // Round 25: USDT only
 
     // Verified: back in business, listing included.
     const start = await s.api.post('/v1/kyc/start', { level: 'tier2_individual' });

@@ -77,23 +77,16 @@ describe('withdrawals', () => {
     const order = await buyAndPay(h, buyer, offer.id);
     await buyer.api.post(`/v1/orders/${order.id}/confirm`);
     const available = await sellerAvailable(h.ctx.db, seller.id);
-    expect((await seller.api.post('/v1/seller/withdrawals', { amountCents: available })).body.error.code).toBe('no_payout_account');
-
-    // Payout onboarding through the (mock) PSP-hosted flow.
-    const link = await seller.api.post('/v1/seller/payout-account');
-    expect((await seller.api.get('/v1/seller/payout-account')).body).toMatchObject({ connected: true, payoutsEnabled: false });
-    const path = new URL(link.body.url).pathname + new URL(link.body.url).search;
-    expect((await client(h.app).get(path, { accept: 'application/json' })).body.payoutsEnabled).toBe(true);
-    expect((await seller.api.get('/v1/seller/payout-account')).body.payoutsEnabled).toBe(true);
-    const evil = path.replace(/return=[^&]+/, 'return=' + encodeURIComponent('https://evil.example/'));
-    expect((await client(h.app).get(evil)).status).toBe(400);
+    // Round 25: USDT only; no card-era payout account. A confirmed payout address is the payout account.
+    expect((await seller.api.post('/v1/seller/withdrawals', { amountCents: available })).body.error.code).toBe('no_payout_address');
+    await h.ctx.db.query(`UPDATE users SET payout_address = 'TTestPayoutAddress123456', payout_address_currency = 'usdttrc20', payout_address_set_at = now() WHERE id = $1`, [seller.id]);
 
     expect((await seller.api.post('/v1/seller/withdrawals', { amountCents: available + 1 })).status).toBe(400);
     const w = await seller.api.post('/v1/seller/withdrawals', { amountCents: available });
     expect(w.status).toBe(201);
-    expect(w.body.status).toBe('paid');
+    expect(w.body.status).toBe('pending_approval'); // the CFO approves; NOWPayments sends USDT
     expect(await sellerAvailable(h.ctx.db, seller.id)).toBe(0);
-    expect((await buyer.api.post('/v1/seller/withdrawals', { amountCents: 1 })).body.error.code).toBe('kyc_required');
+    expect((await buyer.api.post('/v1/seller/withdrawals', { amountCents: 1 })).body.error.code).toBe('no_payout_address');
   });
 });
 

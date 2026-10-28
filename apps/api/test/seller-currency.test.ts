@@ -16,7 +16,7 @@ async function eurSeller() {
   await seller.api.put('/v1/seller/tax-profile', { country: 'US', isBusiness: false });
   // Round 22b: sellers can no longer choose EUR; this is a seller who chose it before (balances in EUR still exist).
   await h.ctx.db.query(`UPDATE users SET payout_currency = 'EUR' WHERE id = $1`, [seller.id]);
-  await h.ctx.db.query(`UPDATE users SET stripe_account_id = 'acct_eur', payouts_enabled = true, payout_hold_days = 0 WHERE id = $1`, [seller.id]);
+  await h.ctx.db.query(`UPDATE users SET payout_address = 'TTestPayoutAddress123456', payout_address_currency = 'usdttrc20', payout_address_set_at = now(), payouts_enabled = true, payout_hold_days = 0 WHERE id = $1`, [seller.id]);
   return seller;
 }
 

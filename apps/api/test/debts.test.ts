@@ -19,7 +19,7 @@ const debtOf = async (sellerId: string) => (await h.ctx.db.query('SELECT * FROM 
 async function sellerInDebt() {
   const arbiter = await makeUser(h, { role: 'arbiter' });
   const seller = await makeUser(h, { tier: 2 });
-  await h.ctx.db.query(`UPDATE users SET stripe_account_id = 'acct_d', payouts_enabled = true, payout_hold_days = 0 WHERE id = $1`, [seller.id]);
+  await h.ctx.db.query(`UPDATE users SET payout_address = 'TTestPayoutAddress123456', payout_address_currency = 'usdttrc20', payout_address_set_at = now(), payouts_enabled = true, payout_hold_days = 0 WHERE id = $1`, [seller.id]);
   const buyer = await makeUser(h, { tier: 1 });
   const offer = await makeOffer(seller, { categorySlug: 'boosting', deliveryMode: 'manual', stock: 1, priceCents: 60_00 });
   const order = await buyAndPay(h, buyer, offer.id);

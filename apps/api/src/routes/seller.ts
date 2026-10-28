@@ -14,10 +14,8 @@ import { createSellerCode, endSale, listSellerCodes, setSale, setSellerCodeActiv
 import { trustSummary } from '../domain/trust.js';
 import { exportListings, importListings } from '../domain/bulkListings.js';
 import { listLinked, startLink, unlink } from '../domain/linkedAccounts.js';
-import { MIN_BUYER_REPUTATIONS } from '../domain/buyerReputation.js';
+import { DELIVERY_TIME_KEYS, MAX_VOLUME_DISCOUNTS, MAX_VOLUME_PERCENT, parseUnitPrice } from '../domain/unitPrice.js';
 import { ACCENTS, MAX_INTRO, MAX_PINNED, deleteBanner, storefront, updateStorefront, uploadBanner } from '../domain/storefront.js';
-import { requestWithdrawal } from '../domain/users.js';
-import { payoutStatus, startPayoutOnboarding } from '../domain/payouts.js';
 import { confirmPayoutAddress, payoutAddressOf, removePayoutAddress, requestCryptoWithdrawal, requestPayoutAddress, withdrawalFee } from '../domain/cryptoPayouts.js';
 import { NowPaymentsProvider } from '../providers/payments/nowpayments.js';
 import { withdrawable } from '../domain/payoutholds.js';
@@ -47,15 +45,22 @@ export const OfferBody = z.object({
   game: z.string().trim().min(1).max(80),
   title: z.string().trim().min(3).max(140),
   description: z.string().max(5_000).optional(),
-  priceCents: z.number().int().positive().max(100_000_00),
+  priceCents: z.number().int().positive().max(100_000_00).optional().describe('Price of one unit in minor units (required except for currency listings, which give unitPrice)'),
   currency: z.string().length(3).toUpperCase().optional().describe('Listing currency (e.g. USD, EUR, EGP)'),
   deliveryMode: z.enum(['auto', 'manual']),
-  stock: z.number().int().min(0).max(1_000_000).optional(),
+  stock: z.number().int().min(0).max(2_000_000_000).optional(),
   lowStockThreshold: z.number().int().min(0).max(100_000).optional(),
-  deliveryHours: z.number().int().min(1).max(168).optional().describe('Promised delivery time for manual orders, in hours'),
+  deliveryHours: z.number().int().min(1).max(168).optional().describe('Promised delivery time for manual orders, in hours (older clients; see deliveryTime)'),
+  deliveryTime: z.enum(DELIVERY_TIME_KEYS as [string, ...string[]]).optional().describe('Round 25: promised delivery time, one of 15m, 1h, 3h, 6h, 12h, 24h'),
+  unitPrice: z.string().max(20).optional().describe('Round 25, currency listings: price of one unit with up to 6 decimals, e.g. "0.000123"'),
+  unitPriceMicros: z.number().int().positive().max(100_000_00 * 10_000).optional().describe('Round 25, currency listings: the same in micro-units (123 = 0.000123)'),
+  volumeDiscounts: z
+    .array(z.object({ minQty: z.number().int().min(2).max(2_000_000_000), percentOff: z.number().int().min(1).max(MAX_VOLUME_PERCENT) }))
+    .max(MAX_VOLUME_DISCOUNTS)
+    .optional()
+    .describe('Round 25, currency listings: up to 4 tiers, e.g. [{"minQty":1000000,"percentOff":5}]. Send [] to remove.'),
   warrantyDays: z.union([z.literal(0), z.literal(7), z.literal(14), z.literal(30), z.literal(60), z.literal(90)]).optional().describe('Account listings only: a warranty after escrow releases, in days'),
   linkedAccountId: z.string().uuid().nullable().optional().describe('Account listings: a Steam/Riot account you linked (GET /v1/seller/linked-accounts); null detaches'),
-  minBuyerReputation: z.enum(MIN_BUYER_REPUTATIONS).nullable().optional().describe('Listings of 100.00 or more: "good" sells only to established buyers (3+ completed orders, no chargebacks); null removes it'),
   attributes: z.record(z.string().max(30), z.string().max(60)).optional().describe('Game-specific fields such as server, region, platform or rank (GET /v1/catalog/attributes)'),
   bundle: z
     .array(z.object({ offerId: z.string().uuid(), quantity: z.number().int().min(1).max(20) }))
@@ -70,9 +75,25 @@ export const OfferBody = z.object({
     .describe('Cheaper unit prices for larger orders, e.g. [{"minQty":10,"priceCents":450}]. Send [] to remove.'),
   unitLabel: z.string().trim().max(12).nullable().optional().describe('Currency sold by amount: what one unit of quantity is, e.g. "M", "k", "orbs"'),
   unitSize: z.number().int().min(1).max(1_000_000_000_000).nullable().optional().describe('Game currency per unit, e.g. 1000000 for "M"'),
-  minQty: z.number().int().min(1).max(1_000_000).optional().describe('Smallest order, in units (default 1)'),
+  minQty: z.number().int().min(1).max(2_000_000_000).optional().describe('Smallest order, in units (default 1)'),
   deliveryMethods: z.array(z.string().max(20)).max(10).nullable().optional().describe('Round 24: delivery methods from the game\'s list (f2f, mail, market, uid), at least one; null = all'),
 });
+
+/**
+ * Round 25: `unitPrice` ("0.000123") becomes unitPriceMicros (both may not disagree). `minBuyerReputation` and
+ * `establishedBuyersOnly` are no longer read: zod drops them, so an older client sending them still works.
+ */
+function offerInput<T extends { unitPrice?: string; unitPriceMicros?: number; deliveryTime?: string }>(body: T) {
+  const { unitPrice, ...rest } = body;
+  let micros = body.unitPriceMicros;
+  if (unitPrice != null) {
+    const parsed = parseUnitPrice(unitPrice);
+    if (parsed == null || parsed < 1) throw badRequest('invalid_unit_price', 'The unit price is a number with up to 6 decimals, e.g. 0.000123');
+    if (micros != null && micros !== parsed) throw badRequest('invalid_unit_price', 'unitPrice and unitPriceMicros disagree');
+    micros = parsed;
+  }
+  return { ...rest, unitPriceMicros: micros } as Omit<T, 'unitPrice' | 'deliveryTime'> & { unitPriceMicros?: number; deliveryTime?: any };
+}
 
 export const InventoryBody = z.object({
   format: z.enum(['txt', 'json']),
@@ -209,7 +230,7 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     ),
   );
 
-  app.post('/offers', async (req, reply) => reply.status(201).send(await createOffer(ctx, me(req), OfferBody.parse(req.body))));
+  app.post('/offers', async (req, reply) => reply.status(201).send(await createOffer(ctx, me(req), offerInput(OfferBody.parse(req.body)))));
 
   /** Founding Sellers: free featured spots during the launch (see dashboard.founding for the allowance). */
   app.post('/offers/:id/feature', async (req) => featureListing(ctx, me(req).id, Id.parse(req.params).id));
@@ -221,12 +242,12 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     return getOffer(ctx.db, Id.parse(req.params).id);
   });
   app.patch('/offers/:id', async (req) => {
-    const body = OfferBody.pick({ title: true, description: true, priceCents: true, stock: true, lowStockThreshold: true, deliveryHours: true, attributes: true, priceTiers: true, warrantyDays: true, linkedAccountId: true, minBuyerReputation: true, unitLabel: true, unitSize: true, minQty: true, deliveryMethods: true })
+    const body = OfferBody.pick({ title: true, description: true, priceCents: true, stock: true, lowStockThreshold: true, deliveryHours: true, deliveryTime: true, attributes: true, priceTiers: true, warrantyDays: true, linkedAccountId: true, unitLabel: true, unitSize: true, minQty: true, deliveryMethods: true, unitPrice: true, unitPriceMicros: true, volumeDiscounts: true })
       .partial()
       .extend({ version: z.number().int().min(0), status: z.enum(['active', 'paused', 'removed']).optional() })
       .parse(req.body);
     const { version, ...patch } = body;
-    return updateOffer(ctx, me(req).id, Id.parse(req.params).id, version, patch);
+    return updateOffer(ctx, me(req).id, Id.parse(req.params).id, version, offerInput(patch));
   });
 
   app.post('/offers/:id/inventory', async (req) => {
@@ -255,8 +276,8 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     const user = me(req);
     const body = z.object({ amountCents: z.number().int().positive(), currency: z.string().length(3).toUpperCase().optional() }).parse(req.body);
     const currency = body.currency ?? 'USD'; // Round 22b: withdrawals are USD only (anything else: 400 unsupported_currency)
-    const crypto = ctx.payments instanceof NowPaymentsProvider;
-    return reply.status(201).send(crypto ? await requestCryptoWithdrawal(ctx, user.id, body.amountCents, currency) : await requestWithdrawal(ctx, user.id, body.amountCents, currency));
+    // Round 25: USDT only (TRC-20 / BEP-20), 6% fee with a $1.50 minimum; no card-era transfer path.
+    return reply.status(201).send(await requestCryptoWithdrawal(ctx, user.id, body.amountCents, currency));
   });
   /** Sell-form preview: buyer price at the seller's rate and what is left after the withdrawal fee. */
   // ---- Onboarding: the rules test before the first listing; the ID deadline on the dashboard ----
@@ -361,8 +382,6 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     return one(ctx.db, 'UPDATE users SET show_online = $2 WHERE id = $1 RETURNING show_online AS "showOnline"', [me(req).id, showOnline]);
   });
 
-  app.post('/seller/payout-account', async (req) => startPayoutOnboarding(ctx, me(req)));
-  app.get('/seller/payout-account', async (req) => payoutStatus(ctx, me(req)));
 
   // --- Tax profile & commission invoices -------------------------------------------------
   app.get('/seller/tax-profile', async (req) => getTaxProfile(ctx, me(req).id));

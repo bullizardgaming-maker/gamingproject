@@ -27,6 +27,7 @@ import { quotePromo, reserveRedemption, setRedemptionStatus } from './promos.js'
 import { availableCredit, maybeGrantReferral } from './referrals.js';
 import { assertTermsCurrent, recordAcceptance } from './legal.js';
 import { idDeadlinePassed, unitPriceFor, type PriceTier } from './offers.js';
+import { MIN_CURRENCY_ORDER_USD_CENTS, totalCentsFor, unitMicrosFor, volumePercentFor, type VolumeDiscount } from './unitPrice.js';
 import { rulesSettings } from './onboarding.js';
 import { effectivePrice, quoteSellerCode, type SaleFields } from './discounts.js';
 import { listStatements, type DisputeCategory } from './disputes.js';
@@ -225,6 +226,10 @@ export interface PriceBreakdown {
   listingTotalCents: number;
   /** Unit price in the listing currency after any sale and quantity tier. */
   listingUnitPriceCents: number;
+  /** Round 25: the same in micro-units (currency listings: after the volume discount; others: cents × 10,000). */
+  listingUnitPriceMicros: number;
+  /** Round 25: the volume discount applied (currency listings), in percent. */
+  volumePercentOff: number;
   /** Seller-code discount in the listing currency, already taken off listingTotalCents. */
   sellerDiscountCents: number;
   sellerCodeId: string | null;
@@ -234,6 +239,8 @@ export interface PriceBreakdown {
   sellerAmountCents: number;
   commissionBps: number;
   unitPriceCents: number;
+  /** Round 25: what the buyer pays per unit in micro-units of the settlement currency (amount × 10,000 / quantity, rounded). */
+  unitPriceMicros: number;
   discountCents: number;
   creditCents: number;
   chargedCents: number;
@@ -251,15 +258,34 @@ export interface PriceBreakdown {
 export async function priceOrder(
   ctx: Ctx,
   tx: Tx,
-  offer: { price_cents: number; currency: string; category_slug: string; seller_id: string; price_tiers?: PriceTier[] | null } & SaleFields,
+  offer: { price_cents: number; currency: string; category_slug: string; seller_id: string; price_tiers?: PriceTier[] | null; unit_price_micros?: number | string | null; volume_discounts?: VolumeDiscount[] | null } & SaleFields,
   buyerId: string,
   input: Pick<CreateOrderInput, 'quantity' | 'rail' | 'promoCode' | 'useCredit' | 'currency' | 'sellerCode'>,
 ): Promise<PriceBreakdown> {
   const settlement = ctx.cfg.SETTLEMENT_CURRENCY;
   const listingRate = await getRate(ctx, tx, offer.currency);
   // Sale price (if one is running), then quantity tiers, then the seller's code: all seller-funded.
-  const listingUnit = unitPriceFor({ price_cents: effectivePrice(offer), price_tiers: offer.price_tiers }, input.quantity);
-  let listingTotal = listingUnit * input.quantity;
+  // Round 25: a currency listing is priced per unit in micro-units: quantity × unit price (after its volume discount),
+  // rounded UP to the cent, is the seller's total; the commission is grossed up on that total as for any listing.
+  const micro = offer.unit_price_micros != null;
+  let listingUnit: number;
+  let listingUnitMicros: number;
+  let listingTotal: number;
+  let volumePct = 0;
+  if (micro) {
+    const sale = effectivePrice(offer) < Number(offer.price_cents);
+    let base = sale ? effectivePrice(offer) * 10_000 : Number(offer.unit_price_micros);
+    // Listings from before Round 25 may still carry quantity prices (whole cents per unit): the best one reached applies.
+    if (offer.price_tiers?.length) base = Math.min(base, unitPriceFor({ price_cents: Number.MAX_SAFE_INTEGER, price_tiers: offer.price_tiers }, input.quantity) * 10_000);
+    volumePct = volumePercentFor(offer.volume_discounts, input.quantity);
+    listingUnitMicros = unitMicrosFor(base, offer.volume_discounts, input.quantity);
+    listingTotal = totalCentsFor(listingUnitMicros, input.quantity);
+    listingUnit = Math.round(listingUnitMicros / 10_000);
+  } else {
+    listingUnit = unitPriceFor({ price_cents: effectivePrice(offer), price_tiers: offer.price_tiers }, input.quantity);
+    listingUnitMicros = listingUnit * 10_000;
+    listingTotal = listingUnit * input.quantity;
+  }
   let sellerDiscount = 0;
   let sellerCodeId: string | null = null;
   if (input.sellerCode) {
@@ -273,6 +299,10 @@ export async function priceOrder(
   const rateBps = (await refreshSellerRate(tx, offer.seller_id)).rateBps;
   const amount = grossUp(sellerAmount, rateBps);
   if (amount < 1) throw badRequest('amount_too_small', 'Order total is below the minimum');
+  // Round 25: currency orders are at least $1.00 (what the buyer pays, in USD).
+  if (micro && amount < MIN_CURRENCY_ORDER_USD_CENTS) {
+    throw badRequest('below_minimum_order', `Currency orders are at least ${(MIN_CURRENCY_ORDER_USD_CENTS / 100).toFixed(2)} ${settlement}`, { minCents: MIN_CURRENCY_ORDER_USD_CENTS, currency: settlement });
+  }
 
   if (input.rail === 'crypto' && (input.promoCode || input.useCredit)) {
     throw badRequest('not_for_crypto', 'Promo codes and credit apply to card payments only');
@@ -310,12 +340,15 @@ export async function priceOrder(
     listingCurrency: offer.currency,
     listingTotalCents: listingTotal,
     listingUnitPriceCents: listingUnit,
+    listingUnitPriceMicros: listingUnitMicros,
+    volumePercentOff: volumePct,
     sellerDiscountCents: sellerDiscount,
     sellerCodeId,
     amountCents: amount,
     sellerAmountCents: sellerAmount,
     commissionBps: rateBps,
     unitPriceCents: Math.round(amount / input.quantity),
+    unitPriceMicros: Math.round((amount * 10_000) / input.quantity),
     discountCents: discount,
     creditCents: credit,
     chargedCents: charged,
@@ -327,10 +360,17 @@ export async function priceOrder(
   };
 }
 
+/** An amount in the settlement currency as USD cents. Settlement is USD (config refuses anything else), so it is the amount itself. */
+export function usdCents(settlementCurrency: string, cents: number) {
+  if (settlementCurrency !== 'USD') throw new Error(`settlement currency must be USD, not ${settlementCurrency}`);
+  return cents;
+}
+
 export async function quoteOrder(ctx: Ctx, buyerId: string, input: Pick<CreateOrderInput, 'offerId' | 'quantity' | 'rail' | 'promoCode' | 'useCredit' | 'currency' | 'sellerCode'>) {
   return withTx(ctx.db, async (tx) => {
-    const offer = await maybeOne(tx, `SELECT price_cents, currency, category_slug, seller_id, price_tiers, reserved_for, sale_price_cents, sale_starts_at, sale_ends_at FROM offers WHERE id = $1 AND status = 'active'`, [input.offerId]);
+    const offer = await maybeOne(tx, `SELECT price_cents, currency, category_slug, seller_id, price_tiers, reserved_for, sale_price_cents, sale_starts_at, sale_ends_at, unit_price_micros, volume_discounts, min_qty, unit_label FROM offers WHERE id = $1 AND status = 'active'`, [input.offerId]);
     if (!offer || (offer.reserved_for && offer.reserved_for !== buyerId)) throw notFound('Offer');
+    if (input.quantity < Number(offer.min_qty ?? 1)) throw badRequest('below_minimum', `This listing sells at least ${offer.min_qty}${offer.unit_label ? ` ${offer.unit_label}` : ''} per order`);
     return priceOrder(ctx, tx, offer, buyerId, input);
   });
 }
@@ -384,16 +424,6 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
     if (offer.seller_id === buyer.id) throw forbidden('own_offer', 'You cannot buy your own offer');
     if (offer.category_kind === 'account' && input.quantity !== 1) throw badRequest('invalid_quantity', 'Accounts are sold one at a time');
     if (input.quantity < Number(offer.min_qty ?? 1)) throw badRequest('below_minimum', `This listing sells at least ${offer.min_qty}${offer.unit_label ? ` ${offer.unit_label}` : ''} per order`);
-    if (offer.min_buyer_reputation) {
-      // The seller asked for an established buyer on this high-value listing.
-      const rep = await buyerReputation(s.tx, buyer.id);
-      if (rep.level !== 'good') {
-        throw forbidden('buyer_reputation_required', rep.level === 'new'
-          ? 'This seller only sells this listing to established buyers: complete three orders first'
-          : 'This seller only sells this listing to buyers in good standing');
-      }
-    }
-
     const price = await priceOrder(ctx, s.tx, offer, buyer.id, input);
     const amount = price.amountCents;
     const rate = price.commissionBps;
@@ -428,10 +458,10 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
                            seller_protected, payment_expires_at, tos_version, tos_accepted_at, buyer_ip, buyer_ip_country,
                            buyer_device, idempotency_key, discount_cents, credit_cents, charged_cents, presentment_currency,
                            presentment_amount_cents, fx_rate, fx_locked_at, listing_currency, listing_unit_price_cents, promo_code_id,
-                           seller_currency, seller_fx_rate, ref)
+                           seller_currency, seller_fx_rate, ref, unit_price_micros, listing_unit_price_micros, amount_usd_cents)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'awaiting_payment', $13, $14,
                now() + make_interval(mins => $15), $16, now(), $17, $18, $19, $20,
-               $21, $22, $23, $24, $25, $26, now(), $27, $28, $29, $30, $31, $32)
+               $21, $22, $23, $24, $25, $26, now(), $27, $28, $29, $30, $31, $32, $33, $34, $35)
        RETURNING *`,
       [
         buyer.id, offer.seller_id, offer.id, input.quantity, price.unitPriceCents, amount, price.settlementCurrency,
@@ -440,7 +470,7 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
         input.device ?? null, input.idempotencyKey ?? null,
         price.discountCents, price.creditCents, price.chargedCents, price.presentmentCurrency,
         price.presentmentAmountCents, price.fxRate, price.listingCurrency, price.listingUnitPriceCents, price.promoId,
-        sellerFx.currency, sellerFx.rate, newOrderRef(),
+        sellerFx.currency, sellerFx.rate, newOrderRef(), price.unitPriceMicros, price.listingUnitPriceMicros, usdCents(price.settlementCurrency, amount),
       ],
     );
     await recordAcceptance(s.tx, buyer.id, termsVersion, 'order', input.ip ?? null); // Round 23d: the version this order was placed under
@@ -473,6 +503,8 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
       offer: {
         id: offer.id, title: offer.title, description: offer.description, game: offer.game, category: offer.category_name,
         price_cents: offer.price_cents, price_tiers: offer.price_tiers, currency: offer.currency, delivery_mode: offer.delivery_mode,
+        unit_price_micros: offer.unit_price_micros != null ? Number(offer.unit_price_micros) : null, volume_discounts: offer.volume_discounts ?? [],
+        unit_label: offer.unit_label ?? null, unit_size: offer.unit_size != null ? Number(offer.unit_size) : null, delivery_minutes: offer.delivery_minutes,
         owner_proof_status: offer.owner_proof_status, version: offer.version,
       },
       terms: { protection, tos_version: termsVersion, commission_bps: rate },
@@ -738,7 +770,7 @@ async function onFunded(ctx: Ctx, s: TxScope, order: Order & { delivery_mode: st
   await transition(
     s.tx, order, 'paid', null, 'payment_captured',
     `, paid_at = now(), delivery_due_at = CASE WHEN $4 = 'manual'
-         THEN now() + make_interval(hours => (SELECT delivery_hours FROM offers WHERE id = orders.offer_id)) END`,
+         THEN now() + make_interval(mins => (SELECT delivery_minutes FROM offers WHERE id = orders.offer_id)) END`,
     [order.delivery_mode],
   );
   const room = await roomOf(s.tx, order.id);
@@ -969,14 +1001,20 @@ export async function releaseByStaff(ctx: Ctx, orderId: string, staffId: string,
 }
 
 /** Orders delivered long enough ago for staff to release, oldest first (the support queue). */
-/** Orders above this amount are flagged for the Support Lead in every staff list (playbook: $200). */
+/** Orders above this amount are flagged for the Support Lead in every staff list (playbook: $200). In USD cents. */
 export const LEAD_REVIEW_ABOVE_CENTS = 200_00;
+/**
+ * Round 25 (M2): the Lead rule compares the order's value in USD (orders.amount_usd_cents, stored at order time), never
+ * cents of whatever currency the order is in.
+ */
+export const isLeadOrder = (o: { amount_usd_cents?: number | string | null; amount_cents: number | string; currency?: string }) =>
+  Number(o.amount_usd_cents ?? (o.currency === 'USD' ? o.amount_cents : Number.POSITIVE_INFINITY)) > LEAD_REVIEW_ABOVE_CENTS;
 
 export async function unconfirmedDeliveries(q: Queryable, limit = 100) {
   return many(
     q,
     `SELECT o.id, o.buyer_id, o.seller_id, o.amount_cents, o.currency, o.delivered_at, o.protection, o.protection_ends_at, f.title, f.game,
-            (o.amount_cents > $3) AS lead_review, b.display_name AS buyer_name, sl.display_name AS seller_name,
+            (o.amount_usd_cents > $3) AS lead_review, b.display_name AS buyer_name, sl.display_name AS seller_name,
             (SELECT count(*)::int FROM support_tickets t WHERE t.order_id = o.id AND t.status <> 'resolved') AS open_tickets,
             (SELECT max(m.created_at) FROM chat_messages m JOIN chat_rooms r ON r.id = m.room_id WHERE r.order_id = o.id AND m.sender_id = o.buyer_id) AS buyer_last_message_at
        FROM orders o JOIN offers f ON f.id = o.offer_id JOIN users b ON b.id = o.buyer_id JOIN users sl ON sl.id = o.seller_id
@@ -1332,7 +1370,7 @@ export async function getOrderFor(ctx: Ctx, orderId: string, user: { id: string;
     : null;
   return {
     ...order, checklist, dispute, events, review, warranty_claims: warrantyClaims, progress, buyer_reputation: buyerRep, buyer_rating: buyerRating,
-    lead_review: staff ? Number(order.amount_cents) > LEAD_REVIEW_ABOVE_CENTS : undefined,
+    lead_review: staff ? isLeadOrder(order) : undefined,
     crypto_payments: cryptoPayments, crypto_refund: cryptoRefund, delivery_proof: deliveryProof,
     handover_field: handoverFieldFor(order.game, order.category_slug ?? ''),
     proof_required: ctx.cfg.DELIVERY_PROOF_REQUIRED && PROOF_REQUIRED_KINDS.has(order.category_kind) && order.delivery_mode === 'manual',

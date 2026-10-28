@@ -5,7 +5,6 @@ import { maybeOne } from '../db.js';
 import { closeChargeback, receiveChargeback } from '../domain/chargebacks.js';
 import { handleChainEvent, handlePaymentCaptured, type ChainEvent } from '../domain/orders.js';
 import { applyKycResult } from '../domain/users.js';
-import { applyPayoutAccountUpdate } from '../domain/payouts.js';
 import { applyCryptoPayment } from '../domain/cryptoPayments.js';
 import { applyCryptoPayout } from '../domain/cryptoPayouts.js';
 import { debtPaymentByRef, handleDebtPaymentCaptured } from '../domain/debts.js';
@@ -30,8 +29,6 @@ export async function processPaymentEvent(ctx: Ctx, ev: PaymentEvent) {
     }
     case 'chargeback.closed':
       return (await closeCheckoutChargeback(ctx, ev.disputeRef, ev.won)) ?? closeChargeback(ctx, ev.disputeRef, ev.won);
-    case 'payout_account.updated':
-      return applyPayoutAccountUpdate(ctx, ev.accountRef, ev.payoutsEnabled);
     case 'crypto.payment':
       return applyCryptoPayment(ctx, ev);
     case 'crypto.payout':
@@ -89,18 +86,6 @@ export async function integrationRoutes(app: FastifyInstance, ctx: Ctx) {
       // form-action also governs the post-submit redirect back to the web app.
       reply.header('Content-Security-Policy', `default-src 'none'; style-src 'unsafe-inline'; form-action 'self' ${new URL(ctx.cfg.PUBLIC_WEB_URL).origin}`);
       return mockCheckoutPage(ref, order);
-    });
-
-    // Stand-in for the PSP-hosted onboarding flow: completing it enables payouts via the signed webhook path.
-    app.get('/payments/mock/onboarding/:account', async (req, reply) => {
-      const { account } = z.object({ account: z.string().regex(/^mock_acct_[a-f0-9]{8}$/) }).parse(req.params);
-      const { return: back } = z.object({ return: z.string().url() }).parse(req.query);
-      if (new URL(back).origin !== new URL(ctx.cfg.PUBLIC_WEB_URL).origin) throw badRequest('invalid_return', 'Return URL must be the web app');
-      mock.enabledAccounts.add(account);
-      const raw = JSON.stringify({ type: 'payout_account.updated', accountRef: account, payoutsEnabled: true });
-      await processPaymentEvent(ctx, await mock.parseWebhook(Buffer.from(raw), { 'x-mock-signature': mock.sign(raw) }));
-      if ((req.headers.accept ?? '').includes('application/json')) return { payoutsEnabled: true };
-      return reply.redirect(back, 303);
     });
 
     app.post('/payments/mock/checkout/:ref/pay', async (req, reply) => {
