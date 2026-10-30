@@ -8,7 +8,8 @@
 import { levelFromOrders, methodsOf } from '@/lib/delivery';
 import { cleanDeliveryChoice, cleanDeliveryMethods } from '../../../api/src/domain/delivery';
 import { CATEGORIES, DEMO_CODE, DEMO_FULL, seed, type DemoState, type DemoUser } from './seed';
-import { CATEGORY_DEFAULTS, GAME_SETS, LEAGUES, PERMANENT_LEAGUES, attributesFor, cleanAttributes, handoverFieldFor, handoverKey, setLeagues } from '../../../api/src/domain/attributeSets';
+import { CATEGORY_DEFAULTS, GAME_SETS, LEAGUES, PERMANENT_LEAGUES, handoverFieldFor, handoverKey, setLeagues } from '../../../api/src/domain/attributeSets';
+import { attributesFor, cleanAttributes } from '@/lib/attributes';
 import { checkTiers, effectivePrice, unitPriceFor } from '../../../api/src/domain/priceTiers';
 import { classify, detectOffPlatform, matchTerms } from '../../../api/src/domain/safety';
 import { parseCsv } from '../../../api/src/domain/csv';
@@ -450,7 +451,8 @@ function orderDetail(o: any, viewer?: DemoUser) {
 function seedOrdersFor(buyer: DemoUser) {
   // Give the buyer a history the first time they sign in: one completed, one in its window.
   if (state.orders.some((o) => o.buyer_id === buyer.id)) return;
-  const pick = (title: string) => state.offers.find((f) => f.title.startsWith(title))!;
+  // Round 26: an edited currency listing gets a new title (game · server), so fall back to any live listing.
+  const pick = (title: string) => state.offers.find((f) => f.title.startsWith(title)) ?? state.offers.find((f) => f.status === 'active' && f.category_slug !== 'accounts' && availableOf(f) > 0)!;
   const make = (offer: any, ageMs: number) => {
     const o = createOrderRecord(buyer, offer, offer.min_qty ?? 1, 'fiat');
     o.created_at = new Date(Date.now() - ageMs).toISOString();
@@ -1291,6 +1293,7 @@ route('POST', '/orders', ({ me, body }) => {
   const qty = Number(body.quantity ?? 1);
   const unit = offer as { min_qty?: number; unit_label?: string };
   if (unit.min_qty && qty < unit.min_qty) fail(400, 'below_min_qty', `The minimum for this offer is ${unit.min_qty} ${unit.unit_label ?? ''}`.trim());
+  if ((offer as any).max_qty && qty > (offer as any).max_qty) fail(400, 'above_max_qty', `The maximum per order for this offer is ${(offer as any).max_qty}`);
   const available = availableOf(offer);
   if (available < qty) fail(409, 'out_of_stock', 'Not enough stock for this order');
   const code = body.sellerCode ? sellerCodeQuote(offer, u, qty, body.sellerCode) : null;
@@ -1330,7 +1333,36 @@ function payableOf(u: DemoUser, kind: 'orders' | 'checkouts', id: string) {
 }
 const paymentsOf = (kind: string, id: string) => state.cryptoPayments.filter((p) => p.ref_kind === kind && p.ref_id === id);
 const paidSoFar = (kind: string, id: string) => paymentsOf(kind, id).reduce((s, p) => s + (['partially_paid', 'finished'].includes(p.status) ? Math.round(Number(p.actually_paid_usd) * 100) : 0), 0);
-const view = (p: any) => ({ ...p, pay_currency_name: coinNameOf(p.pay_currency), ref_kind: undefined, ref_id: undefined, finish_at: undefined });
+/** Orders a payment pays for. */
+const ordersOfPayment = (p: any) => (p.ref_kind === 'orders' ? state.orders.filter((o) => o.id === p.ref_id) : state.orders.filter((o) => (state.checkouts.find((c) => c.id === p.ref_id)?.order_ids ?? []).includes(o.id)));
+/**
+ * Round 26 (A2): one clear state per payment for the buyer, plus the order's status. "finished" with the order not
+ * funded yet is received_applying (the page keeps checking); held / credited come from staff or the provider.
+ */
+function paymentState(p: any): string {
+  if (p.state_override) return p.state_override;
+  const orders = ordersOfPayment(p);
+  const funded = orders.length > 0 && orders.every((o) => o.status !== 'awaiting_payment');
+  if (p.status === 'waiting' || p.status === 'confirming' || p.status === 'confirmed' || p.status === 'sending') return p.status === 'waiting' ? 'waiting' : 'confirming';
+  if (p.status === 'partially_paid') return 'underpaid';
+  if (p.status === 'finished') return funded ? 'paid' : 'received_applying';
+  if (p.status === 'failed' || p.status === 'refunded') return 'failed';
+  if (p.status === 'expired') return 'expired';
+  return p.status;
+}
+const view = (p: any) => ({ ...p, state: paymentState(p), order_status: ordersOfPayment(p)[0]?.status ?? null, pay_currency_name: coinNameOf(p.pay_currency), ref_kind: undefined, ref_id: undefined, finish_at: undefined, apply_at: undefined, state_override: undefined });
+/**
+ * Demo switch for the payment outcome after "finished": localStorage bz.demo.cryptoOutcome =
+ * "slow" (funded a few seconds later), "held" (held for review), "credited" (added to the balance),
+ * "failed" or "expired". Unset: funded at once.
+ */
+const demoOutcome = () => {
+  try {
+    return localStorage.getItem('bz.demo.cryptoOutcome') ?? '';
+  } catch {
+    return '';
+  }
+};
 /** Demo switch for testing the error path: localStorage bz.demo.cryptoDown = "1" makes the provider "down". */
 const providerDown = () => {
   let down = false;
@@ -1402,15 +1434,57 @@ for (const kind of ['orders', 'checkouts'] as const) {
     const p = payableOf(need(me), kind, params[0]!);
     const pay = paymentsOf(kind, p.id).find((x) => x.payment_id === params[1]) ?? fail(404, 'not_found', 'Payment not found');
     if (pay.status === 'waiting' && Date.now() >= pay.finish_at) {
-      pay.status = 'finished';
-      pay.actually_paid = pay.pay_amount;
-      pay.actually_paid_usd = pay.price_usd;
+      const outcome = demoOutcome();
+      if (outcome === 'failed' || outcome === 'expired') pay.status = outcome;
+      else {
+        pay.status = 'finished';
+        pay.actually_paid = pay.pay_amount;
+        pay.actually_paid_usd = pay.price_usd;
+        if (outcome === 'held') pay.state_override = 'held_for_review';
+        else if (outcome === 'credited') {
+          pay.state_override = 'credited_to_balance';
+          const u = userById(p.orders[0].buyer_id)!;
+          state.credit[u.id] = (state.credit[u.id] ?? 0) + Math.round(Number(pay.price_usd) * 100);
+        } else if (outcome === 'slow') pay.apply_at = Date.now() + 4_000;
+        else for (const o of p.orders) payDemoOrder(o.id);
+      }
+      save();
+    } else if (pay.status === 'finished' && pay.apply_at && Date.now() >= pay.apply_at) {
+      pay.apply_at = null;
       for (const o of p.orders) payDemoOrder(o.id);
       save();
     }
     return paymentsOf(kind, p.id).map(view);
   });
 }
+// Round 26 (A3): staff list of crypto payments, with a re-check that asks the provider again and re-applies.
+const staffPaymentView = (p: any) => {
+  const o = ordersOfPayment(p)[0];
+  return {
+    id: p.id, payment_id: p.payment_id, order_id: p.ref_kind === 'orders' ? p.ref_id : null, checkout_id: p.ref_kind === 'checkouts' ? p.ref_id : null, order_ref: o?.ref ?? null,
+    buyer_name: o ? userById(o.buyer_id)?.display_name ?? null : null, status: p.status, state: paymentState(p), order_status: o?.status ?? null,
+    pay_currency: p.pay_currency, pay_amount: p.pay_amount, actually_paid: p.actually_paid, price_amount: p.price_amount ?? p.price_usd, price_currency: p.price_currency ?? 'USD',
+    outcome_amount: p.status === 'finished' ? p.actually_paid : null, outcome_currency: p.status === 'finished' ? 'usdtbsc' : null, review_reason: p.state_override === 'held_for_review' ? 'amount_mismatch' : null,
+    applied_cents: paymentState(p) === 'paid' ? Math.round(Number(p.price_usd) * 100) : 0, credited_cents: p.state_override === 'credited_to_balance' ? Math.round(Number(p.price_usd) * 100) : 0,
+    last_ipn_at: p.status === 'waiting' ? null : p.last_ipn_at ?? p.created_at, created_at: p.created_at,
+  };
+};
+route('GET', '/admin/crypto/payments', ({ me, query }) => {
+  needStaff(me);
+  const st = query.get('state');
+  return state.cryptoPayments.map(staffPaymentView).filter((x) => !st || x.state === st).sort((a, b) => b.created_at.localeCompare(a.created_at));
+});
+route('POST', '/admin/crypto/payments/:id/recheck', ({ me, params }) => {
+  const staff = needStaff(me);
+  const p = state.cryptoPayments.find((x) => x.id === params[0] || x.payment_id === params[0]) ?? fail(404, 'not_found', 'Payment not found');
+  // The provider says it is finished: apply it to the order if it isn't yet (held stays held for a person).
+  if (p.status === 'waiting' && Date.now() >= p.finish_at) Object.assign(p, { status: 'finished', actually_paid: p.pay_amount, actually_paid_usd: p.price_usd });
+  if (p.status === 'finished' && !p.state_override) for (const o of ordersOfPayment(p)) if (o.status === 'awaiting_payment') payDemoOrder(o.id);
+  p.apply_at = null;
+  p.last_ipn_at = now();
+  state.audit.unshift({ id: rid(), created_at: now(), actor_name: staff.display_name, actor_role: staff.role, ip: '203.0.113.7', action: 'crypto.payment.recheck', target_type: 'crypto_payment', target_id: p.payment_id, details: { status: p.status } });
+  return staffPaymentView(p);
+});
 // Wallet for every account: balance plus one history of orders, refunds and withdrawals.
 route('GET', '/me/wallet', ({ me }) => {
   const u = need(me);
@@ -2243,12 +2317,21 @@ route('GET', '/seller/offers', ({ me }) => {
   const u = needSeller(me);
   return state.offers
     .filter((o) => o.seller_id === u.id)
-    .map((o) => ({ ...offerView(o), available: availableOf(o), linked_account_id: o.linked_account_id ?? null, featured: isFeatured(o), featured_until: o.featured_until ?? null }));
+    .filter((o) => o.status !== 'removed')
+    .map((o) => ({ ...offerView(o), available: availableOf(o), linked_account_id: o.linked_account_id ?? null, featured: isFeatured(o), featured_until: o.featured_until ?? null, open_orders: openOrdersOf(o.id) }));
 });
-route('POST', '/offers', ({ me, body }) => {
-  const u = needSeller(me);
+/**
+ * Round 26: a listing from a create body, checked as the API checks it, not saved. Currency listings get an
+ * automatic title (game · server · faction); every listing has a description; min and optional max per order.
+ */
+function buildOffer(u: DemoUser, body: any) {
   const cat = CATEGORIES.find((c) => c.slug === body.categorySlug) ?? fail(400, 'invalid_category', 'Unknown category');
+  if (cat.slug === 'currency') {
+    const a = body.attributes ?? {};
+    body = { ...body, title: [body.game, ...attributesFor(String(body.game ?? ''), 'currency').map((d) => a[d.key]).filter(Boolean)].join(' · ') };
+  }
   if (!body.title || String(body.title).length < 3) fail(400, 'validation_error', 'Give the listing a title');
+  if (!String(body.description ?? '').trim()) fail(400, 'description_required', 'Add a description, with delivery notes for the buyer');
   // Round 25: currency listings give a unit price with up to 6 decimals (or micro-units); others a price in cents.
   let unitMicros: number | null = body.unitPriceMicros ?? null;
   if (body.unitPrice != null) {
@@ -2292,8 +2375,10 @@ route('POST', '/offers', ({ me, body }) => {
     featured_until: null as string | null,
     linked_account_id: null as string | null,
     unit_label: null as string | null,
-    min_qty: 1,
+    min_qty: Math.max(1, Math.floor(Number(body.minQty ?? 1))),
+    max_qty: body.maxQty == null || body.maxQty === '' ? null : Math.floor(Number(body.maxQty)) as number | null,
   };
+  if (o.max_qty != null && !(o.max_qty >= o.min_qty)) fail(400, 'invalid_max_qty', 'The maximum per order must be at least the minimum');
   if (unitMicros != null) {
     if (cat.slug !== 'currency') fail(400, 'invalid_unit_price', 'Only currency listings have a unit price');
     const first = attributesFor(String(body.game), cat.slug)[0];
@@ -2324,6 +2409,11 @@ route('POST', '/offers', ({ me, body }) => {
     checkAttach(u, body.linkedAccountId, body.game, cat.kind);
     o.linked_account_id = body.linkedAccountId;
   }
+  return { o, reviewReasons };
+}
+route('POST', '/offers', ({ me, body }) => {
+  const u = needSeller(me);
+  const { o, reviewReasons } = buildOffer(u, body);
   if (!u.seller_since) {
     u.seller_since = now(); // the launch promo and the ID deadline count from here
     u.founding = Date.parse(state.launch.foundingUntil) > Date.now();
@@ -2331,6 +2421,50 @@ route('POST', '/offers', ({ me, body }) => {
   state.offers.unshift(o);
   if (reviewReasons.length) notify(u.id, 'selling', 'listing_review', 'Your listing is being reviewed', 'It mentions something our rules ask us to check, so it’s hidden until a moderator looks at it.', '/sell');
   return offerView(o);
+});
+// Round 26 (B10): dry run: the listing as buyers will see it (buyer price after fees), nothing saved.
+route('POST', '/offers/preview', ({ me, body }) => {
+  const u = needSeller(me);
+  const { o, reviewReasons } = buildOffer(u, body);
+  return { offer: { ...offerView(o), seller_name: u.display_name, id: 'preview' }, review: reviewReasons.length > 0 };
+});
+// Round 26 (B3): copy a listing to another server; the seller picks the server and the stock.
+route('POST', '/offers/:id/duplicate', ({ me, params, body }) => {
+  const u = needSeller(me);
+  const src = state.offers.find((x) => x.id === params[0] && x.seller_id === u.id) ?? fail(404, 'not_found', 'Offer not found');
+  const attrs = cleanAttributes(src.game, src.category_slug, { ...(src.attributes ?? {}), ...(body.attributes ?? {}) });
+  if (!attrs.ok) return fail(400, 'invalid_attributes', attrs.error);
+  const stock = Math.floor(Number(body.stock));
+  if (!(stock >= 1)) fail(400, 'stock_required', 'Set how many units you have');
+  const first = attributesFor(src.game, src.category_slug)[0];
+  const title = src.category_slug === 'currency' ? [src.game, ...attributesFor(src.game, 'currency').map((d) => attrs.value[d.key]).filter(Boolean)].join(' · ') : src.title;
+  if (first && attrs.value[first.key] === src.attributes?.[first.key] && JSON.stringify(attrs.value) === JSON.stringify(src.attributes)) fail(400, 'same_server', 'Pick another server');
+  const o = { ...JSON.parse(JSON.stringify(src)), id: `offer-${rid().slice(0, 8)}`, attributes: attrs.value, title, stock, inventory: [], version: 1, created_at: now(), status: 'active', featured_until: null, linked_account_id: null, expired_reason: null };
+  state.offers.unshift(o);
+  return offerView(o);
+});
+// Round 26 (B2): edit, pause, resume, delete (status "removed"; refused while orders are open).
+const openOrdersOf = (offerId: string) => state.orders.filter((x) => x.offer_id === offerId && ['awaiting_payment', 'paid', 'delivered', 'disputed'].includes(x.status)).length;
+route('PATCH', '/offers/:id', ({ me, params, body }) => {
+  const u = needSeller(me);
+  const o: any = state.offers.find((x) => x.id === params[0] && x.seller_id === u.id && x.status !== 'removed') ?? fail(404, 'not_found', 'Offer not found');
+  if (body.version !== o.version) fail(409, 'version_conflict', 'This listing changed in another tab. Reload and try again');
+  if (body.status === 'removed' && openOrdersOf(o.id)) fail(409, 'open_orders', 'This listing has open orders. Pause it instead; you can delete it once they are done', { openOrders: openOrdersOf(o.id) });
+  const merged = {
+    categorySlug: o.category_slug, game: o.game, title: body.title ?? o.title, description: body.description ?? o.description, deliveryMode: o.delivery_mode,
+    priceCents: body.priceCents ?? o.price_cents, attributes: body.attributes ?? o.attributes, stock: body.stock ?? o.stock,
+    minQty: body.minQty ?? o.min_qty, maxQty: body.maxQty === undefined ? o.max_qty : body.maxQty,
+    ...(o.unit_price_micros != null ? { unitPriceMicros: body.unitPrice != null ? parseUnitPrice(String(body.unitPrice)) ?? fail(400, 'invalid_unit_price', 'The unit price is a number with up to 6 decimals') : o.unit_price_micros, deliveryTime: body.deliveryTime ?? deliveryTimeFor(o.delivery_minutes ?? 1440), volumeDiscounts: body.volumeDiscounts ?? o.volume_discounts ?? [], deliveryMethods: body.deliveryMethods ?? o.delivery_methods ?? null } : { priceTiers: body.priceTiers ?? o.price_tiers }),
+    warrantyDays: o.warranty_days || undefined,
+  };
+  if (body.status !== 'removed' && Object.keys(body).some((k) => !['version', 'status'].includes(k))) {
+    const { o: next } = buildOffer(u, merged);
+    const keep = { id: o.id, seller_id: o.seller_id, status: o.status, created_at: o.created_at, inventory: o.inventory, bundle: o.bundle, featured_until: o.featured_until, linked_account_id: o.linked_account_id, owner_proof_status: o.owner_proof_status, review_reasons: o.review_reasons };
+    Object.assign(o, next, keep);
+  }
+  if (body.status) o.status = body.status;
+  o.version++;
+  return { ...offerView(o), available: availableOf(o), open_orders: openOrdersOf(o.id) };
 });
 // Bulk listings from CSV (simplified checks; the real API runs the full listing validation).
 route('POST', '/seller/listings/import', ({ me, body }) => {

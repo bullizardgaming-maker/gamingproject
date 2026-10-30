@@ -217,3 +217,79 @@ export function ReleasesPanel() {
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Crypto payments (Round 26, A3): every buyer payment and where it stands, with a re-check
+// that asks NOWPayments again and re-applies it (audited). Stands in for logs on hosts without them.
+// ---------------------------------------------------------------------------
+const STATE_LABEL: Record<string, string> = {
+  waiting: 'Waiting for transfer', confirming: 'Confirming on chain', received_applying: 'Received, applying', paid: 'Paid', underpaid: 'Underpaid',
+  held_for_review: 'Held for review', credited_to_balance: 'Credited to balance', failed: 'Failed', expired: 'Expired',
+};
+const STATE_CHIP: Record<string, string> = { paid: 'released', credited_to_balance: 'released', held_for_review: 'disputed', underpaid: 'held', failed: 'disputed', received_applying: 'held' };
+export function CryptoPaymentsPanel() {
+  const [filter, setFilter] = useState('');
+  return <CryptoPaymentsTable key={filter} filter={filter} setFilter={setFilter} />;
+}
+function CryptoPaymentsTable({ filter, setFilter }: { filter: string; setFilter: (v: string) => void }) {
+  const { data, error, reload } = useLoad(() => api<any[]>(`/admin/crypto/payments${filter ? `?state=${filter}` : ''}`));
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState('');
+  const recheck = async (id: string) => {
+    setMsg('');
+    setBusy(id);
+    try {
+      const p = await api<any>(`/admin/crypto/payments/${id}/recheck`, { body: {} });
+      setMsg(`Re-checked ${p.payment_id}: ${p.status} · ${STATE_LABEL[p.state] ?? p.state}${p.order_status ? ` · order ${p.order_status}` : ''}.`);
+      reload();
+    } catch (e: any) {
+      setMsg(e.message);
+    } finally {
+      setBusy('');
+    }
+  };
+  const amount = (v: string | null | undefined, c: string | null | undefined) => (v == null ? '—' : `${v} ${String(c ?? '').toUpperCase()}`);
+  return (
+    <div className="stack">
+      <p className="small muted" style={{ margin: 0 }}>
+        Every crypto payment from buyers. &ldquo;Re-check&rdquo; asks NOWPayments for the payment again and applies what it says (logged in the audit log).
+        A payment the buyer sees as &ldquo;Received, applying&rdquo; for more than a few minutes needs a re-check.
+      </p>
+      <label className="field" style={{ maxWidth: 260 }}>
+        Show
+        <select value={filter} onChange={(e) => setFilter(e.target.value)}>
+          <option value="">All payments</option>
+          {Object.entries(STATE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+      </label>
+      {error && <div className="alert" role="alert">{error}</div>}
+      {msg && <div className="notice" role="status">{msg}</div>}
+      <div className="card table-wrap" style={{ padding: 0 }}>
+        <table className="data" data-testid="crypto-payments">
+          <thead><tr><th>Payment</th><th>Order</th><th>State</th><th>Invoice</th><th>Sent</th><th>Outcome</th><th>Applied / credited</th><th>Last IPN</th><th><span className="sr-only">Actions</span></th></tr></thead>
+          <tbody>
+            {data === null ? (
+              <tr><td colSpan={9} className="muted">Loading…</td></tr>
+            ) : data.length === 0 ? (
+              <tr><td colSpan={9} className="muted">No payments.</td></tr>
+            ) : (
+              data.map((p) => (
+                <tr key={p.id}>
+                  <td className="mono">{p.payment_id}<div className="small muted">{fmt(p.created_at)}</div></td>
+                  <td>{p.order_id ? <Link to={`/orders/${p.order_id}`}>{p.order_ref ?? p.order_id.slice(0, 8)}</Link> : p.checkout_id ? <span className="mono">cart {p.checkout_id.slice(0, 8)}</span> : '—'}<div className="small muted">{p.buyer_name ?? ''}{p.order_status ? ` · ${p.order_status}` : ''}</div></td>
+                  <td><span className={`chip ${STATE_CHIP[p.state] ?? ''}`}>{STATE_LABEL[p.state] ?? p.state}</span><div className="small muted">{p.status}{p.review_reason ? ` · ${p.review_reason}` : ''}</div></td>
+                  <td className="mono">{amount(p.price_amount, p.price_currency)}</td>
+                  <td className="mono">{amount(p.actually_paid, p.pay_currency)}<div className="small muted">of {amount(p.pay_amount, p.pay_currency)}</div></td>
+                  <td className="mono">{amount(p.outcome_amount, p.outcome_currency)}</td>
+                  <td className="mono">{money(Number(p.applied_cents ?? 0))}{Number(p.credited_cents) ? <div className="small muted">+{money(Number(p.credited_cents))} to balance</div> : null}</td>
+                  <td className="small">{p.last_ipn_at ? fmt(p.last_ipn_at) : '—'}</td>
+                  <td><button className="btn ghost sm" disabled={busy === p.id} onClick={() => recheck(p.id)}>{busy === p.id ? 'Checking…' : 'Re-check with NOWPayments'}</button></td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}

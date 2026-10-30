@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { buy, signIn, startOffer } from './helpers';
+import { buy, signIn, startOffer, publishOffer } from './helpers';
 
 test.describe('bundles', () => {
   test('a buyer sees what is inside and gets every part delivered', async ({ page }) => {
@@ -21,7 +21,7 @@ test.describe('bundles', () => {
     const form = page.locator('form', { has: page.locator('input[name=title]') });
     await form.getByRole('checkbox', { name: /5,350 VP — NA region code/ }).check();
     await form.getByRole('checkbox', { name: /Galaxy Scout skin code/ }).check();
-    await page.getByRole('button', { name: 'Publish offer' }).click();
+    await publishOffer(page);
     await expect(page.getByRole('row', { name: /VP \+ skin code starter pack/ }).getByText('Bundle')).toBeVisible();
   });
 });

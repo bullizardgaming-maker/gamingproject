@@ -60,7 +60,8 @@ export function OfferPage() {
   const onSale = offer.regular_price_cents != null && offer.regular_price_cents > offer.price_cents;
   const min = offer.min_qty ?? 1;
   const qty = Math.max(0, Math.floor(Number(qtyText) || 0));
-  const qtyOk = qty >= min && qty <= offer.stock;
+  const max = Math.min(offer.stock, offer.max_qty ?? Infinity); // Round 26: optional max per order
+  const qtyOk = qty >= min && qty <= max;
   // Round 25: currency listings are priced per unit in micro-units, with volume discounts; the total is rounded up
   // to the cent (the order quote at checkout is the amount charged).
   const micro = offer.unit_price_micros != null ? Number(offer.unit_price_micros) : null;
@@ -74,7 +75,7 @@ export function OfferPage() {
   const needsCharacter = !!handoverFieldFor(offer.game, offer.category_slug);
   const methods = needsCharacter ? methodsOf(offer) : [];
   const pairs = attributePairs(offer.game, offer.category_slug, offer.attributes);
-  const step = (d: number) => setQtyText(String(Math.min(offer.stock, Math.max(min, (qty || min) + d * Math.max(1, Math.round(min / 2))))));
+  const step = (d: number) => setQtyText(String(Math.min(max, Math.max(min, (qty || min) + d * Math.max(1, Math.round(min / 2))))));
   const gameSlug = slugify(offer.game);
 
   const buy = async (choice?: DeliveryChoice) => {
@@ -194,15 +195,16 @@ export function OfferPage() {
             <div className="of-stepper">
               <button type="button" aria-label={t('offer.less')} onClick={() => step(-1)} disabled={qty <= min}><Minus className="size-4" aria-hidden /></button>
               <label className="sr-only" htmlFor="of-qty">{t('offer.quantity')}</label>
-              <input id="of-qty" className="num" type="number" inputMode="numeric" min={min} max={offer.stock} value={qtyText} onChange={(e) => setQtyText(e.target.value)} aria-invalid={!qtyOk || undefined} />
+              <input id="of-qty" className="num" type="number" inputMode="numeric" min={min} max={max} value={qtyText} onChange={(e) => setQtyText(e.target.value)} aria-invalid={!qtyOk || undefined} />
               {isUnit && <span className="of-unit" aria-hidden>{offer.unit_label}</span>}
-              <button type="button" className="of-plus" aria-label={t('offer.more')} onClick={() => step(1)} disabled={qty >= offer.stock}><Plus className="size-4" aria-hidden /></button>
+              <button type="button" className="of-plus" aria-label={t('offer.more')} onClick={() => step(1)} disabled={qty >= max}><Plus className="size-4" aria-hidden /></button>
             </div>
             <p className="of-unitprice small muted num">
               {onSale && micro == null && <span className="line-through" style={{ marginInlineEnd: 6 }}>{price(offer.regular_price_cents!)}</span>}
               {t('of.unitPrice', { price: unitMicros != null ? price.unit(unitMicros) : price(unit) })}{isUnit ? ` / ${offer.unit_label}` : ''}
               {pctOff > 0 && <span className="text-released"> · {t('vd.off', { n: pctOff })}</span>}
               {min > 1 && <> · {t('ct.minShort', { n: min.toLocaleString(intlLocale()) })}</>}
+              {offer.max_qty != null && <span data-testid="offer-max"> · {t('lst.maxShort', { n: offer.max_qty.toLocaleString(intlLocale()) })}</span>}
             </p>
             {onSale && offer.sale_ends_at && <p className="small text-released" style={{ margin: 0, textAlign: 'center' }}>{t('sale.endsOn', { when: new Date(offer.sale_ends_at).toLocaleString(intlLocale(), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) })}</p>}
           </div>

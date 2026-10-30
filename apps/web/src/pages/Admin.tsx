@@ -4,7 +4,7 @@ import { api, apiBlob, money } from '../api';
 import { useSession } from '../session';
 import { AffiliatesPanel, AmlPanel, LeaguesPanel, RanksPanel, RulesTestPanel, StaffPanel, TaxPanel, TreasuryPanel } from './AdminPanels';
 import { ControlsPanel, CurrencyPanel, DebtsPanel, FraudModelPanel, IncidentsPanel, LegalPanel, ListingBanPanel, PrivacyPanel } from './OpsPanels';
-import { CryptoRefundsPanel, PayoutsPanel, ReleasesPanel } from './CryptoOpsPanels';
+import { CryptoPaymentsPanel, CryptoRefundsPanel, PayoutsPanel, ReleasesPanel } from './CryptoOpsPanels';
 import { usePageMeta } from '@/lib/seo';
 import { currentLocale, t } from '../i18n';
 import { BusinessPanel, NewsletterExport } from './BusinessPanel';
@@ -16,7 +16,7 @@ import { ModerationPanel } from './ModerationPanel';
 import { WarrantyPanel } from './WarrantyPanel';
 
 type ListTab = 'disputes' | 'risk' | 'proofs' | 'chargebacks' | 'ledger' | 'recon' | 'audit';
-type PanelTab = 'business' | 'retention' | 'support' | 'releases' | 'moderation' | 'warranty' | 'aml' | 'treasury' | 'payouts' | 'refunds' | 'tax' | 'staff' | 'status' | 'debts' | 'currency' | 'model' | 'privacy' | 'ranks' | 'leagues' | 'rules' | 'affiliates' | 'legal' | 'listingban' | 'controls' | 'newsletter';
+type PanelTab = 'business' | 'retention' | 'support' | 'releases' | 'moderation' | 'warranty' | 'aml' | 'treasury' | 'payouts' | 'refunds' | 'tax' | 'staff' | 'status' | 'debts' | 'currency' | 'model' | 'privacy' | 'ranks' | 'leagues' | 'rules' | 'affiliates' | 'legal' | 'listingban' | 'controls' | 'newsletter' | 'cryptopay';
 type Tab = ListTab | PanelTab;
 
 /** Each tab is shown to whoever holds its permission (see the API's domain/permissions.ts). */
@@ -36,6 +36,7 @@ const TABS: Array<{ id: Tab; label: string; perm: string }> = [
   { id: 'chargebacks', label: 'Chargebacks', perm: 'chargebacks.manage' },
   { id: 'treasury', label: 'Treasury', perm: 'treasury.request' },
   { id: 'payouts', label: 'Payouts', perm: 'treasury.request' },
+  { id: 'cryptopay', label: 'Crypto payments', perm: 'support.manage' },
   // CFO B11: crypto refunds hidden at launch — refunds go to balance only. Panel kept for later.
   { id: 'affiliates', label: 'Creator codes', perm: 'promos.manage' },
   { id: 'currency', label: 'Currency', perm: 'fx.manage' },
@@ -57,7 +58,7 @@ const TABS: Array<{ id: Tab; label: string; perm: string }> = [
 const PANELS: Record<PanelTab, () => React.ReactElement> = {
   business: BusinessPanel, retention: RetentionPanel, newsletter: NewsletterExport, support: SupportPanel, moderation: ModerationPanel, warranty: WarrantyPanel, aml: AmlPanel, treasury: TreasuryPanel, tax: TaxPanel, staff: StaffPanel,
   status: IncidentsPanel, debts: DebtsPanel, currency: CurrencyPanel, model: FraudModelPanel, privacy: PrivacyPanel, legal: LegalPanel, listingban: ListingBanPanel, controls: ControlsPanel,
-  releases: ReleasesPanel, payouts: PayoutsPanel, refunds: CryptoRefundsPanel, ranks: RanksPanel, leagues: LeaguesPanel, rules: RulesTestPanel, affiliates: AffiliatesPanel,
+  releases: ReleasesPanel, payouts: PayoutsPanel, cryptopay: CryptoPaymentsPanel, refunds: CryptoRefundsPanel, ranks: RanksPanel, leagues: LeaguesPanel, rules: RulesTestPanel, affiliates: AffiliatesPanel,
 };
 const isPanel = (t: Tab): t is PanelTab => t in PANELS;
 

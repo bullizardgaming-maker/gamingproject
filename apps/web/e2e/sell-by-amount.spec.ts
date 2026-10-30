@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { signIn, startOffer } from './helpers';
+import { signIn, startOffer, publishOffer } from './helpers';
 
 test.describe('seller side', () => {
   test('a seller lists currency with a 6-decimal unit price and volume discounts, and picks the badges buyers see', async ({ page }) => {
@@ -19,7 +19,7 @@ test.describe('seller side', () => {
     await page.getByLabel('Discount 1: percent off').fill('5');
     await page.getByLabel('Market order').uncheck();
     await page.locator('select[name=deliveryTime]').selectOption('15m');
-    await page.getByRole('button', { name: 'Publish offer' }).click();
+    await publishOffer(page);
     await expect(page.getByText('Your offer is live.')).toBeVisible();
     await page.goto('/games/albion-online/currency');
     await page.getByRole('button', { name: /Europe/ }).click(); // the server is picked first (Round 24)

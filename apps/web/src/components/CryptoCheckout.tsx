@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { CircleNotch, Hourglass, Wallet } from '@phosphor-icons/react';
 import QRCode from 'qrcode';
 import { ApiError, api, money } from '../api';
 import { t, type MessageKey } from '../i18n';
@@ -28,6 +29,9 @@ export interface CryptoPayment {
   price_currency?: string;
   price_amount?: string;
   fx_rate?: string;
+  /** Round 26 (A2): what this payment means for the buyer, and the order's status. */
+  state?: 'waiting' | 'confirming' | 'received_applying' | 'paid' | 'underpaid' | 'held_for_review' | 'credited_to_balance' | 'failed' | 'expired';
+  order_status?: string | null;
   status: string;
   expires_at: string | null;
   created_at: string;
@@ -91,9 +95,33 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid }: { base: 
   }, [load]);
 
   const list = payments ?? [];
-  const open = list.find((p) => OPEN.has(p.status));
-  const underpaid = list.find((p) => p.status === 'partially_paid');
+  const stateOf = (p: CryptoPayment) => p.state ?? (p.status === 'partially_paid' ? 'underpaid' : p.status === 'finished' ? 'received_applying' : OPEN.has(p.status) ? 'waiting' : p.status === 'refunded' ? 'failed' : (p.status as CryptoPayment['state']));
+  const open = list.find((p) => OPEN.has(p.status) && !['received_applying', 'paid', 'held_for_review', 'credited_to_balance'].includes(stateOf(p)!));
+  const underpaid = list.find((p) => stateOf(p) === 'underpaid');
+  // Round 26 (A4): the money has arrived: never fall back to the coin list or a blank card while the order catches up.
+  const latest = list[0] ? [...list].sort((a, b) => b.created_at.localeCompare(a.created_at))[0] : undefined;
+  const received = list.find((p) => stateOf(p) === 'received_applying' || stateOf(p) === 'paid');
+  const held = list.find((p) => stateOf(p) === 'held_for_review');
+  const credited = list.find((p) => stateOf(p) === 'credited_to_balance');
+  const lapsed = !open && latest && (stateOf(latest) === 'failed' || stateOf(latest) === 'expired') ? stateOf(latest) : null;
   const paidCents = list.filter((p) => ['partially_paid', 'finished', 'confirmed', 'sending'].includes(p.status)).reduce((s, p) => s + Math.round(Number(p.actually_paid_usd ?? 0) * 100), 0);
+
+  // Received (or held for a person): keep asking about the payment and reloading the order until it is funded.
+  const settling = received ?? held;
+  useEffect(() => {
+    if (!settling || open) return;
+    const every = held && !received ? 15_000 : 3_000;
+    const timer = setInterval(async () => {
+      try {
+        const next = await api<CryptoPayment[]>(`${base}/crypto/payments/${settling.payment_id}/refresh`, { method: 'POST', body: {} });
+        setPayments(next);
+      } catch {
+        /* keep asking */
+      }
+      onPaid(); // the order page reloads the order; once it is paid this checkout gives way to the paid order
+    }, every);
+    return () => clearInterval(timer);
+  }, [base, settling?.payment_id, !!open, !!held, !!received, onPaid]);
 
   // Poll the open payment every 5 s; the API asks the provider and applies what it finds.
   useEffect(() => {
@@ -184,6 +212,34 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid }: { base: 
   return (
     <div className="crypto-checkout pg-pay">
       <h2 className="sr-only">{t('crypto.title')}</h2>
+      {received && !open ? (
+        <div className="card pay-state" role="status" aria-live="polite" data-testid="pay-confirming">
+          <span className="pay-state-icon is-ok" aria-hidden><CircleNotch className="size-6 auth-spin" /></span>
+          <h3>{t('pay26.confirming')}</h3>
+          <p className="small muted">{t('pay26.confirmingText')}</p>
+        </div>
+      ) : held && !open ? (
+        <div className="card pay-state" role="status" aria-live="polite" data-testid="pay-held">
+          <span className="pay-state-icon is-held" aria-hidden><Hourglass className="size-6" /></span>
+          <h3>{t('pay26.held')}</h3>
+          <p className="small muted">{t('pay26.heldText')}</p>
+          <Link className="btn ghost sm" to="/support/new">{t('pay26.contactSupport')}</Link>
+        </div>
+      ) : credited && !open ? (
+        <div className="card pay-state" role="status" aria-live="polite" data-testid="pay-credited">
+          <span className="pay-state-icon is-ok" aria-hidden><Wallet className="size-6" /></span>
+          <h3>{t('pay26.credited', { amount: money(Math.round(Number(credited.actually_paid_usd ?? credited.price_usd) * 100), 'USD') })}</h3>
+          <p className="small muted">{t('pay26.creditedText')}</p>
+          <div className="row" style={{ gap: 8, justifyContent: 'center' }}>
+            <Link className="btn sm" to="/wallet">{t('pay26.seeBalance')}</Link>
+            <Link className="btn ghost sm" to="/support/new">{t('pay26.contactSupport')}</Link>
+          </div>
+        </div>
+      ) : (
+      <>
+      {lapsed && (
+        <div className="alert" role="status" data-testid="pay-lapsed">{lapsed === 'expired' ? t('pay26.expired') : t('pay26.failed')}</div>
+      )}
       {underpaid && !open && (
         <div className="alert" role="status">
           {t('crypto.underpaid', { received: money(paidCents, currency), short: money(owed, currency) })}
@@ -231,6 +287,8 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid }: { base: 
           coinsError={!coins ? loadError : ''}
           onRetry={() => void load()}
         />
+      )}
+      </>
       )}
       {requote && (
         <div className="notice stack" role="alertdialog" aria-labelledby="requote-title" data-testid="fx-requote" style={{ gap: 8 }}>

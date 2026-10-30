@@ -21,6 +21,9 @@ import { rankName, rankPerk } from '@/lib/ranks';
 import { BulkListings } from '../components/BulkListings';
 import { LinkedAccounts, platformName, type LinkedAccount } from '../components/LinkedAccounts';
 import { platformForGame } from '../../../api/src/domain/platforms';
+import { ListingPreview } from '../components/ListingPreview';
+import { OrderLimits, limitsError } from '../components/OrderLimits';
+import type { Offer } from './Market';
 
 interface Dashboard {
   tier: { name: string; accountRateBps: number; otherRateBps: number };
@@ -75,6 +78,16 @@ export interface SellerOffer {
   /** Round 25, currency listings: buyer's and seller's unit price in micro-units. */
   unit_price_micros?: number | null;
   seller_unit_price_micros?: number | null;
+  /** Round 26: what the edit form needs, and open orders (delete is refused while there are any). */
+  description?: string;
+  min_qty?: number | null;
+  max_qty?: number | null;
+  volume_discounts?: Array<{ minQty: number; percentOff: number }>;
+  delivery_methods?: string[] | null;
+  delivery_time?: string | null;
+  seller_price_tiers?: Array<{ minQty: number; priceCents: number }>;
+  warranty_days?: number;
+  open_orders?: number;
 }
 
 const TIER_ROWS = [0, 1, 2];
@@ -160,6 +173,7 @@ export function Sell() {
   const { user, refresh } = useSession();
   const { pathname, state: navState } = useLocation();
   const created = !!(navState as { created?: boolean } | null)?.created;
+  const saved = !!(navState as { saved?: boolean } | null)?.saved;
   const navigate = useNavigate();
   const moneyTab = pathname.startsWith('/sell/money');
   const analyticsTab = pathname.startsWith('/sell/analytics');
@@ -300,6 +314,7 @@ export function Sell() {
         </div>
       </div>
       {created && <div className="ok" role="status">{t('co.created')}</div>}
+      {saved && <div className="ok" role="status">{t('lst.saved')}</div>}
       {msg && <div className={msg.kind}>{msg.text}</div>}
 
       <div className="card">
@@ -400,6 +415,22 @@ function OfferRow({ offer, linked, onChange, founding }: { offer: SellerOffer; l
   const [content, setContent] = useState('');
   const [result, setResult] = useState('');
   const [proofOpen, setProofOpen] = useState(false);
+  const [dupOpen, setDupOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [rowError, setRowError] = useState('');
+  const openOrders = offer.open_orders ?? 0;
+  const outOfStock = offer.status === 'active' && offer.available <= 0;
+  // Round 26 (B2): pause, resume and delete go through PATCH /offers/:id with the listing's version.
+  const setStatus = async (status: 'active' | 'paused' | 'removed') => {
+    setRowError('');
+    try {
+      await api(`/offers/${offer.id}`, { method: 'PATCH', body: { version: offer.version, status } });
+      onChange();
+    } catch (e: any) {
+      setRowError(e.code === 'open_orders' ? t('lst.deleteBlocked', { n: openOrders || 1 }) : e.message);
+      setConfirmDelete(false);
+    }
+  };
   const needsProof = offer.category_slug === 'accounts' && ['none', 'rejected'].includes(offer.owner_proof_status);
 
   const submitProof = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -442,6 +473,8 @@ function OfferRow({ offer, linked, onChange, founding }: { offer: SellerOffer; l
             <div className="small" title={t('mod.inReviewHint')}><span className="chip held">{t('mod.inReview')}</span> <span className="muted">{t('mod.inReviewHint')}</span></div>
           )}
           {offer.status === 'expired' && <RelistExpired offer={offer} onDone={onChange} />}
+          {offer.status === 'paused' && <div className="small"><span className="chip">{t('lst.paused')}</span></div>}
+          {outOfStock && <div className="small" data-testid="out-of-stock"><span className="chip held">{t('lst.outOfStock')}</span></div>}
           {shown && <div className="small"><span className="chip released">{t('linked.listingChip', { platform: platformName(shown.provider) })}</span> <span className="muted">{shown.display_name}</span></div>}
           {offer.category_slug === 'accounts' && offer.owner_proof_status !== 'verified' && (
             <div className="small" style={{ color: 'var(--disputed)' }}>{t('sell.ownerProof', { status: offer.owner_proof_status })}</div>
@@ -454,19 +487,42 @@ function OfferRow({ offer, linked, onChange, founding }: { offer: SellerOffer; l
         <td className="mono">{offer.available}</td>
         <td>{offer.delivery_mode === 'auto' ? t('delivery.instant') : t('sell.manual')}</td>
         <td>
-          {offer.delivery_mode === 'auto' && !offer.is_bundle && <button className="btn ghost" onClick={() => setOpen(!open)}>{t('sell.addStock')}</button>}
-          {needsProof && <button className="btn ghost" onClick={() => setProofOpen(!proofOpen)}>{t('sell.addProof')}</button>}
-          {founding?.founding && founding.windowOpen && offer.status === 'active' && (
-            offer.featured ? (
-              <button className="btn ghost" onClick={() => api(`/offers/${offer.id}/feature`, { method: 'DELETE' }).then(onChange).catch((e) => setFeatureError(e.message))}>{t('founding.unfeature')}</button>
+          <div className="lst-actions" role="group" aria-label={t('lst.actionsFor', { title: offer.title })}>
+            {['active', 'paused'].includes(offer.status) && <Link className="btn ghost sm" to={`/sell/edit/${offer.id}`}>{t('lst.edit')}</Link>}
+            {offer.status === 'active' && <button type="button" className="btn ghost sm" onClick={() => setStatus('paused')}>{t('lst.pause')}</button>}
+            {offer.status === 'paused' && <button type="button" className="btn ghost sm" onClick={() => setStatus('active')}>{t('lst.resume')}</button>}
+            {['active', 'paused'].includes(offer.status) && offer.category_slug === 'currency' && attributesFor(offer.game, offer.category_slug).length > 0 && (
+              <button type="button" className="btn ghost sm" aria-expanded={dupOpen} onClick={() => setDupOpen(!dupOpen)}>{t('lst.duplicate')}</button>
+            )}
+            {confirmDelete ? (
+              <span className="lst-confirm">
+                <button type="button" className="btn danger sm" onClick={() => setStatus('removed')}>{t('lst.deleteConfirm')}</button>
+                <button type="button" className="btn ghost sm" onClick={() => setConfirmDelete(false)}>{t('lst.cancel')}</button>
+              </span>
             ) : (
-              <button className="btn ghost" disabled={founding.featuredUsed >= founding.featuredSlots} title={founding.featuredUsed >= founding.featuredSlots ? t('founding.noSlots') : ''} onClick={() => api(`/offers/${offer.id}/feature`, { body: {} }).then(onChange).catch((e) => setFeatureError(e.message))}>{t('founding.feature')}</button>
-            )
-          )}
+              <button type="button" className="btn ghost sm" disabled={openOrders > 0} aria-describedby={openOrders > 0 ? `del-${offer.id}` : undefined} onClick={() => setConfirmDelete(true)}>{t('lst.delete')}</button>
+            )}
+            {offer.delivery_mode === 'auto' && !offer.is_bundle && <button className="btn ghost sm" onClick={() => setOpen(!open)}>{t('sell.addStock')}</button>}
+            {needsProof && <button className="btn ghost sm" onClick={() => setProofOpen(!proofOpen)}>{t('sell.addProof')}</button>}
+            {founding?.founding && founding.windowOpen && offer.status === 'active' && (
+              offer.featured ? (
+                <button className="btn ghost sm" onClick={() => api(`/offers/${offer.id}/feature`, { method: 'DELETE' }).then(onChange).catch((e) => setFeatureError(e.message))}>{t('founding.unfeature')}</button>
+              ) : (
+                <button className="btn ghost sm" disabled={founding.featuredUsed >= founding.featuredSlots} title={founding.featuredUsed >= founding.featuredSlots ? t('founding.noSlots') : ''} onClick={() => api(`/offers/${offer.id}/feature`, { body: {} }).then(onChange).catch((e) => setFeatureError(e.message))}>{t('founding.feature')}</button>
+              )
+            )}
+          </div>
+          {openOrders > 0 && <div id={`del-${offer.id}`} className="small muted">{t('lst.deleteBlocked', { n: openOrders })}</div>}
+          {rowError && <div className="small" role="alert" style={{ color: 'var(--disputed)' }}>{rowError}</div>}
           {offer.featured && <div className="small text-released">{t('founding.featuredUntil', { when: offer.featured_until ? new Date(offer.featured_until).toLocaleDateString(intlLocale(), { month: 'short', day: 'numeric' }) : '' })}</div>}
           {featureError && <div className="small" style={{ color: 'var(--disputed)' }}>{featureError}</div>}
         </td>
       </tr>
+      {dupOpen && (
+        <tr>
+          <td colSpan={5}><DuplicateForm offer={offer} onDone={() => (setDupOpen(false), onChange())} onCancel={() => setDupOpen(false)} /></td>
+        </tr>
+      )}
       {proofOpen && (
         <tr>
           <td colSpan={5}>
@@ -507,15 +563,75 @@ function OfferRow({ offer, linked, onChange, founding }: { offer: SellerOffer; l
 }
 
 /**
+ * Round 26 (B3): copy a listing to another server. The seller picks the server (and faction where the game has
+ * one) and the stock there; price, limits, discounts, delivery and description are copied.
+ */
+function DuplicateForm({ offer, onDone, onCancel }: { offer: SellerOffer; onDone: () => void; onCancel: () => void }) {
+  useLeagues(offer.game);
+  const defs = attributesFor(offer.game, offer.category_slug);
+  const server = defs[0]!;
+  const extra = defs.filter((d) => d.key === 'faction');
+  const [attrs, setAttrs] = useState<Record<string, string>>(Object.fromEntries(extra.map((d) => [d.key, offer.attributes?.[d.key] ?? ''])));
+  const [stock, setStock] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setBusy(true);
+    try {
+      await api(`/offers/${offer.id}/duplicate`, { body: { attributes: attrs, stock: Math.floor(Number(stock)) } });
+      onDone();
+    } catch (err: any) {
+      setError(err.code === 'same_server' ? t('lst.sameServer') : err.message);
+      setBusy(false);
+    }
+  };
+  const field = (d: typeof server, current?: string) => (
+    <label key={d.key} className="field">
+      {d.key === server.key ? t('lst.dupTo', { field: attrLabel(d.label).toLowerCase() }) : attrLabel(d.label)}
+      {d.type === 'select' ? (
+        <select required value={attrs[d.key] ?? ''} onChange={(e) => setAttrs((a) => ({ ...a, [d.key]: e.target.value }))}>
+          <option value="">{t('sell.f.choose')}</option>
+          {d.options!.filter((o) => d.key !== server.key || o !== current).map((o) => <option key={o}>{o}</option>)}
+        </select>
+      ) : (
+        <input required maxLength={60} value={attrs[d.key] ?? ''} onChange={(e) => setAttrs((a) => ({ ...a, [d.key]: e.target.value }))} />
+      )}
+    </label>
+  );
+  return (
+    <form className="stack lst-dup" onSubmit={submit} aria-label={t('lst.dupTitle', { title: offer.title })}>
+      <b>{t('lst.dupTitle', { title: offer.title })}</b>
+      <div className="grid three">
+        {field(server, offer.attributes?.[server.key])}
+        {extra.map((d) => field(d))}
+        <label className="field">{t('co.stock')}<input className="num" type="number" inputMode="numeric" min={1} step={1} required value={stock} onChange={(e) => setStock(e.target.value)} /></label>
+      </div>
+      {error && <div className="alert" role="alert">{error}</div>}
+      <div className="row">
+        <button className="btn" type="submit" disabled={busy}>{t('lst.dupCreate')}</button>
+        <button className="btn ghost" type="button" onClick={onCancel}>{t('lst.cancel')}</button>
+      </div>
+    </form>
+  );
+}
+
+/**
  * Create offer, step 2 for every product type except currency (Round 25): the type and game were picked in step 1.
  * Currency has its own short form (CurrencyOfferForm on the create page).
  */
-export function OtherOfferForm({ category, game, onCreated, offers, linked }: { category: string; game: string; onCreated: () => void; offers: SellerOffer[]; linked: LinkedAccount[] }) {
+export function OtherOfferForm({ category, game, onCreated, offers, linked, initial }: { category: string; game: string; onCreated: () => void; offers: SellerOffer[]; linked: LinkedAccount[]; initial?: SellerOffer }) {
   const [error, setError] = useState('');
+  const [minQty, setMinQty] = useState(String(initial?.min_qty ?? 1));
+  const [maxQty, setMaxQty] = useState(initial?.max_qty != null ? String(initial.max_qty) : '');
+  const [pending, setPending] = useState<Record<string, any> | null>(null);
+  const [preview, setPreview] = useState<{ offer: Offer; review: boolean } | null>(null);
+  const [busy, setBusy] = useState(false);
   const [bundleOn, setBundleOn] = useState(false);
   const [parts, setParts] = useState<Record<string, number>>({});
   const bundleable = offers.filter((o) => o.delivery_mode === 'auto' && o.status === 'active' && !o.is_bundle && !o.reserved_for);
-  const [price, setPrice] = useState('');
+  const [price, setPrice] = useState(initial ? ((initial.seller_price_cents ?? initial.price_cents) / 100).toFixed(2) : '');
   useLeagues(game); // league options refresh from the table once it loads
   const fields = attributesFor(game, category);
   // Account listings can show a linked account from the game's own platform, if it isn't on another listing.
@@ -527,9 +643,12 @@ export function OtherOfferForm({ category, game, onCreated, offers, linked }: { 
     const form = e.currentTarget;
     const f = Object.fromEntries(new FormData(form)) as Record<string, string>;
     setError('');
+    const limits = category === 'accounts' ? '' : limitsError(minQty, maxQty, f.deliveryMode === 'manual' ? Number(f.stock || 1) : undefined);
+    if (limits) return setError(limits);
+    if (!f.description?.trim()) return setError(t('lst.descriptionRequired'));
+    setBusy(true);
     try {
-      await api('/offers', {
-        body: {
+      const body = {
           categorySlug: f.categorySlug,
           game: f.game,
           title: f.title,
@@ -543,19 +662,36 @@ export function OtherOfferForm({ category, game, onCreated, offers, linked }: { 
           ...(f.linkedAccountId ? { linkedAccountId: f.linkedAccountId } : {}),
           ...(methodsForListing(f.game, f.categorySlug).length ? { deliveryMethods: new FormData(form).getAll('deliveryMethods') } : {}),
           ...(bundleOn ? { bundle: Object.entries(parts).map(([offerId, quantity]) => ({ offerId, quantity })) } : {}),
-        },
-      });
-      form.reset();
-      setPrice('');
-      setBundleOn(false);
-      setParts({});
+          ...(category === 'accounts' ? {} : { minQty: Math.floor(Number(minQty)), maxQty: maxQty.trim() ? Math.floor(Number(maxQty)) : null }),
+      };
+      setPreview(await api<{ offer: Offer; review: boolean }>('/offers/preview', { body }));
+      setPending(body);
+      window.scrollTo({ top: 0 });
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const publish = async () => {
+    if (!pending) return;
+    setError('');
+    setBusy(true);
+    try {
+      if (initial) {
+        const { categorySlug: _c, game: _g, deliveryMode: _d, bundle: _b, linkedAccountId: _l, warrantyDays: _w, ...edit } = pending;
+        await api(`/offers/${initial.id}`, { method: 'PATCH', body: { ...edit, version: initial.version } });
+      } else await api('/offers', { body: pending });
       onCreated();
     } catch (err: any) {
       setError(err.message);
+      setBusy(false);
     }
   };
   return (
-    <form className="pg-sell" id="create-offer" onSubmit={submit} aria-labelledby="create-offer-title">
+    <>
+    {preview && <ListingPreview offer={preview.offer} review={preview.review} busy={busy} error={error} publishLabel={initial ? t('lst.saveChanges') : t('sell.f.create')} onEdit={() => (setPreview(null), setError(''))} onPublish={publish} />}
+    <form className="pg-sell" id="create-offer" onSubmit={submit} aria-labelledby="create-offer-title" hidden={!!preview}>
       <h2 id="create-offer-title" className="sr-only">{t('sell.new')}</h2>
       <input type="hidden" name="categorySlug" value={category} />
       <input type="hidden" name="game" value={game} />
@@ -563,7 +699,7 @@ export function OtherOfferForm({ category, game, onCreated, offers, linked }: { 
       <div className="pg-sell-main">
       <div className="card stack">
       <div className="grid two">
-        <label className="field">{t('sell.f.title')}<input name="title" required minLength={3} maxLength={140} /></label>
+        <label className="field">{t('sell.f.title')}<input name="title" required minLength={3} maxLength={140} defaultValue={initial?.title} /></label>
         <label className="field">
           {t('sell.f.price')}
           <input name="price" className="num" type="number" step="0.01" min="0.01" required value={price} onChange={(e) => setPrice(e.target.value)} aria-describedby="price-preview" />
@@ -579,13 +715,14 @@ export function OtherOfferForm({ category, game, onCreated, offers, linked }: { 
         ) : (
           <input type="hidden" name="deliveryMode" value="manual" />
         )}
-        {category !== 'accounts' && <label className="field">{t('sell.f.stock')}<input name="stock" type="number" min="1" defaultValue="1" /></label>}
+        {category !== 'accounts' && <label className="field">{t('sell.f.stock')}<input name="stock" type="number" min="1" defaultValue={initial ? String(initial.available) : '1'} /></label>}
+        {category !== 'accounts' && <OrderLimits min={minQty} max={maxQty} onMin={setMinQty} onMax={setMaxQty} />}
         {methodsForListing(game, category).length > 0 && (
           <fieldset className="field sell-methods">
             <legend>{t('of.deliveryMethods')}</legend>
             {methodsForListing(game, category).map((m) => (
               <label key={m} className="check-row" style={{ color: 'var(--ink)' }}>
-                <input type="checkbox" name="deliveryMethods" value={m} defaultChecked style={{ width: 'auto' }} /> {methodLabel(m)}
+                <input type="checkbox" name="deliveryMethods" value={m} defaultChecked={!initial?.delivery_methods?.length || initial.delivery_methods.includes(m)} style={{ width: 'auto' }} /> {methodLabel(m)}
               </label>
             ))}
           </fieldset>
@@ -593,7 +730,7 @@ export function OtherOfferForm({ category, game, onCreated, offers, linked }: { 
         {category === 'accounts' && (
           <label className="field">
             {t('warranty.sellLabel')}
-            <select name="warrantyDays" defaultValue="0" aria-describedby="warranty-hint">
+            <select name="warrantyDays" defaultValue={String(initial?.warranty_days ?? 0)} aria-describedby="warranty-hint" disabled={!!initial}>
               {[0, 7, 14, 30, 60, 90].map((d) => <option key={d} value={d}>{d ? t('warranty.days', { count: d }) : t('warranty.none')}</option>)}
             </select>
             <span id="warranty-hint" className="small muted">{t('warranty.sellHint')}</span>
@@ -620,12 +757,12 @@ export function OtherOfferForm({ category, game, onCreated, offers, linked }: { 
               <label key={`${category}-${game.trim().toLowerCase()}-${d.key}`} className="field">
                 {attrLabel(d.label)}{d.required ? '' : ` (${t('sell.f.optional')})`}
                 {d.type === 'select' ? (
-                  <select name={`attr.${d.key}`} required={d.required} defaultValue="">
+                  <select name={`attr.${d.key}`} required={d.required} defaultValue={initial?.attributes?.[d.key] ?? ''}>
                     <option value="">{d.required ? t('sell.f.choose') : '—'}</option>
                     {d.options!.map((o) => <option key={o}>{o}</option>)}
                   </select>
                 ) : (
-                  <input name={`attr.${d.key}`} required={d.required} maxLength={60} />
+                  <input name={`attr.${d.key}`} required={d.required} maxLength={60} defaultValue={initial?.attributes?.[d.key]} />
                 )}
               </label>
             ))}
@@ -638,8 +775,8 @@ export function OtherOfferForm({ category, game, onCreated, offers, linked }: { 
           <div className="grid three">
             {TIER_ROWS.map((i) => (
               <div key={i} className="row" style={{ gap: 8, flexWrap: 'nowrap' }}>
-                <label className="field" style={{ flex: 1 }}>{t('tier.fromQty')}<input name={`tierQty${i}`} type="number" min={2} placeholder={String([10, 50, 100][i])} /></label>
-                <label className="field" style={{ flex: 1 }}>{t('tier.each')}<input name={`tierPrice${i}`} type="number" step="0.01" min="0.01" /></label>
+                <label className="field" style={{ flex: 1 }}>{t('tier.fromQty')}<input name={`tierQty${i}`} type="number" min={2} defaultValue={initial?.seller_price_tiers?.[i]?.minQty} /></label>
+                <label className="field" style={{ flex: 1 }}>{t('tier.each')}<input name={`tierPrice${i}`} type="number" step="0.01" min="0.01" defaultValue={initial?.seller_price_tiers?.[i] ? (initial.seller_price_tiers[i]!.priceCents / 100).toFixed(2) : undefined} /></label>
               </div>
             ))}
           </div>
@@ -679,7 +816,7 @@ export function OtherOfferForm({ category, game, onCreated, offers, linked }: { 
           )}
         </fieldset>
       )}
-      <label className="field">{t('sell.f.description')}<textarea name="description" maxLength={5000} /></label>
+      <label className="field">{t('lst.description')}<textarea name="description" required maxLength={5000} rows={4} dir="auto" defaultValue={initial?.description} /></label>
       {category === 'accounts' && (
         <p className="small muted">{t('sell.f.accountHint')}</p>
       )}
@@ -688,11 +825,12 @@ export function OtherOfferForm({ category, game, onCreated, offers, linked }: { 
       <aside className="card pg-sticky pg-sell-preview">
         <SellPreview price={price} />
         {error && <div className="alert" role="alert">{error}</div>}
-        <button className="btn lg block" type="submit">{t('sell.f.create')}</button>
+        <button className="btn lg block" type="submit" disabled={busy}>{t('lst.preview')}</button>
         <p className="small muted" style={{ margin: 0 }}>{t('sell.f.howPaid')}</p>
       </aside>
       </div>
     </form>
+    </>
   );
 }
 
