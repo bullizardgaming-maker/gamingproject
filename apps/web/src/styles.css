@@ -1424,3 +1424,20 @@ html.dark .auth-faces .avatar-ini { background: #3a3a3a; }
 /* Our colourful app icon (brand canvas: dark tile, green mark), on the sign-in card and the code step. */
 .auth-appicon { display: grid; place-items: center; width: 56px; height: 56px; padding: 0; border-radius: 14px; border: 1px solid var(--rule); background: #0d131c; color: #4bae24; box-shadow: 0 6px 18px rgba(0, 0, 0, .18); }
 .auth-shield-paper.auth-appicon { gap: 0; }
+
+/* Round 26 (A4): a payment that arrived, is held or went to the balance: never a blank card. */
+.pay-state { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 32px 24px; text-align: center; }
+.pay-state h3 { margin: 0; font-size: 20px; }
+.pay-state p { margin: 0; max-width: 440px; }
+.pay-state-icon { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 999px; border: 1px solid var(--rule); }
+.pay-state-icon.is-ok { color: var(--released); }
+.pay-state-icon.is-held { color: var(--held-ink, var(--held)); }
+
+/* Round 26: listing actions, duplicate form, preview */
+.lst-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.lst-confirm { display: inline-flex; gap: 6px; }
+.btn.danger { background: var(--disputed); border-color: var(--disputed); color: #fff; }
+.lst-dup { padding: 12px; border: 1px solid var(--rule); border-radius: 10px; }
+.lp-banner b { margin-inline-end: 4px; }
+.lp .of-buy { display: flex; flex-direction: column; gap: 12px; }
+.lp-limits { margin: 0; }

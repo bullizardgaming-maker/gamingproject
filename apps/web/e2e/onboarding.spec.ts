@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { signIn, signOut, startOffer } from './helpers';
+import { signIn, signOut, startOffer, publishOffer } from './helpers';
 
 test.describe('seller onboarding', () => {
   test('a new seller passes the rules test before the first listing and sees the ID deadline', async ({ page }) => {
@@ -34,7 +34,7 @@ test.describe('seller onboarding', () => {
     await page.locator('input[name=stock]').fill('5000000');
     await page.locator('input[name=unitPrice]').fill('0.000012');
     await page.locator('select[name=deliveryTime]').selectOption('1h');
-    await page.getByRole('button', { name: 'Publish offer' }).click();
+    await publishOffer(page);
     await expect(page.getByText('Your offer is live.')).toBeVisible();
     await expect(page.getByText('Albion Online · Europe').first()).toBeVisible();
     await expect(page.getByTestId('id-deadline')).toContainText('Verify your identity by');

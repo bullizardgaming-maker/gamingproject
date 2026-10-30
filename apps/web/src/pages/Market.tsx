@@ -38,6 +38,8 @@ export interface Offer {
   unit_label?: string | null;
   unit_size?: number | null;
   min_qty?: number | null;
+  /** Round 26 (B1): optional most a buyer can take in one order. */
+  max_qty?: number | null;
   price_per_unit_cents?: number;
   stock_qty?: number;
   /** Only on the seller's own shop (GET /offers?seller=): a featured listing, pinned first there. */

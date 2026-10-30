@@ -63,7 +63,19 @@ export async function startOffer(page: Page, type: string, game: string) {
   await page.locator('input[name=game]').fill(game);
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Publish offer' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Preview', exact: true })).toBeVisible();
+}
+
+/** Round 26: every listing has a description; "Preview" shows it as buyers will see it before publishing. */
+export async function previewOffer(page: Page, description = 'Delivered in game. Message me with your character name.') {
+  const d = page.locator('textarea[name=description]').first();
+  if (!(await d.inputValue())) await d.fill(description);
+  await page.getByRole('button', { name: 'Preview', exact: true }).click();
+}
+export async function publishOffer(page: Page, description?: string) {
+  await previewOffer(page, description);
+  await expect(page.getByTestId('listing-preview')).toBeVisible();
+  await page.getByRole('button', { name: 'Publish offer' }).click();
 }
 
 /** Sign out from the account menu in the top bar. */

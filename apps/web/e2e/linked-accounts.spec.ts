@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { signIn } from './helpers';
+import { signIn, publishOffer } from './helpers';
 
 // Round 24b: removed from the seller hub (CEO).
 test.skip('a seller links Steam and Riot accounts and lists one with a verified badge', async ({ page }) => {
@@ -23,7 +23,7 @@ test.skip('a seller links Steam and Riot accounts and lists one with a verified 
   await page.locator('input[name=title]').fill('Prime account, 3k hours, Faceit 10');
   await page.locator('input[name=price]').fill('90');
   await page.locator('select[name=deliveryMode]').selectOption('manual');
-  await page.getByRole('button', { name: 'Publish offer' }).click();
+  await publishOffer(page);
   await expect(page.getByText('Steam verified').first()).toBeVisible();
   // The account is now in use, so a second listing can't pick it.
   await page.locator('input[name=game]').fill('Dota 2');

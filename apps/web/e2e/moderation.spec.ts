@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { buy, signIn, startOffer } from './helpers';
+import { buy, signIn, startOffer, publishOffer, previewOffer } from './helpers';
 
 test.describe('safety and moderation', () => {
   test('chat warns before sending contact details', async ({ page }) => {
@@ -20,12 +20,12 @@ test.describe('safety and moderation', () => {
     await startOffer(page, 'items', 'Counter-Strike 2');
     await page.locator('input[name=title]').fill('Wallhack-proof crosshair pack');
     await page.locator('input[name=price]').fill('3');
-    await page.getByRole('button', { name: 'Publish offer' }).click();
+    await publishOffer(page);
     await expect(page.getByText('In review').first()).toBeVisible();
     await startOffer(page, 'items', 'Counter-Strike 2');
     await page.locator('input[name=title]').fill('Carding guide');
     await page.locator('input[name=price]').fill('3');
-    await page.getByRole('button', { name: 'Publish offer' }).click();
+    await previewOffer(page);
     await expect(page.getByText('This offer breaks the rules on what can be sold.')).toBeVisible(); // err.listing_blocked (copy deck §2.13)
   });
 

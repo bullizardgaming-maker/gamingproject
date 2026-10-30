@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { Plus, Trash as Trash2 } from '@phosphor-icons/react';
 import { api } from '../api';
 import { useSession } from '../session';
@@ -14,6 +14,9 @@ import { KNOWN_GAMES } from '@/lib/gameList';
 import { deliveryTimeLabel, methodLabel, methodsForListing } from '@/lib/delivery';
 import { unitMoney } from '@/lib/prefs';
 import { OtherOfferForm, type SellerOffer } from './Sell';
+import type { Offer } from './Market';
+import { ListingPreview } from '../components/ListingPreview';
+import { OrderLimits, limitsError } from '../components/OrderLimits';
 import type { LinkedAccount } from '../components/LinkedAccounts';
 import { DELIVERY_TIME_KEYS, MAX_VOLUME_DISCOUNTS, MAX_VOLUME_PERCENT, checkVolumeDiscounts, grossMicros, parseUnitPrice, type DeliveryTime } from '../../../api/src/domain/unitPrice';
 
@@ -108,52 +111,120 @@ export function CreateOffer() {
   );
 }
 
+/** Round 26 (B2): edit a listing with the same form it was made with; changes are previewed, then saved. */
+export function EditOffer() {
+  usePageMeta({ title: t('lst.editTitle') });
+  const { id = '' } = useParams();
+  const { user } = useSession();
+  const nav = useNavigate();
+  const [rateBps, setRateBps] = useState<number | null>(null);
+  const [offers, setOffers] = useState<SellerOffer[] | null>(null);
+  const [linked, setLinked] = useState<LinkedAccount[]>([]);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    if (!user) return;
+    Promise.all([api<{ rateBps: number }>('/seller/dashboard'), api<SellerOffer[]>('/seller/offers'), api<LinkedAccount[]>('/seller/linked-accounts').catch(() => [])])
+      .then(([d, o, l]) => (setRateBps(d.rateBps), setOffers(o), setLinked(l)))
+      .catch((e) => setError(e.message));
+  }, [user]);
+  if (!user) return <p className="muted"><Link to={`/login?next=/sell/edit/${id}`}>{t('sell.signIn')}</Link></p>;
+  const offer = offers?.find((o) => o.id === id);
+  const done = () => nav('/sell', { state: { saved: true } });
+  return (
+    <div className="stack co" style={{ maxWidth: 980 }}>
+      <nav className="crumbs" aria-label="Breadcrumb"><Link to="/sell">{t('sell.title')}</Link><span>/</span><span>{t('lst.editTitle')}</span></nav>
+      <h1 className="pg-h1" style={{ margin: 0 }}>{t('lst.editTitle')}</h1>
+      {error ? <div className="alert" role="alert">{error}</div> : offers === null ? <p className="muted">{t('sp.loading')}</p> : !offer ? <div className="card muted">{t('lst.notFound')}</div> : (
+        <>
+          <div className="co-picked card">
+            <span className="small muted">{t('co.type')}</span><b>{categoryLabel(offer.category_slug)}</b>
+            <span className="small muted">{t('sell.f.game')}</span><b>{offer.game}</b>
+          </div>
+          {offer.category_slug === 'currency' ? (
+            <CurrencyOfferForm game={offer.game} rateBps={rateBps} onCreated={done} initial={offer} />
+          ) : (
+            <OtherOfferForm category={offer.category_slug} game={offer.game} offers={offers} linked={linked} onCreated={done} initial={offer} />
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 interface Tier { minQty: string; percentOff: string }
 
+/** Round 26: the create body is checked by POST /offers/preview, shown as buyers will see it, then published. */
+type Preview = { offer: Offer; review: boolean };
+
 /**
- * Currency listing form: only server/region (and any other field the game requires), stock, unit price with up
- * to 6 decimals, volume discounts (up to 4), delivery methods from the game's list and a delivery time.
+ * Currency listing form: only server/region (and any other field the game requires, e.g. faction on Aion), stock,
+ * unit price with up to 6 decimals, min and max per order, volume discounts (up to 4), delivery methods and time,
+ * and a description. The title is made from the game and server. With `initial` it edits that listing.
  */
-function CurrencyOfferForm({ game, rateBps, onCreated }: { game: string; rateBps: number | null; onCreated: () => void }) {
+export function CurrencyOfferForm({ game, rateBps, onCreated, initial }: { game: string; rateBps: number | null; onCreated: () => void; initial?: SellerOffer }) {
   useLeagues(game); // league options come from the table
   const fields = attributesFor(game, 'currency').filter((d, i) => i === 0 || d.required);
   const methods = methodsForListing(game, 'currency');
-  const [attrs, setAttrs] = useState<Record<string, string>>({});
-  const [stock, setStock] = useState('');
-  const [price, setPrice] = useState('');
-  const [tiers, setTiers] = useState<Tier[]>([]);
-  const [picked, setPicked] = useState<string[]>(methods);
-  const [time, setTime] = useState<DeliveryTime | ''>('');
+  const [attrs, setAttrs] = useState<Record<string, string>>(initial?.attributes ?? {});
+  const [stock, setStock] = useState(initial ? String(initial.available ?? '') : '');
+  const [price, setPrice] = useState(initial?.seller_unit_price_micros != null ? (initial.seller_unit_price_micros / 1_000_000).toFixed(6) : '');
+  const [minQty, setMinQty] = useState(String(initial?.min_qty ?? 1));
+  const [maxQty, setMaxQty] = useState(initial?.max_qty != null ? String(initial.max_qty) : '');
+  const [description, setDescription] = useState(initial?.description ?? '');
+  const [tiers, setTiers] = useState<Tier[]>((initial?.volume_discounts ?? []).map((v) => ({ minQty: String(v.minQty), percentOff: String(v.percentOff) })));
+  const [picked, setPicked] = useState<string[]>(initial?.delivery_methods?.length ? initial.delivery_methods : methods);
+  const [time, setTime] = useState<DeliveryTime | ''>((initial?.delivery_time as DeliveryTime) ?? '');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<Preview | null>(null);
 
   const micros = parseUnitPrice(price);
   const priceOk = micros != null && micros >= 1;
   const tierList = tiers.map((x) => ({ minQty: Math.floor(Number(x.minQty)), percentOff: Math.floor(Number(x.percentOff)) }));
   const tierCheck = checkVolumeDiscounts(tierList.filter((x) => x.minQty || x.percentOff), 1);
 
-  const submit = async (e: React.FormEvent) => {
+  const body = () => ({
+    categorySlug: 'currency',
+    game,
+    deliveryMode: 'manual',
+    attributes: Object.fromEntries(Object.entries(attrs).filter(([, v]) => v.trim())),
+    stock: Math.floor(Number(stock)),
+    unitPrice: price.trim(),
+    minQty: Math.floor(Number(minQty)),
+    maxQty: maxQty.trim() ? Math.floor(Number(maxQty)) : null,
+    description: description.trim(),
+    volumeDiscounts: tierCheck.ok ? tierCheck.value : [],
+    deliveryMethods: methods.length ? picked : undefined,
+    deliveryTime: time,
+  });
+
+  const review = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     if (!priceOk) return setError(t('co.priceInvalid'));
     if (!tierCheck.ok) return setError(tierCheck.error);
     if (methods.length && !picked.length) return setError(t('co.pickMethod'));
+    const limits = limitsError(minQty, maxQty, Math.floor(Number(stock)));
+    if (limits) return setError(limits);
+    if (!description.trim()) return setError(t('lst.descriptionRequired'));
     setBusy(true);
     try {
-      await api('/offers', {
-        body: {
-          categorySlug: 'currency',
-          game,
-          title: [game, ...fields.map((d) => attrs[d.key]).filter(Boolean)].join(' · ').slice(0, 140),
-          deliveryMode: 'manual',
-          attributes: Object.fromEntries(Object.entries(attrs).filter(([, v]) => v.trim())),
-          stock: Math.floor(Number(stock)),
-          unitPrice: price.trim(),
-          volumeDiscounts: tierCheck.value,
-          deliveryMethods: methods.length ? picked : undefined,
-          deliveryTime: time,
-        },
-      });
+      setPreview(await api<Preview>('/offers/preview', { body: body() }));
+      window.scrollTo({ top: 0 });
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const publish = async () => {
+    setError('');
+    setBusy(true);
+    try {
+      if (initial) {
+        const { categorySlug: _c, game: _g, deliveryMode: _d, ...edit } = body();
+        await api(`/offers/${initial.id}`, { method: 'PATCH', body: { ...edit, version: initial.version } });
+      } else await api('/offers', { body: body() });
       onCreated();
     } catch (err: any) {
       setError(err.message);
@@ -161,8 +232,10 @@ function CurrencyOfferForm({ game, rateBps, onCreated }: { game: string; rateBps
     }
   };
 
+  if (preview) return <ListingPreview offer={preview.offer} review={preview.review} busy={busy} error={error} publishLabel={initial ? t('lst.saveChanges') : t('sell.f.create')} onEdit={() => (setPreview(null), setError(''))} onPublish={publish} />;
+
   return (
-    <form className="pg-split co-form" onSubmit={submit} aria-label={t('co.currencyForm')}>
+    <form className="pg-split co-form" onSubmit={review} aria-label={t('co.currencyForm')}>
       <div className="card stack">
         <div className="grid two">
           {fields.map((d) => <AttrInput key={`${game}-${d.key}`} def={d} value={attrs[d.key] ?? ''} onChange={(v) => setAttrs((a) => ({ ...a, [d.key]: v }))} />)}
@@ -185,6 +258,7 @@ function CurrencyOfferForm({ game, rateBps, onCreated }: { game: string; rateBps
               onBlur={() => priceOk && setPrice((micros! / 1_000_000).toFixed(6))}
             />
           </label>
+          <OrderLimits min={minQty} max={maxQty} onMin={setMinQty} onMax={setMaxQty} />
           <label className="field">
             {t('co.deliveryTime')}
             <select name="deliveryTime" required value={time} onChange={(e) => setTime(e.target.value as DeliveryTime)}>
@@ -226,6 +300,11 @@ function CurrencyOfferForm({ game, rateBps, onCreated }: { game: string; rateBps
             </button>
           )}
         </fieldset>
+
+        <label className="field">
+          {t('lst.description')}
+          <textarea name="description" required maxLength={5000} rows={4} dir="auto" value={description} onChange={(e) => setDescription(e.target.value)} />
+        </label>
       </div>
 
       <aside className="card pg-sticky stack co-side">
@@ -234,7 +313,7 @@ function CurrencyOfferForm({ game, rateBps, onCreated }: { game: string; rateBps
           <div className="pg-total"><span>{t('co.buyersPay')}</span><span className="pg-price num">{priceOk && rateBps != null ? unitMoney(grossMicros(micros!, rateBps)) : '—'}</span></div>
         </div>
         {error && <div className="alert" role="alert">{error}</div>}
-        <button className="btn lg block" type="submit" disabled={busy}>{t('sell.f.create')}</button>
+        <button className="btn lg block" type="submit" disabled={busy}>{t('lst.preview')}</button>
       </aside>
     </form>
   );

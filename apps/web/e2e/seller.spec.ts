@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { signIn, signOut, startOffer } from './helpers';
+import { signIn, signOut, startOffer, publishOffer } from './helpers';
 
 test.describe('seller', () => {
   test('creates a listing with game-specific fields that buyers can filter by', async ({ page }) => {
@@ -19,7 +19,7 @@ test.describe('seller', () => {
     await page.locator('select[name="attr.server"]').selectOption('KR');
     await page.locator('select[name="attr.rank_from"]').selectOption('Silver');
     await page.locator('select[name="attr.rank_to"]').selectOption('Gold');
-    await page.getByRole('button', { name: 'Publish offer' }).click();
+    await publishOffer(page);
     await expect(page.getByText('Silver → Gold in 3 days').first()).toBeVisible();
     await expect(page.getByRole('row', { name: /Silver → Gold in 3 days/ })).toContainText('buyers pay $28.09');
     await page.goto('/games/league-of-legends/boosting?attr.server=KR');
