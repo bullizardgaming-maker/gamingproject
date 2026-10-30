@@ -81,7 +81,7 @@ describe('B2 precise unit prices', () => {
     await h.ctx.db.query('UPDATE users SET payout_hold_days = 0 WHERE id = $1', [seller.id]);
     const buyer = await makeUser(h);
     const offer = await silver(seller, { volumeDiscounts: [{ minQty: 2_000_000, percentOff: 5 }] });
-    expect(offer).toMatchObject({ unit_price_micros: grossMicros(123, 500), volume_discounts: [{ minQty: 2_000_000, percentOff: 5 }], delivery_time: '1h', delivery_minutes: 60 });
+    expect(offer).toMatchObject({ unit_price_micros: grossMicros(123, 500), volume_discounts: [{ minQty: 2_000_000, type: 'percent', value: 5 }], delivery_time: '1h', delivery_minutes: 60 });
     expect(offer.seller_unit_price_micros).toBe(123); // the owner sees their own price
 
     // Minimum $1.00: 1,000 units are 0.12 + commission.
@@ -102,7 +102,7 @@ describe('B2 precise unit prices', () => {
     expect(row).toMatchObject({ listing_unit_price_micros: 123, seller_net_cents: 15_186, commission_cents: grossUp(15_186, 500) - 15_186 });
     expect(Number(row.unit_price_micros)).toBe(Math.round((grossUp(15_186, 500) * 10_000) / 1_234_567));
     const snap = (await h.ctx.db.query('SELECT snapshot FROM offer_snapshots WHERE order_id = $1', [order.id])).rows[0].snapshot;
-    expect(snap.offer).toMatchObject({ unit_price_micros: 123, price_cents: 1, volume_discounts: [{ minQty: 2_000_000, percentOff: 5 }], delivery_minutes: 60 });
+    expect(snap.offer).toMatchObject({ unit_price_micros: 123, price_cents: 1, volume_discounts: [{ minQty: 2_000_000, type: 'percent', value: 5 }], delivery_minutes: 60 });
     expect(snap.price).toMatchObject({ listingUnitPriceMicros: 123, listingUnitPriceCents: 0, sellerAmountCents: 15_186 });
 
     // Paid, delivered, confirmed: the seller receives exactly their price, the rest is commission.
@@ -163,7 +163,9 @@ describe('B3 currency listing create/update', () => {
     const patched = await seller.api.patch(`/v1/offers/${ok.body.id}`, { version: ok.body.version, unitPriceMicros: 150, deliveryTime: '15m', volumeDiscounts: [] });
     expect(patched.status, JSON.stringify(patched.body)).toBe(200);
     expect(patched.body).toMatchObject({ seller_unit_price_micros: 150, delivery_time: '15m', volume_discounts: [] });
-    expect((await seller.api.patch(`/v1/offers/${ok.body.id}`, { version: patched.body.version, deliveryHours: 2 })).body.error.code).toBe('invalid_delivery_time');
+    // Round 26b: any time from 1 minute to 72 hours is fine (2 h = 120 min); 73 h is not.
+    expect((await seller.api.patch(`/v1/offers/${ok.body.id}`, { version: patched.body.version, deliveryHours: 2 })).body).toMatchObject({ delivery_minutes: 120, delivery_time: '3h' });
+    expect((await seller.api.patch(`/v1/offers/${ok.body.id}`, { version: patched.body.version + 1, deliveryHours: 73 })).body.error.code).toBe('validation_error');
   });
 
   it('featured_until reaches only the owner and staff', async () => {

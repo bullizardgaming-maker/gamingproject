@@ -27,7 +27,7 @@ import { quotePromo, reserveRedemption, setRedemptionStatus } from './promos.js'
 import { availableCredit, maybeGrantReferral } from './referrals.js';
 import { assertTermsCurrent, recordAcceptance } from './legal.js';
 import { idDeadlinePassed, unitPriceFor, type PriceTier } from './offers.js';
-import { MIN_CURRENCY_ORDER_USD_CENTS, totalCentsFor, unitMicrosFor, volumePercentFor, type VolumeDiscount } from './unitPrice.js';
+import { MIN_CURRENCY_ORDER_USD_CENTS, tierFor, totalCentsFor, unitMicrosFor, volumePercentFor, type VolumeDiscount } from './unitPrice.js';
 import { rulesSettings } from './onboarding.js';
 import { effectivePrice, quoteSellerCode, type SaleFields } from './discounts.js';
 import { listStatements, type DisputeCategory } from './disputes.js';
@@ -230,6 +230,8 @@ export interface PriceBreakdown {
   listingUnitPriceMicros: number;
   /** Round 25: the volume discount applied (currency listings), in percent. */
   volumePercentOff: number;
+  /** Round 26b: the tier reached (percent or fixed), for full-precision display. */
+  volumeTier?: VolumeDiscount | null;
   /** Seller-code discount in the listing currency, already taken off listingTotalCents. */
   sellerDiscountCents: number;
   sellerCodeId: string | null;
@@ -277,7 +279,7 @@ export async function priceOrder(
     let base = sale ? effectivePrice(offer) * 10_000 : Number(offer.unit_price_micros);
     // Listings from before Round 25 may still carry quantity prices (whole cents per unit): the best one reached applies.
     if (offer.price_tiers?.length) base = Math.min(base, unitPriceFor({ price_cents: Number.MAX_SAFE_INTEGER, price_tiers: offer.price_tiers }, input.quantity) * 10_000);
-    volumePct = volumePercentFor(offer.volume_discounts, input.quantity);
+    volumePct = volumePercentFor(offer.volume_discounts, input.quantity, base);
     listingUnitMicros = unitMicrosFor(base, offer.volume_discounts, input.quantity);
     listingTotal = totalCentsFor(listingUnitMicros, input.quantity);
     listingUnit = Math.round(listingUnitMicros / 10_000);
@@ -342,6 +344,7 @@ export async function priceOrder(
     listingUnitPriceCents: listingUnit,
     listingUnitPriceMicros: listingUnitMicros,
     volumePercentOff: volumePct,
+    volumeTier: micro ? tierFor(offer.volume_discounts, input.quantity) : null,
     sellerDiscountCents: sellerDiscount,
     sellerCodeId,
     amountCents: amount,
@@ -366,16 +369,20 @@ export function usdCents(settlementCurrency: string, cents: number) {
   return cents;
 }
 
-/** Round 26 (B1): the seller's cap per order, checked on quotes, orders and every cart line. */
-function assertWithinMax(offer: { max_qty?: number | string | null; unit_label?: string | null }, quantity: number) {
-  if (offer.max_qty != null && quantity > Number(offer.max_qty)) {
-    throw badRequest('above_maximum', `This listing sells at most ${offer.max_qty}${offer.unit_label ? ` ${offer.unit_label}` : ''} per order`, { maxQty: Number(offer.max_qty) });
+/**
+ * Round 26b: the most a buyer may order is the stock on the listing (no seller-set cap, CEO). A quote above it says so
+ * with the available amount; an order above it fails the stock check as before.
+ */
+function assertWithinMax(offer: { available?: number | string | null; stock?: number | string | null; unit_label?: string | null; delivery_mode?: string }, quantity: number) {
+  const avail = offer.available ?? offer.stock;
+  if (avail != null && offer.delivery_mode !== 'auto' && quantity > Number(avail)) {
+    throw badRequest('above_maximum', `This listing has ${avail}${offer.unit_label ? ` ${offer.unit_label}` : ''} in stock`, { maxQty: Number(avail) });
   }
 }
 
 export async function quoteOrder(ctx: Ctx, buyerId: string, input: Pick<CreateOrderInput, 'offerId' | 'quantity' | 'rail' | 'promoCode' | 'useCredit' | 'currency' | 'sellerCode'>) {
   return withTx(ctx.db, async (tx) => {
-    const offer = await maybeOne(tx, `SELECT price_cents, currency, category_slug, seller_id, price_tiers, reserved_for, sale_price_cents, sale_starts_at, sale_ends_at, unit_price_micros, volume_discounts, min_qty, max_qty, unit_label FROM offers WHERE id = $1 AND status = 'active'`, [input.offerId]);
+    const offer = await maybeOne(tx, `SELECT price_cents, currency, category_slug, seller_id, price_tiers, reserved_for, sale_price_cents, sale_starts_at, sale_ends_at, unit_price_micros, volume_discounts, min_qty, unit_label, available, delivery_mode FROM offers WHERE id = $1 AND status = 'active'`, [input.offerId]);
     if (!offer || (offer.reserved_for && offer.reserved_for !== buyerId)) throw notFound('Offer');
     if (input.quantity < Number(offer.min_qty ?? 1)) throw badRequest('below_minimum', `This listing sells at least ${offer.min_qty}${offer.unit_label ? ` ${offer.unit_label}` : ''} per order`);
     assertWithinMax(offer, input.quantity);

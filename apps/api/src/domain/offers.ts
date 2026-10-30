@@ -7,7 +7,7 @@ import { getRate } from './fx.js';
 import { GAME_SETS, attributesFor, cleanAttributes, currencyTitle, handoverFieldFor } from './attributeSets.js';
 import { cleanDeliveryMethods } from './delivery.js';
 import { checkTiers, type PriceTier } from './priceTiers.js';
-import { DELIVERY_TIMES, MIN_CURRENCY_ORDER_USD_CENTS, centsForMicros, checkVolumeDiscounts, deliveryTimeFor, formatUnitPrice, grossMicros, totalCentsFor, unitMicrosFor, type DeliveryTime, type VolumeDiscount } from './unitPrice.js';
+import { DELIVERY_TIMES, MAX_DELIVERY_MINUTES, MIN_CURRENCY_ORDER_USD_CENTS, MIN_DELIVERY_MINUTES, centsForMicros, checkVolumeDiscounts, deliveryTimeFor, formatDeliveryMinutes, formatUnitPriceTrimmed, grossMicros, tierMicros, totalCentsFor, unitMicrosFor, type DeliveryTime, type VolumeDiscountInput } from './unitPrice.js';
 import { allowedMethods } from './delivery.js';
 import { listingStatusFor } from './moderation.js';
 import { notify } from './notifications.js';
@@ -45,14 +45,16 @@ export interface OfferInput {
   unitLabel?: string | null;
   unitSize?: number | null;
   minQty?: number;
-  /** Round 26 (B1): the most a buyer may order at once (null = no cap). */
+  /** Round 26b: ignored if sent — the most a buyer may order is the listing's stock (CEO). */
   maxQty?: number | null;
   /** Round 24: the delivery methods this listing offers, from the game's fixed list (domain/delivery.ts). Null/absent: all of them. */
   deliveryMethods?: string[] | null;
   /** Round 25, currency listings: the unit price in micro-units of the listing currency (123 = 0.000123 per unit). */
   unitPriceMicros?: number;
   /** Round 25, currency listings: up to four volume discounts (min quantity → % off). */
-  volumeDiscounts?: VolumeDiscount[];
+  volumeDiscounts?: VolumeDiscountInput[];
+  /** Round 26b: the delivery time typed by the seller, in minutes (1–4320). */
+  deliveryMinutes?: number;
   /** Round 25: the promised delivery time from the fixed list (15m … 24h); replaces deliveryHours. */
   deliveryTime?: DeliveryTime;
 }
@@ -74,10 +76,7 @@ export function cleanUnit(input: Pick<OfferInput, 'unitLabel' | 'unitSize' | 'mi
   const label = input.unitLabel?.trim() || null;
   const size = input.unitSize ?? null;
   const minQty = input.minQty ?? 1;
-  const maxQty = input.maxQty ?? null;
-  // Round 26 (B1): an optional cap per order, never below the minimum.
-  if (maxQty != null && (!Number.isInteger(maxQty) || maxQty < 1)) throw badRequest('invalid_unit', 'maxQty is a whole number of at least 1');
-  if (maxQty != null && maxQty < minQty) throw badRequest('invalid_unit', 'The maximum per order can’t be less than the minimum');
+  const maxQty = null; // Round 26b: no cap per order; the maximum is the stock (maxQty in a body is ignored)
   if ((label || size) && categoryKind !== 'currency') throw badRequest('invalid_unit', 'Only currency listings are sold by amount');
   if (label && label.length > 12) throw badRequest('invalid_unit', 'Keep the unit label short (e.g. "M", "k", "orbs")');
   if (size != null && !(Number.isInteger(size) && size >= 1)) throw badRequest('invalid_unit', 'unitSize is a whole number of game currency per unit');
@@ -121,7 +120,7 @@ export function cleanTiers(basePriceCents: number, tiers: PriceTier[] | undefine
 
 /** Round 25: the listing's delivery time as its key on the fixed list (null for instant delivery, and above 24 hours: older non-currency listings). */
 export const DELIVERY_TIME_SQL = `(CASE WHEN f.delivery_mode = 'auto' THEN NULL WHEN f.delivery_minutes <= 15 THEN '15m' WHEN f.delivery_minutes <= 60 THEN '1h' WHEN f.delivery_minutes <= 180 THEN '3h'
-  WHEN f.delivery_minutes <= 360 THEN '6h' WHEN f.delivery_minutes <= 720 THEN '12h' WHEN f.delivery_minutes <= 1440 THEN '24h' END)`;
+  WHEN f.delivery_minutes <= 360 THEN '6h' WHEN f.delivery_minutes <= 720 THEN '12h' ELSE '24h' END)`;
 
 /**
  * Prices in this view are what the BUYER pays: the seller's price grossed up by the seller's
@@ -140,7 +139,7 @@ export const OFFER_LIST_SQL = `
          (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now())) AS shop_paused,
          u.shop_paused_until, u.shop_pause_message, ${ONLINE_SQL} AS seller_online, u.response_minutes AS seller_response_minutes, u.trust_level AS seller_trust_level,
          f.available AS stock, f.is_bundle,
-         f.unit_label, f.unit_size, f.min_qty, f.max_qty, ${GROSS_SQL(EFFECTIVE_PRICE_SQL)} AS price_per_unit_cents, f.available AS stock_qty,
+         f.unit_label, f.unit_size, f.min_qty, ${GROSS_SQL(EFFECTIVE_PRICE_SQL)} AS price_per_unit_cents, f.available AS stock_qty,
          CASE WHEN f.status = 'active' AND f.available <= 0 THEN 'out_of_stock' ELSE f.status END AS listing_state,
          u.badges AS seller_badges, CASE WHEN u.show_online THEN u.last_seen_at END AS seller_last_seen_at,
          (c.kind = 'account' AND f.owner_proof_status <> 'verified') AS high_risk_secondary,
@@ -173,27 +172,33 @@ export function requireSeller(user: { kyc_tier: number; status: string; rules_pa
   if (idDeadlinePassed(user, idDueDays)) throw forbidden('kyc_overdue', 'Verify your identity to keep selling: the 30-day deadline has passed');
 }
 
-/** Round 25: the delivery time in minutes: one of the fixed list, or (older clients) a whole number of hours that is on it. */
-export function deliveryMinutesFrom(input: { deliveryTime?: DeliveryTime; deliveryHours?: number }, required: boolean): number | null {
-  if (input.deliveryTime) {
-    if (!(input.deliveryTime in DELIVERY_TIMES)) throw badRequest('invalid_delivery_time', `Pick a delivery time: ${Object.keys(DELIVERY_TIMES).join(', ')}`);
-    return DELIVERY_TIMES[input.deliveryTime];
+/**
+ * Round 26b: the delivery time in minutes — typed by the seller as minutes (`deliveryMinutes`), or an hour count
+ * (`deliveryHours`), or a Round 25 list key (`deliveryTime`). Any whole number from 1 minute to 72 hours.
+ */
+export function deliveryMinutesFrom(input: { deliveryTime?: DeliveryTime; deliveryHours?: number; deliveryMinutes?: number }, required: boolean): number | null {
+  let minutes: number | null = null;
+  if (input.deliveryMinutes != null) minutes = input.deliveryMinutes;
+  else if (input.deliveryTime) {
+    if (!(input.deliveryTime in DELIVERY_TIMES)) throw badRequest('invalid_delivery_time', `Delivery time is 1 minute to 72 hours (${Object.keys(DELIVERY_TIMES).join(', ')} or a number of minutes)`);
+    minutes = DELIVERY_TIMES[input.deliveryTime];
+  } else if (input.deliveryHours != null) minutes = input.deliveryHours * 60;
+  if (minutes == null) {
+    if (required) throw badRequest('delivery_time_required', 'Give the delivery time: 1 minute to 72 hours');
+    return null;
   }
-  if (input.deliveryHours != null) {
-    const minutes = input.deliveryHours * 60;
-    if (required && !Object.values(DELIVERY_TIMES).includes(minutes as never)) throw badRequest('invalid_delivery_time', `Pick a delivery time: ${Object.keys(DELIVERY_TIMES).join(', ')}`);
-    return minutes;
+  if (!Number.isInteger(minutes) || minutes < MIN_DELIVERY_MINUTES || minutes > MAX_DELIVERY_MINUTES) {
+    throw badRequest('invalid_delivery_time', `Delivery time is ${MIN_DELIVERY_MINUTES} minute to ${MAX_DELIVERY_MINUTES / 60} hours`, { minMinutes: MIN_DELIVERY_MINUTES, maxMinutes: MAX_DELIVERY_MINUTES });
   }
-  if (required) throw badRequest('delivery_time_required', `Pick a delivery time: ${Object.keys(DELIVERY_TIMES).join(', ')}`);
-  return null;
+  return minutes;
 }
 
-/** Round 25: a currency listing's unit price (micro-units) and volume discounts, checked. `priceCents` from older clients is a unit price of that many cents. */
-export function currencyPricing(input: { unitPriceMicros?: number; priceCents?: number; volumeDiscounts?: VolumeDiscount[] }, minQty: number) {
+/** Round 25/26b: currency listings: the unit price in micro-units and the volume tiers checked against it. */
+export function currencyPricing(input: { unitPriceMicros?: number; priceCents?: number; volumeDiscounts?: VolumeDiscountInput[] }, minQty: number) {
   const micros = input.unitPriceMicros ?? (input.priceCents != null ? input.priceCents * 10_000 : undefined);
   if (micros == null) throw badRequest('unit_price_required', 'Give the price of one unit (up to 6 decimals)');
   if (!Number.isSafeInteger(micros) || micros < 1) throw badRequest('invalid_unit_price', 'The unit price is at least 0.000001');
-  const vd = checkVolumeDiscounts(input.volumeDiscounts, minQty);
+  const vd = checkVolumeDiscounts(input.volumeDiscounts, minQty, micros);
   if (!vd.ok) throw badRequest('invalid_volume_discounts', vd.error);
   return { micros, priceCents: centsForMicros(micros), discounts: vd.value };
 }
@@ -267,12 +272,12 @@ export async function createOffer(ctx: Ctx, seller: { id: string; kyc_tier: numb
   const offer = await one(
     ctx.db,
     `INSERT INTO offers (seller_id, category_slug, game, title, description, price_cents, currency, delivery_mode, stock, low_stock_threshold, delivery_hours, attributes, price_tiers,
-                         status, review_reasons, unit_label, unit_size, min_qty, delivery_methods, unit_price_micros, volume_discounts, delivery_minutes, max_qty)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23) RETURNING id`,
+                         status, review_reasons, unit_label, unit_size, min_qty, delivery_methods, unit_price_micros, volume_discounts, delivery_minutes)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22) RETURNING id`,
     [seller.id, input.categorySlug, input.game, title, input.description ?? '', priceCents, (input.currency ?? ctx.cfg.SETTLEMENT_CURRENCY).toUpperCase(),
      input.deliveryMode, stock, input.lowStockThreshold ?? 5, Math.max(1, Math.ceil(minutes / 60)), JSON.stringify(attrs), JSON.stringify(tiers),
      screen.review ? 'review' : 'active', screen.reasons, unit.label, unit.size, unit.minQty, deliveryMethods,
-     pricing?.micros ?? null, JSON.stringify(pricing?.discounts ?? []), minutes, unit.maxQty],
+     pricing?.micros ?? null, JSON.stringify(pricing?.discounts ?? []), minutes],
   );
   if (input.bundle) {
     await ctx.db.query('UPDATE offers SET is_bundle = true WHERE id = $1', [offer.id]);
@@ -287,6 +292,62 @@ export async function createOffer(ctx: Ctx, seller: { id: string; kyc_tier: numb
   return getOffer(ctx.db, offer.id);
 }
 
+/** The commission rate a new listing by this seller carries (the launch promo rate for a seller's very first listing). */
+export async function listingRateBps(ctx: Ctx, sellerId: string) {
+  const t = await sellerTier(ctx.db, sellerId);
+  if (t.promo) return t.rateBps;
+  const u = await one<{ seller_since: string | null }>(ctx.db, 'SELECT seller_since FROM users WHERE id = $1', [sellerId]);
+  return u.seller_since ? t.rateBps : Math.min((await commissionSettings(ctx.db)).promoRateBps, t.rank.rateBps);
+}
+
+/** Round 26b: the market a seller is about to list into — buyer unit prices of other sellers' live, in-stock listings. */
+const PRICE_GUIDE_TTL_MS = 60_000;
+const priceGuideCache = new Map<string, { at: number; rows: Array<{ seller_id: string; micros: number }> }>();
+export async function priceGuide(ctx: Ctx, seller: { id: string }, q: { game: string; server?: string; faction?: string; category?: string }) {
+  const category = q.category ?? 'currency';
+  const serverKey = attributesFor(q.game, category)[0]?.key ?? 'server';
+  const key = [q.game, q.server ?? '', q.faction ?? '', category].map((v) => v.toLowerCase()).join('|');
+  const now = Date.now();
+  let hit = priceGuideCache.get(key);
+  if (!hit || now - hit.at > PRICE_GUIDE_TTL_MS) {
+    const rows = await many<{ seller_id: string; micros: string }>(
+      ctx.db,
+      `SELECT f.seller_id, ${GROSS_SQL('f.price_settlement_micros')} AS micros
+         FROM offers f JOIN users u ON u.id = f.seller_id
+        WHERE f.status = 'active' AND f.reserved_for IS NULL AND category_open(f.category_slug) AND u.status = 'active' AND u.deleted_at IS NULL
+          AND NOT (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now()))
+          AND offer_available(f.id) > 0 AND f.price_settlement_micros IS NOT NULL
+          AND lower(f.game) = lower($1) AND f.category_slug = $2
+          AND ($3::text IS NULL OR lower(f.attributes->>$4) = lower($3))
+          AND ($5::text IS NULL OR lower(f.attributes->>'faction') = lower($5))`,
+      [q.game, category, q.server ?? null, serverKey, q.faction ?? null],
+    );
+    hit = { at: now, rows: rows.map((r) => ({ seller_id: r.seller_id, micros: Number(r.micros) })) };
+    priceGuideCache.set(key, hit);
+    if (priceGuideCache.size > 500) for (const [k, v] of priceGuideCache) if (now - v.at > PRICE_GUIDE_TTL_MS) priceGuideCache.delete(k);
+  }
+  const rateBps = await listingRateBps(ctx, seller.id);
+  const net = (buyerMicros: number | null) => (buyerMicros == null ? null : Math.floor((buyerMicros * (10_000 - rateBps)) / 10_000));
+  const others = hit.rows.filter((r) => r.seller_id !== seller.id);
+  const prices = others.map((r) => r.micros).sort((a, b) => a - b);
+  const sellers = new Set(others.map((r) => r.seller_id)).size;
+  let lowest: number | null = null, median: number | null = null, recommended: number | null = null;
+  if (prices.length) {
+    lowest = prices[0]!;
+    const mid = prices.length >> 1;
+    median = prices.length % 2 ? prices[mid]! : Math.ceil((prices[mid - 1]! + prices[mid]!) / 2);
+    // Just under the lowest (1 % less, to the micro), but never below 80 % of the median.
+    recommended = Math.max(Math.round(lowest * 0.99), Math.ceil(median * 0.8), 1);
+  }
+  return {
+    game: q.game, server: q.server ?? null, faction: q.faction ?? null, category, sellers, listings: prices.length,
+    lowest_micros: lowest, median_micros: median, recommended_micros: recommended,
+    seller_net: { commission_bps: rateBps, lowest_micros: net(lowest), median_micros: net(median), recommended_micros: net(recommended) },
+    as_of: new Date(hit.at).toISOString(),
+  };
+}
+export const _resetPriceGuideCache = () => priceGuideCache.clear();
+
 /**
  * Round 26 (B10): the listing exactly as a buyer will see it, before it exists. Runs every check of createOffer and
  * prices the listing at the seller's current commission rate; nothing is written. Validation errors are the same 400s.
@@ -295,12 +356,7 @@ export async function previewOffer(ctx: Ctx, seller: { id: string; kyc_tier: num
   const { cat, attrs, title, currency, stock, unit, pricing, priceCents, tiers, minutes, deliveryMethods, screen } = await prepareOffer(ctx, seller, input);
   // The rate the listing will carry: a seller's very first listing starts the launch promo (markSellerSince), so the
   // preview prices it as if it were already listed — never at the pre-promo rate the seller would not actually pay.
-  const t = await sellerTier(ctx.db, seller.id);
-  let rateBps = t.rateBps;
-  if (!t.promo) {
-    const u = await one<{ seller_since: string | null }>(ctx.db, 'SELECT seller_since FROM users WHERE id = $1', [seller.id]);
-    if (!u.seller_since) rateBps = Math.min((await commissionSettings(ctx.db)).promoRateBps, t.rank.rateBps);
-  }
+  const rateBps = await listingRateBps(ctx, seller.id);
   const buyerUnitMicros = pricing ? grossMicros(pricing.micros, rateBps) : null;
   const buyerPriceCents = grossUp(priceCents, rateBps);
   const minOrder = pricing ? grossUp(totalCentsFor(unitMicrosFor(pricing.micros, pricing.discounts, unit.minQty), unit.minQty), rateBps) : buyerPriceCents * unit.minQty;
@@ -313,13 +369,20 @@ export async function previewOffer(ctx: Ctx, seller: { id: string; kyc_tier: num
       category_slug: input.categorySlug, category_kind: cat.kind, game: input.game, title, description: input.description ?? '',
       attributes: attrs, currency: (input.currency ?? ctx.cfg.SETTLEMENT_CURRENCY).toUpperCase(),
       delivery_mode: input.deliveryMode, delivery_minutes: minutes, delivery_time: deliveryTimeFor(minutes), delivery_methods: deliveryMethods,
-      handover_field: handover?.key ?? null, stock, unit_label: unit.label, unit_size: unit.size, min_qty: unit.minQty, max_qty: unit.maxQty,
-      price_cents: buyerPriceCents, unit_price_micros: buyerUnitMicros, unit_price: buyerUnitMicros != null ? formatUnitPrice(buyerUnitMicros) : null,
+      handover_field: handover?.key ?? null, stock, unit_label: unit.label, unit_size: unit.size, min_qty: unit.minQty, max_qty: null,
+      price_cents: buyerPriceCents, unit_price_micros: buyerUnitMicros, unit_price: buyerUnitMicros != null ? formatUnitPriceTrimmed(buyerUnitMicros) : null,
       volume_discounts: pricing?.discounts ?? [], price_tiers: tiers.map((t) => ({ ...t, priceCents: grossUp(t.priceCents, rateBps) })),
+      // Round 26b: each tier's buyer unit price, in micro-units and as text, for full-precision display.
+      volume_tiers: (pricing?.discounts ?? []).map((t) => {
+        const sellerMicros = tierMicros(pricing!.micros, t);
+        const buyerMicros = grossMicros(sellerMicros, rateBps);
+        return { ...t, seller_unit_micros: sellerMicros, seller_unit_price: formatUnitPriceTrimmed(sellerMicros), unit_price_micros: buyerMicros, unit_price: formatUnitPriceTrimmed(buyerMicros) };
+      }),
+      delivery_minutes_text: formatDeliveryMinutes(minutes),
       listing_state: currency && stock <= 0 && input.deliveryMode === 'manual' ? 'out_of_stock' : 'active',
     },
-    seller: { commission_bps: rateBps, price_cents: priceCents, unit_price_micros: pricing?.micros ?? null, unit_price: pricing ? formatUnitPrice(pricing.micros) : null },
-    buyer: { unit_price_micros: buyerUnitMicros, unit_price: buyerUnitMicros != null ? formatUnitPrice(buyerUnitMicros) : null, price_cents: buyerPriceCents, min_order_cents: Math.max(minOrder, currency ? MIN_CURRENCY_ORDER_USD_CENTS : 0), currency: ctx.cfg.SETTLEMENT_CURRENCY },
+    seller: { commission_bps: rateBps, price_cents: priceCents, unit_price_micros: pricing?.micros ?? null, unit_price: pricing ? formatUnitPriceTrimmed(pricing.micros) : null },
+    buyer: { unit_price_micros: buyerUnitMicros, unit_price: buyerUnitMicros != null ? formatUnitPriceTrimmed(buyerUnitMicros) : null, price_cents: buyerPriceCents, min_order_cents: Math.max(minOrder, currency ? MIN_CURRENCY_ORDER_USD_CENTS : 0), currency: ctx.cfg.SETTLEMENT_CURRENCY },
   };
 }
 
@@ -338,10 +401,10 @@ export async function duplicateOffer(ctx: Ctx, seller: { id: string; kyc_tier: n
     categorySlug: cur.category_slug, game: cur.game, title: kind === 'currency' ? undefined : cur.title, description: cur.description,
     currency: cur.currency, deliveryMode: cur.delivery_mode,
     stock: cur.delivery_mode === 'manual' ? (input.stock ?? Number(cur.stock)) : undefined,
-    lowStockThreshold: cur.low_stock_threshold, deliveryTime: deliveryTimeFor(cur.delivery_minutes),
+    lowStockThreshold: cur.low_stock_threshold, deliveryMinutes: Number(cur.delivery_minutes),
     warrantyDays: cur.warranty_days ?? undefined, attributes,
     priceTiers: cur.price_tiers?.length ? cur.price_tiers : undefined,
-    unitLabel: cur.unit_label, unitSize: cur.unit_size != null ? Number(cur.unit_size) : null, minQty: Number(cur.min_qty ?? 1), maxQty: cur.max_qty != null ? Number(cur.max_qty) : null,
+    unitLabel: cur.unit_label, unitSize: cur.unit_size != null ? Number(cur.unit_size) : null, minQty: Number(cur.min_qty ?? 1),
     deliveryMethods: cur.delivery_methods,
     ...(cur.unit_price_micros != null ? { unitPriceMicros: Number(cur.unit_price_micros), volumeDiscounts: cur.volume_discounts ?? [] } : { priceCents: Number(cur.price_cents) }),
   };
@@ -378,7 +441,7 @@ export async function getOffer(q: Queryable, id: string) {
   return offer;
 }
 
-export type OfferPatch = Partial<Pick<OfferInput, 'title' | 'description' | 'priceCents' | 'stock' | 'lowStockThreshold' | 'deliveryHours' | 'attributes' | 'priceTiers' | 'warrantyDays' | 'linkedAccountId' | 'unitLabel' | 'unitSize' | 'minQty' | 'maxQty' | 'deliveryMethods' | 'unitPriceMicros' | 'volumeDiscounts' | 'deliveryTime'>> & { status?: 'active' | 'paused' | 'removed' };
+export type OfferPatch = Partial<Pick<OfferInput, 'title' | 'description' | 'priceCents' | 'stock' | 'lowStockThreshold' | 'deliveryHours' | 'attributes' | 'priceTiers' | 'warrantyDays' | 'linkedAccountId' | 'unitLabel' | 'unitSize' | 'minQty' | 'deliveryMethods' | 'unitPriceMicros' | 'volumeDiscounts' | 'deliveryTime' | 'deliveryMinutes'>> & { status?: 'active' | 'paused' | 'removed' };
 
 /**
  * Update an offer with optimistic concurrency. Clients send the version they
@@ -403,9 +466,9 @@ export async function updateOffer(ctx: Ctx, sellerId: string, offerId: string, v
     if (cur.reserved_for) throw conflict('reserved_offer', 'This listing was agreed with a buyer and its terms can’t be changed');
   }
   let unit: { label: string | null; size: number | null; minQty: number; maxQty: number | null } | null = null;
-  if (patch.unitLabel !== undefined || patch.unitSize !== undefined || patch.minQty !== undefined || patch.maxQty !== undefined) {
+  if (patch.unitLabel !== undefined || patch.unitSize !== undefined || patch.minQty !== undefined) {
     unit = cleanUnit(
-      { unitLabel: patch.unitLabel === undefined ? cur.unit_label : patch.unitLabel, unitSize: patch.unitSize === undefined ? cur.unit_size : patch.unitSize, minQty: patch.minQty ?? Number(cur.min_qty), maxQty: patch.maxQty === undefined ? (cur.max_qty != null ? Number(cur.max_qty) : null) : patch.maxQty },
+      { unitLabel: patch.unitLabel === undefined ? cur.unit_label : patch.unitLabel, unitSize: patch.unitSize === undefined ? cur.unit_size : patch.unitSize, minQty: patch.minQty ?? Number(cur.min_qty) },
       cur.kind,
       patch.stock ?? Number(cur.stock),
     );
@@ -443,7 +506,7 @@ export async function updateOffer(ctx: Ctx, sellerId: string, offerId: string, v
   } else if (patch.unitPriceMicros != null || patch.volumeDiscounts?.length) {
     throw badRequest('invalid_unit', 'Only currency listings have a unit price in micro-units and volume discounts');
   }
-  const minutes = patch.deliveryTime !== undefined || patch.deliveryHours !== undefined ? deliveryMinutesFrom(patch, currency) : null;
+  const minutes = patch.deliveryTime !== undefined || patch.deliveryHours !== undefined || patch.deliveryMinutes !== undefined ? deliveryMinutesFrom(patch, currency) : null;
   let tiers: string | null = null;
   if (patch.priceTiers) tiers = JSON.stringify(cleanTiers(priceCents ?? Number(cur.price_cents), patch.priceTiers, cur.kind));
   // Edited text is screened again; a listing in review can only be removed until staff decide.
@@ -469,7 +532,7 @@ export async function updateOffer(ctx: Ctx, sellerId: string, offerId: string, v
         delivery_hours = COALESCE($10, delivery_hours), attributes = COALESCE($11::jsonb, attributes), price_tiers = COALESCE($12::jsonb, price_tiers),
         warranty_days = COALESCE($15, warranty_days),
         unit_label = CASE WHEN $16::boolean THEN $17 ELSE unit_label END, unit_size = CASE WHEN $16::boolean THEN $18::bigint ELSE unit_size END,
-        min_qty = CASE WHEN $16::boolean THEN $19::bigint ELSE min_qty END, max_qty = CASE WHEN $16::boolean THEN $27::bigint ELSE max_qty END,
+        min_qty = CASE WHEN $16::boolean THEN $19::bigint ELSE min_qty END,
         removed_at = CASE WHEN $9 = 'removed' THEN now() ELSE removed_at END,
         linked_account_id = CASE WHEN $20::boolean THEN $21::uuid ELSE linked_account_id END,
         delivery_methods = CASE WHEN $22::boolean THEN $23::text[] ELSE delivery_methods END,
@@ -482,7 +545,7 @@ export async function updateOffer(ctx: Ctx, sellerId: string, offerId: string, v
      !!unit, unit?.label ?? null, unit?.size ?? null, unit?.minQty ?? null,
      patch.linkedAccountId !== undefined, patch.linkedAccountId ?? null,
      methods !== undefined, methods ?? null,
-     micros, discounts, minutes, unit?.maxQty ?? null],
+     micros, discounts, minutes],
   );
   if (res.rowCount === 0) {
     const now = await maybeOne(ctx.db, 'SELECT seller_id, version FROM offers WHERE id = $1', [offerId]);
