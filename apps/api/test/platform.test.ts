@@ -25,8 +25,9 @@ describe('market search', () => {
     await h.ctx.db.query(`UPDATE offers SET game = 'Elden Ring' WHERE title LIKE 'Elden Ring%'`);
     await mk(sellerB, { title: 'Valorant Immortal account', categorySlug: 'accounts', deliveryMode: 'manual', priceCents: 150_00 });
     await h.ctx.db.query(`UPDATE offers SET game = 'Valorant' WHERE title LIKE 'Valorant%'`);
-    await mk(sellerB, { title: 'Cheap Elden Ring runes 10M', categorySlug: 'currency', deliveryMode: 'manual', stock: 5, priceCents: 5_00 });
-    await h.ctx.db.query(`UPDATE offers SET game = 'Elden Ring' WHERE title LIKE 'Cheap Elden%'`);
+    // Round 26: currency titles are built by the API; this one is set in the database as a pre-Round-26 listing would be.
+    await mk(sellerB, { title: 'Cheap Elden Ring runes 10M', description: 'Cheap Elden Ring runes 10M', categorySlug: 'currency', deliveryMode: 'manual', stock: 5, priceCents: 5_00 } as any);
+    await h.ctx.db.query(`UPDATE offers SET game = 'Elden Ring', title = 'Cheap Elden Ring runes 10M' WHERE description LIKE 'Cheap Elden%'`);
     await mk(sellerB, { title: 'Out of stock key', priceCents: 1_00 }); // auto, stock uploaded
     const oos = await makeOffer(sellerB, { title: 'Sold out gift card', categorySlug: 'gift-cards', priceCents: 2_00 }); // no stock
     void oos;

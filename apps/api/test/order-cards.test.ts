@@ -23,7 +23,7 @@ describe('order refs, official order messages and the safety panel', () => {
     const cards = async () => (await buyer.api.get(`/v1/chat/rooms/${detail.room_id}/messages`)).body.filter((m: any) => m.kind === 'system_order').map((m: any) => JSON.parse(m.body));
     let seen = await cards();
     expect(seen.map((c: any) => c.status)).toEqual(['awaiting_payment', 'paid']);
-    expect(seen[1]).toMatchObject({ order_id: order.id, ref: order.ref, title: '10M silver', character_name: 'Pat_of_Caerleon', quantity: 1 });
+    expect(seen[1]).toMatchObject({ order_id: order.id, ref: order.ref, title: offer.title, character_name: 'Pat_of_Caerleon', quantity: 1 });
     expect(seen[1]).not.toHaveProperty('amount_cents');
     // Every card comes from the server: a user cannot send that kind.
     expect((await buyer.api.post(`/v1/chat/rooms/${detail.room_id}/messages`, { body: '{"status":"completed"}', kind: 'system_order' })).body.kind).toBe('text');

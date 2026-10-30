@@ -38,7 +38,7 @@ describe('release rule: held until the buyer confirms', () => {
     expect(fu.status, JSON.stringify(fu.body)).toBe(201);
     expect((await seller.api.post(`/v1/orders/${order.id}/follow-up`, {})).body.error.code).toBe('already_open');
     const ticket = (await seller.api.get(`/v1/support/tickets/${fu.body.ticketId}`)).body;
-    expect(ticket.subject).toMatch(/^Release request: Gold 10k/);
+    expect(ticket.subject).toMatch(new RegExp(`^Release request: ${offer.title}`)); // Round 26: the API titles currency listings
     expect(ticket.priority).toBe('high');
     const queue = (await support.api.get('/v1/admin/orders/unconfirmed')).body;
     expect(queue.find((o: any) => o.id === order.id)).toMatchObject({ open_tickets: 1, seller_name: expect.any(String) });

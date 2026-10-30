@@ -72,6 +72,9 @@ const MODE: AttributeDef = { key: 'mode', label: 'Mode', type: 'select', options
 const ALBION_SERVER: AttributeDef = { key: 'server', label: 'Server', type: 'select', options: ['Americas', 'Europe', 'Asia'], required: true };
 const AION_REGIONS = ['North America', 'Europe', 'Asia', 'Middle East'] as const;
 const AION_SERVER: AttributeDef = { key: 'server', label: 'Server', type: 'text', required: true };
+/** Round 26 (B5): Aion and Aion 2 have servers AND factions; the faction is required there and nowhere else. */
+export const AION_FACTIONS = ['Elyos', 'Asmodian'] as const;
+const AION_FACTION: AttributeDef = { key: 'faction', label: 'Faction', type: 'select', options: [...AION_FACTIONS], required: true };
 
 /**
  * Where a game delivers in-game, the buyer gives the name the seller trades with. Only games that
@@ -158,8 +161,8 @@ export const GAME_SETS: Record<string, Record<string, AttributeDef[]>> = {
   'path of exile': { currency: [league('path of exile'), MODE], items: [league('path of exile'), MODE], boosting: [league('path of exile'), MODE] },
   'path of exile 2': { currency: [league('path of exile 2'), MODE], items: [league('path of exile 2'), MODE], boosting: [league('path of exile 2'), MODE] },
   'albion online': { currency: [ALBION_SERVER], items: [ALBION_SERVER], boosting: [ALBION_SERVER] },
-  aion: { currency: [AION_SERVER, region(AION_REGIONS, true)], items: [AION_SERVER, region(AION_REGIONS, true)], boosting: [AION_SERVER, region(AION_REGIONS, true)] },
-  'aion 2': { currency: [AION_SERVER, region(AION_REGIONS, true)], items: [AION_SERVER, region(AION_REGIONS, true)], boosting: [AION_SERVER, region(AION_REGIONS, true)] },
+  aion: { currency: [AION_SERVER, region(AION_REGIONS, true), AION_FACTION], items: [AION_SERVER, region(AION_REGIONS, true), AION_FACTION], boosting: [AION_SERVER, region(AION_REGIONS, true), AION_FACTION] },
+  'aion 2': { currency: [AION_SERVER, region(AION_REGIONS, true), AION_FACTION], items: [AION_SERVER, region(AION_REGIONS, true), AION_FACTION], boosting: [AION_SERVER, region(AION_REGIONS, true), AION_FACTION] },
   'old school runescape': {
     currency: [{ key: 'method', label: 'Delivery method', type: 'select', options: ['Trade', 'Grand Exchange', 'Drop party'] }],
     accounts: [{ key: 'type', label: 'Account type', type: 'select', options: ['Main', 'Pure', 'Ironman', 'Hardcore Ironman', 'Skiller'] }],
@@ -202,4 +205,12 @@ export function cleanAttributes(game: string, category: string, input: Record<st
   const missing = !opts.partial && defs.find((d) => d.required && !out[d.key]);
   if (missing) return { ok: false, error: `${missing.label} is required for ${game} listings` };
   return { ok: true, value: out };
+}
+
+/** Round 26 (B4): the automatic title of a currency listing — game · server/league/region · faction (when the game has one). */
+export function currencyTitle(game: string, category: string, attrs: Record<string, string>): string {
+  const defs = attributesFor(game, category);
+  const first = defs[0] ? attrs[defs[0].key] : undefined;
+  const faction = attrs.faction;
+  return [game.trim(), first, faction].filter((x): x is string => !!x && x.trim().length > 0).join(' · ');
 }

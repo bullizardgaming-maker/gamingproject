@@ -13,4 +13,4 @@ export const badRequest = (code: string, msg: string, details?: unknown) => new 
 export const unauthorized = (msg = 'Authentication required') => new AppError(401, 'unauthorized', msg);
 export const forbidden = (code: string, msg: string) => new AppError(403, code, msg);
 export const notFound = (what: string) => new AppError(404, 'not_found', `${what} not found`);
-export const conflict = (code: string, msg: string) => new AppError(409, code, msg);
+export const conflict = (code: string, msg: string, details?: unknown) => new AppError(409, code, msg, details);

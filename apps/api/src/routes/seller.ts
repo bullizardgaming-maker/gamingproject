@@ -9,7 +9,7 @@ import { MAX_SHOWN_BADGES, earnedBadges, setShownBadges, shownBadges } from '../
 import { onboardingStatus, rulesTestFor, submitRulesTest } from '../domain/onboarding.js';
 import { recordSignals } from '../domain/fraud.js';
 import { sellerAvailable } from '../domain/ledger.js';
-import { createOffer, getOffer, requireSeller, submitOwnerProof, updateOffer, uploadInventory } from '../domain/offers.js';
+import {createOffer, getOffer, requireSeller, submitOwnerProof, updateOffer, uploadInventory, duplicateOffer, previewOffer, setListingState } from '../domain/offers.js';
 import { createSellerCode, endSale, listSellerCodes, setSale, setSellerCodeActive } from '../domain/discounts.js';
 import { trustSummary } from '../domain/trust.js';
 import { exportListings, importListings } from '../domain/bulkListings.js';
@@ -43,8 +43,8 @@ const Id = z.object({ id: z.string().uuid() });
 export const OfferBody = z.object({
   categorySlug: z.string(),
   game: z.string().trim().min(1).max(80),
-  title: z.string().trim().min(3).max(140),
-  description: z.string().max(5_000).optional(),
+  title: z.string().trim().max(140).optional().describe('Required except for currency listings (Round 26: their title is game · server · faction, built by the API)'),
+  description: z.string().max(5_000).optional().describe('Round 26: shown on every listing; put delivery notes for the buyer here'),
   priceCents: z.number().int().positive().max(100_000_00).optional().describe('Price of one unit in minor units (required except for currency listings, which give unitPrice)'),
   currency: z.string().length(3).toUpperCase().optional().describe('Listing currency (e.g. USD, EUR, EGP)'),
   deliveryMode: z.enum(['auto', 'manual']),
@@ -76,6 +76,7 @@ export const OfferBody = z.object({
   unitLabel: z.string().trim().max(12).nullable().optional().describe('Currency sold by amount: what one unit of quantity is, e.g. "M", "k", "orbs"'),
   unitSize: z.number().int().min(1).max(1_000_000_000_000).nullable().optional().describe('Game currency per unit, e.g. 1000000 for "M"'),
   minQty: z.number().int().min(1).max(2_000_000_000).optional().describe('Smallest order, in units (default 1)'),
+  maxQty: z.number().int().min(1).max(2_000_000_000).nullable().optional().describe('Round 26 (B1): the most a buyer may order at once; null = no cap'),
   deliveryMethods: z.array(z.string().max(20)).max(10).nullable().optional().describe('Round 24: delivery methods from the game\'s list (f2f, mail, market, uid), at least one; null = all'),
 });
 
@@ -224,13 +225,24 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/seller/offers', async (req) =>
     many(
       ctx.db,
-      `SELECT f.*
+      `SELECT f.*, CASE WHEN f.status = 'active' AND f.available <= 0 THEN 'out_of_stock' ELSE f.status END AS listing_state
          FROM offers f WHERE seller_id = $1 AND status <> 'removed' ORDER BY created_at DESC`,
       [me(req).id],
     ),
   );
 
   app.post('/offers', async (req, reply) => reply.status(201).send(await createOffer(ctx, me(req), offerInput(OfferBody.parse(req.body)))));
+  /** Round 26 (B10): the listing as the buyer will see it (buyer prices at the seller's rate), without creating it. */
+  app.post('/offers/preview', async (req) => previewOffer(ctx, me(req), offerInput(OfferBody.parse(req.body))));
+  /** Round 26 (B3): copy a listing to another server; stock starts at what the seller enters. */
+  app.post('/offers/:id/duplicate', async (req, reply) => {
+    const body = z.object({ attributes: z.record(z.string().max(30), z.string().max(60)).optional(), stock: z.number().int().min(0).max(2_000_000_000).optional() }).parse(req.body ?? {});
+    return reply.status(201).send(await duplicateOffer(ctx, me(req), Id.parse(req.params).id, body));
+  });
+  /** Round 26 (B2): pause / resume / soft delete (open orders → pause only). */
+  app.post('/offers/:id/pause', async (req) => setListingState(ctx, me(req).id, Id.parse(req.params).id, 'pause'));
+  app.post('/offers/:id/resume', async (req) => setListingState(ctx, me(req).id, Id.parse(req.params).id, 'resume'));
+  app.delete('/offers/:id', async (req) => setListingState(ctx, me(req).id, Id.parse(req.params).id, 'delete'));
 
   /** Founding Sellers: free featured spots during the launch (see dashboard.founding for the allowance). */
   app.post('/offers/:id/feature', async (req) => featureListing(ctx, me(req).id, Id.parse(req.params).id));
@@ -242,7 +254,7 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     return getOffer(ctx.db, Id.parse(req.params).id);
   });
   app.patch('/offers/:id', async (req) => {
-    const body = OfferBody.pick({ title: true, description: true, priceCents: true, stock: true, lowStockThreshold: true, deliveryHours: true, deliveryTime: true, attributes: true, priceTiers: true, warrantyDays: true, linkedAccountId: true, unitLabel: true, unitSize: true, minQty: true, deliveryMethods: true, unitPrice: true, unitPriceMicros: true, volumeDiscounts: true })
+    const body = OfferBody.pick({ title: true, description: true, priceCents: true, stock: true, lowStockThreshold: true, deliveryHours: true, deliveryTime: true, attributes: true, priceTiers: true, warrantyDays: true, linkedAccountId: true, unitLabel: true, unitSize: true, minQty: true, maxQty: true, deliveryMethods: true, unitPrice: true, unitPriceMicros: true, volumeDiscounts: true })
       .partial()
       .extend({ version: z.number().int().min(0), status: z.enum(['active', 'paused', 'removed']).optional() })
       .parse(req.body);

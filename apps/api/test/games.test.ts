@@ -21,8 +21,8 @@ const poeOffer = (seller: any, league = 'Standard', extra: Record<string, unknow
 
 describe('launch games', () => {
   it('has the listing fields each launch game uses, and a character name only where the game delivers in-game', async () => {
-    expect(attributesFor('Aion', 'currency').map((d) => [d.key, d.required])).toEqual([['server', true], ['region', true]]);
-    expect(attributesFor('Aion 2', 'items').map((d) => d.key)).toEqual(['server', 'region']);
+    expect(attributesFor('Aion', 'currency').map((d) => [d.key, d.required])).toEqual([['server', true], ['region', true], ['faction', true]]); // Round 26: Elyos / Asmodian
+    expect(attributesFor('Aion 2', 'items').map((d) => d.key)).toEqual(['server', 'region', 'faction']);
     expect(attributesFor('Albion Online', 'currency')[0]).toMatchObject({ key: 'server', options: ['Americas', 'Europe', 'Asia'], required: true });
     expect(attributesFor('Path of Exile', 'currency').map((d) => d.key)).toEqual(['league', 'mode']);
     expect(attributesFor('Path of Exile 2', 'items').map((d) => d.key)).toEqual(['league', 'mode']);

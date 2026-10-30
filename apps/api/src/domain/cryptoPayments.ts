@@ -202,11 +202,48 @@ export interface CryptoPaymentView {
 }
 
 const VIEW = 'id, payment_id, pay_currency, pay_address, pay_extra_id, pay_amount::text, price_usd::text, price_currency, price_amount::text, fx_rate::text, actually_paid::text, actually_paid_usd::text, status, expires_at, created_at';
+/** Columns the buyer's `state` is derived from (not sent to the buyer themselves). */
+const STATE_COLS = 'applied_at, credited_cents::text, review_reason, outcome_amount::text';
+
+/** Round 26 (A2): what the buyer should understand about a payment row, in one word. */
+export type PaymentState = 'waiting' | 'confirming' | 'received_applying' | 'paid' | 'underpaid' | 'held_for_review' | 'credited_to_balance' | 'failed' | 'expired';
+export function paymentState(r: { status: string; applied_at: string | null; credited_cents: string | null; review_reason: string | null; expires_at: string | null }, orderStatus: string): PaymentState {
+  if (r.review_reason) return 'held_for_review';
+  if (r.applied_at) return 'paid';
+  if (Number(r.credited_cents ?? 0) > 0 || r.status === 'credited') return 'credited_to_balance';
+  switch (r.status) {
+    case 'finished':
+    case 'confirmed':
+    case 'sending':
+      // The provider has the money; the order is funded as soon as the IPN/poll applies it (or it is waiting on the rest).
+      return orderStatus === 'awaiting_payment' ? 'received_applying' : 'paid';
+    case 'partially_paid':
+      return 'underpaid';
+    case 'confirming':
+      return 'confirming';
+    case 'failed':
+    case 'refunded':
+      return 'failed';
+    case 'expired':
+      return 'expired';
+    default:
+      return r.expires_at && new Date(r.expires_at) < new Date() && orderStatus === 'awaiting_payment' ? 'expired' : 'waiting';
+  }
+}
 
 export async function paymentsFor(q: Queryable, ref: PayableRef) {
   const p = 'orderId' in ref ? { kind: 'order', id: ref.orderId } : { kind: 'checkout', id: ref.checkoutId };
-  const rows = await many<CryptoPaymentView>(q, `SELECT ${VIEW} FROM crypto_payments WHERE ${whereRef(p)} ORDER BY created_at`, [p.id]);
-  return rows.map((r) => ({ ...r, pay_currency_name: coinName(r.pay_currency) }));
+  const status = await maybeOne<{ status: string }>(q, p.kind === 'order' ? 'SELECT status FROM orders WHERE id = $1' : 'SELECT status FROM checkouts WHERE id = $1', [p.id]);
+  const orderStatus = status?.status ?? 'awaiting_payment';
+  const rows = await many<CryptoPaymentView & { applied_at: string | null; credited_cents: string | null; review_reason: string | null; outcome_amount: string | null }>(
+    q, `SELECT ${VIEW}, ${STATE_COLS} FROM crypto_payments WHERE ${whereRef(p)} ORDER BY created_at`, [p.id],
+  );
+  return rows.map(({ applied_at, credited_cents, review_reason, outcome_amount: _o, ...r }) => ({
+    ...r,
+    pay_currency_name: coinName(r.pay_currency),
+    state: paymentState({ ...r, applied_at, credited_cents, review_reason }, orderStatus),
+    order_status: orderStatus,
+  }));
 }
 export const paymentsForOrder = (q: Queryable, orderId: string) => paymentsFor(q, { orderId });
 
@@ -326,9 +363,12 @@ export async function startCryptoPayment(ctx: Ctx, ref: PayableRef, buyerId: str
 export async function refreshCryptoPayment(ctx: Ctx, ref: PayableRef, buyerId: string, paymentId: string) {
   const np = provider(ctx);
   const o = await payable(ctx.db, ref, buyerId, false);
-  const row = await maybeOne<{ status: string }>(ctx.db, `SELECT status FROM crypto_payments WHERE ${whereRef(o)} AND payment_id = $2`, [o.id, paymentId]);
+  const row = await maybeOne<{ status: string; applied_at: string | null; credited_cents: string | null; review_reason: string | null }>(ctx.db, `SELECT status, applied_at, credited_cents, review_reason FROM crypto_payments WHERE ${whereRef(o)} AND payment_id = $2`, [o.id, paymentId]);
   if (!row) throw notFound('Payment');
-  if (['finished', 'failed', 'refunded', 'expired'].includes(row.status)) return paymentsFor(ctx.db, ref);
+  // Round 26 (A1): a row the provider calls finished is final only once its money went somewhere (funded the order,
+  // credited the balance, or is held for a person). A finished row that applied nothing is asked about again.
+  const settledRow = row.applied_at || Number(row.credited_cents ?? 0) > 0 || row.review_reason || o.status !== 'awaiting_payment';
+  if (['failed', 'refunded', 'expired'].includes(row.status) || (row.status === 'finished' && settledRow)) return paymentsFor(ctx.db, ref);
   try {
     const p = await np.getPayment(paymentId); // a failure here only means no fresh status: the list below is still answered
     await applyCryptoPayment(ctx, {
@@ -459,7 +499,10 @@ function expectedFeeCents(ctx: Ctx, rows: Array<{ actually_paid_usd: string | nu
   let cents = 0;
   for (const r of rows) {
     const f = r.raw?.fee;
-    const parts = f && typeof f === 'object' ? [f.depositFee, f.withdrawalFee, f.serviceFee].map(Number).filter((n) => Number.isFinite(n) && n >= 0) : [];
+    // Round 26: the IPN's fee object is in whatever coin it names (the pay coin, in NOWPayments' own example); only a
+    // USD stablecoin figure is USD. Anything else falls back to the expected rate of the invoice.
+    const usdCoin = f && typeof f === 'object' && typeof f.currency === 'string' && /^usd[tc]/i.test(f.currency);
+    const parts = usdCoin ? [f.depositFee, f.withdrawalFee, f.serviceFee].map(Number).filter((n) => Number.isFinite(n) && n >= 0) : [];
     cents += parts.length ? toCents(parts.reduce((a, b) => a + b, 0)) : Math.round((toCents(Number(r.actually_paid_usd ?? 0)) * ctx.cfg.NOWPAYMENTS_FEE_BPS) / 10_000);
   }
   return cents;
@@ -480,17 +523,21 @@ export function depositUsd(
   ev: { actuallyPaidUsd: number | null; actuallyPaid: number; payAmount: number; priceUsd: number; raw?: unknown },
 ): { ok: true; usd: number } | { ok: false; reason: string } {
   const coinShare = ev.payAmount > 0 ? ev.actuallyPaid / ev.payAmount : 0;
-  if (inv.price_currency === 'USD' || !Number(inv.price_amount)) return { ok: true, usd: ev.actuallyPaidUsd ?? coinShare * ev.priceUsd };
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  // Round 26 (A1, the staging bug): NOWPayments sends `actually_paid_at_fiat: 0` whenever it has no fiat valuation —
+  // its own IPN example does, the sandbox always does. Zero is "not provided", never "the buyer paid nothing": the
+  // coins that arrived are valued in proportion to the invoice (actually_paid / pay_amount × the invoiced amount).
+  const fiat = ev.actuallyPaidUsd != null && ev.actuallyPaidUsd > 0 ? ev.actuallyPaidUsd : null;
+  // The invoice's own figure (price_usd for USD; price_amount × its USD value for EUR) is what the coins were priced at.
+  const priceUsd = Number(inv.price_usd) > 0 ? Number(inv.price_usd) : ev.priceUsd;
+  if (inv.price_currency === 'USD' || !Number(inv.price_amount)) return { ok: true, usd: fiat ?? round2(coinShare * priceUsd) };
   const invoiced = Number(inv.price_amount);
-  const usdPerInvoiced = Number(inv.price_usd) / invoiced;
+  const usdPerInvoiced = priceUsd / invoiced;
   const raw = (ev.raw ?? {}) as Record<string, unknown>;
   if (typeof raw.price_currency === 'string' && raw.price_currency.toUpperCase() !== inv.price_currency) {
     return { ok: false, reason: `ipn_price_currency_${raw.price_currency.toLowerCase()}` };
   }
-  const round2 = (n: number) => Math.round(n * 100) / 100;
-  if (ev.actuallyPaidUsd == null) return { ok: true, usd: round2(coinShare * invoiced * usdPerInvoiced) };
-  const fiat = ev.actuallyPaidUsd;
-  if (fiat === 0) return { ok: true, usd: 0 };
+  if (fiat == null) return { ok: true, usd: round2(coinShare * invoiced * usdPerInvoiced) };
   if (!(coinShare > 0)) return { ok: false, reason: 'fiat_value_without_coins' };
   const asEur = coinShare * invoiced;
   const near = (a: number, b: number) => Math.abs(a - b) <= Math.max(0.02 * b, 0.01);
@@ -651,4 +698,59 @@ export async function markRefundSent(ctx: Ctx, id: string, staffId: string, inpu
     await enqueueEmail(s.tx, order.buyer_id, 'crypto_refund_sent', { order_id: order.id, amount_cents: Number(r.amount_cents), currency: r.currency, tx_hash: input.txHash.trim() });
     return refundView(s.tx, id);
   });
+}
+
+// ---------------------------------------------------------------------------
+// Round 26 (A3): Ops → Crypto payments. Render's free plan has no logs; this list is what staff look at instead.
+// ---------------------------------------------------------------------------
+export async function listCryptoPayments(q: Queryable, filter: { status?: string; q?: string; limit?: number } = {}) {
+  const rows = await many<any>(
+    q,
+    `SELECT p.id, p.payment_id, p.purchase_id, p.order_id, p.checkout_id, o.ref AS order_ref, o.status AS order_status, c.status AS checkout_status,
+            p.status, p.pay_currency, p.pay_amount::text, p.actually_paid::text, p.actually_paid_usd::text, p.price_usd::text, p.price_currency, p.price_amount::text, p.fx_rate::text,
+            p.outcome_amount::text, p.outcome_currency, p.applied_at, p.applied_cents, p.credited_cents, p.review_reason, p.review_flagged_at, p.review_resolved_at,
+            p.fx_gap_cents, p.fx_gap_bps, p.expires_at, p.created_at, p.updated_at AS last_ipn_at,
+            COALESCE(o.buyer_id, c.buyer_id) AS buyer_id, u.display_name AS buyer_name
+       FROM crypto_payments p
+       LEFT JOIN orders o ON o.id = p.order_id LEFT JOIN checkouts c ON c.id = p.checkout_id
+       LEFT JOIN users u ON u.id = COALESCE(o.buyer_id, c.buyer_id)
+      WHERE ($1::text IS NULL OR p.status = $1)
+        AND ($2::text IS NULL OR p.payment_id = $2 OR o.ref = $2 OR p.order_id::text = $2 OR p.checkout_id::text = $2)
+      ORDER BY p.created_at DESC LIMIT $3`,
+    [filter.status ?? null, filter.q?.trim() || null, Math.min(filter.limit ?? 100, 500)],
+  );
+  return rows.map((r) => ({
+    ...r,
+    pay_currency_name: coinName(r.pay_currency),
+    state: paymentState(r, r.order_status ?? r.checkout_status ?? 'awaiting_payment'),
+  }));
+}
+
+/**
+ * Staff "Re-check with NOWPayments": ask the provider for the payment as it is now and run it through the same path an
+ * IPN takes (funds the order, credits the balance, or holds it). The row's provider answer is kept on it.
+ */
+export async function recheckCryptoPayment(ctx: Ctx, paymentId: string) {
+  const np = provider(ctx);
+  const row = await maybeOne<{ id: string; order_id: string | null; checkout_id: string | null; status: string }>(ctx.db, 'SELECT id, order_id, checkout_id, status FROM crypto_payments WHERE payment_id = $1', [paymentId]);
+  if (!row) throw notFound('Payment');
+  const p = await viaProvider(ctx, 'get_payment', () => np.getPayment(paymentId));
+  const before = row.status;
+  await applyCryptoPayment(ctx, {
+    type: 'crypto.payment',
+    paymentId: String(p.payment_id),
+    orderId: p.order_id ? String(p.order_id) : (row.order_id ?? row.checkout_id)!,
+    purchaseId: p.purchase_id != null ? String(p.purchase_id) : null,
+    status: p.payment_status,
+    payCurrency: p.pay_currency,
+    payAmount: Number(p.pay_amount),
+    actuallyPaid: Number(p.actually_paid ?? 0),
+    actuallyPaidUsd: p.actually_paid_at_fiat != null ? Number(p.actually_paid_at_fiat) : null,
+    priceUsd: Number(p.price_amount),
+    outcomeAmount: p.outcome_amount != null ? Number(p.outcome_amount) : null,
+    outcomeCurrency: p.outcome_currency ?? null,
+    raw: p,
+  });
+  const after = (await listCryptoPayments(ctx.db, { q: paymentId, limit: 1 }))[0];
+  return { before, provider_status: p.payment_status, payment: after };
 }

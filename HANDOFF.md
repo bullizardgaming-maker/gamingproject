@@ -922,6 +922,77 @@ Suites: API 85 files / 778 tests green (multinode excluded), typecheck clean, `n
 image start check: build, runtime imports, migrate through 081, `/readyz` + `/healthz` as `APP_ENV=staging` with
 `PAYMENT_PROVIDER=nowpayments` and `SANDBOX_MODE=false` (proxy CA in a scratch Dockerfile copy, repo Dockerfile unchanged).
 
+## Round 26 (Oct 30, 2026) — review of Rounds 24–25b, the crypto "disappears" fix, listing features (`claude/round-26-brief.md`)
+
+Migration **082** (`082_round26.sql`). New test files `test/round26-crypto.test.ts` (A1–A3, 6 cases) and
+`test/round26.test.ts` (B1–B10, 6 cases). No seller/merchant API, no API keys, no phone, no SMS, no auto-release.
+
+### Independent review of 6f5092e / cabbfe5 / e71d094 / c37b79b (by severity)
+
+| Sev | Where | Finding | Fixed |
+|---|---|---|---|
+| **High** | `cryptoPayments.ts` `depositUsd` (was :489) | NOWPayments sends `actually_paid_at_fiat: 0` whenever it has no fiat valuation — its own IPN example does, and the sandbox always does. `ev.actuallyPaidUsd ?? …` took 0 as "the buyer paid $0": `paidSoFarCents` = 0 → the IPN was treated as underpaid, the order never funded, the row sat as `finished`. **This is the staging bug**: the payment showed until the order lapsed. Same for EUR invoices (`fiat === 0 → usd: 0`). | Yes: 0 / missing = "not provided"; coins are valued in proportion to the invoice (`actually_paid / pay_amount × price`), USD and EUR. |
+| **High** | `refreshCryptoPayment` (was :332) | The poll returned early for every row with status `finished` — including one that never applied anything — so even when the IPN was lost the buyer's own polling could not recover it. | Yes: a finished row is final only once it funded the order, was credited, or is held for review; otherwise the provider is asked again and the result applied. |
+| Medium | `server.ts` origin guard | PSP webhooks were subject to the Cloudflare `X-Origin-Auth` check: an IPN sent to the origin directly (NOWPayments → `*.onrender.com`, or a Transform Rule that misses the path) was a 403 before the signature was even read. | Yes: `/v1/payments/webhook/*` is exempt (the HMAC is its authentication; bad signature still 401). |
+| Medium | `expectedFeeCents` (was :462) | The IPN `fee` object is in whatever coin it names (the pay coin in NOWPayments' example: BTC); it was read as USD, so an EUR invoice's `psp_fee` / `crypto_fx` split was wrong for any non-stablecoin payment (a 0.0000037 BTC fee → 0 cents of fee, the whole gap to `fx_pnl`). | Yes: only a USD-stablecoin fee object is USD; otherwise `NOWPAYMENTS_FEE_BPS` of the deposit. |
+| Low | `search.ts` `filterSql` (:86–89) | Price-range filters wrap `price_settlement_micros` in `GROSS_SQL` (× the seller's rate), so `offers_market` cannot serve a range scan; every `/offers` request also materialises `OFFER_LIST_SQL` for the count and the category facets. Fine at beta volume (thousands of listings); revisit above ~50k listings (store the buyer price, or count on a slim projection). | No (noted). |
+| — | migrations 079–081 | Read against real-shaped data: 079's tier-1 promotion of banned/deleted rows is undone by 080; 080's `amount_usd_cents` backfill divides by the EUR-per-USD rate (right direction); 081 drops/recreates the two triggers and functions that name the retyped columns. Nothing found. The money paths (unit micros rounded up, $1 minimum, gross-up, volume discounts + promo + seller code, seller net = seller price, refunds to balance, EUR invoice at the 15-min lock, `use_checkout` + `alignCartOrders`, USDT-only withdrawals, ticket → dispute needs `disputes.manage` as the playbook says, delivery info only to the parties, no phone requirement left) hold under the existing suites and the new sandbox-shaped cases. | — |
+
+**Root cause of the staging bug, in one line:** the sandbox's `finished` IPN carries `actually_paid_at_fiat: 0`; we read 0 as the paid value, so the order was never funded and the poll never retried a `finished` row. Also check on staging that `NOWPAYMENTS_IPN_SECRET` is the sandbox IPN secret and the IPN URL in the NOWPayments dashboard is `<PUBLIC_API_URL>/v1/payments/webhook/nowpayments` (the origin guard no longer blocks it either way).
+
+### A. Crypto payments — contract for the front end
+
+- **A2** every row in `crypto_payments` (order view `crypto_payments[]`, checkout view, `…/refresh`) carries
+  `state`: `waiting | confirming | received_applying | paid | underpaid | held_for_review | credited_to_balance | failed | expired`,
+  and `order_status` (the order's or cart's status). `received_applying` = the provider has the money and the order
+  is being funded (a poll or re-check completes it); `paid` once applied. Web: never go blank — show the state's
+  message and poll `/refresh` until `paid`, then the order view.
+- **A3 (staff)** `GET /v1/admin/crypto/payments?status=&q=&limit=` (`ledger.view`: support, lead, finance, admin,
+  compliance) → rows with `payment_id, purchase_id, order_id, order_ref, checkout_id, order_status, status, state,
+  pay_currency(+_name), pay_amount, actually_paid, actually_paid_usd, price_usd, price_currency, price_amount, fx_rate,
+  outcome_amount, outcome_currency, applied_at, applied_cents, credited_cents, review_reason, review_flagged_at,
+  review_resolved_at, fx_gap_cents, fx_gap_bps, expires_at, created_at, last_ipn_at, buyer_id, buyer_name`.
+  `q` matches a payment id, an order ref (`BZ…`), an order id or a checkout id.
+  `POST /v1/admin/crypto/payments/:paymentId/recheck` (`treasury.request`: finance, admin): asks NOWPayments for the
+  payment and runs it through the IPN path (funds, credits or holds); returns `{ before, provider_status, payment }`;
+  audited `crypto_payment.recheck`. Provider down → 503 `payment_provider_unavailable`.
+
+### B. Listings — contract for the front end
+
+- **B1** `POST/PATCH /v1/offers`: `maxQty` (int ≥ 1, `null` = no cap; 400 `invalid_unit` below `minQty`). Reads carry
+  `max_qty`. Quotes, orders and every cart line above it: 400 `above_maximum` with `details.maxQty`.
+- **B2** `POST /v1/offers/:id/pause`, `POST /v1/offers/:id/resume`, `DELETE /v1/offers/:id` (soft delete:
+  `status = 'removed'`, `removed_at`; the row stays for order history). Errors: 409 `not_active` (pause), `not_paused`
+  (resume — an out-of-stock listing says "add stock and it goes live by itself"), `listing_removed`,
+  `has_open_orders` with `details.openOrders` (delete, also through `PATCH status: 'removed'`): a listing with an
+  order awaiting payment, paid, delivered or disputed can only be paused. Edit stays `PATCH /v1/offers/:id`.
+- **B3** `POST /v1/offers/:id/duplicate { attributes?: { server… }, stock? }` → 201 the new listing: everything copied
+  (price, discounts, methods, delivery time, units, min/max, description), the given fields replace the attributes,
+  the title is rebuilt, stock starts at `stock` (default: the source's), new `public_id`; `duplicated_from` stored.
+  Not for reserved listings or bundles (409).
+- **B4** `title` is optional in the body: **currency listings ignore it** — the API builds `game · server/league/region
+  · faction` and keeps it in step when the attributes change; other categories need it (400 `title_required`).
+  `description` (≤ 5,000, delivery notes go here) is on every listing read. 082 rebuilt existing currency titles.
+- **B5** Aion and Aion 2 (currency, items, boosting): attribute `faction` ∈ `Elyos | Asmodian`, required
+  (`/v1/catalog/attributes` lists it); Albion and Path of Exile refuse it (400 `invalid_attributes`).
+- **B8** every listing read and `GET /v1/seller/offers` carry `listing_state`: `active | out_of_stock | paused |
+  removed | review | expired`. `out_of_stock` = `status` still `active` but `available` 0: hidden from the market and
+  the server summary by itself (the stock counter is kept by trigger, so concurrent buys never oversell and a restock
+  — `PATCH stock` or an inventory upload — relists at once with no other action). A seller-paused listing stays
+  paused through a restock.
+- **B10** `POST /v1/offers/preview` (same body as create) → 200
+  `{ valid: true, would_need_review, review_reasons, listing: {…as the buyer sees it: title, description, attributes,
+  delivery_time/_minutes/_methods, min_qty, max_qty, price_cents, unit_price_micros, unit_price, volume_discounts,
+  listing_state}, seller: { commission_bps, price_cents, unit_price_micros, unit_price }, buyer: { unit_price_micros,
+  unit_price, price_cents, min_order_cents, currency } }`. Writes nothing; validation errors are the same 400s as create.
+  A seller's first listing is priced at the launch-promo rate it will actually get.
+
+Suites on this commit: API 87 files / 788 tests green (2 skipped, multinode excluded), typecheck clean, `npm audit
+--omit=dev` 0 in root and api, runtime imports ok, image start check (migrate through 082, `/readyz` + `/healthz` as
+`APP_ENV=staging`, `PAYMENT_PROVIDER=nowpayments`, `SANDBOX_MODE=false`, `PLATFORM_ACCOUNTS=live`) passed. Adjusted
+existing tests for the API-built currency titles and the Aion faction: `games`, `launch-phase`, `order-cards`,
+`platform`, `release-rule`, `round25b`.
+
 ## Suggested next round
 
 1. Handover check for Riot/Steam games without a linked listing: let the buyer link any account of the game's

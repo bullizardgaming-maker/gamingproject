@@ -21,7 +21,7 @@ describe('launch phases', () => {
 
     // Search and the game directory leave the key out; its page is gone for buyers, not for its seller.
     const found = (await client(h.app).get('/v1/offers?q=Phase')).body.items.map((o: any) => o.title);
-    expect(found).toContain('Phase gold');
+    expect(found).toContain(gold.title); // Round 26: currency titles are built by the API (game · server)
     expect(found).not.toContain('Phase key');
     expect((await client(h.app).get(`/v1/offers/${key.id}`)).status).toBe(404);
     expect((await seller.api.get(`/v1/offers/${key.id}`)).status).toBe(200);
@@ -72,9 +72,9 @@ describe('launch phases', () => {
     expect((await founder.api.post(`/v1/offers/${b.id}/feature`)).body).toMatchObject({ featuredUsed: 2 });
     expect((await founder.api.post(`/v1/offers/${c.id}/feature`)).body.error.code).toBe('no_slots');
     const titles = (await client(h.app).get('/v1/offers?game=Founding%20Game&sort=newest')).body.items.map((o: any) => o.title);
-    expect(titles[0]).toBe('Latecomer gold');
+    expect(titles[0]).toBe(newest.title); // Round 26: currency titles come from the API
     const shop = (await client(h.app).get(`/v1/offers?seller=${founder.id}&sort=newest`)).body.items;
-    expect(shop.slice(0, 2).map((o: any) => o.title).sort()).toEqual(['Founder gold A', 'Founder gold B']);
+    expect(shop.slice(0, 2).map((o: any) => o.id).sort()).toEqual([a.id, b.id].sort());
     expect(shop.map((o: any) => o.featured)).toEqual([true, true, false]);
     expect((await founder.api.del(`/v1/offers/${a.id}/feature`)).body).toMatchObject({ featuredUsed: 1 });
     expect((await founder.api.post(`/v1/offers/${c.id}/feature`)).status).toBe(200);

@@ -41,7 +41,7 @@ import { fxPosition, recordConversion } from '../domain/sellerfx.js';
 import { getInvoice, invoicePdf, issueMonthlyInvoices } from '../domain/invoices.js';
 import { decideAdjustment, listAdjustments, requestAdjustment, userLedger } from '../domain/adjustments.js';
 import { decideTreasuryWithdrawal, listTreasuryWithdrawals, requestTreasuryWithdrawal, treasuryBalance } from '../domain/treasury.js';
-import { listCryptoRefunds, markRefundSent } from '../domain/cryptoPayments.js';
+import { listCryptoRefunds, markRefundSent, listCryptoPayments, recheckCryptoPayment } from '../domain/cryptoPayments.js';
 import { recheckUnknownPayout, decideWithdrawal, listPendingWithdrawals } from '../domain/cryptoPayouts.js';
 import { commissionSettings, listRanks, updateRanks } from '../domain/commission.js';
 import { referralSettings, updateReferralSettings } from '../domain/referrals.js';
@@ -582,6 +582,20 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!w) throw notFound('Withdrawal in the unknown state');
     await audit(ctx.db, req, 'withdrawal.recheck', { type: 'withdrawal', id }, { status: w.status });
     return w;
+  });
+
+  // --- Crypto payments (Round 26 A3): the list that replaces logs, and a provider re-check -------------
+  app.get('/admin/crypto/payments', async (req) => {
+    requirePermission(req, 'ledger.view');
+    const q = z.object({ status: z.string().max(30).optional(), q: z.string().max(100).optional(), limit: z.coerce.number().int().positive().max(500).optional() }).parse(req.query);
+    return listCryptoPayments(ctx.db, q);
+  });
+  app.post('/admin/crypto/payments/:paymentId/recheck', async (req) => {
+    requirePermission(req, 'treasury.request');
+    const { paymentId } = z.object({ paymentId: z.string().min(1).max(60) }).parse(req.params);
+    const res = await recheckCryptoPayment(ctx, paymentId);
+    await audit(ctx.db, req, 'crypto_payment.recheck', { type: 'crypto_payment', id: paymentId }, { before: res.before, providerStatus: res.provider_status, state: res.payment?.state ?? null });
+    return res;
   });
 
   // --- Crypto refunds: sent by hand from the store wallet -----------------------------------

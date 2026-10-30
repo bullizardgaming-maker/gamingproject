@@ -366,11 +366,19 @@ export function usdCents(settlementCurrency: string, cents: number) {
   return cents;
 }
 
+/** Round 26 (B1): the seller's cap per order, checked on quotes, orders and every cart line. */
+function assertWithinMax(offer: { max_qty?: number | string | null; unit_label?: string | null }, quantity: number) {
+  if (offer.max_qty != null && quantity > Number(offer.max_qty)) {
+    throw badRequest('above_maximum', `This listing sells at most ${offer.max_qty}${offer.unit_label ? ` ${offer.unit_label}` : ''} per order`, { maxQty: Number(offer.max_qty) });
+  }
+}
+
 export async function quoteOrder(ctx: Ctx, buyerId: string, input: Pick<CreateOrderInput, 'offerId' | 'quantity' | 'rail' | 'promoCode' | 'useCredit' | 'currency' | 'sellerCode'>) {
   return withTx(ctx.db, async (tx) => {
-    const offer = await maybeOne(tx, `SELECT price_cents, currency, category_slug, seller_id, price_tiers, reserved_for, sale_price_cents, sale_starts_at, sale_ends_at, unit_price_micros, volume_discounts, min_qty, unit_label FROM offers WHERE id = $1 AND status = 'active'`, [input.offerId]);
+    const offer = await maybeOne(tx, `SELECT price_cents, currency, category_slug, seller_id, price_tiers, reserved_for, sale_price_cents, sale_starts_at, sale_ends_at, unit_price_micros, volume_discounts, min_qty, max_qty, unit_label FROM offers WHERE id = $1 AND status = 'active'`, [input.offerId]);
     if (!offer || (offer.reserved_for && offer.reserved_for !== buyerId)) throw notFound('Offer');
     if (input.quantity < Number(offer.min_qty ?? 1)) throw badRequest('below_minimum', `This listing sells at least ${offer.min_qty}${offer.unit_label ? ` ${offer.unit_label}` : ''} per order`);
+    assertWithinMax(offer, input.quantity);
     return priceOrder(ctx, tx, offer, buyerId, input);
   });
 }
@@ -424,6 +432,7 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
     if (offer.seller_id === buyer.id) throw forbidden('own_offer', 'You cannot buy your own offer');
     if (offer.category_kind === 'account' && input.quantity !== 1) throw badRequest('invalid_quantity', 'Accounts are sold one at a time');
     if (input.quantity < Number(offer.min_qty ?? 1)) throw badRequest('below_minimum', `This listing sells at least ${offer.min_qty}${offer.unit_label ? ` ${offer.unit_label}` : ''} per order`);
+    assertWithinMax(offer, input.quantity);
     const price = await priceOrder(ctx, s.tx, offer, buyer.id, input);
     const amount = price.amountCents;
     const rate = price.commissionBps;

@@ -120,6 +120,8 @@ export function parseTrustProxy(v: string): boolean | number | string[] {
 
 /** Health checks Render (and uptime monitors) call directly on the origin, without Cloudflare's header. */
 const ORIGIN_AUTH_EXEMPT = new Set(['/readyz', '/healthz']);
+/** Round 26 (A1): PSP webhooks are signed by the provider (HMAC) and may be sent to the origin directly. */
+const ORIGIN_AUTH_EXEMPT_PREFIX = ['/v1/payments/webhook/'];
 
 /**
  * Round 23a, behind Cloudflare: with ORIGIN_SHARED_SECRET set, only requests carrying X-Origin-Auth = the secret
@@ -132,7 +134,7 @@ export function originGuard(secret: string | undefined) {
   return async (req: FastifyRequest, reply: FastifyReply) => {
     if (!secret) return;
     const path = req.url.split('?')[0]!;
-    if (ORIGIN_AUTH_EXEMPT.has(path)) return;
+    if (ORIGIN_AUTH_EXEMPT.has(path) || ORIGIN_AUTH_EXEMPT_PREFIX.some((p) => path.startsWith(p))) return;
     const given = req.headers['x-origin-auth'];
     // Compared as SHA-256 digests: constant time, and the secret's length doesn't leak either.
     if (typeof given !== 'string' || !safeEqual(sha256(given), sha256(secret))) {

@@ -201,8 +201,9 @@ describe('L3 facets follow the text search', () => {
   it('counts only listings matching q', async () => {
     const seller = await makeUser(h, { tier: 2 });
     const base = { categorySlug: 'currency', game: 'Albion Online', deliveryMode: 'manual', stock: 10_000_000, unitPrice: '0.0003', deliveryMethods: ['f2f'], deliveryTime: '1h', attributes: { server: 'Americas' } };
-    expect((await seller.api.post('/v1/offers', { ...base, title: 'Zephyrine silver' })).status).toBe(201);
-    expect((await seller.api.post('/v1/offers', { ...base, title: 'Plain silver' })).status).toBe(201);
+    // Round 26: a currency listing's title is built by the API; its description is what the text search can match.
+    expect((await seller.api.post('/v1/offers', { ...base, description: 'Zephyrine silver, bank trade' })).status).toBe(201);
+    expect((await seller.api.post('/v1/offers', { ...base, description: 'Plain silver' })).status).toBe(201);
     const all = (await client(h.app).get('/v1/offers/facets?game=Albion%20Online&category=currency')).body;
     const some = (await client(h.app).get('/v1/offers/facets?game=Albion%20Online&category=currency&q=Zephyrine')).body;
     const am = (f: any) => f.servers.values.find((v: any) => v.name === 'Americas').count;
