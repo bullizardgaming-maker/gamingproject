@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { CircleNotch, Hourglass, Wallet } from '@phosphor-icons/react';
+import { CircleNotch, Hourglass, Wallet, CheckCircle } from '@phosphor-icons/react';
 import QRCode from 'qrcode';
 import { ApiError, api, money } from '../api';
 import { t, type MessageKey } from '../i18n';
@@ -55,6 +55,9 @@ const hm = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digi
  * An EUR price is held 15 minutes; if it lapsed, the API answers 409 fx_quote_expired with the new price, which
  * the buyer confirms before paying. A provider outage shows its message and a Retry, never an endless "Loading".
  */
+/** Order / checkout statuses that mean the money was applied. */
+const PAID_ORDER = new Set(['paid', 'delivered', 'completed', 'disputed', 'released', 'refunded']);
+
 export function CryptoCheckout({ base, amountCents, currency, onPaid }: { base: string; amountCents: number; currency: string; onPaid: () => void }) {
   const viewer = useDisplayCurrency();
   const nav = useNavigate();
@@ -100,14 +103,20 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid }: { base: 
   const underpaid = list.find((p) => stateOf(p) === 'underpaid');
   // Round 26 (A4): the money has arrived: never fall back to the coin list or a blank card while the order catches up.
   const latest = list[0] ? [...list].sort((a, b) => b.created_at.localeCompare(a.created_at))[0] : undefined;
-  const received = list.find((p) => stateOf(p) === 'received_applying' || stateOf(p) === 'paid');
+  // Round 27: once the order (or cart) is paid — the payment's state says paid, or its order_status is past
+  // awaiting payment — stop polling and hand over to the paid order. "Confirming" is only for money not yet applied.
+  const funded = list.find((p) => stateOf(p) === 'paid' || (!!p.order_status && PAID_ORDER.has(p.order_status)));
+  const received = funded ? undefined : list.find((p) => stateOf(p) === 'received_applying');
   const held = list.find((p) => stateOf(p) === 'held_for_review');
   const credited = list.find((p) => stateOf(p) === 'credited_to_balance');
   const lapsed = !open && latest && (stateOf(latest) === 'failed' || stateOf(latest) === 'expired') ? stateOf(latest) : null;
   const paidCents = list.filter((p) => ['partially_paid', 'finished', 'confirmed', 'sending'].includes(p.status)).reduce((s, p) => s + Math.round(Number(p.actually_paid_usd ?? 0) * 100), 0);
 
   // Received (or held for a person): keep asking about the payment and reloading the order until it is funded.
-  const settling = received ?? held;
+  const settling = funded ? undefined : received ?? held;
+  useEffect(() => {
+    if (funded) onPaid(); // once: the page reloads the order and shows it paid
+  }, [!!funded]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!settling || open) return;
     const every = held && !received ? 15_000 : 3_000;
@@ -125,7 +134,7 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid }: { base: 
 
   // Poll the open payment every 5 s; the API asks the provider and applies what it finds.
   useEffect(() => {
-    if (!open) return;
+    if (!open || funded) return;
     const timer = setInterval(async () => {
       try {
         const next = await api<CryptoPayment[]>(`${base}/crypto/payments/${open.payment_id}/refresh`, { method: 'POST', body: {} });
@@ -142,7 +151,7 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid }: { base: 
       }
     }, 5_000);
     return () => clearInterval(timer);
-  }, [base, open?.payment_id, amountCents, paidCents, onPaid]);
+  }, [base, open?.payment_id, amountCents, paidCents, onPaid, !!funded]);
 
   const crypto = methods?.find((m) => m.id === 'crypto');
   // EGP (or any viewer the method doesn't price in) gets the method's pay currency: USD.
@@ -212,7 +221,14 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid }: { base: 
   return (
     <div className="crypto-checkout pg-pay">
       <h2 className="sr-only">{t('crypto.title')}</h2>
-      {received && !open ? (
+      {funded ? (
+        <div className="card pay-state" role="status" aria-live="polite" data-testid="pay-paid">
+          <span className="pay-state-icon is-ok" aria-hidden><CheckCircle className="size-6" weight="fill" /></span>
+          <h3>{t('pay27.paid')}</h3>
+          <p className="small muted">{t('pay27.paidText')}</p>
+          <button type="button" className="btn ghost sm" onClick={onPaid}>{t('pay27.showOrder')}</button>
+        </div>
+      ) : received && !open ? (
         <div className="card pay-state" role="status" aria-live="polite" data-testid="pay-confirming">
           <span className="pay-state-icon is-ok" aria-hidden><CircleNotch className="size-6 auth-spin" /></span>
           <h3>{t('pay26.confirming')}</h3>

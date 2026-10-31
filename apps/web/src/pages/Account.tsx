@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import QRCode from 'qrcode';
 import { DEMO, api, money, session } from '../api';
 import { DemoSignIn } from '../demo/DemoUi';
@@ -12,9 +12,11 @@ import { useSession } from '../session';
 import { currentLocale, t } from '../i18n';
 import { usePageMeta } from '@/lib/seo';
 
-export function Login() {
+export function Login({ initialMode = 'login' }: { initialMode?: 'login' | 'register' }) {
   usePageMeta({ title: 'Sign in', noindex: true });
-  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [mode, setMode] = useState<'login' | 'register'>(initialMode);
+  const { user, loading } = useSession();
+  const location = useLocation();
   const [error, setError] = useState('');
   const [mfaToken, setMfaToken] = useState<string | null>(null);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
@@ -26,9 +28,9 @@ export function Login() {
   const [codeBusy, setCodeBusy] = useState(false);
   // Round 25c: "You're in" for a moment, then on to the shop (or where the buyer was going).
   const finish = (token: string, registered = false) => {
-    session.set(token);
     const to = registered ? '/account' : params.get('next') ?? '/';
-    setDone(registered ? 'Taking you to your account…' : 'Taking you to the shop…');
+    setDone(registered ? 'Taking you to your account…' : 'Taking you to the shop…'); // before the session lands, so the redirect below doesn't skip "You're in"
+    session.set(token);
     setTimeout(() => nav(to), 1400);
   };
 
@@ -67,6 +69,21 @@ export function Login() {
   };
 
   if (done) return <YoureIn where={done} />;
+  // Round 27: signed in already → never the sign-in page: back where they came from (?next=, the previous page) or home.
+  if (user && !loading && !mfaToken) {
+    const next = params.get('next');
+    const local = (p: string | null | undefined) => (p && p.startsWith('/') && !p.startsWith('//') && !/^\/(login|signup)\b/.test(p) ? p : null);
+    let referrer: string | null = null;
+    try {
+      const r = document.referrer ? new URL(document.referrer) : null;
+      referrer = r && r.origin === window.location.origin ? r.pathname + r.search : null;
+    } catch {
+      /* no usable referrer */
+    }
+    const back = local(next) ?? local((location.state as { from?: string } | null)?.from);
+    if (!back && location.key !== 'default') return <GoBack />; // reached in the app: one step back
+    return <Navigate to={back ?? local(referrer) ?? '/'} replace />;
+  }
   if (mfaToken) return <SignInCode onSubmit={submitCode} error={error} busy={codeBusy} onBack={() => (setMfaToken(null), setError(''))} />;
 
   return (
@@ -687,4 +704,13 @@ function CreditCard() {
       {error && <div className="alert" role="alert">{error}</div>}
     </div>
   );
+}
+
+/** Signed in on the sign-in page: step back to the page that linked here. */
+function GoBack() {
+  const nav = useNavigate();
+  useEffect(() => {
+    void nav(-1);
+  }, [nav]);
+  return null;
 }

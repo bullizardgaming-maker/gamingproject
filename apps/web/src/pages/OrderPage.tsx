@@ -306,7 +306,9 @@ export function OrderPage() {
   const paid = !['awaiting_payment', 'cancelled'].includes(order.status);
   const delivered = !!order.delivered_at || ['delivered', 'completed'].includes(order.status);
   const done = order.status === 'completed';
-  const stopped = ['disputed', 'refunded', 'charged_back', 'cancelled'].includes(order.status) || order.escrow_frozen;
+  // Round 27: the current step is yellow (waiting); red only while the order is under security review.
+  const underReview = !!order.escrow_frozen && ['paid', 'delivered'].includes(order.status);
+  const stopped = underReview;
   const steps: Array<{ label: string; sub?: string; state: 'done' | 'now' | 'stop' | '' }> = [
     { label: t('order.step.paid'), sub: paid ? [money(order.amount_cents, order.currency), hm(at('paid'))].filter(Boolean).join(' · ') : undefined, state: paid ? 'done' : 'now' },
     { label: order.proof_required || order.delivery_proof ? t('order.step.deliveredProof') : t('order.step.delivered'), sub: hm(order.delivered_at) || undefined, state: delivered ? 'done' : paid ? (stopped ? 'stop' : 'now') : '' },
@@ -371,11 +373,12 @@ export function OrderPage() {
             </div>
             <ol className="od-line" aria-label={t('order.progress')}>
               {steps.map((st) => (
-                <li key={st.label} className={st.state} aria-current={st.state === 'now' ? 'step' : undefined}>
+                <li key={st.label} className={st.state} aria-current={st.state === 'now' || st.state === 'stop' ? 'step' : undefined}>
                   <i aria-hidden /><span>{st.label}</span>
                 </li>
               ))}
             </ol>
+            {underReview && <p className="od-review" role="status" data-testid="under-review">{t('order.underReview')}</p>}
             <dl className="od-grid">
               <div><dt>{t('od.game')}</dt><dd>{order.game}</dd></div>
               <div><dt>{t('od.item')}</dt><dd dir="auto"><Link to={`/offers/${order.offer_id}`}>{order.offer_title}</Link></dd></div>
@@ -392,7 +395,7 @@ export function OrderPage() {
             <div className="od-total">
               <span className="pg-label">{isSeller ? t('od.youEarn') : t('od.total')}</span>
               <span className="od-amount num">{money(isSeller ? order.seller_net_cents : order.amount_cents, order.currency)}</span>
-              {order.escrow_frozen && order.status !== 'disputed' && <span className="small muted">{t('order.frozenNote')}</span>}
+              {order.escrow_frozen && order.status !== 'disputed' && !underReview && <span className="small muted">{t('order.frozenNote')}</span>}
             </div>
             {(isBuyer && order.status === 'delivered' && order.rail === 'fiat') || ((isBuyer || isSeller) && ['paid', 'delivered'].includes(order.status) && order.rail === 'fiat') ? (
               <div className="od-actions">
@@ -405,12 +408,20 @@ export function OrderPage() {
                         {t('order.releaseEarly')}
                       </label>
                     )}
-                    <button className="btn release" disabled={!canConfirm} onClick={() => act('confirm', handoverConsent ? { handoverConsent: true } : undefined)}>{t('order.confirmRelease')}</button>
+                    <button className="btn release" disabled={!canConfirm} aria-describedby={underReview ? 'od-review-reason' : undefined} onClick={() => act('confirm', handoverConsent ? { handoverConsent: true } : undefined)}>{t('order.confirmRelease')}</button>
+                    {underReview && <p id="od-review-reason" className="small od-review-reason" style={{ margin: 0 }}>{t('order.underReview')}</p>}
                     {!checklistDone && !handoverVerified && <p className="small muted" style={{ margin: 0 }}>{t('order.finishFirst')}</p>}
                     <p className="small muted" style={{ margin: 0 }}>{t('order.working.text')}</p>
                   </>
                 )}
                 {isBuyer && order.status === 'paid' && order.rail === 'fiat' && !order.escrow_frozen && <EarlyConfirm onYes={() => act('confirm')} />}
+                {isBuyer && order.status === 'paid' && underReview && (
+                  <>
+                    <button className="btn release" disabled aria-describedby="od-review-reason">{t('order.confirmRelease')}</button>
+                    <p id="od-review-reason" className="small od-review-reason" style={{ margin: 0 }}>{t('order.underReview')}</p>
+                  </>
+                )}
+                {isSeller && order.status === 'paid' && underReview && <p className="small od-review-reason" style={{ margin: 0 }}>{t('order.underReviewSeller')}</p>}
               </div>
             ) : null}
           </section>
@@ -496,6 +507,7 @@ export function OrderPage() {
               <button
                 className="btn release"
                 disabled={order.escrow_frozen || delivering || (order.proof_required && !proofFile)}
+                aria-describedby={underReview ? 'od-deliver-reason' : undefined}
                 onClick={async () => {
                   setDelivering(true);
                   setError('');
@@ -515,6 +527,7 @@ export function OrderPage() {
               >
                 {delivering ? (uploadState ?? t('order.delivering')) : t('order.markDelivered')}
               </button>
+              {underReview && <p id="od-deliver-reason" className="small od-review-reason" style={{ margin: 0 }}>{t('order.underReview')}</p>}
             </div>
           )}
 

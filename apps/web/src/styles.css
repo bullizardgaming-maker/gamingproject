@@ -1488,3 +1488,9 @@ input[type=checkbox], input[type=radio] { color: inherit; }
 .gp-listmode input { padding-inline-end: 34px; cursor: pointer; }
 .gp-caret { position: absolute; inset-inline-end: 12px; top: 50%; transform: translateY(-50%); color: var(--steel); pointer-events: none; }
 .gp-list li[data-chosen] { font-weight: 600; }
+
+/* Round 27: security review note (the timeline's red step) */
+.od-review { margin: 12px 0 0; padding: 8px 12px; border: 1px solid var(--disputed); border-radius: var(--radius); background: var(--disputed-soft); color: var(--disputed-ink); font-size: 13px; font-weight: 600; }
+html.dark .od-review { background: transparent; color: var(--disputed-ink, #f6a39b); }
+.od-review-reason { color: var(--disputed-ink); }
+html.dark .od-review-reason { color: #f6a39b; }

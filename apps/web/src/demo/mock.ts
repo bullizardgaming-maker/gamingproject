@@ -8,7 +8,7 @@
 import { levelFromOrders, methodsOf } from '@/lib/delivery';
 import { cleanDeliveryChoice, cleanDeliveryMethods } from '../../../api/src/domain/delivery';
 import { CATEGORIES, DEMO_CODE, DEMO_FULL, seed, type DemoState, type DemoUser } from './seed';
-import { CATEGORY_DEFAULTS, GAME_SETS, LEAGUES, PERMANENT_LEAGUES, handoverFieldFor, handoverKey, setLeagues } from '../../../api/src/domain/attributeSets';
+import { CATEGORY_DEFAULTS, GAME_SETS, LEAGUES, PERMANENT_LEAGUES, currencyTitle, handoverFieldFor, handoverKey, setLeagues } from '../../../api/src/domain/attributeSets';
 import { attributesFor, cleanAttributes } from '@/lib/attributes';
 import { checkTiers, effectivePrice, unitPriceFor } from '../../../api/src/domain/priceTiers';
 import { classify, detectOffPlatform, matchTerms } from '../../../api/src/domain/safety';
@@ -1587,10 +1587,12 @@ route('POST', '/admin/crypto/refunds/:id/sent', ({ me, params, body }) => {
   return r;
 });
 
-// --- Crypto payouts (demo): the address confirms at once, withdrawals wait for the CFO -----------
+// --- Crypto payouts: a new address waits for the email link + emailed code (as the API); withdrawals wait for the CFO ---
 const PAYOUT_COINS = ['usdttrc20', 'usdtbsc']; // USDT only at launch (CEO, Oct 24): TRC-20 and BEP-20
 const payoutAddressView = (u: DemoUser) => ({
-  address: u.payout_address ?? null, currency: u.payout_address_currency ?? null, currencyName: u.payout_address_currency ? coinNameOf(u.payout_address_currency) : null, setAt: u.payout_address_set_at ?? null, pending: null,
+  address: u.payout_address ?? null, currency: u.payout_address_currency ?? null, currencyName: u.payout_address_currency ? coinNameOf(u.payout_address_currency) : null, setAt: u.payout_address_set_at ?? null,
+  // demo_token stands in for the link in the email (the demo sends no email); the API never returns it.
+  pending: (u as any).payout_pending ? { address: (u as any).payout_pending.address, currency: (u as any).payout_pending.currency, since: (u as any).payout_pending.since, demo_token: (u as any).payout_pending.token } : null,
   coins: PAYOUT_COINS.map((coin) => ({ coin, name: coinNameOf(coin) })),
 });
 route('GET', '/seller/payout-address', ({ me }) => payoutAddressView(need(me)));
@@ -1599,12 +1601,25 @@ route('POST', '/seller/payout-address', ({ me, body }) => {
   const currency = String(body.currency).toLowerCase();
   if (!PAYOUT_COINS.includes(currency)) fail(400, 'unsupported_coin', 'That coin is not supported for payouts');
   if (!/^[A-Za-z0-9:_-]{10,128}$/.test(String(body.address).trim())) fail(400, 'invalid_address', 'That does not look like a wallet address');
-  // The real site sends an email link (and asks for the 2FA code); the demo confirms at once.
-  Object.assign(u, { payout_address: String(body.address).trim(), payout_address_currency: currency, payout_address_set_at: now(), payouts_enabled: true });
+  // As the API: a link and a 6-digit code go to the seller's email; nothing changes until both come back.
+  (u as any).payout_pending = { address: String(body.address).trim(), currency, since: now(), token: `demo-${rid()}`, attempts: 0 };
   save();
   return payoutAddressView(u);
 });
-route('POST', '/seller/payout-address/confirm', ({ me }) => payoutAddressView(need(me)));
+route('POST', '/seller/payout-address/confirm', ({ me, body }) => {
+  const u: any = need(me);
+  const p = u.payout_pending;
+  if (!p || String(body.token ?? '') !== p.token) fail(400, 'link_expired', 'This confirmation link is no longer valid; request the change again');
+  if (!body.code) fail(400, 'mfa_code_required', 'Enter the code we sent by email to confirm the new address');
+  if (String(body.code).trim() !== DEMO_CODE) {
+    p.attempts++;
+    if (p.attempts >= 5) u.payout_pending = null;
+    fail(401, 'invalid_code', 'Incorrect code');
+  }
+  Object.assign(u, { payout_address: p.address, payout_address_currency: p.currency, payout_address_set_at: now(), payouts_enabled: true, payout_pending: null });
+  save();
+  return payoutAddressView(u);
+});
 route('DELETE', '/seller/payout-address', ({ me }) => {
   const u = need(me);
   Object.assign(u, { payout_address: null, payout_address_currency: null, payout_address_set_at: null, payouts_enabled: false });
@@ -2381,7 +2396,7 @@ function buildOffer(u: DemoUser, body: any) {
   const cat = CATEGORIES.find((c) => c.slug === body.categorySlug) ?? fail(400, 'invalid_category', 'Unknown category');
   if (cat.slug === 'currency') {
     const a = body.attributes ?? {};
-    body = { ...body, title: [body.game, ...attributesFor(String(body.game ?? ''), 'currency').map((d) => a[d.key]).filter(Boolean)].join(' · ') };
+    body = { ...body, title: currencyTitle(String(body.game ?? ''), 'currency', a) }; // the API's rule: game · server · faction
   }
   if (!body.title || String(body.title).length < 3) fail(400, 'validation_error', 'Give the listing a title');
   if (!String(body.description ?? '').trim()) fail(400, 'description_required', 'Add a description, with delivery notes for the buyer');
@@ -2510,7 +2525,7 @@ route('POST', '/offers/:id/duplicate', ({ me, params, body }) => {
   if (!attrs.ok) return fail(400, 'invalid_attributes', attrs.error);
   const stock = body.stock == null ? availableOf(src) : Math.floor(Number(body.stock));
   if (!(stock >= 1)) fail(400, 'stock_required', 'Set how many units you have');
-  const title = src.category_slug === 'currency' ? [src.game, ...attributesFor(src.game, 'currency').map((d) => attrs.value[d.key]).filter(Boolean)].join(' · ') : src.title;
+  const title = src.category_slug === 'currency' ? currencyTitle(src.game, 'currency', attrs.value) : src.title;
   const o = { ...JSON.parse(JSON.stringify(src)), duplicated_from: src.id, id: `offer-${rid().slice(0, 8)}`, attributes: attrs.value, title, stock, inventory: [], version: 1, created_at: now(), status: 'active', featured_until: null, linked_account_id: null, expired_reason: null };
   state.offers.unshift(o);
   return offerView(o);

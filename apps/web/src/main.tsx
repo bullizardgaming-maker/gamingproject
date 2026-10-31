@@ -12,6 +12,7 @@ import { CartPayPage } from './pages/Cart';
 import { InquiryChat, Orders } from './pages/Orders';
 import { Sell } from './pages/Sell';
 import { CreateOffer, EditOffer } from './pages/CreateOffer';
+import { PayoutAddressConfirm } from './pages/SellerMoney';
 import { Messages } from './pages/Messages';
 import { LegalHistory, LegalPage } from './pages/Legal';
 import { Account, ForgotPassword, Login, ResetPassword } from './pages/Account';
@@ -119,6 +120,7 @@ function App() {
           <Route path="/sell/new" element={<CreateOffer />} />
           <Route path="/sell/edit/:id" element={<EditOffer />} />
           <Route path="/sell/money" element={<Sell />} />
+          <Route path="/sell/payout-address/confirm" element={<PayoutAddressConfirm />} />
           <Route path="/sell/analytics" element={<Sell />} />
           <Route path="/sell/invoices" element={<Navigate to="/sell/money" replace />} />
           <Route path="/terms" element={<LegalPage doc="terms" />} />
@@ -129,6 +131,7 @@ function App() {
           <Route path="/refunds" element={<LegalPage doc="refunds" />} />
           <Route path="/restricted-countries" element={<LegalPage doc="restricted-countries" />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/signup" element={<Login initialMode="register" />} />
           <Route path="/account" element={<Account />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />

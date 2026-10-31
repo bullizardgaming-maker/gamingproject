@@ -109,7 +109,7 @@ export function SellerPage() {
         </div>
         <dl className="sp-stats">
           <div><dt>{t('sp.positive')}</dt><dd className="num">{r.count ? `${Number(r.positive_pct)}%` : '—'}</dd></div>
-          <div><dt>{t('sp.rating')}</dt><dd className="num"><Star className="size-4 text-held" weight="fill" aria-hidden /> {r.count ? Number(r.average).toFixed(2) : '—'} <span className="small muted">({r.count.toLocaleString()})</span></dd></div>
+          <div data-testid="sp-rating"><dt>{t('sp.rating')}</dt><dd className="num">{r.count ? <Stars value={Number(r.average)} /> : null} {r.count ? Number(r.average).toFixed(2) : '—'} <span className="small muted">({t('sp.reviewsN', { n: r.count.toLocaleString(intlLocale()) })})</span></dd></div>
           <div><dt>{t('sp.sold')}</dt><dd className="num">{profile.completed_orders.toLocaleString()}</dd></div>
           {profile.on_time_delivery_pct != null && <div><dt>{t('sp.onTime')}</dt><dd className="num">{Number(profile.on_time_delivery_pct)}%</dd></div>}
           <div><dt>{t('sp.since')}</dt><dd>{since(profile.member_since)}</dd></div>
@@ -118,6 +118,28 @@ export function SellerPage() {
         {own && <button type="button" className="btn ghost sm sp-edit" onClick={() => setEditing((e) => !e)}>{editing ? t('sp.done') : t('sp.edit')}</button>}
         {profile.shop_paused && <div className="notice">{profile.shop_pause_message || t('sp.paused')}</div>}
       </section>
+
+      {/* Round 27: the seller's rating at a glance — stars, positive %, count and the latest reviews. */}
+      {profile.reviews.length > 0 && tab === 'offers' && (
+        <section className="stack sp-recent" aria-labelledby="sp-recent-title" data-testid="sp-recent">
+          <div className="row spread">
+            <h2 id="sp-recent-title" className="sp-h2">{t('sp.recentReviews')}</h2>
+            <button type="button" className="btn ghost sm" onClick={() => setTab('reviews')}>{t('sp.allReviews', { n: r.count.toLocaleString(intlLocale()) })}</button>
+          </div>
+          <ul className="sp-reviews">
+            {profile.reviews.slice(0, 3).map((rv) => (
+              <li key={rv.id} className="card sp-review">
+                <div className="sp-review-head">
+                  <Stars value={rv.rating} />
+                  <b className="text-sm">{rv.buyer_name}</b>
+                  <span className="small muted">{ago(rv.created_at)}</span>
+                </div>
+                {rv.comment && <p dir="auto">{rv.comment}</p>}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {own && editing && (
         <section className="stack sp-editor" aria-label={t('sp.edit')}>
@@ -202,5 +224,15 @@ function OfferCards({ offers }: { offers: Offer[] }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+/** Five stars filled to the rating (rounded to the nearest whole star), read out as "4.9 out of 5". */
+function Stars({ value }: { value: number }) {
+  const n = Math.round(value);
+  return (
+    <span className="stars-show" role="img" aria-label={t('sp.starsLabel', { n: value.toFixed(1) })}>
+      {[1, 2, 3, 4, 5].map((i) => <Star key={i} className={i <= n ? 'on' : ''} weight="fill" aria-hidden />)}
+    </span>
   );
 }

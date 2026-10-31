@@ -97,7 +97,10 @@ test.describe('Round 26b: create offer redesign', () => {
     await pickServer(page, 'Europe');
     await page.getByLabel('Create a volume discount').check();
     await choose(page, page.getByLabel('Discount 1: type'), 'Fixed unit price');
-    const axe = () => new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
+    await page.keyboard.press('Escape'); // no list left open
+    // Colour transitions (buttons fade .14 s) must finish before axe measures contrast, or it reads a mid-fade colour.
+    const settled = () => page.waitForFunction(() => document.getAnimations().every((x) => x.playState !== 'running'));
+    const axe = async () => (await settled(), new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze());
     expect((await axe()).violations.map((v) => v.id)).toEqual([]);
     await page.evaluate(() => document.documentElement.classList.add('dark'));
     expect((await axe()).violations.map((v) => v.id)).toEqual([]);

@@ -4,6 +4,8 @@ export type DemoAccount = 'Buyer' | 'Seller' | 'Admin';
 
 /** Sign in with one of the demo accounts on the login page. */
 export async function signIn(page: Page, who: DemoAccount) {
+  // Round 27: a signed-in visitor is sent away from /login, so switching accounts signs out first (demo: drop the token).
+  if (page.url().startsWith('http')) await page.evaluate(() => (localStorage.removeItem('mkt.token'), localStorage.removeItem('mkt.signed-in'))).catch(() => {});
   await page.goto('/login');
   await page.getByRole('button', { name: new RegExp(who) }).click();
   await expect(page).not.toHaveURL(/\/login/);

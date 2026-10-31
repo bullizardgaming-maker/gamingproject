@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { usePageMeta } from '@/lib/seo';
 import { DownloadSimple as Download, FileText, Lock, Receipt as ReceiptText } from '@phosphor-icons/react';
 import { api, download, money } from '../api';
 import { useSession } from '../session';
@@ -59,7 +60,8 @@ export function SellerMoney() {
   const [tax, setTax] = useState<TaxProfile | null>(null);
   const [invoices, setInvoices] = useState<any[]>([]);
   const [credits, setCredits] = useState<any[]>([]);
-  const [msg, setMsg] = useState<{ kind: 'ok' | 'alert'; text: string } | null>(null);
+  const location = useLocation();
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'alert'; text: string } | null>((location.state as { payoutConfirmed?: boolean } | null)?.payoutConfirmed ? { kind: 'ok', text: t('money.payoutAddress.confirmed') } : null);
   const [sales, setSales] = useState<any[]>([]);
   const [withdrawals, setWithdrawals] = useState<any[]>([]);
 
@@ -359,13 +361,16 @@ const WSTATUS: Record<string, MessageKey> = {
 
 interface PayoutAddress { address: string | null; currency: string | null; currencyName: string | null; setAt: string | null; clearedAt?: string | null; pending: { address: string; currency: string; since: string } | null; coins: Array<{ coin: string; name: string }> }
 
-/** The crypto address withdrawals go to: set with an email link, plus the 2FA code when the account has one. */
-function PayoutAddressCard({ onChanged, onMessage }: { onChanged: () => void; onMessage: (m: { kind: 'ok' | 'alert'; text: string }) => void }) {
+/**
+ * The crypto address withdrawals go to. Round 27: saving a new address opens its own confirmation page (the email link
+ * and the emailed code, or the authenticator code); the email link lands there too.
+ */
+function PayoutAddressCard({ onMessage }: { onChanged: () => void; onMessage: (m: { kind: 'ok' | 'alert'; text: string }) => void }) {
   const [pa, setPa] = useState<PayoutAddress | null>(null);
   const [coin, setCoin] = useState('usdttrc20');
   const [address, setAddress] = useState('');
-  const [code, setCode] = useState('');
-  const [params, setParams] = useSearchParams();
+  const [params] = useSearchParams();
+  const nav = useNavigate();
   const token = params.get('confirm-payout-address');
   const load = useCallback(() => api<PayoutAddress>('/seller/payout-address').then(setPa).catch(() => {}), []);
   useEffect(() => {
@@ -375,25 +380,15 @@ function PayoutAddressCard({ onChanged, onMessage }: { onChanged: () => void; on
   const request = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      setPa(await api<PayoutAddress>('/seller/payout-address', { body: { address, currency: coin } }));
-      setAddress('');
-      onMessage({ kind: 'ok', text: t('money.payoutAddress.sent') });
-    } catch (err: any) {
-      onMessage({ kind: 'alert', text: err.message });
-    }
-  };
-  const confirm = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      setPa(await api<PayoutAddress>('/seller/payout-address/confirm', { body: { token, ...(code ? { code } : {}) } }));
-      setParams({}, { replace: true });
-      onMessage({ kind: 'ok', text: t('money.payoutAddress.confirmed') });
-      onChanged();
+      await api<PayoutAddress>('/seller/payout-address', { body: { address, currency: coin } });
+      nav('/sell/payout-address/confirm');
     } catch (err: any) {
       onMessage({ kind: 'alert', text: err.message });
     }
   };
 
+  // The link in the email: confirm on its own page.
+  if (token) return <Navigate to={`/sell/payout-address/confirm?token=${encodeURIComponent(token)}`} replace />;
   if (!pa) return null;
   return (
     <div className="card stack" id="payout-address">
@@ -406,17 +401,11 @@ function PayoutAddressCard({ onChanged, onMessage }: { onChanged: () => void; on
       ) : (
         <p className="small muted" style={{ margin: 0 }}>{t('money.payoutAddress.none')}</p>
       )}
-      {token ? (
-        <form className="row" onSubmit={confirm} style={{ alignItems: 'end', flexWrap: 'wrap' }}>
-          <label className="field" style={{ margin: 0 }}>
-            {t('money.payoutAddress.code')}
-            <input value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" maxLength={12} style={{ maxWidth: 140 }} />
-          </label>
-          <button className="btn" type="submit">{t('money.payoutAddress.confirm')}</button>
-        </form>
-      ) : pa.pending ? (
-        <p className="small" role="status" style={{ margin: 0 }}>{t('money.payoutAddress.pending', { address: pa.pending.address })}</p>
-      ) : null}
+      {pa.pending && (
+        <p className="small" role="status" style={{ margin: 0 }}>
+          {t('money.payoutAddress.pending', { address: pa.pending.address })} <Link to="/sell/payout-address/confirm">{t('pa27.enterCode')}</Link>
+        </p>
+      )}
       <form className="row" onSubmit={request} style={{ alignItems: 'end', flexWrap: 'wrap' }}>
         <label className="field" style={{ margin: 0 }}>
           {t('money.payoutAddress.coin')}
@@ -428,6 +417,68 @@ function PayoutAddressCard({ onChanged, onMessage }: { onChanged: () => void; on
           <input value={address} onChange={(e) => setAddress(e.target.value)} required minLength={10} maxLength={128} />
         </label>
         <button className="btn ghost" type="submit">{t('money.payoutAddress.save')}</button>
+      </form>
+    </div>
+  );
+}
+
+/**
+ * Round 27: confirming a new payout address is its own page. It says why (a code went to the seller's email — this
+ * protects their money) and asks for that code. The API also needs the link from the confirmation email: arriving
+ * from that link carries it (?token=); arriving straight after saving, the page says to open the email.
+ */
+export function PayoutAddressConfirm() {
+  usePageMeta({ title: t('pa27.title'), noindex: true });
+  const [params] = useSearchParams();
+  const nav = useNavigate();
+  const { user } = useSession();
+  const [pa, setPa] = useState<PayoutAddress | null>(null);
+  const [code, setCode] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (user) api<PayoutAddress>('/seller/payout-address').then(setPa).catch((e) => setError(e.message));
+  }, [user]);
+  if (!user) return <p className="muted"><Link to="/login?next=/sell/payout-address/confirm">{t('sell.signIn')}</Link></p>;
+  // The demo sends no email: it hands over the link's token itself (the API never does).
+  const token = params.get('token') ?? (pa?.pending as { demo_token?: string } | null)?.demo_token ?? null;
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (!token) return setError(t('pa27.needLink'));
+    setBusy(true);
+    try {
+      await api<PayoutAddress>('/seller/payout-address/confirm', { body: { token, code: code.trim() } });
+      nav('/sell/money', { state: { payoutConfirmed: true } });
+    } catch (err: any) {
+      setError(err.code === 'invalid_code' ? t('pa27.wrongCode') : err.code === 'link_expired' ? t('pa27.expired') : err.message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="stack" style={{ maxWidth: 560 }}>
+      <nav className="crumbs" aria-label="Breadcrumb"><Link to="/sell/money">{t('money.payoutAddress')}</Link><span>/</span><span>{t('pa27.title')}</span></nav>
+      <h1 className="pg-h1" style={{ margin: 0 }}>{t('pa27.title')}</h1>
+      <form className="card stack" onSubmit={submit} aria-labelledby="pa27-why">
+        <p id="pa27-why" style={{ margin: 0 }}>{t('pa27.why')}</p>
+        {pa?.pending && (
+          <p className="small" style={{ margin: 0 }} data-testid="pa27-address">
+            {t('pa27.newAddress')} <b>{pa.pending.currency ? pa.coins.find((c) => c.coin === pa.pending!.currency)?.name ?? pa.pending.currency : ''}</b> · <code className="mono" style={{ wordBreak: 'break-all' }}>{pa.pending.address}</code>
+          </p>
+        )}
+        {pa && !pa.pending && !params.get('token') && <p className="small muted" style={{ margin: 0 }}>{t('pa27.nothingPending')}</p>}
+        {!token && pa?.pending && <p className="small muted" style={{ margin: 0 }}>{t('pa27.openLink')}</p>}
+        <label className="field">
+          {t('pa27.code')}
+          <input name="code" className="num" inputMode="numeric" autoComplete="one-time-code" required minLength={6} maxLength={12} value={code} onChange={(e) => setCode(e.target.value.replace(/\s/g, ''))} aria-invalid={error ? true : undefined} aria-describedby={error ? 'pa27-err' : undefined} />
+        </label>
+        {error && <div id="pa27-err" className="alert" role="alert">{error}</div>}
+        <div className="row">
+          <button className="btn" type="submit" disabled={busy}>{t('money.payoutAddress.confirm')}</button>
+          <Link className="btn ghost" to="/sell/money">{t('lst.cancel')}</Link>
+        </div>
       </form>
     </div>
   );
