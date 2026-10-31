@@ -1,3 +1,4 @@
+import { plainEmailTail } from './notifications.js';
 import type { Ctx } from '../context.js';
 import { many, maybeOne, one, withTx } from '../db.js';
 import { hmacSha256, randomToken, safeEqual } from '../lib/crypto.js';
@@ -189,7 +190,7 @@ export async function subscribe(ctx: Ctx, email: string) {
       channel: 'email',
       to: addr,
       subject: 'Confirm Bullizard status updates',
-      body: `Confirm you want emails when Bullizard has an incident or planned maintenance:\n\n${link}\n\nIf you didn't ask for this, ignore this email.`,
+      body: `Confirm you want emails when Bullizard has an incident or planned maintenance:\n\n${link}\n\nIf you didn't ask for this, ignore this email.${plainEmailTail()}`,
     });
   }
   return { ok: true };
@@ -248,7 +249,7 @@ export async function dispatchStatusEmails(ctx: Ctx, limit = 100) {
   for (const m of batch) {
     try {
       const unsub = `${ctx.cfg.PUBLIC_WEB_URL}/status?unsubscribe=${unsubscribeToken(ctx, m.subscriber_id)}`;
-      await ctx.messenger.send({ channel: 'email', to: m.email, subject: m.subject, body: `${m.body}\n\nUnsubscribe: ${unsub}`, idempotencyKey: `status-email-${m.id}` });
+      await ctx.messenger.send({ channel: 'email', to: m.email, subject: m.subject, body: `${m.body}\n\nUnsubscribe: ${unsub}${plainEmailTail()}`, idempotencyKey: `status-email-${m.id}` });
       await ctx.db.query(`UPDATE status_emails SET status = 'sent', sent_at = now() WHERE id = $1`, [m.id]);
     } catch (err) {
       await ctx.db.query(`UPDATE status_emails SET status = CASE WHEN attempts >= 5 THEN 'failed' ELSE 'pending' END WHERE id = $1`, [m.id]);

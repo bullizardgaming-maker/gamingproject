@@ -110,7 +110,7 @@ describe('§9.7 email layout', () => {
     expect(ar.html).not.toMatch(/[-]/); // no marker leaks
     expect(ar.html).toContain(`href="${h.ctx.cfg.PUBLIC_WEB_URL}/orders/${ORDER_ID}"`); // markers never reach a URL
     expect(ar.html).toContain('system-ui, &quot;Segoe UI&quot;, Tahoma, Arial, sans-serif');
-    for (const line of ['تصلك هذه الرسالة لأن لديك حسابًا في Bullizard.', 'لن نطلب منك كلمة المرور أو الرموز عبر البريد أبدًا.', 'إعدادات البريد', 'Bullizard · للبالغين 18+ فقط · غير تابع لأي ناشر ألعاب']) expect(ar.html).toContain(line);
+    for (const line of ['تصلك هذه الرسالة لأن لديك حسابًا في Bullizard.', 'لن نطلب منك كلمة المرور أو الرموز عبر البريد أبدًا.', 'إعدادات البريد', 'Bullizard · 18+ only · للبالغين فقط · غير تابع لأي ناشر ألعاب']) expect(ar.html).toContain(line);
     const en = render(h.ctx, 'order_paid', data, 'en', { name: null });
     expect(en.text.startsWith('Hey,\n\n')).toBe(true);
     expect(en.html).toContain('>Terms v2026-10-24 accepted for this order</a>'); // the button carries the label

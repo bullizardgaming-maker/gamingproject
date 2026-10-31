@@ -922,6 +922,18 @@ Suites: API 85 files / 778 tests green (multinode excluded), typecheck clean, `n
 image start check: build, runtime imports, migrate through 081, `/readyz` + `/healthz` as `APP_ENV=staging` with
 `PAYMENT_PROVIDER=nowpayments` and `SANDBOX_MODE=false` (proxy CA in a scratch Dockerfile copy, repo Dockerfile unchanged).
 
+## Round 27 (Oct 31, 2026) — CEO staging test fixes, back end (`claude/round-27-brief.md`)
+
+Migration `084_round27.sql` (risk_flags.reasons_text). Pushed to main and staging.
+
+1. **Payment state.** `paymentState()` answers `paid` whenever the order/checkout is funded (status not awaiting_payment/cancelled/expired) and the row is not held for review or credited — never `received_applying`/`confirming` for a paid order. `order_status` is on every payment row (buyer's `GET /orders|checkouts/:id/crypto/payments`, the order read's `crypto_payments`, Ops `GET /admin/crypto/payments`); the web stops polling on `state: 'paid'` or a funded `order_status`.
+2. **Fraud review reasons.** `risk_flags.reasons_text` (plain words, stored at flag time; older flags are rendered on read) — `GET /admin/risk-flags` rows carry `reasons_text`, `order_ref`, `order_status`, `amount_cents`; the staff order read carries `risk_flags[]` and `risk_reasons[]` (deduped). Scoring unchanged: shared device/wallet/card 0.6 (IP network alone 0.2), new seller 0.1, new buyer + ≥$200 0.25 … so a first purchase on different devices scores < 0.5 and is not frozen; the same PC for both accounts is. `FRAUD_REVIEW_THRESHOLD` (default 0.5) is documented in `.env.example`; staging can raise it to test from one PC.
+3. **/crypto/coins ≤ 2 s.** NOWPayments coin list and per-coin minimums are cached 10 min and served stale-while-revalidate; a cold cache fetches all minimums in parallel and the answer never waits past `coinsDeadlineMs` (2 s): `{ owedCents, currency, coins, partial }` — `partial: true` when minimums were still loading (ask again). The API warms the cache at start-up (`warmCoins`).
+4. **Seller profile** `GET /sellers/:id`: `rating {count, average, positive_pct}` as numbers, plus flat `rating_average`, `review_count`, `positive_pct`, and `reviews[]` (recent, buyer initial, offer title).
+5. **Emails:** sign-off is exactly `Bullizard Team` in every language (AR «فريق Bullizard»); every footer contains `18+ only` (plus the local wording). Status-page mails get the same tail (`plainEmailTail`).
+6. `.gitattributes` (`* text=auto eol=lf`) with one renormalise commit; no more CRLF juggling before commits.
+- Tests: `test/round27.test.ts` (5).
+
 ## Round 26c (Oct 31, 2026) — hardening after 26b
 
 Branch `round-26-api` only. No migration.

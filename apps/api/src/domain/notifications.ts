@@ -52,7 +52,7 @@ const EN_WITHDRAWAL_REASONS: Record<WithdrawalReason, string> = {
 export const EN_LAYOUT: EmailLayout = {
   greeting: 'Hey {name},',
   greetingNoName: 'Hey,',
-  signoff: 'The Bullizard team',
+  signoff: 'Bullizard Team',
   why: "You're getting this because you have a Bullizard account.",
   safety: 'We never ask for your password or codes by email.',
   manage: 'Email settings',
@@ -613,6 +613,11 @@ interface EmailParts {
 }
 
 /** The plain-text part: greeting, body (links stay "Label: URL"), sign-off, footer. */
+/** Round 27 (5): sign-off and legal line for the few plain emails sent outside the template (status page mail). */
+export const EMAIL_SIGNOFF = EN_LAYOUT.signoff;
+export const EMAIL_LEGAL = EN_LAYOUT.legal;
+export const plainEmailTail = () => `\n\n${EMAIL_SIGNOFF}\n\n${EMAIL_LEGAL}`;
+
 function emailText(p: EmailParts) {
   const L = layoutFor(p.locale);
   const footer = [L.why, L.safety, ...(p.security ? [] : [`${L.manage}: ${p.manageUrl}`]), L.legal];

@@ -3,7 +3,7 @@ import { simpleDuration, type LocalePack } from './types.js';
 const U = { minute: 'minuto', minutes: 'minutos', hour: 'hora', hours: 'horas' };
 
 const es: LocalePack = {
-  layout: { greeting: "Hola, {name}:", greetingNoName: "Hola:", signoff: "El equipo de Bullizard", why: "Recibes este correo porque tienes una cuenta en Bullizard.", safety: "Nunca te pediremos tu contraseña ni tus códigos por correo.", manage: "Ajustes de correo", legal: "Bullizard · Solo mayores de 18 · Sin relación con ningún editor de juegos", button: "Abrir Bullizard" },
+  layout: { greeting: "Hola, {name}:", greetingNoName: "Hola:", signoff: "Bullizard Team", why: "Recibes este correo porque tienes una cuenta en Bullizard.", safety: "Nunca te pediremos tu contraseña ni tus códigos por correo.", manage: "Ajustes de correo", legal: "Bullizard · 18+ only · Solo mayores de 18 · Sin relación con ningún editor de juegos", button: "Abrir Bullizard" },
   verifySubject: (code) => `Tu código de Bullizard: ${code}`,
   verifyCode: (code, minutes) => `Tu código es ${code}. Sirve durante ${simpleDuration(minutes, U)}. Si no lo pediste, ignora este correo.`,
   duration: (minutes) => simpleDuration(minutes, U),

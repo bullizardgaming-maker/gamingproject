@@ -16,7 +16,7 @@ import { notify } from '../domain/notifications.js';
 import { refundAfterRelease } from '../domain/clawback.js';
 import { addNote, decideCase, getCase, listCases, openCase, refreshLists, rescreenSellers, runMonitoring, screenUser } from '../domain/aml.js';
 import { collectDebts, listDebts } from '../domain/debts.js';
-import { fraudModelReport } from '../domain/fraud.js';
+import { fraudModelReport, riskReasonsText } from '../domain/fraud.js';
 import { COMPONENTS, COMPONENT_IDS, createIncident, listIncidents, updateIncident } from '../domain/status.js';
 import { decideTopUp, listTopUps, planTopUps } from '../domain/fxtopups.js';
 import { chatLegalHold } from '../domain/chatkeys.js';
@@ -144,9 +144,10 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     requirePermission(req, 'risk.review');
     return many(
       ctx.db,
-      `SELECT f.*, u.email, u.display_name, u.withdrawals_frozen FROM risk_flags f JOIN users u ON u.id = f.user_id
+      `SELECT f.*, u.email, u.display_name, u.withdrawals_frozen, o.ref AS order_ref, o.status AS order_status, o.amount_cents
+         FROM risk_flags f JOIN users u ON u.id = f.user_id LEFT JOIN orders o ON o.id = f.order_id
         WHERE f.status = 'open' ORDER BY f.score DESC, f.created_at LIMIT 200`,
-    );
+    ).then((rows) => rows.map((f) => ({ ...f, reasons_text: f.reasons_text?.length ? f.reasons_text : riskReasonsText(f.reasons) }))); // Round 27 (2): plain words
   });
 
   /** Clear (false positive: unfreeze) or confirm (fraud: suspend) a flagged user. */

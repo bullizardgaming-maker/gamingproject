@@ -1,7 +1,7 @@
 import { arDuration, type LocalePack } from './types.js';
 
 const ar: LocalePack = {
-  layout: { greeting: "أهلًا {name}،", greetingNoName: "أهلًا،", signoff: "فريق Bullizard", why: "تصلك هذه الرسالة لأن لديك حسابًا في Bullizard.", safety: "لن نطلب منك كلمة المرور أو الرموز عبر البريد أبدًا.", manage: "إعدادات البريد", legal: "Bullizard · للبالغين 18+ فقط · غير تابع لأي ناشر ألعاب", button: "افتح Bullizard" },
+  layout: { greeting: "أهلًا {name}،", greetingNoName: "أهلًا،", signoff: "فريق Bullizard", why: "تصلك هذه الرسالة لأن لديك حسابًا في Bullizard.", safety: "لن نطلب منك كلمة المرور أو الرموز عبر البريد أبدًا.", manage: "إعدادات البريد", legal: "Bullizard · 18+ only · للبالغين فقط · غير تابع لأي ناشر ألعاب", button: "افتح Bullizard" },
   verifySubject: (code) => `رمز Bullizard الخاص بك: ${code}`,
   verifyCode: (code, minutes) => `رمزك هو ${code}، وهو صالح لمدة ${arDuration(minutes)}. إن لم تطلبه فتجاهل هذه الرسالة.`,
   duration: (minutes) => arDuration(minutes),

@@ -297,6 +297,38 @@ export async function fraudModelReport(ctx: Ctx, days = 180) {
   };
 }
 
+
+/**
+ * Round 27 (2): a risk reason in plain words, for Ops → Fraud review and the staff order view.
+ * Codes come from heuristicScore (and the GNN, which only has a score).
+ */
+const SIGNAL_WORDS: Record<string, string> = { device: 'a device', ip_subnet: 'an IP network', wallet: 'a payout wallet', card: 'a card' };
+export function riskReasonText(r: { code: string; weight: number; detail?: unknown }): string {
+  const d = (r.detail ?? {}) as Record<string, unknown>;
+  const pct = `${Math.round(r.weight * 100)} %`;
+  switch (r.code) {
+    case 'buyer_seller_shared_infra': {
+      const kinds = Array.isArray(r.detail) ? (r.detail as string[]).map((k) => SIGNAL_WORDS[k] ?? k) : [];
+      return `Buyer and seller share ${kinds.length ? kinds.join(' and ') : 'a device, network, wallet or card'} (${pct})`;
+    }
+    case 'buyer_syndicate_cluster':
+      return `The buyer is one of ${d.clusterSize} linked accounts buying from this seller in the last 72 h (${pct})`;
+    case 'new_seller':
+      return `The seller's account is under 7 days old${Number(d.buyersLast72h) >= 5 ? ` and already has ${d.buyersLast72h} buyers in 72 h` : ''} (${pct})`;
+    case 'new_buyer_high_value':
+      return `The buyer's account is under 24 h old and this order is $200 or more (${pct})`;
+    case 'buyer_velocity':
+      return `The buyer placed ${d.ordersLastHour} orders in the last hour (${pct})`;
+    case 'linked_to_bad_actor':
+      return `The buyer shares a device, network, wallet or card with ${d.linkedAccounts} suspended, banned or chargeback account(s) (${pct})`;
+    case 'gnn_syndicate_score':
+      return `The fraud model scored this order ${pct} likely to be a syndicate`;
+    default:
+      return `${r.code.replace(/_/g, ' ')} (${pct})`;
+  }
+}
+export const riskReasonsText = (reasons: unknown): string[] => (Array.isArray(reasons) ? reasons.map((r) => riskReasonText(r as { code: string; weight: number; detail?: unknown })) : []);
+
 /**
  * Act on a score. Above the review threshold the order's escrow is frozen and
  * flagged. Above the freeze threshold the seller's withdrawals and *all* their
@@ -308,8 +340,8 @@ export async function applyRiskActions(ctx: Ctx, s: TxScope, order: { id: string
 
   await s.tx.query('UPDATE orders SET escrow_frozen = true WHERE id = $1', [order.id]);
   await s.tx.query(
-    'INSERT INTO risk_flags (user_id, order_id, score, reasons) VALUES ($1, $2, $3, $4), ($5, $2, $3, $4)',
-    [order.buyer_id, order.id, risk.score, JSON.stringify(risk.reasons), order.seller_id],
+    'INSERT INTO risk_flags (user_id, order_id, score, reasons, reasons_text) VALUES ($1, $2, $3, $4, $6), ($5, $2, $3, $4, $6)',
+    [order.buyer_id, order.id, risk.score, JSON.stringify(risk.reasons), order.seller_id, risk.reasons.map(riskReasonText)],
   );
   if (risk.score < ctx.cfg.FRAUD_FREEZE_THRESHOLD) return { action: 'review' as const };
 

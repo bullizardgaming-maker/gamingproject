@@ -8,7 +8,7 @@ import { appendMessage, createOrderRoom } from './chat.js';
 import { grossUp, refreshSellerRate, sellerTier, splitGross } from './commission.js';
 import type { TxScope } from './events.js';
 import { withScope } from './events.js';
-import { applyRiskActions, assessOrder, recordSignals, subnetOf } from './fraud.js';
+import { applyRiskActions, assessOrder, recordSignals, riskReasonsText, subnetOf } from './fraud.js';
 import { randomBytes } from 'node:crypto';
 import { handoverFieldFor, handoverKey } from './attributeSets.js';
 import { cleanDeliveryChoice, offeredMethods, type DeliveryInfo, type DeliveryMethod } from './delivery.js';
@@ -1376,7 +1376,7 @@ export async function getOrderFor(ctx: Ctx, orderId: string, user: { id: string;
   // Sellers (and staff) see the buyer's reputation and their own rating of this order.
   const sellerView = staff || order.seller_id === user.id;
   const crypto = order.payment_provider === 'nowpayments';
-  const [checklist, dispute, events, review, warrantyClaims, progress, buyerRep, buyerRating, cryptoPayments, cryptoRefund] = await Promise.all([
+  const [checklist, dispute, events, review, warrantyClaims, progress, buyerRep, buyerRating, cryptoPayments, cryptoRefund, riskFlags] = await Promise.all([
     maybeOne(q, 'SELECT items, completed_at, handover_platform, handover_at FROM security_checklists WHERE order_id = $1', [orderId]),
     // Round 24: which staff member opened it from a ticket is staff's to know.
     maybeOne<any>(q, 'SELECT * FROM disputes WHERE order_id = $1', [orderId]).then(async (d) => {
@@ -1393,6 +1393,8 @@ export async function getOrderFor(ctx: Ctx, orderId: string, user: { id: string;
     crypto && order.buyer_id === user.id ? paymentsForOrder(q, orderId) : Promise.resolve([]),
     // Round 23e (item 4): the refund (address, coin, transaction) is the buyer's and staff's; the seller sees none of it.
     crypto && (staff || order.buyer_id === user.id) ? refundForOrder(q, orderId) : Promise.resolve(null),
+    // Round 27 (2): why the order is under security review, in plain words (staff only).
+    staff ? many<{ id: string; user_id: string; score: string; status: string; reasons: unknown; reasons_text: string[] | null; created_at: string }>(q, 'SELECT id, user_id, score, status, reasons, reasons_text, created_at FROM risk_flags WHERE order_id = $1 ORDER BY created_at', [orderId]) : Promise.resolve([]),
   ]);
   const deliveryProof = order.delivery_proof_id
     ? await maybeOne(q, 'SELECT id, mime, original_name, bytes, width, height, created_at FROM chat_attachments WHERE id = $1', [order.delivery_proof_id])
@@ -1400,6 +1402,8 @@ export async function getOrderFor(ctx: Ctx, orderId: string, user: { id: string;
   return {
     ...order, checklist, dispute, events, review, warranty_claims: warrantyClaims, progress, buyer_reputation: buyerRep, buyer_rating: buyerRating,
     lead_review: staff ? isLeadOrder(order) : undefined,
+    risk_flags: staff ? riskFlags.map((f) => ({ ...f, score: Number(f.score), reasons_text: f.reasons_text?.length ? f.reasons_text : riskReasonsText(f.reasons) })) : undefined,
+    risk_reasons: staff ? [...new Set(riskFlags.flatMap((f) => (f.reasons_text?.length ? f.reasons_text : riskReasonsText(f.reasons))))] : undefined,
     crypto_payments: cryptoPayments, crypto_refund: cryptoRefund, delivery_proof: deliveryProof,
     handover_field: handoverFieldFor(order.game, order.category_slug ?? ''),
     proof_required: ctx.cfg.DELIVERY_PROOF_REQUIRED && PROOF_REQUIRED_KINDS.has(order.category_kind) && order.delivery_mode === 'manual',

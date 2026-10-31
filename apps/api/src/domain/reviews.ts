@@ -80,8 +80,8 @@ export async function sellerRating(q: Queryable, sellerId: string) {
   return one<{ count: number; average: number | null; positive_pct: number | null }>(
     q,
     `SELECT count(*)::int AS count,
-            round(avg(rating)::numeric, 2) AS average,
-            round(100.0 * count(*) FILTER (WHERE rating >= 4) / NULLIF(count(*), 0), 0) AS positive_pct
+            round(avg(rating)::numeric, 2)::float AS average,
+            round(100.0 * count(*) FILTER (WHERE rating >= 4) / NULLIF(count(*), 0), 0)::int AS positive_pct
        FROM reviews WHERE seller_id = $1 AND NOT hidden`,
     [sellerId],
   );
@@ -119,5 +119,6 @@ export async function sellerProfile(q: Queryable, sellerId: string, limit = 20, 
       [sellerId, Math.min(limit, 50), offset],
     ),
   ]);
-  return { ...seller, rating, storefront: shop, reviews };
+  // Round 27 (4): the rating summary as numbers (never numeric strings), also flat for the shop header.
+  return { ...seller, rating, rating_average: rating.average, review_count: rating.count, positive_pct: rating.positive_pct, storefront: shop, reviews };
 }

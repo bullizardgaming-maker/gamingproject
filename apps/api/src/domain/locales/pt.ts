@@ -4,7 +4,7 @@ const U = { minute: 'minuto', minutes: 'minutos', hour: 'hora', hours: 'horas' }
 
 /** Português (Brasil). */
 const pt: LocalePack = {
-  layout: { greeting: "Olá, {name},", greetingNoName: "Olá,", signoff: "Equipe Bullizard", why: "Você recebe este e-mail porque tem uma conta na Bullizard.", safety: "Nunca pedimos sua senha ou seus códigos por e-mail.", manage: "Configurações de e-mail", legal: "Bullizard · Somente maiores de 18 · Sem vínculo com editoras de jogos", button: "Abrir a Bullizard" },
+  layout: { greeting: "Olá, {name},", greetingNoName: "Olá,", signoff: "Bullizard Team", why: "Você recebe este e-mail porque tem uma conta na Bullizard.", safety: "Nunca pedimos sua senha ou seus códigos por e-mail.", manage: "Configurações de e-mail", legal: "Bullizard · 18+ only · Somente maiores de 18 · Sem vínculo com editoras de jogos", button: "Abrir a Bullizard" },
   verifySubject: (code) => `Seu código da Bullizard: ${code}`,
   verifyCode: (code, minutes) => `Seu código é ${code}. Ele vale por ${simpleDuration(minutes, U)}. Se você não pediu, ignore este e-mail.`,
   duration: (minutes) => simpleDuration(minutes, U),

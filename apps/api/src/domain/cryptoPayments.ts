@@ -160,7 +160,8 @@ export async function coinsFor(ctx: Ctx, ref: PayableRef, buyerId: string) {
   const owed = p.charged_cents - (await paidSoFarCents(ctx.db, p));
   const coins = await viaProvider(ctx, 'coins', async () => {
     const list = await np.coinsFor(usd(owed));
-    if (!list.length) throw new Error('no coin minimums could be read');
+    // Round 27 (3): within the deadline some minimums may still be loading — answer what is known, marked partial.
+    if (!list.length && !list.partial) throw new Error('no coin minimums could be read');
     return list;
   });
   const pos = (c: string) => (POPULAR.includes(c) ? POPULAR.indexOf(c) : POPULAR.length);
@@ -178,7 +179,7 @@ export async function coinsFor(ctx: Ctx, ref: PayableRef, buyerId: string) {
       };
     })
     .sort((a, b) => Number(b.available) - Number(a.available) || pos(a.coin) - pos(b.coin) || a.coin.localeCompare(b.coin));
-  return { owedCents: owed, currency: p.currency, coins: list };
+  return { owedCents: owed, currency: p.currency, coins: list, partial: coins.partial === true };
 }
 
 export interface CryptoPaymentView {
@@ -207,10 +208,15 @@ const STATE_COLS = 'applied_at, credited_cents::text, review_reason, outcome_amo
 
 /** Round 26 (A2): what the buyer should understand about a payment row, in one word. */
 export type PaymentState = 'waiting' | 'confirming' | 'received_applying' | 'paid' | 'underpaid' | 'held_for_review' | 'credited_to_balance' | 'failed' | 'expired';
+/** Order / checkout statuses under which no money has been applied yet. */
+const UNFUNDED = new Set(['awaiting_payment', 'cancelled', 'expired']);
 export function paymentState(r: { status: string; applied_at: string | null; credited_cents: string | null; review_reason: string | null; expires_at: string | null }, orderStatus: string): PaymentState {
   if (r.review_reason) return 'held_for_review';
   if (r.applied_at) return 'paid';
   if (Number(r.credited_cents ?? 0) > 0 || r.status === 'credited') return 'credited_to_balance';
+  // Round 27 (1): once the order (or cart checkout) is funded, the payment is paid whatever the provider row still
+  // says (an IPN applied by another path, a poll that applied it before the row caught up) — never "confirming" forever.
+  if (!UNFUNDED.has(orderStatus)) return 'paid';
   switch (r.status) {
     case 'finished':
     case 'confirmed':

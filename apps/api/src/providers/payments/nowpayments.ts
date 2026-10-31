@@ -81,6 +81,8 @@ export interface NowPaymentsOptions {
   /** Wallet the store converts into, e.g. usdtbsc (USDT BEP-20); sets the pair for minimum amounts. */
   outcomeCurrency?: string;
   fetch?: typeof fetch;
+  /** Round 27 (3): how long /crypto/coins may wait for cold minimums before answering what it has (default 2 000). */
+  coinsDeadlineMs?: number;
   /** Deadline per call in ms (default 10 000). */
   timeoutMs?: number;
 }
@@ -97,6 +99,9 @@ export function sortDeep(v: unknown): unknown {
 export function ipnSignature(secret: string, body: unknown): string {
   return createHmac('sha512', secret).update(JSON.stringify(sortDeep(body))).digest('hex');
 }
+
+/** The coin list; `partial` when some minimums had not come back within the deadline (ask again in a moment). */
+export type CoinList = Array<{ coin: string; minUsd: number; available: boolean }> & { partial?: boolean };
 
 export class NowPaymentsProvider implements PaymentProvider {
   readonly name = 'nowpayments';
@@ -147,34 +152,73 @@ export class NowPaymentsProvider implements PaymentProvider {
 
   // --- Payments in ---------------------------------------------------------------------
 
-  /** Coins the store accepts (Store Settings → Payment options). */
+  /**
+   * Round 27 (3): the coin list and each coin's minimum are cached for ten minutes and served stale while a refresh
+   * runs in the background, so the payment-method step answers from cache in milliseconds. A cold cache is filled with
+   * every call in parallel and the answer never waits past `coinsDeadlineMs` (2 s): coins whose minimum has not come
+   * back yet are left out and the result is marked `partial` so the web can ask again.
+   */
+  private static readonly FRESH_MS = 10 * 60_000;
+  private coinsInFlight: Promise<string[]> | null = null;
+  private readonly minInFlight = new Map<string, Promise<number>>();
+
+  /** Coins the store accepts (Store Settings → Payment options). Stale-while-revalidate; a cold cache waits for the call. */
   async availableCoins(): Promise<string[]> {
-    if (this.coins && Date.now() - this.coins.at < 10 * 60_000) return this.coins.list;
-    const r = await this.call<{ selectedCurrencies?: string[]; currencies?: string[] }>('GET', '/v1/merchant/coins');
-    const list = (r.selectedCurrencies ?? r.currencies ?? []).map((c) => c.toLowerCase());
-    this.coins = { list, at: Date.now() };
-    return list;
+    const fresh = this.coins && Date.now() - this.coins.at < NowPaymentsProvider.FRESH_MS;
+    if (this.coins && fresh) return this.coins.list;
+    const load = (this.coinsInFlight ??= this.call<{ selectedCurrencies?: string[]; currencies?: string[] }>('GET', '/v1/merchant/coins')
+      .then((r) => {
+        const list = (r.selectedCurrencies ?? r.currencies ?? []).map((c) => c.toLowerCase());
+        this.coins = { list, at: Date.now() };
+        return list;
+      })
+      .finally(() => (this.coinsInFlight = null)));
+    if (this.coins) {
+      load.catch(() => {}); // stale list answers now; the refresh failing is retried on the next call
+      return this.coins.list;
+    }
+    return load;
   }
 
-  /** Smallest payment NOWPayments accepts in this coin, in USD. */
+  /** Smallest payment NOWPayments accepts in this coin, in USD. Stale-while-revalidate like the coin list. */
   async minAmountUsd(coin: string): Promise<number> {
     const hit = this.minAmounts.get(coin);
-    if (hit && Date.now() - hit.at < 10 * 60_000) return hit.usd;
-    const r = await this.call<{ min_amount: number; fiat_equivalent?: number }>(
+    if (hit && Date.now() - hit.at < NowPaymentsProvider.FRESH_MS) return hit.usd;
+    const load = this.loadMin(coin);
+    if (hit) {
+      load.catch(() => {});
+      return hit.usd;
+    }
+    return load;
+  }
+  private loadMin(coin: string): Promise<number> {
+    const running = this.minInFlight.get(coin);
+    if (running) return running;
+    const p = this.call<{ min_amount: number; fiat_equivalent?: number }>(
       'GET',
       `/v1/min-amount?currency_from=${encodeURIComponent(coin)}&currency_to=${encodeURIComponent(this.outcomeCurrency)}&fiat_equivalent=usd`,
-    );
-    const usd = Number(r.fiat_equivalent ?? 0);
-    this.minAmounts.set(coin, { usd, at: Date.now() });
-    return usd;
+    )
+      .then((r) => {
+        const usd = Number(r.fiat_equivalent ?? 0);
+        this.minAmounts.set(coin, { usd, at: Date.now() });
+        return usd;
+      })
+      .finally(() => this.minInFlight.delete(coin));
+    this.minInFlight.set(coin, p);
+    return p;
   }
 
-  /** Coins whose minimum covers `amountUsd`, so the buyer never picks one that can't pay the order. */
-  /** Every coin NOWPayments offers, with its minimum and whether it fits the amount owed. */
-  async coinsFor(amountUsd: number): Promise<Array<{ coin: string; minUsd: number; available: boolean }>> {
+  /** Every coin NOWPayments offers, with its minimum and whether it fits the amount owed; answers within the deadline. */
+  async coinsFor(amountUsd: number): Promise<CoinList> {
+    const deadlineMs = this.opts.coinsDeadlineMs ?? 2_000;
+    const started = Date.now();
     const coins = await this.availableCoins();
     const out: Array<{ coin: string; minUsd: number; available: boolean }> = [];
-    await Promise.all(
+    let partial = false;
+    const left = Math.max(50, deadlineMs - (Date.now() - started));
+    let timer: NodeJS.Timeout | undefined;
+    const deadline = new Promise<'timeout'>((resolve) => (timer = setTimeout(() => resolve('timeout'), left)));
+    const all = Promise.all(
       coins.map(async (coin) => {
         try {
           const minUsd = await this.minAmountUsd(coin);
@@ -184,7 +228,19 @@ export class NowPaymentsProvider implements PaymentProvider {
         }
       }),
     );
-    return out.sort((a, b) => Number(b.available) - Number(a.available) || a.coin.localeCompare(b.coin));
+    const won = await Promise.race([all.then(() => 'done' as const), deadline]);
+    clearTimeout(timer);
+    if (won === 'timeout') {
+      partial = true;
+      all.catch(() => {}); // the rest keeps filling the cache in the background
+    }
+    const list = [...out].sort((a, b) => Number(b.available) - Number(a.available) || a.coin.localeCompare(b.coin));
+    return Object.assign(list, { partial });
+  }
+
+  /** Round 27 (3): fill the coin and minimum caches at start-up so the first buyer does not wait. */
+  warmCoins(): void {
+    this.coinsFor(1).catch(() => {});
   }
 
   async estimate(amountUsd: number, coin: string): Promise<number> {
