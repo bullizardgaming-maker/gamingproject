@@ -2,7 +2,7 @@ import type { Ctx } from '../context.js';
 import type { Queryable, Tx } from '../db.js';
 import { many, one } from '../db.js';
 import { hmacSha256 } from '../lib/crypto.js';
-import { badRequest, conflict } from '../lib/errors.js';
+import { badRequest, conflict, notFound } from '../lib/errors.js';
 
 export const MAX_ITEMS_PER_UPLOAD = 10_000;
 export const MAX_ITEM_BYTES = 4_096;
@@ -99,11 +99,12 @@ export async function reserveInventory(tx: Tx, offerId: string, orderId: string,
 /** Manual-delivery offers keep a stock counter guarded by the offer's version column. */
 export async function reserveManualStock(tx: Tx, offerId: string, quantity: number): Promise<void> {
   for (let attempt = 0; attempt < 5; attempt++) {
-    const offer = await one<{ stock: number; version: number }>(tx, 'SELECT stock, version FROM offers WHERE id = $1', [offerId]);
+    const offer = await one<{ stock: number; version: number; status: string }>(tx, 'SELECT stock, version, status FROM offers WHERE id = $1', [offerId]);
+    if (offer.status !== 'active') throw notFound('Offer'); // Round 26c (L1): a listing paused mid-checkout is not sold
     if (offer.stock < quantity) throw conflict('out_of_stock', 'Not enough stock for this order');
     const res = await tx.query(
       `UPDATE offers SET stock = stock - $3, version = version + 1, updated_at = now()
-        WHERE id = $1 AND version = $2 AND stock >= $3`,
+        WHERE id = $1 AND version = $2 AND stock >= $3 AND status = 'active'`,
       [offerId, offer.version, quantity],
     );
     if (res.rowCount === 1) return;

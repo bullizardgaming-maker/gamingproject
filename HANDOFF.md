@@ -922,6 +922,29 @@ Suites: API 85 files / 778 tests green (multinode excluded), typecheck clean, `n
 image start check: build, runtime imports, migrate through 081, `/readyz` + `/healthz` as `APP_ENV=staging` with
 `PAYMENT_PROVIDER=nowpayments` and `SANDBOX_MODE=false` (proxy CA in a scratch Dockerfile copy, repo Dockerfile unchanged).
 
+## Round 26c (Oct 31, 2026) — hardening after 26b
+
+Branch `round-26-api` only. No migration.
+
+- **H1 staff/system pauses stay paused.** `POST /offers/:id/resume` and `PATCH /offers/:id {status:'active'}` run `requireSeller` (403 `listing_banned` / `kyc_overdue` …) and refuse with 403 `paused_by_staff` while `expired_reason` is set (listing_ban, id_overdue, league ended). Staff lifting the ban / the seller verifying ID still re-activates as before. Other PATCH edits on a paused listing are unaffected.
+- **L1** `reserveManualStock`: the stock UPDATE requires `status = 'active'` (404 if the listing was paused mid-checkout).
+- **L2** `updateOffer` runs in one transaction with the row locked (`FOR UPDATE`); the PATCH-delete open-orders check happens under that lock, like `DELETE /offers/:id`.
+- **L4** `POST /admin/crypto/payments/:id/recheck` is rate-limited to 10/min per staff member (429).
+- `GET /seller/offers` rows carry `open_orders` (awaiting_payment/paid/delivered/disputed count).
+- Price guide filters on `f.available > 0` (column) instead of `offer_available(f.id)` per row.
+- Tests: `test/round26c.test.ts` (4).
+
+## Round 26b (Oct 31, 2026) — create-offer redesign, back end (`claude/round-26b-create-offer.md`)
+
+Branch `round-26-api` only. Migration `083_round26b.sql` (idempotent).
+
+- **No max per order.** `maxQty` in a body is accepted and ignored; `max_qty` is always null (column unused, constraint dropped). The most a buyer may order is the available stock: quote/order above it → 400 `above_maximum` `{maxQty: <available>}` (create-order's cheap stock check may answer 409 `out_of_stock` first).
+- **Delivery speed is typed.** `deliveryMinutes` (int 1–4320) on POST/PATCH `/offers` and preview; `deliveryHours` (1–72) and the Round 25 `deliveryTime` keys still work. DB check `offers_delivery_minutes_range`. `delivery_time` on reads is the nearest list bucket (anything over 12 h → `24h`); preview adds `delivery_minutes_text` ("1h 30m"). Market: `maxDeliveryMinutes` query (1–4320) next to `maxDeliveryTime`; `sort=fastest_delivery` unchanged.
+- **Volume tiers** `{ minQty, type: 'percent'|'fixed', value }` (max 4): percent 1–50; fixed = seller unit price in micros, below the base price and below the previous tier's effective price; quantities must rise and exceed `minQty`. Legacy `{minQty, percentOff}` still accepted (stored as percent). 400 `invalid_volume_discounts`. Pricing: percent tiers round up to the micro; fixed tiers are the price; all grossed up at the seller's rate like the base. Quote adds `volumeTier` (the tier applied or null); `volumePercentOff` for a fixed tier is the implied %. Migration converts stored Round 25 tiers.
+- **Micros everywhere.** Preview `listing.volume_tiers[]` = tier + `seller_unit_micros`, `seller_unit_price`, `unit_price_micros`, `unit_price` (buyer, grossed up; strings trimmed, up to 6 decimals). `seller.unit_price` / `buyer.unit_price` are trimmed too. Prices accept ".14". Offer reads already carry buyer `unit_price_micros` (+ `display_unit_price_micros`); quote carries `unitPriceMicros` / `listingUnitPriceMicros`.
+- **Price guide** `GET /v1/offers/price-guide?game=&server=&faction=&category=currency` (seller only; 403 otherwise) → `{ sellers, listings, lowest_micros, median_micros, recommended_micros, seller_net: { commission_bps, lowest_micros, median_micros, recommended_micros }, as_of }`. Buyer prices of other sellers' active, in-stock, visible listings (own, paused, sold-out, reserved, paused shops excluded). Recommended = round(lowest × 0.99) but ≥ ceil(median × 0.8); all null when empty. Market rows cached 60 s per game|server|faction|category in process memory; the caller's own listings are filtered after the cache, net is at the caller's listing rate (`listingRateBps`).
+- Tests: `test/round26b.test.ts` (5) — pure rules, delivery, tiers + migration, preview micros, price guide. `round25`/`round26` expectations updated.
+
 ## Round 26 (Oct 30, 2026) — review of Rounds 24–25b, the crypto "disappears" fix, listing features (`claude/round-26-brief.md`)
 
 Migration **082** (`082_round26.sql`). New test files `test/round26-crypto.test.ts` (A1–A3, 6 cases) and

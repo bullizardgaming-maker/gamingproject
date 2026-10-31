@@ -9,7 +9,7 @@ import { MAX_SHOWN_BADGES, earnedBadges, setShownBadges, shownBadges } from '../
 import { onboardingStatus, rulesTestFor, submitRulesTest } from '../domain/onboarding.js';
 import { recordSignals } from '../domain/fraud.js';
 import { sellerAvailable } from '../domain/ledger.js';
-import {createOffer, getOffer, requireSeller, submitOwnerProof, updateOffer, uploadInventory, duplicateOffer, previewOffer, setListingState } from '../domain/offers.js';
+import {createOffer, getOffer, requireSeller, submitOwnerProof, updateOffer, uploadInventory, duplicateOffer, previewOffer, priceGuide, setListingState } from '../domain/offers.js';
 import { createSellerCode, endSale, listSellerCodes, setSale, setSellerCodeActive } from '../domain/discounts.js';
 import { trustSummary } from '../domain/trust.js';
 import { exportListings, importListings } from '../domain/bulkListings.js';
@@ -50,15 +50,20 @@ export const OfferBody = z.object({
   deliveryMode: z.enum(['auto', 'manual']),
   stock: z.number().int().min(0).max(2_000_000_000).optional(),
   lowStockThreshold: z.number().int().min(0).max(100_000).optional(),
-  deliveryHours: z.number().int().min(1).max(168).optional().describe('Promised delivery time for manual orders, in hours (older clients; see deliveryTime)'),
-  deliveryTime: z.enum(DELIVERY_TIME_KEYS as [string, ...string[]]).optional().describe('Round 25: promised delivery time, one of 15m, 1h, 3h, 6h, 12h, 24h'),
+  deliveryHours: z.number().int().min(1).max(72).optional().describe('Promised delivery time in hours (older clients; see deliveryMinutes)'),
+  deliveryTime: z.enum(DELIVERY_TIME_KEYS as [string, ...string[]]).optional().describe('Round 25 list value (15m, 1h, 3h, 6h, 12h, 24h); still accepted'),
   unitPrice: z.string().max(20).optional().describe('Round 25, currency listings: price of one unit with up to 6 decimals, e.g. "0.000123"'),
   unitPriceMicros: z.number().int().positive().max(100_000_00 * 10_000).optional().describe('Round 25, currency listings: the same in micro-units (123 = 0.000123)'),
   volumeDiscounts: z
-    .array(z.object({ minQty: z.number().int().min(2).max(2_000_000_000), percentOff: z.number().int().min(1).max(MAX_VOLUME_PERCENT) }))
+    .array(
+      z.union([
+        z.object({ minQty: z.number().int().min(2).max(2_000_000_000), type: z.enum(['percent', 'fixed']), value: z.number().int().min(1).max(100_000_00 * 10_000) }),
+        z.object({ minQty: z.number().int().min(2).max(2_000_000_000), percentOff: z.number().int().min(1).max(MAX_VOLUME_PERCENT) }),
+      ]),
+    )
     .max(MAX_VOLUME_DISCOUNTS)
     .optional()
-    .describe('Round 25, currency listings: up to 4 tiers, e.g. [{"minQty":1000000,"percentOff":5}]. Send [] to remove.'),
+    .describe('Round 26b, currency listings: up to 4 tiers {minQty, type: "percent" (value 1–50) | "fixed" (value = unit price in micros, below the base and the previous tier)}; the Round 25 {minQty, percentOff} spelling still works. Send [] to remove.'),
   warrantyDays: z.union([z.literal(0), z.literal(7), z.literal(14), z.literal(30), z.literal(60), z.literal(90)]).optional().describe('Account listings only: a warranty after escrow releases, in days'),
   linkedAccountId: z.string().uuid().nullable().optional().describe('Account listings: a Steam/Riot account you linked (GET /v1/seller/linked-accounts); null detaches'),
   attributes: z.record(z.string().max(30), z.string().max(60)).optional().describe('Game-specific fields such as server, region, platform or rank (GET /v1/catalog/attributes)'),
@@ -76,7 +81,8 @@ export const OfferBody = z.object({
   unitLabel: z.string().trim().max(12).nullable().optional().describe('Currency sold by amount: what one unit of quantity is, e.g. "M", "k", "orbs"'),
   unitSize: z.number().int().min(1).max(1_000_000_000_000).nullable().optional().describe('Game currency per unit, e.g. 1000000 for "M"'),
   minQty: z.number().int().min(1).max(2_000_000_000).optional().describe('Smallest order, in units (default 1)'),
-  maxQty: z.number().int().min(1).max(2_000_000_000).nullable().optional().describe('Round 26 (B1): the most a buyer may order at once; null = no cap'),
+  maxQty: z.number().int().nullable().optional().describe('Ignored (Round 26b): the most a buyer may order is the stock'),
+  deliveryMinutes: z.number().int().min(1).max(72 * 60).optional().describe('Round 26b: the delivery time the seller typed, in minutes (1 – 4320); hours × 60'),
   deliveryMethods: z.array(z.string().max(20)).max(10).nullable().optional().describe('Round 24: delivery methods from the game\'s list (f2f, mail, market, uid), at least one; null = all'),
 });
 
@@ -225,7 +231,8 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/seller/offers', async (req) =>
     many(
       ctx.db,
-      `SELECT f.*, CASE WHEN f.status = 'active' AND f.available <= 0 THEN 'out_of_stock' ELSE f.status END AS listing_state
+      `SELECT f.*, CASE WHEN f.status = 'active' AND f.available <= 0 THEN 'out_of_stock' ELSE f.status END AS listing_state,
+              (SELECT count(*)::int FROM orders o WHERE o.offer_id = f.id AND o.status IN ('awaiting_payment', 'paid', 'delivered', 'disputed')) AS open_orders
          FROM offers f WHERE seller_id = $1 AND status <> 'removed' ORDER BY created_at DESC`,
       [me(req).id],
     ),
@@ -233,6 +240,12 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.post('/offers', async (req, reply) => reply.status(201).send(await createOffer(ctx, me(req), offerInput(OfferBody.parse(req.body)))));
   /** Round 26 (B10): the listing as the buyer will see it (buyer prices at the seller's rate), without creating it. */
+  /** Round 26b: the market for a game + server (+ faction) — lowest / median / recommended buyer unit price, as micros, and the same as the seller's net. */
+  app.get('/offers/price-guide', async (req) => {
+    const q = z.object({ game: z.string().trim().min(1).max(80), server: z.string().trim().min(1).max(60).optional(), faction: z.string().trim().min(1).max(60).optional(), category: z.string().trim().min(1).max(40).default('currency') }).parse(req.query);
+    requireSeller(me(req));
+    return priceGuide(ctx, me(req), q);
+  });
   app.post('/offers/preview', async (req) => previewOffer(ctx, me(req), offerInput(OfferBody.parse(req.body))));
   /** Round 26 (B3): copy a listing to another server; stock starts at what the seller enters. */
   app.post('/offers/:id/duplicate', async (req, reply) => {
@@ -241,7 +254,10 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
   });
   /** Round 26 (B2): pause / resume / soft delete (open orders → pause only). */
   app.post('/offers/:id/pause', async (req) => setListingState(ctx, me(req).id, Id.parse(req.params).id, 'pause'));
-  app.post('/offers/:id/resume', async (req) => setListingState(ctx, me(req).id, Id.parse(req.params).id, 'resume'));
+  app.post('/offers/:id/resume', async (req) => {
+    requireSeller(me(req)); // Round 26c (H1): a banned or ID-overdue seller cannot bring listings back
+    return setListingState(ctx, me(req).id, Id.parse(req.params).id, 'resume');
+  });
   app.delete('/offers/:id', async (req) => setListingState(ctx, me(req).id, Id.parse(req.params).id, 'delete'));
 
   /** Founding Sellers: free featured spots during the launch (see dashboard.founding for the allowance). */
@@ -254,11 +270,12 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     return getOffer(ctx.db, Id.parse(req.params).id);
   });
   app.patch('/offers/:id', async (req) => {
-    const body = OfferBody.pick({ title: true, description: true, priceCents: true, stock: true, lowStockThreshold: true, deliveryHours: true, deliveryTime: true, attributes: true, priceTiers: true, warrantyDays: true, linkedAccountId: true, unitLabel: true, unitSize: true, minQty: true, maxQty: true, deliveryMethods: true, unitPrice: true, unitPriceMicros: true, volumeDiscounts: true })
+    const body = OfferBody.pick({ title: true, description: true, priceCents: true, stock: true, lowStockThreshold: true, deliveryHours: true, deliveryTime: true, attributes: true, priceTiers: true, warrantyDays: true, linkedAccountId: true, unitLabel: true, unitSize: true, minQty: true, maxQty: true, deliveryMethods: true, unitPrice: true, unitPriceMicros: true, volumeDiscounts: true, deliveryMinutes: true })
       .partial()
       .extend({ version: z.number().int().min(0), status: z.enum(['active', 'paused', 'removed']).optional() })
       .parse(req.body);
     const { version, ...patch } = body;
+    if (patch.status === 'active') requireSeller(me(req)); // Round 26c (H1)
     return updateOffer(ctx, me(req).id, Id.parse(req.params).id, version, offerInput(patch));
   });
 

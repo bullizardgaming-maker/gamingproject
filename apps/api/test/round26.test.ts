@@ -21,22 +21,18 @@ async function silver(seller: Seller, over: Record<string, unknown> = {}) {
 const delivery = { deliveryMethod: 'f2f', deliveryInfo: { character: 'Buyer1' } };
 
 describe('Round 26 B — listing features', () => {
-  it('B1: a maximum per order is checked on quotes, orders and cart lines; never below the minimum', async () => {
+  it('B1 (Round 26b): no seller-set maximum — the most a buyer may order is the stock; maxQty in a body is ignored', async () => {
     const seller = await makeUser(h, { tier: 2 });
     const buyer = await makeUser(h);
-    expect((await seller.api.post('/v1/offers', { categorySlug: 'currency', game: 'Albion Online', deliveryMode: 'manual', stock: 5_000_000, unitPrice: '0.0005', deliveryMethods: ['f2f'], deliveryTime: '1h', attributes: { server: 'Europe' }, minQty: 10_000, maxQty: 9_999 })).body.error.code).toBe('invalid_unit');
-    const offer = await silver(seller, { minQty: 10_000, maxQty: 1_000_000 });
-    expect(offer).toMatchObject({ min_qty: 10_000, max_qty: 1_000_000 });
+    const offer = await silver(seller, { stock: 1_000_000, minQty: 10_000, maxQty: 50_000 });
+    expect(offer.max_qty ?? null).toBeNull();
     const over = await buyer.api.post('/v1/orders/quote', { offerId: offer.id, quantity: 1_000_001 });
     expect(over.body.error).toMatchObject({ code: 'above_maximum', details: { maxQty: 1_000_000 } });
-    expect((await buyer.api.post('/v1/orders', { offerId: offer.id, quantity: 1_000_001, acceptTos: true, ...delivery })).body.error.code).toBe('above_maximum');
-    expect((await buyer.api.post('/v1/orders/cart', { items: [{ offerId: offer.id, quantity: 1_000_001, ...delivery }], acceptTos: true })).body.error.code).toBe('above_maximum');
     expect((await buyer.api.post('/v1/orders/quote', { offerId: offer.id, quantity: 1_000_000 })).status).toBe(200);
-    // The cap can be edited and removed.
+    expect((await buyer.api.post('/v1/orders', { offerId: offer.id, quantity: 1_000_001, acceptTos: true, ...delivery })).body.error.code).toBe('out_of_stock'); // the cheap stock check runs first
     const v = (await seller.api.get(`/v1/offers/${offer.id}`)).body.version;
-    expect((await seller.api.patch(`/v1/offers/${offer.id}`, { version: v, maxQty: 5_000 })).body.error.code).toBe('invalid_unit'); // below the minimum
-    expect((await seller.api.patch(`/v1/offers/${offer.id}`, { version: v, maxQty: null })).body.max_qty).toBeNull();
-    expect((await buyer.api.post('/v1/orders/quote', { offerId: offer.id, quantity: 1_000_001 })).status).toBe(200);
+    expect((await seller.api.patch(`/v1/offers/${offer.id}`, { version: v, maxQty: 5 })).status).toBe(200); // ignored, not refused
+    expect((await buyer.api.post('/v1/orders/quote', { offerId: offer.id, quantity: 600_000 })).status).toBe(200);
   });
 
   it('B2: pause, resume and soft delete; a listing with open orders can only be paused', async () => {
@@ -73,13 +69,13 @@ describe('Round 26 B — listing features', () => {
 
   it('B3: duplicate to another server copies everything, rebuilds the title, and starts at the stock given', async () => {
     const seller = await makeUser(h, { tier: 2 });
-    const src = await silver(seller, { volumeDiscounts: [{ minQty: 2_000_000, percentOff: 5 }], minQty: 1_000, maxQty: 10_000_000, unitLabel: 'k', unitSize: 1000 });
+    const src = await silver(seller, { volumeDiscounts: [{ minQty: 2_000_000, percentOff: 5 }], minQty: 1_000, unitLabel: 'k', unitSize: 1000 });
     const copy = await seller.api.post(`/v1/offers/${src.id}/duplicate`, { attributes: { server: 'Americas' }, stock: 7_000_000 });
     expect(copy.status, JSON.stringify(copy.body)).toBe(201);
     expect(copy.body).toMatchObject({
       id: expect.not.stringMatching(src.id), game: 'Albion Online', category_slug: 'currency', attributes: { server: 'Americas' }, title: 'Albion Online · Americas',
       description: src.description, unit_price_micros: src.unit_price_micros, volume_discounts: src.volume_discounts, delivery_methods: src.delivery_methods,
-      delivery_time: '1h', min_qty: 1000, max_qty: 10_000_000, unit_label: 'k', stock: 7_000_000,
+      delivery_time: '1h', delivery_minutes: 60, min_qty: 1000, unit_label: 'k', stock: 7_000_000,
     });
     expect(copy.body.public_id).not.toBe(src.public_id);
     expect((await h.ctx.db.query('SELECT duplicated_from FROM offers WHERE id = $1', [copy.body.id])).rows[0].duplicated_from).toBe(src.id);
@@ -155,19 +151,19 @@ describe('Round 26 B — listing features', () => {
     expect(bad.status).toBe(400);
     expect(bad.body.error.code).toBe('invalid_attributes'); // Server is required for Albion
     expect((await seller.api.post('/v1/offers/preview', { categorySlug: 'currency', game: 'Albion Online', deliveryMode: 'manual', stock: 1000, unitPrice: '0.000123', deliveryMethods: ['boat'], deliveryTime: '1h', attributes: { server: 'Europe' } })).body.error.code).toBe('invalid_delivery_method');
-    const ok = await seller.api.post('/v1/offers/preview', { categorySlug: 'currency', game: 'Albion Online', deliveryMode: 'manual', stock: 5_000_000, unitPrice: '0.000123', deliveryMethods: ['f2f', 'market'], deliveryTime: '1h', attributes: { server: 'Europe' }, minQty: 10_000, maxQty: 1_000_000, volumeDiscounts: [{ minQty: 1_000_000, percentOff: 10 }], description: 'Bank trade' });
+    const ok = await seller.api.post('/v1/offers/preview', { categorySlug: 'currency', game: 'Albion Online', deliveryMode: 'manual', stock: 5_000_000, unitPrice: '0.000123', deliveryMethods: ['f2f', 'market'], deliveryTime: '1h', attributes: { server: 'Europe' }, minQty: 10_000, volumeDiscounts: [{ minQty: 1_000_000, percentOff: 10 }], description: 'Bank trade' });
     expect(ok.status, JSON.stringify(ok.body)).toBe(200);
     const rate = ok.body.seller.commission_bps as number;
     expect(ok.body).toMatchObject({
       valid: true, would_need_review: false,
-      listing: { title: 'Albion Online · Europe', description: 'Bank trade', attributes: { server: 'Europe' }, delivery_time: '1h', delivery_methods: ['f2f', 'market'], min_qty: 10_000, max_qty: 1_000_000, unit_price_micros: grossMicros(123, rate), unit_price: expect.stringMatching(/^0\.0001/), listing_state: 'active', volume_discounts: [{ minQty: 1_000_000, percentOff: 10 }] },
+      listing: { title: 'Albion Online · Europe', description: 'Bank trade', attributes: { server: 'Europe' }, delivery_time: '1h', delivery_methods: ['f2f', 'market'], min_qty: 10_000, unit_price_micros: grossMicros(123, rate), unit_price: expect.stringMatching(/^0\.0001/), listing_state: 'active', volume_discounts: [{ minQty: 1_000_000, type: 'percent', value: 10 }] },
       seller: { unit_price_micros: 123, unit_price: '0.000123' },
       buyer: { unit_price_micros: grossMicros(123, rate), currency: 'USD' },
     });
     expect(ok.body.buyer.min_order_cents).toBe(grossUpCents(Math.ceil((123 * 10_000) / 10_000), rate)); // 10,000 units × 0.000123 = $1.23, grossed up
     expect((await h.ctx.db.query('SELECT count(*)::int AS n FROM offers WHERE seller_id = $1', [seller.id])).rows[0].n).toBe(before);
     // The real listing then matches the preview.
-    const real = await silver(seller, { minQty: 10_000, maxQty: 1_000_000, volumeDiscounts: [{ minQty: 1_000_000, percentOff: 10 }], description: 'Bank trade' });
+    const real = await silver(seller, { minQty: 10_000, volumeDiscounts: [{ minQty: 1_000_000, percentOff: 10 }], description: 'Bank trade' });
     expect(real.unit_price_micros).toBe(ok.body.listing.unit_price_micros);
     expect(real.title).toBe(ok.body.listing.title);
     void grossUp;
