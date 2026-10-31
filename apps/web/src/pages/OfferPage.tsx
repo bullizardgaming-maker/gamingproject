@@ -18,6 +18,7 @@ import { METHODS, methodLabel, methodsOf } from '@/lib/delivery';
 import { intlLocale, t } from '../i18n';
 import { BuyerProtection } from '../components/Brand';
 import { usePrice } from '@/lib/prefs';
+import { effectiveMin, soldOut } from '@/lib/stock';
 import { MIN_CURRENCY_ORDER_USD_CENTS, totalCentsFor } from '../../../api/src/domain/unitPrice';
 import { buyerTiers, buyerUnitAt, tierFor, tierText } from '@/lib/volume';
 
@@ -45,7 +46,7 @@ export function OfferPage() {
 
   useEffect(() => {
     setOffer(null);
-    api<Offer>(`/offers/${id}`).then((o) => (setOffer(o), setQtyText((q) => q || String(o.min_qty ?? 1)))).catch((e) => setError(e.message));
+    api<Offer>(`/offers/${id}`).then((o) => (setOffer(o), setQtyText((q) => q || String(effectiveMin(o))))).catch((e) => setError(e.message));
   }, [id]);
   useEffect(() => {
     if (!offer) return;
@@ -59,7 +60,8 @@ export function OfferPage() {
   const bundleSeparately = (offer.bundle ?? []).reduce((s, p) => s + p.price_cents * p.quantity, 0);
   const bundleSave = bundleSeparately - offer.price_cents;
   const onSale = offer.regular_price_cents != null && offer.regular_price_cents > offer.price_cents;
-  const min = offer.min_qty ?? 1;
+  const min = effectiveMin(offer); // Round 28: below the seller's minimum, the minimum is the stock left
+  const gone = soldOut(offer);
   const qty = Math.max(0, Math.floor(Number(qtyText) || 0));
   const max = offer.stock; // Round 26b: the max per order is the stock
   const qtyOk = qty >= min && qty <= max;
@@ -240,6 +242,7 @@ export function OfferPage() {
           ) : own ? (
             <p className="muted small" style={{ margin: 0 }}>{t('offer.yours')}</p>
           ) : (
+            gone ? <p className="alert small" role="status" style={{ margin: 0 }} data-testid="sold-out">{t('of.soldOut')}</p> :
             <button className="btn go lg block" disabled={busy || !qtyOk || belowMin} onClick={() => (methods.length ? (setError(''), setDialog(true)) : buy())}>
               {busy && !dialog ? t('offer.opening') : t('of.buyNow')}
             </button>

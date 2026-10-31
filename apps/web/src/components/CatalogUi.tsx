@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { attributePairs } from '@/lib/attributes';
 import { usePrice } from '@/lib/prefs';
 import { unitPriceFor } from '@/lib/tiers';
+import { effectiveMin } from '@/lib/stock';
 import { buyerUnitAt } from '@/lib/volume';
 import { totalCentsFor } from '../../../api/src/domain/unitPrice';
 import type { Offer } from '../pages/Market';
@@ -269,7 +270,7 @@ export function CurrencyTable({ offers, empty, current }: { offers: Offer[]; emp
           </div>
           <div className="ct-cell"><span className="ct-k">{t('ct.server')}</span><span>{Object.values(o.attributes ?? {}).slice(0, 2).join(' · ') || '—'}</span></div>
           <div className="ct-cell"><span className="ct-k">{t('table.stock')}</span><span className="num">{fmtUnits(o.stock, o.unit_label)}</span></div>
-          <div className="ct-cell"><span className="ct-k">{t('ct.min')}</span><span className="num">{fmtUnits(o.min_qty ?? 1, o.unit_label)}</span></div>
+          <div className="ct-cell"><span className="ct-k">{t('ct.min')}</span><span className="num">{fmtUnits(effectiveMin(o), o.unit_label)}</span></div>
           <div className="ct-cell"><span className="ct-k">{t('table.delivery')}</span><DeliveryTag offer={o as any} /></div>
           <div className="ct-price">
             <span><b className="num">{price.offer(o as any)}</b>{o.unit_label && <span className="small muted"> / {o.unit_label}</span>}</span>
@@ -341,7 +342,7 @@ export function CurrencyList({ offers, empty, current }: { offers: Offer[]; empt
               {o.sold_count != null && <span className="cl-sold num">{t('ct.sold', { n: compact(o.sold_count) })}</span>}
             </div>
             <div className="cl-chips">
-              {o.unit_label && <span className="cl-chip num">{t('ct.minShort', { n: compact(o.min_qty ?? 1) })}</span>}
+              {o.unit_label && <span className="cl-chip num">{t('ct.minShort', { n: compact(effectiveMin(o)) })}</span>}
               <span className="cl-chip num" title={t('ct.stockShort', { n: o.stock.toLocaleString(intlLocale()) })}><Package className="size-3.5" aria-hidden />{compact(o.stock)}<span className="sr-only"> {t('table.stock')}</span></span>
               <DeliveryShort offer={o as any} />
               <MethodIcons offer={o} />

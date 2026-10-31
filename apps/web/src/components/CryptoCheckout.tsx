@@ -23,8 +23,8 @@ export interface CryptoPayment {
   price_usd: string;
   actually_paid: string;
   actually_paid_usd: string | null;
-  /** Network fee the buyer covers on top of the order amount. */
-  fee_usd?: string;
+  /** Round 28: the payment processing fee included in price_usd (the invoice = order + fee). */
+  processing_fee_usd?: string;
   /** Round 25: what the invoice is priced in (USD or EUR) and that amount, plus the EUR-per-USD rate used. */
   price_currency?: string;
   price_amount?: string;
@@ -36,7 +36,7 @@ export interface CryptoPayment {
   expires_at: string | null;
   created_at: string;
 }
-interface Coins { owedCents: number; currency: string; coins: Array<{ coin: string; name: string; minUsd: number; available?: boolean; network?: string; fee_cents?: number; total_cents?: number }> }
+interface Coins { owedCents: number; orderCents?: number; processingFeeCents?: number; currency: string; coins: Array<{ coin: string; name: string; minUsd: number; available?: boolean; network?: string }> }
 /** GET /payment-methods (Round 25, B5): only Crypto for the beta; more methods appear when they are enabled. */
 interface PaymentMethod { id: string; currencies: string[]; enabled: boolean; pay_currency?: string }
 /** POST …/fx-quote: the price in a currency, held until `lockedUntil`. */
@@ -58,7 +58,7 @@ const hm = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digi
 /** Order / checkout statuses that mean the money was applied. */
 const PAID_ORDER = new Set(['paid', 'delivered', 'completed', 'disputed', 'released', 'refunded']);
 
-export function CryptoCheckout({ base, amountCents, currency, onPaid }: { base: string; amountCents: number; currency: string; onPaid: () => void }) {
+export function CryptoCheckout({ base, amountCents, currency, onPaid, orderRef }: { base: string; amountCents: number; currency: string; onPaid: () => void; orderRef?: string | null }) {
   const viewer = useDisplayCurrency();
   const nav = useNavigate();
   const [coins, setCoins] = useState<Coins | null>(null);
@@ -114,6 +114,15 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid }: { base: 
 
   // Received (or held for a person): keep asking about the payment and reloading the order until it is funded.
   const settling = funded ? undefined : received ?? held;
+  // Round 28: "confirming" never spins for ever. After 60 s it says so, keeps checking, and offers support with the order number.
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    if (!received || open) return setSlow(false);
+    const timer = setTimeout(() => setSlow(true), 60_000);
+    return () => clearTimeout(timer);
+  }, [received?.payment_id, !!open]); // eslint-disable-line react-hooks/exhaustive-deps
+  const orderId = base.startsWith('/orders/') ? base.slice('/orders/'.length) : null;
+  const supportLink = `/support/new?category=order${orderId ? `&order=${encodeURIComponent(orderId)}` : ''}`;
   useEffect(() => {
     if (funded) onPaid(); // once: the page reloads the order and shows it paid
   }, [!!funded]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -229,11 +238,21 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid }: { base: 
           <button type="button" className="btn ghost sm" onClick={onPaid}>{t('pay27.showOrder')}</button>
         </div>
       ) : received && !open ? (
-        <div className="card pay-state" role="status" aria-live="polite" data-testid="pay-confirming">
-          <span className="pay-state-icon is-ok" aria-hidden><CircleNotch className="size-6 auth-spin" /></span>
-          <h3>{t('pay26.confirming')}</h3>
-          <p className="small muted">{t('pay26.confirmingText')}</p>
-        </div>
+        slow ? (
+          <div className="card pay-state" role="status" aria-live="polite" data-testid="pay-slow">
+            <span className="pay-state-icon is-held" aria-hidden><Hourglass className="size-6" /></span>
+            <h3>{t('pay28.slow')}</h3>
+            <p className="small muted">{t('pay28.slowText')}</p>
+            {orderRef && <p className="small" style={{ margin: 0 }}>{t('pay28.orderNumber', { ref: orderRef })}</p>}
+            <Link className="btn ghost sm" to={supportLink}>{t('pay26.contactSupport')}</Link>
+          </div>
+        ) : (
+          <div className="card pay-state" role="status" aria-live="polite" data-testid="pay-confirming">
+            <span className="pay-state-icon is-ok" aria-hidden><CircleNotch className="size-6 auth-spin" /></span>
+            <h3>{t('pay26.confirming')}</h3>
+            <p className="small muted">{t('pay26.confirmingText')}</p>
+          </div>
+        )
       ) : held && !open ? (
         <div className="card pay-state" role="status" aria-live="polite" data-testid="pay-held">
           <span className="pay-state-icon is-held" aria-hidden><Hourglass className="size-6" /></span>
@@ -271,12 +290,8 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid }: { base: 
             </div>
             <b className="pg-pay-amount num" data-testid="pay-amount">{trim(open.pay_amount)} {ticker(open.pay_currency)}</b>
             <span className="small muted">{t('crypto.onNetwork', { network: open.pay_currency_name })}</span>
-            {open.price_currency && open.price_currency !== 'USD' ? (
+            {open.price_currency && open.price_currency !== 'USD' && (
               <span className="small muted num" data-testid="pay-breakdown">{t('crypto.invoiceIn', { amount: invoiceAmount(open) })}</span>
-            ) : Number(open.fee_usd) > 0 && (
-              <span className="small muted num" data-testid="pay-breakdown">
-                {t('crypto.breakdown', { price: money(Math.round(Number(open.price_usd) * 100), 'USD'), fee: money(Math.round(Number(open.fee_usd) * 100), 'USD'), total: money(Math.round((Number(open.price_usd) + Number(open.fee_usd)) * 100), 'USD') })}
-              </span>
             )}
             <div className="pg-addr">
               <code className="num" data-testid="pay-address">{open.pay_address}</code>
@@ -383,7 +398,7 @@ function InvoiceStep({ choices, owed, busy, onPick, onBack }: { choices: Readonl
   );
 }
 
-/** Step 3: the coin. Amounts are in the invoice currency; network fees are estimates in USD. */
+/** Step 3: the coin. Amounts are in the invoice currency (order + payment processing fee); no network-fee estimates. */
 function CoinStep({ coins, due, heldUntil, usd, busy, onPick, onBack, coinsError, onRetry }: { coins: Coins | null; due: string; heldUntil: string | null; usd: boolean; busy: boolean; onPick: (coin: string) => void; onBack: () => void; coinsError: string; onRetry: () => void }) {
   const ticker = (code: string) => code.toUpperCase().replace(/(.+)(TRC20|ERC20|BSC|SOL)$/, '$1');
   return (
@@ -409,14 +424,12 @@ function CoinStep({ coins, due, heldUntil, usd, busy, onPick, onBack, coinsError
                   <span className="pg-sym" aria-hidden>{ticker(c.coin).slice(0, 4)}</span>
                   <span className="min-w-0 flex-1">
                     <b className="block">{c.name}{c.network && !c.name.includes('(') && c.network !== c.name && !c.name.startsWith(c.network) && <span className="pg-net">{c.network}</span>}</b>
-                    <span className="small muted">{off ? t('crypto.tooSmall', { amount: money(Math.round(c.minUsd * 100), 'USD') }) : c.fee_cents != null ? t('crypto.feeLine', { fee: money(c.fee_cents, 'USD') }) : t('crypto.minimum', { amount: money(Math.round(c.minUsd * 100), 'USD') })}</span>
+                    <span className="small muted">{off ? t('crypto.tooSmall', { amount: money(Math.round(c.minUsd * 100), 'USD') }) : t('crypto.minimum', { amount: money(Math.round(c.minUsd * 100), 'USD') })}</span>
                   </span>
-                  {usd && !off && c.total_cents != null && <b className="pg-coin-total num">{money(c.total_cents, 'USD')}</b>}
                 </button>
               );
             })}
           </div>
-          <p className="small muted" style={{ margin: 0 }}>{t('crypto.feeNote')}</p>
         </>
       )}
     </div>

@@ -180,7 +180,7 @@ export function CartPayPage() {
   const price = usePrice(); // the buyer's chosen currency, at the published rate
   const { id } = useParams();
   const nav = useNavigate();
-  const [view, setView] = useState<{ checkout: { id: string; status: string; presentment_amount_cents: number; presentment_currency: string }; orders: Array<{ id: string; offer_title: string; quantity: number; seller_name: string; amount_cents: number; credit_cents?: number; charged_cents?: number; currency: string }> } | null>(null);
+  const [view, setView] = useState<{ checkout: { id: string; status: string; presentment_amount_cents: number; presentment_currency: string; processing_fee_cents?: number | null }; orders: Array<{ id: string; offer_title: string; quantity: number; seller_name: string; amount_cents: number; credit_cents?: number; charged_cents?: number; currency: string }> } | null>(null);
   const [error, setError] = useState('');
   const load = useCallback(async () => {
     try {
@@ -198,7 +198,8 @@ export function CartPayPage() {
   if (!view) return <p className="muted">Loading…</p>;
   const total = view.orders.reduce((s, o) => s + o.amount_cents, 0);
   const fromBalance = view.orders.reduce((s, o) => s + (o.credit_cents ?? 0), 0);
-  const toPay = total - fromBalance;
+  const fee = view.checkout.processing_fee_cents ?? 0; // Round 28: the payment processor's fee, on top
+  const toPay = total - fromBalance + fee;
   const cur = view.orders[0]?.currency ?? 'USD';
   return (
     <div className="stack" style={{ maxWidth: 640 }}>
@@ -210,6 +211,7 @@ export function CartPayPage() {
         {view.orders.map((o) => <div key={o.id}><span>{o.offer_title} × {o.quantity} · {o.seller_name}</span><span className="num">{price(o.amount_cents, o.currency)}</span></div>)}
         <div><span className="muted">{t('checkout.price')}</span><span className="num">{price(total, cur)}</span></div>
         {fromBalance > 0 && <div><span className="muted">{t('checkout.fromBalance')}</span><span className="num" data-testid="from-balance">−{price(fromBalance, cur)}</span></div>}
+        {fee > 0 && <div><span className="muted">{t('checkout.processingFee')}</span><span className="num" data-testid="processing-fee">{price(fee, cur)}</span></div>}
         <div className="pg-total"><span>{t('checkout.toPay')}</span><span className="pg-price">{price(toPay, cur)}</span></div>
       </div>
       <CryptoCheckout base={`/checkouts/${view.checkout.id}`} amountCents={toPay} currency={cur} onPaid={load} />

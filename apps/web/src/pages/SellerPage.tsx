@@ -109,7 +109,7 @@ export function SellerPage() {
         </div>
         <dl className="sp-stats">
           <div><dt>{t('sp.positive')}</dt><dd className="num">{r.count ? `${Number(r.positive_pct)}%` : '—'}</dd></div>
-          <div data-testid="sp-rating"><dt>{t('sp.rating')}</dt><dd className="num">{r.count ? <Stars value={Number(r.average)} /> : null} {r.count ? Number(r.average).toFixed(2) : '—'} <span className="small muted">({t('sp.reviewsN', { n: r.count.toLocaleString(intlLocale()) })})</span></dd></div>
+          <div data-testid="sp-rating"><dt>{t('sp.rating')}</dt><dd className="num">{r.count ? <Stars value={Number(r.average)} /> : null} {r.count ? Number(r.average).toFixed(2) : '—'} <span className="small muted">({t('sp.reviewCount', { count: r.count })})</span></dd></div>
           <div><dt>{t('sp.sold')}</dt><dd className="num">{profile.completed_orders.toLocaleString()}</dd></div>
           {profile.on_time_delivery_pct != null && <div><dt>{t('sp.onTime')}</dt><dd className="num">{Number(profile.on_time_delivery_pct)}%</dd></div>}
           <div><dt>{t('sp.since')}</dt><dd>{since(profile.member_since)}</dd></div>

@@ -48,8 +48,10 @@ test.describe('crypto money paths', () => {
     await buyNow(page);
     await page.waitForURL(/pay=crypto/);
     await expect(page.getByTestId('from-balance')).toHaveText('−$5.00');
-    await expect(page.locator('.pg-summary .pg-price')).toHaveText('$7.51');
-    await expect(page.locator('.crypto-checkout').getByText('To pay $7.51')).toBeVisible();
+    // Round 28: + the payment processing fee (0.5 % of $7.51, rounded up = $0.04).
+    await expect(page.getByTestId('processing-fee')).toHaveText('$0.04');
+    await expect(page.locator('.pg-summary .pg-price')).toHaveText('$7.55');
+    await expect(page.locator('.crypto-checkout').getByText('To pay $7.55')).toBeVisible();
     await payCrypto(page);
     await expect(page.locator('.od-amount')).toHaveText('$12.51');
 

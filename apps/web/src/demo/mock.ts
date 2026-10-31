@@ -435,6 +435,8 @@ function orderDetail(o: any, viewer?: DemoUser) {
   const rating = state.buyerRatings.find((r) => r.order_id === o.id);
   return {
     ...o,
+    // Round 28: the payment processor's fee, paid by the buyer on top (crypto invoice = charged + fee). Not the seller's.
+    processing_fee_cents: sellerView && viewer?.id === o.seller_id ? undefined : processingFeeOf(o), processing_fee_bps: PROCESSING_FEE_BPS,
     items: undefined,
     buyer_name: userById(o.buyer_id)?.display_name,
     seller_name: userById(o.seller_id)?.display_name,
@@ -1322,7 +1324,9 @@ route('POST', '/orders', ({ me, body }) => {
   if (offer.seller_id === u.id) fail(400, 'own_listing', 'You can’t buy your own listing');
   const qty = Number(body.quantity ?? 1);
   const unit = offer as { min_qty?: number; unit_label?: string };
-  if (unit.min_qty && qty < unit.min_qty) fail(400, 'below_min_qty', `The minimum for this offer is ${unit.min_qty} ${unit.unit_label ?? ''}`.trim());
+  // Round 28: below the seller's minimum, the minimum is the stock left (their own minimum is back after a restock).
+  const minNow = Math.min(unit.min_qty ?? 1, Math.max(1, availableOf(offer)));
+  if (qty < minNow) fail(400, 'below_min_qty', `The minimum for this offer is ${minNow} ${unit.unit_label ?? ''}`.trim());
   const available = availableOf(offer);
   if (available < qty) fail(409, 'out_of_stock', 'Not enough stock for this order');
   const code = body.sellerCode ? sellerCodeQuote(offer, u, qty, body.sellerCode) : null;
@@ -1340,7 +1344,14 @@ const DEMO_COINS = [
   ['btc', 'Bitcoin', 6], ['eth', 'Ethereum', 10], ['ltc', 'Litecoin', 2],
   ['trx', 'TRON', 1], ['sol', 'Solana', 2], ['doge', 'Dogecoin', 3], ['xmr', 'Monero', 15], ['ton', 'Toncoin', 2],
 ] as const;
-/** Network each coin travels on, and the network fee the buyer pays on top (estimates, USD cents). */
+/** Round 28: the payment processor's fee (NOWPAYMENTS_FEE_BPS), on top of the amount charged, rounded up to the cent. */
+const PROCESSING_FEE_BPS = 50;
+const feeOnCents = (cents: number) => (cents > 0 ? Math.ceil((cents * PROCESSING_FEE_BPS) / 10_000) : 0);
+function processingFeeOf(o: any) {
+  if (o.checkout_id) return null; // a cart pays one fee on the checkout
+  return feeOnCents(o.charged_cents ?? o.amount_cents);
+}
+/** Network each coin travels on (names only: network fees are the buyer's wallet's business, Round 28). */
 const DEMO_NETWORK: Record<string, [string, number]> = {
   usdttrc20: ['TRC-20', 100], usdtbsc: ['BEP-20', 30], usdterc20: ['ERC-20', 350], usdcmatic: ['Polygon', 10], btc: ['Bitcoin', 150], eth: ['Ethereum', 200],
   ltc: ['Litecoin', 5], trx: ['TRON', 30], sol: ['Solana', 2], doge: ['Dogecoin', 10], xmr: ['Monero', 5], ton: ['TON', 5],
@@ -1354,11 +1365,13 @@ const notInCart = (p: { kind: string; orders: any[] }) => {
 function payableOf(u: DemoUser, kind: 'orders' | 'checkouts', id: string) {
   if (kind === 'orders') {
     const o = orderFor(u, id);
-    return { kind, id, orders: [o], owed: o.charged_cents ?? o.amount_cents, status: o.status };
+    const base = o.charged_cents ?? o.amount_cents;
+    return { kind, id, orders: [o], base, fee: feeOnCents(base), owed: base + feeOnCents(base), status: o.status };
   }
   const c = state.checkouts.find((x) => x.id === id && x.buyer_id === u.id) ?? fail(404, 'not_found', 'Checkout not found');
   const orders = c.order_ids.map((oid: string) => state.orders.find((o) => o.id === oid)!);
-  return { kind, id, orders, owed: orders.reduce((s: number, o: any) => s + (o.charged_cents ?? o.amount_cents), 0), status: orders.every((o: any) => o.status !== 'awaiting_payment') ? 'paid' : 'awaiting_payment' };
+  const base = orders.reduce((s: number, o: any) => s + (o.charged_cents ?? o.amount_cents), 0);
+  return { kind, id, orders, base, fee: feeOnCents(base), owed: base + feeOnCents(base), status: orders.every((o: any) => o.status !== 'awaiting_payment') ? 'paid' : 'awaiting_payment' };
 }
 const paymentsOf = (kind: string, id: string) => state.cryptoPayments.filter((p) => p.ref_kind === kind && p.ref_id === id);
 const paidSoFar = (kind: string, id: string) => paymentsOf(kind, id).reduce((s, p) => s + (['partially_paid', 'finished'].includes(p.status) ? Math.round(Number(p.actually_paid_usd) * 100) : 0), 0);
@@ -1382,7 +1395,7 @@ function paymentState(p: any): string {
 const view = (p: any) => ({ ...p, state: paymentState(p), order_status: ordersOfPayment(p)[0]?.status ?? null, pay_currency_name: coinNameOf(p.pay_currency), ref_kind: undefined, ref_id: undefined, finish_at: undefined, apply_at: undefined, state_override: undefined });
 /**
  * Demo switch for the payment outcome after "finished": localStorage bz.demo.cryptoOutcome =
- * "slow" (funded a few seconds later), "held" (held for review), "credited" (added to the balance),
+ * "slow" (funded a few seconds later), "stuck" (received, never applied), "held" (held for review), "credited" (added to the balance),
  * "failed" or "expired". Unset: funded at once.
  */
 const demoOutcome = () => {
@@ -1408,7 +1421,7 @@ function lockFx(p: ReturnType<typeof payableOf>, currency: string) {
   const live = first.presentment_currency === currency && first.fx_locked_at && Date.now() - Date.parse(first.fx_locked_at) < FX_TTL_MS;
   const rate = currency === 'USD' ? 1 : RATES[currency]!;
   if (!live) for (const o of p.orders) Object.assign(o, { presentment_currency: currency, fx_rate: rate, presentment_amount_cents: Math.round((o.charged_cents ?? o.amount_cents) * rate), fx_locked_at: now() });
-  const amountCents = p.orders.reduce((s: number, o: any) => s + o.presentment_amount_cents, 0);
+  const amountCents = p.orders.reduce((s: number, o: any) => s + o.presentment_amount_cents, 0) + Math.ceil(p.fee * rate); // + the processing fee
   save();
   return { currency, rate: rate.toFixed(8), amountCents, usdCents: p.owed, lockedUntil: new Date(Date.parse(first.fx_locked_at) + FX_TTL_MS).toISOString(), fresh: !live };
 }
@@ -1424,8 +1437,9 @@ for (const kind of ['orders', 'checkouts'] as const) {
     providerDown();
     const p = payableOf(need(me), kind, params[0]!);
     const owed = p.owed - paidSoFar(kind, p.id);
-    const coins = DEMO_COINS.map(([coin, name, minUsd]) => ({ coin, name, minUsd, available: minUsd * 100 <= owed, network: DEMO_NETWORK[coin]![0], fee_cents: DEMO_NETWORK[coin]![1], total_cents: owed + DEMO_NETWORK[coin]![1] }));
-    return { owedCents: owed, currency: 'USD', coins: coins.sort((a, b) => Number(b.available) - Number(a.available) || a.coin.localeCompare(b.coin)) };
+    const coins = DEMO_COINS.map(([coin, name, minUsd]) => ({ coin, name, minUsd, available: minUsd * 100 <= owed, network: DEMO_NETWORK[coin]![0] }));
+    // owedCents = what is still to pay, processing fee included; orderCents + processingFeeCents = the whole invoice.
+    return { owedCents: owed, orderCents: p.base, processingFeeCents: p.fee, currency: 'USD', coins: coins.sort((a, b) => Number(b.available) - Number(a.available) || a.coin.localeCompare(b.coin)) };
   });
   route('GET', `/${kind}/:id/crypto/payments`, ({ me, params }) => paymentsOf(kind, payableOf(need(me), kind, params[0]!).id).map(view));
   route('POST', `/${kind}/:id/crypto/pay`, ({ me, params, body }) => {
@@ -1446,12 +1460,11 @@ for (const kind of ['orders', 'checkouts'] as const) {
       price = { currency: priceCurrency, amountCents: owed === p.owed ? q.amountCents : Math.ceil(owed * Number(q.rate)), rate: Number(q.rate) };
     }
     if (!DEMO_COINS.some(([c, , min]) => c === coin && min * 100 <= owed)) fail(400, 'coin_unavailable', `${coinNameOf(coin)} can’t be used for this amount`);
-    // The buyer sends the order amount plus the coin's network fee; only the order amount counts toward the order.
-    const fee = DEMO_NETWORK[coin]?.[1] ?? 0;
-    const amount = (owed + fee) / 100 / (DEMO_RATE[coin] ?? 1);
+    // Round 28: the invoice is the order amount + the processing fee; no network-fee estimate (the wallet adds its own).
+    const amount = owed / 100 / (DEMO_RATE[coin] ?? 1);
     const pay = {
       id: rid(), ref_kind: kind, ref_id: p.id, payment_id: String(5_000_000 + state.cryptoPayments.length), pay_currency: coin, pay_address: `${coin === 'btc' ? 'bc1q' : coin === 'eth' || coin.endsWith('erc20') ? '0x' : 'T'}demo${rid().replace(/-/g, '').slice(0, 28)}`,
-      pay_extra_id: null, pay_amount: amount.toFixed(coin.startsWith('usd') ? 2 : 8), price_usd: (owed / 100).toFixed(2), fee_usd: (fee / 100).toFixed(2), actually_paid: '0', actually_paid_usd: null as string | null, status: 'waiting',
+      pay_extra_id: null, pay_amount: amount.toFixed(coin.startsWith('usd') ? 2 : 8), price_usd: (owed / 100).toFixed(2), processing_fee_usd: (p.fee / 100).toFixed(2), actually_paid: '0', actually_paid_usd: null as string | null, status: 'waiting',
       expires_at: new Date(Date.now() + 20 * 60_000).toISOString(), created_at: now(), finish_at: Date.now() + 1_500, // the demo "network" confirms after a moment
       price_currency: price.currency, price_amount: (price.amountCents / 100).toFixed(2), fx_rate: price.rate.toFixed(8),
     };
@@ -1475,6 +1488,7 @@ for (const kind of ['orders', 'checkouts'] as const) {
           const u = userById(p.orders[0].buyer_id)!;
           state.credit[u.id] = (state.credit[u.id] ?? 0) + Math.round(Number(pay.price_usd) * 100);
         } else if (outcome === 'slow') pay.apply_at = Date.now() + 4_000;
+        else if (outcome === 'stuck') pay.apply_at = Number.MAX_SAFE_INTEGER; // Round 28 test: received, never applied
         else for (const o of p.orders) payDemoOrder(o.id);
       }
       save();
@@ -1877,7 +1891,8 @@ route('POST', '/orders/cart', ({ me, body }) => {
 const checkoutView = (c: any) => {
   const orders = c.order_ids.map((id: string) => state.orders.find((o) => o.id === id)!);
   return {
-    checkout: { id: c.id, status: orders.every((o: any) => o.status !== 'awaiting_payment') ? 'paid' : 'awaiting_payment', presentment_amount_cents: orders.reduce((s: number, o: any) => s + (o.charged_cents ?? o.amount_cents), 0), presentment_currency: 'USD', created_at: c.created_at },
+    checkout: { id: c.id, status: orders.every((o: any) => o.status !== 'awaiting_payment') ? 'paid' : 'awaiting_payment', presentment_amount_cents: orders.reduce((s: number, o: any) => s + (o.charged_cents ?? o.amount_cents), 0), presentment_currency: 'USD', created_at: c.created_at,
+      processing_fee_cents: feeOnCents(orders.reduce((s: number, o: any) => s + (o.charged_cents ?? o.amount_cents), 0)) },
     orders: orders.map((o: any) => ({ id: o.id, ref: o.ref, status: o.status, seller_id: o.seller_id, offer_id: o.offer_id, offer_title: o.offer_title, quantity: o.quantity, amount_cents: o.amount_cents, credit_cents: o.credit_cents ?? 0, charged_cents: o.charged_cents ?? o.amount_cents, currency: o.currency, character_name: o.character_name ?? null, seller_name: userById(o.seller_id)?.display_name })),
   };
 };

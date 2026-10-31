@@ -41,6 +41,8 @@ interface OrderDetail {
   amount_cents: number;
   credit_cents?: number;
   charged_cents?: number;
+  /** Round 28: the payment processor's fee the buyer pays on top (to pay = charged + this). */
+  processing_fee_cents?: number | null;
   currency: string;
   commission_bps: number;
   seller_net_cents: number;
@@ -324,7 +326,7 @@ export function OrderPage() {
       <div className="stack pg-checkout">
         <CheckoutSteps step={2} />
         <div className="pg-split">
-          <CryptoCheckout base={`/orders/${order.id}`} amountCents={order.charged_cents ?? order.amount_cents} currency={order.currency} onPaid={load} />
+          <CryptoCheckout base={`/orders/${order.id}`} amountCents={(order.charged_cents ?? order.amount_cents) + (order.processing_fee_cents ?? 0)} currency={order.currency} onPaid={load} orderRef={order.ref ?? null} />
           <aside className="card pg-summary">
             <p className="pg-label">{t('checkout.yourOrder')}</p>
             <div className="flex items-center gap-3">
@@ -337,7 +339,8 @@ export function OrderPage() {
               {order.unit_price_micros != null && <div><span className="muted">{t('od.unitPrice')}</span><span className="num" data-testid="checkout-unit">{unitMoney(Number(order.unit_price_micros), 'USD')}</span></div>}
               <div><span className="muted">{t('checkout.price')}</span><span className="num">{viewerPrice(order.amount_cents, order.currency)}</span></div>
               {(order.credit_cents ?? 0) > 0 && <div><span className="muted">{t('checkout.fromBalance')}</span><span className="num" data-testid="from-balance">−{viewerPrice(order.credit_cents!, order.currency)}</span></div>}
-              <div className="pg-total"><span>{t('checkout.toPay')}</span><span className="pg-price">{viewerPrice(order.charged_cents ?? order.amount_cents, order.currency)}</span></div>
+              {!!order.processing_fee_cents && <div><span className="muted">{t('checkout.processingFee')}</span><span className="num" data-testid="processing-fee">{viewerPrice(order.processing_fee_cents, order.currency)}</span></div>}
+              <div className="pg-total"><span>{t('checkout.toPay')}</span><span className="pg-price" data-testid="to-pay">{viewerPrice((order.charged_cents ?? order.amount_cents) + (order.processing_fee_cents ?? 0), order.currency)}</span></div>
             </div>
             <span className="small muted num" data-testid="order-ref">{order.ref ?? t('order.ref', { id: order.id.slice(0, 8) })}</span>
             <div className="bp-box"><BuyerProtection short /></div>
@@ -395,6 +398,11 @@ export function OrderPage() {
             <div className="od-total">
               <span className="pg-label">{isSeller ? t('od.youEarn') : t('od.total')}</span>
               <span className="od-amount num">{money(isSeller ? order.seller_net_cents : order.amount_cents, order.currency)}</span>
+              {isBuyer && !!order.processing_fee_cents && (
+                <span className="small muted num" data-testid="order-processing-fee">
+                  {t('od.processingFee')} {money(order.processing_fee_cents, order.currency)} · {t('od.totalPaid')} {money((order.charged_cents ?? order.amount_cents) + order.processing_fee_cents, order.currency)}
+                </span>
+              )}
               {order.escrow_frozen && order.status !== 'disputed' && !underReview && <span className="small muted">{t('order.frozenNote')}</span>}
             </div>
             {(isBuyer && order.status === 'delivered' && order.rail === 'fiat') || ((isBuyer || isSeller) && ['paid', 'delivered'].includes(order.status) && order.rail === 'fiat') ? (
