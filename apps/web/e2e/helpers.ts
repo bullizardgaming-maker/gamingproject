@@ -121,3 +121,24 @@ export async function disputeViaSupport(page: Page, subject: string, details: st
   await expect(page.getByTestId('ticket-dispute')).toContainText('open');
   return orderUrl;
 }
+
+/** Round 26b: the currency form's server is a searchable list: type to filter, then pick the option. */
+export async function pickServer(page: Page, name: string) {
+  const input = page.locator('input[name="attr.server"]');
+  await input.fill(name.slice(0, -1)); // a full match closes the list, so type all but the last letter
+  await page.getByRole('listbox').getByRole('option', { name, exact: true }).click();
+  await expect(input).toHaveValue(name);
+}
+
+/** Round 26b: delivery speed is a number plus minutes or hours. */
+export async function setSpeed(page: Page, value: number, unit: 'minutes' | 'hours') {
+  await page.getByLabel('Delivery speed, number').fill(String(value));
+  await choose(page, page.getByLabel('Delivery speed, unit'), unit === 'hours' ? 'Hours' : 'Minutes');
+}
+
+/** Round 26c: list-mode dropdowns open on click and list every option; pick one by its label. */
+export async function choose(page: Page, field: import('@playwright/test').Locator, option: string) {
+  await field.click();
+  await page.getByRole('listbox').getByRole('option', { name: option, exact: true }).click();
+  await expect(field).toHaveValue(option);
+}

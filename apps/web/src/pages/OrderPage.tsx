@@ -13,7 +13,7 @@ import { DeliveryProof, type ProofAttachment } from '../components/DeliveryProof
 import { useSession } from '../session';
 import { currentLocale, intlLocale, t } from '../i18n';
 import { usePageMeta } from '@/lib/seo';
-import { usePrice } from '@/lib/prefs';
+import { unitMoney, usePrice } from '@/lib/prefs';
 import { attributePairs } from '@/lib/attributes';
 
 interface OrderDetail {
@@ -36,6 +36,8 @@ interface OrderDetail {
   attributes?: Record<string, string>;
   delivery_mode: string;
   quantity: number;
+  /** Currency orders: the unit price paid, in micro-units (shown at full precision). */
+  unit_price_micros?: number | null;
   amount_cents: number;
   credit_cents?: number;
   charged_cents?: number;
@@ -330,6 +332,7 @@ export function OrderPage() {
               </div>
             </div>
             <div className="pg-rows">
+              {order.unit_price_micros != null && <div><span className="muted">{t('od.unitPrice')}</span><span className="num" data-testid="checkout-unit">{unitMoney(Number(order.unit_price_micros), 'USD')}</span></div>}
               <div><span className="muted">{t('checkout.price')}</span><span className="num">{viewerPrice(order.amount_cents, order.currency)}</span></div>
               {(order.credit_cents ?? 0) > 0 && <div><span className="muted">{t('checkout.fromBalance')}</span><span className="num" data-testid="from-balance">−{viewerPrice(order.credit_cents!, order.currency)}</span></div>}
               <div className="pg-total"><span>{t('checkout.toPay')}</span><span className="pg-price">{viewerPrice(order.charged_cents ?? order.amount_cents, order.currency)}</span></div>
@@ -378,6 +381,7 @@ export function OrderPage() {
               <div><dt>{t('od.item')}</dt><dd dir="auto"><Link to={`/offers/${order.offer_id}`}>{order.offer_title}</Link></dd></div>
               {pairs.map(([label, v]) => <div key={label}><dt>{label}</dt><dd>{v}</dd></div>)}
               <div><dt>{t('od.quantity')}</dt><dd className="num">{order.quantity}</dd></div>
+              {order.unit_price_micros != null && <div><dt>{t('od.unitPrice')}</dt><dd className="num" data-testid="order-unit">{unitMoney(Number(order.unit_price_micros), 'USD')}</dd></div>}
               {order.character_name && (
                 <div><dt>{currentLocale() === 'en' ? order.handover_field?.label ?? t('order.character') : t('order.character')}</dt><dd data-testid="order-character"><b className="num">{order.character_name}</b></dd></div>
               )}

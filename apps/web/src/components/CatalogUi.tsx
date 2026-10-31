@@ -7,6 +7,8 @@ import { cn } from '@/lib/utils';
 import { attributePairs } from '@/lib/attributes';
 import { usePrice } from '@/lib/prefs';
 import { unitPriceFor } from '@/lib/tiers';
+import { buyerUnitAt } from '@/lib/volume';
+import { totalCentsFor } from '../../../api/src/domain/unitPrice';
 import type { Offer } from '../pages/Market';
 import { OnlineDot, lastSeenLabel } from '@/lib/presence';
 import { intlLocale, t, type MessageKey } from '../i18n';
@@ -113,6 +115,8 @@ export function OfferTable({ offers, showGame = false, showSeller = true, empty,
           const qty = withTotal ? Math.min(amount!, Math.max(1, o.stock)) : 1;
           const unit = withTotal ? unitPriceFor(o, qty) : o.price_cents;
           const tooMany = withTotal && amount! > o.stock;
+          // Round 26b: currency is priced per unit at full precision; the total for the amount is rounded up to the cent.
+          const micros = buyerUnitAt(o, qty);
           return (
             <li key={o.id} className="lt-row group">
               <div className="lt-offer">
@@ -139,7 +143,7 @@ export function OfferTable({ offers, showGame = false, showSeller = true, empty,
                 {o.regular_price_cents != null && o.regular_price_cents > o.price_cents && (
                   <span className="num text-xs text-muted-foreground line-through">{money(o.regular_price_cents, o.currency)}</span>
                 )}
-                <span className="num">{withTotal ? price.offer({ ...o, price_cents: unit, price_settlement_cents: null } as any) : price.offer(o as any)}</span>
+                <span className="num">{micros != null ? price.unit(micros) : withTotal ? price.offer({ ...o, price_cents: unit, price_settlement_cents: null } as any) : price.offer(o as any)}</span>
                 {!!o.price_tiers?.length && (
                   <span className="text-xs text-muted-foreground">{t('tier.bulkFrom', { price: money(o.price_tiers.at(-1)!.priceCents, o.currency), qty: o.price_tiers.at(-1)!.minQty })}</span>
                 )}
@@ -147,7 +151,7 @@ export function OfferTable({ offers, showGame = false, showSeller = true, empty,
               <div className="lt-buy">
                 {withTotal && (
                   <b className="num" title={tooMany ? t('table.onlyStock', { n: o.stock }) : undefined}>
-                    {price.offer({ ...o, price_cents: unit * qty, price_settlement_cents: null } as any)}
+                    {micros != null ? price(totalCentsFor(micros, qty)) : price.offer({ ...o, price_cents: unit * qty, price_settlement_cents: null } as any)}
                     {tooMany && <span className="block text-xs font-normal text-muted-foreground">{t('table.onlyStock', { n: o.stock })}</span>}
                   </b>
                 )}

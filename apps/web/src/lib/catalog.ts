@@ -104,7 +104,7 @@ export const initials = (name: string) =>
 export function deliveryLabel(mode: string, hours: number | null | undefined) {
   if (mode === 'auto') return t('delivery.instant');
   const h = Number(hours ?? 2);
-  if (h < 1) return t('delivery.minutes', { n: Math.max(5, Math.round(h * 60)) });
+  if (h < 1) return t('delivery.minutes', { n: Math.max(1, Math.round(h * 60)) });
   if (h < 48) return t('delivery.hours', { n: Math.round(h) });
   return t('delivery.days', { n: Math.round(h / 24) });
 }

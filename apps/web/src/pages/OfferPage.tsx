@@ -18,7 +18,8 @@ import { METHODS, methodLabel, methodsOf } from '@/lib/delivery';
 import { intlLocale, t } from '../i18n';
 import { BuyerProtection } from '../components/Brand';
 import { usePrice } from '@/lib/prefs';
-import { MIN_CURRENCY_ORDER_USD_CENTS, totalCentsFor, unitMicrosFor, volumePercentFor } from '../../../api/src/domain/unitPrice';
+import { MIN_CURRENCY_ORDER_USD_CENTS, totalCentsFor } from '../../../api/src/domain/unitPrice';
+import { buyerTiers, buyerUnitAt, tierFor, tierText } from '@/lib/volume';
 
 /**
  * One offer, Eldorado-style: what you get and from whom on the left (kept short), the buy box on
@@ -60,14 +61,16 @@ export function OfferPage() {
   const onSale = offer.regular_price_cents != null && offer.regular_price_cents > offer.price_cents;
   const min = offer.min_qty ?? 1;
   const qty = Math.max(0, Math.floor(Number(qtyText) || 0));
-  const max = Math.min(offer.stock, offer.max_qty ?? Infinity); // Round 26: optional max per order
+  const max = offer.stock; // Round 26b: the max per order is the stock
   const qtyOk = qty >= min && qty <= max;
   // Round 25: currency listings are priced per unit in micro-units, with volume discounts; the total is rounded up
   // to the cent (the order quote at checkout is the amount charged).
   const micro = offer.unit_price_micros != null ? Number(offer.unit_price_micros) : null;
-  const volume = offer.volume_discounts ?? [];
-  const unitMicros = micro != null ? unitMicrosFor(micro, volume, Math.max(qty, 1)) : null;
-  const pctOff = micro != null ? volumePercentFor(volume, Math.max(qty, 1)) : 0;
+  // Round 26b: tiers are % off or a fixed unit price (buyer prices, fees included).
+  const volume = buyerTiers(offer);
+  const unitMicros = buyerUnitAt(offer, Math.max(qty, 1));
+  const reached = micro != null ? tierFor(offer.volume_discounts, Math.max(qty, 1)) : null;
+  const pctOff = reached && micro != null && unitMicros != null ? Math.round(((micro - unitMicros) / micro) * 100) : 0;
   const unit = unitPriceFor(offer, Math.max(qty, 1));
   const total = unitMicros != null ? totalCentsFor(unitMicros, Math.max(qty, 1)) : unit * Math.max(qty, 1);
   const belowMin = micro != null && total < MIN_CURRENCY_ORDER_USD_CENTS;
@@ -204,15 +207,14 @@ export function OfferPage() {
               {t('of.unitPrice', { price: unitMicros != null ? price.unit(unitMicros) : price(unit) })}{isUnit ? ` / ${offer.unit_label}` : ''}
               {pctOff > 0 && <span className="text-released"> · {t('vd.off', { n: pctOff })}</span>}
               {min > 1 && <> · {t('ct.minShort', { n: min.toLocaleString(intlLocale()) })}</>}
-              {offer.max_qty != null && <span data-testid="offer-max"> · {t('lst.maxShort', { n: offer.max_qty.toLocaleString(intlLocale()) })}</span>}
             </p>
             {onSale && offer.sale_ends_at && <p className="small text-released" style={{ margin: 0, textAlign: 'center' }}>{t('sale.endsOn', { when: new Date(offer.sale_ends_at).toLocaleString(intlLocale(), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) })}</p>}
           </div>
           {volume.length > 0 && micro != null && (
             <div className="pg-seg of-volume" role="group" aria-label={t('vd.title')}>
               {volume.map((v) => (
-                <button key={v.minQty} type="button" aria-pressed={pctOff === v.percentOff} onClick={() => setQtyText(String(v.minQty))}>
-                  {t('vd.row', { qty: v.minQty.toLocaleString(intlLocale()), n: v.percentOff })}
+                <button key={v.minQty} type="button" aria-pressed={reached?.minQty === v.minQty} onClick={() => setQtyText(String(v.minQty))}>
+                  {tierText(v, price.unit, intlLocale())}
                 </button>
               ))}
             </div>

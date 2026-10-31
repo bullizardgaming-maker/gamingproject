@@ -21,9 +21,9 @@ import { rankName, rankPerk } from '@/lib/ranks';
 import { BulkListings } from '../components/BulkListings';
 import { LinkedAccounts, platformName, type LinkedAccount } from '../components/LinkedAccounts';
 import { platformForGame } from '../../../api/src/domain/platforms';
-import { ListingPreview } from '../components/ListingPreview';
-import { OrderLimits, limitsError } from '../components/OrderLimits';
-import type { Offer } from './Market';
+import { ListingPreview, type PreviewResponse } from '../components/ListingPreview';
+import { grossMicros } from '../../../api/src/domain/unitPrice';
+import { MinPerOrder, limitsError } from '../components/OrderLimits';
 
 interface Dashboard {
   tier: { name: string; accountRateBps: number; otherRateBps: number };
@@ -78,16 +78,44 @@ export interface SellerOffer {
   /** Round 25, currency listings: buyer's and seller's unit price in micro-units. */
   unit_price_micros?: number | null;
   seller_unit_price_micros?: number | null;
+  /** True when the row is a buyer-side offer view (unit_price_micros / price_cents are then the buyer's). */
+  buyer_view?: boolean;
   /** Round 26: what the edit form needs, and open orders (delete is refused while there are any). */
   description?: string;
   min_qty?: number | null;
-  max_qty?: number | null;
-  volume_discounts?: Array<{ minQty: number; percentOff: number }>;
+  volume_discounts?: Array<{ minQty: number; percentOff: number } | { minQty: number; type: 'percent' | 'fixed'; value: number }>;
+  delivery_minutes?: number | null;
+  /** Round 26 (B8): out_of_stock = live but nothing left, hidden from buyers until restocked. */
+  listing_state?: 'active' | 'out_of_stock' | 'paused' | 'removed' | 'review' | 'expired';
   delivery_methods?: string[] | null;
   delivery_time?: string | null;
   seller_price_tiers?: Array<{ minQty: number; priceCents: number }>;
   warranty_days?: number;
   open_orders?: number;
+}
+
+/**
+ * GET /seller/offers returns the seller's own rows (`f.*`: price_cents / unit_price_micros / price_tiers are the
+ * SELLER's prices) plus available, listing_state and open_orders. Older builds sent buyer-side offer views with
+ * seller_* fields. Read both into one shape; buyer prices are worked out from the seller's rate where needed.
+ */
+export function sellerOfferOf(o: any): SellerOffer {
+  const view = o.seller_price_cents != null || o.seller_unit_price_micros != null;
+  const currency = o.category_slug === 'currency';
+  const sellerMicros = o.seller_unit_price_micros ?? (view ? null : o.unit_price_micros != null ? Number(o.unit_price_micros) : currency ? Number(o.price_cents) * 10_000 : null);
+  return {
+    ...o,
+    seller_price_cents: Number(view ? o.seller_price_cents ?? o.price_cents : o.price_cents),
+    seller_unit_price_micros: sellerMicros == null ? null : Number(sellerMicros),
+    seller_price_tiers: o.seller_price_tiers ?? (view ? [] : o.price_tiers ?? []),
+    buyer_view: view,
+    available: Number(o.available ?? o.stock ?? 0),
+    min_qty: o.min_qty != null ? Number(o.min_qty) : null,
+    delivery_minutes: o.delivery_minutes != null ? Number(o.delivery_minutes) : null,
+    open_orders: o.open_orders != null ? Number(o.open_orders) : undefined,
+    featured: o.featured ?? (!!o.featured_until && Date.parse(o.featured_until) > Date.now()),
+    is_bundle: o.is_bundle ?? !!o.bundle?.length,
+  };
 }
 
 const TIER_ROWS = [0, 1, 2];
@@ -187,7 +215,7 @@ export function Sell() {
   const load = useCallback(async () => {
     const [d, o, l] = await Promise.all([api<Dashboard>('/seller/dashboard'), api<SellerOffer[]>('/seller/offers'), api<LinkedAccount[]>('/seller/linked-accounts').catch(() => [])]);
     setDash(d);
-    setOffers(o);
+    setOffers(o.map(sellerOfferOf));
     setLinked(l);
   }, []);
 
@@ -329,7 +357,7 @@ export function Sell() {
             <table className="data">
               <thead><tr><th>{t('sell.col.listing')}</th><th>{t('table.price')}</th><th>{t('table.stock')}</th><th>{t('table.delivery')}</th><th /></tr></thead>
               <tbody>
-                {offers.map((o) => <OfferRow key={o.id} offer={o} linked={linked} onChange={load} founding={dash.founding} />)}
+                {offers.map((o) => <OfferRow key={o.id} offer={o} linked={linked} onChange={load} founding={dash.founding} rateBps={dash.rateBps} />)}
               </tbody>
             </table>
           </div>
@@ -407,7 +435,10 @@ function DiscountCodes() {
   );
 }
 
-function OfferRow({ offer, linked, onChange, founding }: { offer: SellerOffer; linked: LinkedAccount[]; onChange: () => void; founding?: Founding }) {
+function OfferRow({ offer, linked, onChange, founding, rateBps }: { offer: SellerOffer; linked: LinkedAccount[]; onChange: () => void; founding?: Founding; rateBps?: number }) {
+  // What buyers pay: from the row when it is a buyer view, else the seller's price grossed up at the seller's rate.
+  const buyerMicros = offer.seller_unit_price_micros == null ? null : offer.buyer_view && offer.unit_price_micros != null ? Number(offer.unit_price_micros) : rateBps != null ? grossMicros(offer.seller_unit_price_micros, rateBps) : null;
+  const buyerCents = offer.buyer_view ? offer.price_cents : rateBps != null ? Math.ceil((offer.seller_price_cents * 10_000) / (10_000 - rateBps)) : null;
   const [featureError, setFeatureError] = useState('');
   const shown = linked.find((a) => a.id === offer.linked_account_id);
   const [open, setOpen] = useState(false);
@@ -419,15 +450,18 @@ function OfferRow({ offer, linked, onChange, founding }: { offer: SellerOffer; l
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [rowError, setRowError] = useState('');
   const openOrders = offer.open_orders ?? 0;
-  const outOfStock = offer.status === 'active' && offer.available <= 0;
-  // Round 26 (B2): pause, resume and delete go through PATCH /offers/:id with the listing's version.
+  // Round 26c (H1): a listing paused by Bullizard (ID overdue, listing ban…) carries expired_reason; only staff resume it.
+  const staffPaused = offer.status === 'paused' && !!offer.expired_reason;
+  const outOfStock = offer.listing_state ? offer.listing_state === 'out_of_stock' : offer.status === 'active' && offer.available <= 0;
+  // Round 26 (B2): POST /offers/:id/pause, POST /offers/:id/resume, DELETE /offers/:id (refused with open orders).
   const setStatus = async (status: 'active' | 'paused' | 'removed') => {
     setRowError('');
     try {
-      await api(`/offers/${offer.id}`, { method: 'PATCH', body: { version: offer.version, status } });
+      if (status === 'removed') await api(`/offers/${offer.id}`, { method: 'DELETE' });
+      else await api(`/offers/${offer.id}/${status === 'paused' ? 'pause' : 'resume'}`, { body: {} });
       onChange();
     } catch (e: any) {
-      setRowError(e.code === 'open_orders' ? t('lst.deleteBlocked', { n: openOrders || 1 }) : e.message);
+      setRowError(e.code === 'paused_by_staff' ? t('lst.pausedByStaff') : e.code === 'has_open_orders' ? t('lst.deleteBlocked', { n: e.details?.openOrders ?? (openOrders || 1) }) : e.message);
       setConfirmDelete(false);
     }
   };
@@ -473,7 +507,15 @@ function OfferRow({ offer, linked, onChange, founding }: { offer: SellerOffer; l
             <div className="small" title={t('mod.inReviewHint')}><span className="chip held">{t('mod.inReview')}</span> <span className="muted">{t('mod.inReviewHint')}</span></div>
           )}
           {offer.status === 'expired' && <RelistExpired offer={offer} onDone={onChange} />}
-          {offer.status === 'paused' && <div className="small"><span className="chip">{t('lst.paused')}</span></div>}
+          {offer.status === 'paused' && (
+            <div className="small" data-testid={staffPaused ? 'paused-by-staff' : undefined}>
+              {staffPaused ? (
+                <><span className="chip held">{t('lst.pausedByBz')}</span> – <Link to="/support/new">{t('lst.contactSupport')}</Link></>
+              ) : (
+                <span className="chip">{t('lst.paused')}</span>
+              )}
+            </div>
+          )}
           {outOfStock && <div className="small" data-testid="out-of-stock"><span className="chip held">{t('lst.outOfStock')}</span></div>}
           {shown && <div className="small"><span className="chip released">{t('linked.listingChip', { platform: platformName(shown.provider) })}</span> <span className="muted">{shown.display_name}</span></div>}
           {offer.category_slug === 'accounts' && offer.owner_proof_status !== 'verified' && (
@@ -481,8 +523,8 @@ function OfferRow({ offer, linked, onChange, founding }: { offer: SellerOffer; l
           )}
         </td>
         <td className="mono">
-          {offer.seller_unit_price_micros != null ? unitMoney(offer.seller_unit_price_micros) : money(offer.seller_price_cents ?? offer.price_cents)}
-          <div className="small muted">{t('ranks.buyersPay', { price: offer.unit_price_micros != null ? unitMoney(offer.unit_price_micros) : money(offer.price_cents) })}</div>
+          {offer.seller_unit_price_micros != null ? unitMoney(offer.seller_unit_price_micros) : money(offer.seller_price_cents)}
+          {(buyerMicros != null || buyerCents != null) && <div className="small muted">{t('ranks.buyersPay', { price: buyerMicros != null ? unitMoney(buyerMicros) : money(buyerCents!) })}</div>}
         </td>
         <td className="mono">{offer.available}</td>
         <td>{offer.delivery_mode === 'auto' ? t('delivery.instant') : t('sell.manual')}</td>
@@ -490,7 +532,7 @@ function OfferRow({ offer, linked, onChange, founding }: { offer: SellerOffer; l
           <div className="lst-actions" role="group" aria-label={t('lst.actionsFor', { title: offer.title })}>
             {['active', 'paused'].includes(offer.status) && <Link className="btn ghost sm" to={`/sell/edit/${offer.id}`}>{t('lst.edit')}</Link>}
             {offer.status === 'active' && <button type="button" className="btn ghost sm" onClick={() => setStatus('paused')}>{t('lst.pause')}</button>}
-            {offer.status === 'paused' && <button type="button" className="btn ghost sm" onClick={() => setStatus('active')}>{t('lst.resume')}</button>}
+            {offer.status === 'paused' && !staffPaused && <button type="button" className="btn ghost sm" onClick={() => setStatus('active')}>{t('lst.resume')}</button>}
             {['active', 'paused'].includes(offer.status) && offer.category_slug === 'currency' && attributesFor(offer.game, offer.category_slug).length > 0 && (
               <button type="button" className="btn ghost sm" aria-expanded={dupOpen} onClick={() => setDupOpen(!dupOpen)}>{t('lst.duplicate')}</button>
             )}
@@ -583,7 +625,7 @@ function DuplicateForm({ offer, onDone, onCancel }: { offer: SellerOffer; onDone
       await api(`/offers/${offer.id}/duplicate`, { body: { attributes: attrs, stock: Math.floor(Number(stock)) } });
       onDone();
     } catch (err: any) {
-      setError(err.code === 'same_server' ? t('lst.sameServer') : err.message);
+      setError(err.message);
       setBusy(false);
     }
   };
@@ -621,12 +663,12 @@ function DuplicateForm({ offer, onDone, onCancel }: { offer: SellerOffer; onDone
  * Create offer, step 2 for every product type except currency (Round 25): the type and game were picked in step 1.
  * Currency has its own short form (CurrencyOfferForm on the create page).
  */
-export function OtherOfferForm({ category, game, onCreated, offers, linked, initial }: { category: string; game: string; onCreated: () => void; offers: SellerOffer[]; linked: LinkedAccount[]; initial?: SellerOffer }) {
+export function OtherOfferForm({ category, game, onCreated, offers, linked, initial, onConflict }: { category: string; game: string; onCreated: () => void; offers: SellerOffer[]; linked: LinkedAccount[]; initial?: SellerOffer; onConflict?: () => void }) {
   const [error, setError] = useState('');
   const [minQty, setMinQty] = useState(String(initial?.min_qty ?? 1));
-  const [maxQty, setMaxQty] = useState(initial?.max_qty != null ? String(initial.max_qty) : '');
   const [pending, setPending] = useState<Record<string, any> | null>(null);
-  const [preview, setPreview] = useState<{ offer: Offer; review: boolean } | null>(null);
+  const [preview, setPreview] = useState<PreviewResponse | null>(null);
+  const { user } = useSession();
   const [busy, setBusy] = useState(false);
   const [bundleOn, setBundleOn] = useState(false);
   const [parts, setParts] = useState<Record<string, number>>({});
@@ -643,7 +685,7 @@ export function OtherOfferForm({ category, game, onCreated, offers, linked, init
     const form = e.currentTarget;
     const f = Object.fromEntries(new FormData(form)) as Record<string, string>;
     setError('');
-    const limits = category === 'accounts' ? '' : limitsError(minQty, maxQty, f.deliveryMode === 'manual' ? Number(f.stock || 1) : undefined);
+    const limits = category === 'accounts' ? '' : limitsError(minQty, f.deliveryMode === 'manual' ? Number(f.stock || 1) : undefined);
     if (limits) return setError(limits);
     if (!f.description?.trim()) return setError(t('lst.descriptionRequired'));
     setBusy(true);
@@ -662,9 +704,9 @@ export function OtherOfferForm({ category, game, onCreated, offers, linked, init
           ...(f.linkedAccountId ? { linkedAccountId: f.linkedAccountId } : {}),
           ...(methodsForListing(f.game, f.categorySlug).length ? { deliveryMethods: new FormData(form).getAll('deliveryMethods') } : {}),
           ...(bundleOn ? { bundle: Object.entries(parts).map(([offerId, quantity]) => ({ offerId, quantity })) } : {}),
-          ...(category === 'accounts' ? {} : { minQty: Math.floor(Number(minQty)), maxQty: maxQty.trim() ? Math.floor(Number(maxQty)) : null }),
+          ...(category === 'accounts' ? {} : { minQty: Math.floor(Number(minQty)) }),
       };
-      setPreview(await api<{ offer: Offer; review: boolean }>('/offers/preview', { body }));
+      setPreview(await api<PreviewResponse>('/offers/preview', { body }));
       setPending(body);
       window.scrollTo({ top: 0 });
     } catch (err: any) {
@@ -684,13 +726,14 @@ export function OtherOfferForm({ category, game, onCreated, offers, linked, init
       } else await api('/offers', { body: pending });
       onCreated();
     } catch (err: any) {
+      if (initial && err.code === 'version_conflict' && onConflict) return onConflict();
       setError(err.message);
       setBusy(false);
     }
   };
   return (
     <>
-    {preview && <ListingPreview offer={preview.offer} review={preview.review} busy={busy} error={error} publishLabel={initial ? t('lst.saveChanges') : t('sell.f.create')} onEdit={() => (setPreview(null), setError(''))} onPublish={publish} />}
+    {preview && <ListingPreview preview={preview} game={game} category={category} stock={Number(pending?.stock ?? 1)} sellerName={user?.display_name ?? ''} busy={busy} error={error} publishLabel={initial ? t('lst.saveChanges') : t('sell.f.create')} onEdit={() => (setPreview(null), setError(''))} onPublish={publish} />}
     <form className="pg-sell" id="create-offer" onSubmit={submit} aria-labelledby="create-offer-title" hidden={!!preview}>
       <h2 id="create-offer-title" className="sr-only">{t('sell.new')}</h2>
       <input type="hidden" name="categorySlug" value={category} />
@@ -716,7 +759,7 @@ export function OtherOfferForm({ category, game, onCreated, offers, linked, init
           <input type="hidden" name="deliveryMode" value="manual" />
         )}
         {category !== 'accounts' && <label className="field">{t('sell.f.stock')}<input name="stock" type="number" min="1" defaultValue={initial ? String(initial.available) : '1'} /></label>}
-        {category !== 'accounts' && <OrderLimits min={minQty} max={maxQty} onMin={setMinQty} onMax={setMaxQty} />}
+        {category !== 'accounts' && <MinPerOrder min={minQty} onMin={setMinQty} />}
         {methodsForListing(game, category).length > 0 && (
           <fieldset className="field sell-methods">
             <legend>{t('of.deliveryMethods')}</legend>
