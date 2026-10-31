@@ -922,6 +922,18 @@ Suites: API 85 files / 778 tests green (multinode excluded), typecheck clean, `n
 image start check: build, runtime imports, migrate through 081, `/readyz` + `/healthz` as `APP_ENV=staging` with
 `PAYMENT_PROVIDER=nowpayments` and `SANDBOX_MODE=false` (proxy CA in a scratch Dockerfile copy, repo Dockerfile unchanged).
 
+## Round 26c (Oct 31, 2026) — hardening after 26b
+
+Branch `round-26-api` only. No migration.
+
+- **H1 staff/system pauses stay paused.** `POST /offers/:id/resume` and `PATCH /offers/:id {status:'active'}` run `requireSeller` (403 `listing_banned` / `kyc_overdue` …) and refuse with 403 `paused_by_staff` while `expired_reason` is set (listing_ban, id_overdue, league ended). Staff lifting the ban / the seller verifying ID still re-activates as before. Other PATCH edits on a paused listing are unaffected.
+- **L1** `reserveManualStock`: the stock UPDATE requires `status = 'active'` (404 if the listing was paused mid-checkout).
+- **L2** `updateOffer` runs in one transaction with the row locked (`FOR UPDATE`); the PATCH-delete open-orders check happens under that lock, like `DELETE /offers/:id`.
+- **L4** `POST /admin/crypto/payments/:id/recheck` is rate-limited to 10/min per staff member (429).
+- `GET /seller/offers` rows carry `open_orders` (awaiting_payment/paid/delivered/disputed count).
+- Price guide filters on `f.available > 0` (column) instead of `offer_available(f.id)` per row.
+- Tests: `test/round26c.test.ts` (4).
+
 ## Round 26b (Oct 31, 2026) — create-offer redesign, back end (`claude/round-26b-create-offer.md`)
 
 Branch `round-26-api` only. Migration `083_round26b.sql` (idempotent).

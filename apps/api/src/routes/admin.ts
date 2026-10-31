@@ -590,7 +590,8 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const q = z.object({ status: z.string().max(30).optional(), q: z.string().max(100).optional(), limit: z.coerce.number().int().positive().max(500).optional() }).parse(req.query);
     return listCryptoPayments(ctx.db, q);
   });
-  app.post('/admin/crypto/payments/:paymentId/recheck', async (req) => {
+  /** Round 26c (L4): each re-check is a provider call; 10 a minute per staff member. */
+  app.post('/admin/crypto/payments/:paymentId/recheck', { config: { rateLimit: { max: 10, timeWindow: '1 minute', keyGenerator: (req) => `crypto-recheck:${req.user?.id ?? req.ip}` } } }, async (req) => {
     requirePermission(req, 'treasury.request');
     const { paymentId } = z.object({ paymentId: z.string().min(1).max(60) }).parse(req.params);
     const res = await recheckCryptoPayment(ctx, paymentId);

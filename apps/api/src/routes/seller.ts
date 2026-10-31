@@ -231,7 +231,8 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/seller/offers', async (req) =>
     many(
       ctx.db,
-      `SELECT f.*, CASE WHEN f.status = 'active' AND f.available <= 0 THEN 'out_of_stock' ELSE f.status END AS listing_state
+      `SELECT f.*, CASE WHEN f.status = 'active' AND f.available <= 0 THEN 'out_of_stock' ELSE f.status END AS listing_state,
+              (SELECT count(*)::int FROM orders o WHERE o.offer_id = f.id AND o.status IN ('awaiting_payment', 'paid', 'delivered', 'disputed')) AS open_orders
          FROM offers f WHERE seller_id = $1 AND status <> 'removed' ORDER BY created_at DESC`,
       [me(req).id],
     ),
@@ -253,7 +254,10 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
   });
   /** Round 26 (B2): pause / resume / soft delete (open orders → pause only). */
   app.post('/offers/:id/pause', async (req) => setListingState(ctx, me(req).id, Id.parse(req.params).id, 'pause'));
-  app.post('/offers/:id/resume', async (req) => setListingState(ctx, me(req).id, Id.parse(req.params).id, 'resume'));
+  app.post('/offers/:id/resume', async (req) => {
+    requireSeller(me(req)); // Round 26c (H1): a banned or ID-overdue seller cannot bring listings back
+    return setListingState(ctx, me(req).id, Id.parse(req.params).id, 'resume');
+  });
   app.delete('/offers/:id', async (req) => setListingState(ctx, me(req).id, Id.parse(req.params).id, 'delete'));
 
   /** Founding Sellers: free featured spots during the launch (see dashboard.founding for the allowance). */
@@ -271,6 +275,7 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
       .extend({ version: z.number().int().min(0), status: z.enum(['active', 'paused', 'removed']).optional() })
       .parse(req.body);
     const { version, ...patch } = body;
+    if (patch.status === 'active') requireSeller(me(req)); // Round 26c (H1)
     return updateOffer(ctx, me(req).id, Id.parse(req.params).id, version, offerInput(patch));
   });
 

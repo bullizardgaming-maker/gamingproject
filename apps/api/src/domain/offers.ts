@@ -316,7 +316,7 @@ export async function priceGuide(ctx: Ctx, seller: { id: string }, q: { game: st
          FROM offers f JOIN users u ON u.id = f.seller_id
         WHERE f.status = 'active' AND f.reserved_for IS NULL AND category_open(f.category_slug) AND u.status = 'active' AND u.deleted_at IS NULL
           AND NOT (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now()))
-          AND offer_available(f.id) > 0 AND f.price_settlement_micros IS NOT NULL
+          AND f.available > 0 AND f.price_settlement_micros IS NOT NULL
           AND lower(f.game) = lower($1) AND f.category_slug = $2
           AND ($3::text IS NULL OR lower(f.attributes->>$4) = lower($3))
           AND ($5::text IS NULL OR lower(f.attributes->>'faction') = lower($5))`,
@@ -417,11 +417,14 @@ export async function duplicateOffer(ctx: Ctx, seller: { id: string; kyc_tier: n
  * Round 26 (B2): pause, resume and soft-delete. A listing with open orders (paid, delivered, disputed — money in
  * escrow) can only be paused: deleting it is refused with the count. Deleted listings stay for the orders' history.
  */
+const PAUSED_BY_STAFF_MSG = 'This listing was paused by Bullizard and comes back when the reason is cleared (verify your ID, or wait for the review)';
 export async function setListingState(ctx: Ctx, sellerId: string, offerId: string, action: 'pause' | 'resume' | 'delete') {
   return withTx(ctx.db, async (tx) => {
-    const cur = await maybeOne<{ status: string; available: string }>(tx, 'SELECT status, available FROM offers WHERE id = $1 AND seller_id = $2 FOR UPDATE', [offerId, sellerId]);
+    const cur = await maybeOne<{ status: string; available: string; expired_reason: string | null }>(tx, 'SELECT status, available, expired_reason FROM offers WHERE id = $1 AND seller_id = $2 FOR UPDATE', [offerId, sellerId]);
     if (!cur) throw notFound('Offer');
     if (cur.status === 'removed') throw conflict('listing_removed', 'This listing was deleted');
+    // Round 26c (H1): a pause by staff or the system (listing ban, overdue ID, league ended) is not the seller's to undo.
+    if (action === 'resume' && cur.expired_reason) throw forbidden('paused_by_staff', PAUSED_BY_STAFF_MSG);
     if (action === 'resume' && cur.status !== 'paused') throw conflict('not_paused', `This listing is ${cur.status === 'active' ? (Number(cur.available) > 0 ? 'already live' : 'out of stock: add stock and it goes live by itself') : cur.status}`);
     if (action === 'pause' && cur.status !== 'active') throw conflict('not_active', `This listing is ${cur.status}`);
     if (action === 'delete') {
@@ -452,14 +455,21 @@ export type OfferPatch = Partial<Pick<OfferInput, 'title' | 'description' | 'pri
  * nothing (delivery methods, units, linked account included).
  */
 export async function updateOffer(ctx: Ctx, sellerId: string, offerId: string, version: number, patch: OfferPatch) {
+  // Round 26c (L2): the whole edit runs in one transaction with the row locked, so the open-orders check of a delete
+  // and the status change cannot be split by an order placed in between (same guarantee as DELETE /offers/:id).
+  return withTx(ctx.db, (tx) => updateOfferTx(ctx, tx, sellerId, offerId, version, patch));
+}
+async function updateOfferTx(ctx: Ctx, q: Queryable, sellerId: string, offerId: string, version: number, patch: OfferPatch) {
   const cur = await maybeOne(
-    ctx.db,
+    q,
     `SELECT f.seller_id, f.game, f.category_slug, f.stock, f.unit_label, f.unit_size, f.min_qty, f.price_cents, f.unit_price_micros, f.volume_discounts,
-            f.reserved_for, f.title, f.description, f.delivery_mode, c.kind
-       FROM offers f JOIN categories c ON c.slug = f.category_slug WHERE f.id = $1`,
+            f.reserved_for, f.title, f.description, f.delivery_mode, f.status, f.expired_reason, c.kind
+       FROM offers f JOIN categories c ON c.slug = f.category_slug WHERE f.id = $1 FOR UPDATE OF f`,
     [offerId],
   );
   if (!cur || cur.seller_id !== sellerId) throw notFound('Offer');
+  // Round 26c (H1): PATCH {status: 'active'} is a resume too — not for a pause by staff or the system.
+  if (patch.status === 'active' && cur.status !== 'active' && cur.expired_reason) throw forbidden('paused_by_staff', PAUSED_BY_STAFF_MSG);
   const currency = cur.kind === 'currency';
   if (patch.priceCents != null || patch.attributes || patch.title || patch.stock != null || patch.priceTiers || patch.warrantyDays != null || patch.unitPriceMicros != null || patch.volumeDiscounts) {
     // The terms of an accepted buyer request are fixed; the seller can only pause or remove it.
@@ -475,10 +485,10 @@ export async function updateOffer(ctx: Ctx, sellerId: string, offerId: string, v
   }
   // Round 26 (B2): deleting through PATCH follows the same rule as DELETE /offers/:id.
   if (patch.status === 'removed') {
-    const open = await one<{ n: number }>(ctx.db, `SELECT count(*)::int AS n FROM orders WHERE offer_id = $1 AND status IN ('awaiting_payment', 'paid', 'delivered', 'disputed')`, [offerId]);
+    const open = await one<{ n: number }>(q, `SELECT count(*)::int AS n FROM orders WHERE offer_id = $1 AND status IN ('awaiting_payment', 'paid', 'delivered', 'disputed')`, [offerId]);
     if (open.n > 0) throw conflict('has_open_orders', `This listing has ${open.n} open order(s): finish them first, or pause the listing`, { openOrders: open.n });
   }
-  if (patch.linkedAccountId) await checkAttach(ctx.db, sellerId, patch.linkedAccountId, cur.game, cur.kind, offerId);
+  if (patch.linkedAccountId) await checkAttach(q, sellerId, patch.linkedAccountId, cur.game, cur.kind, offerId);
   if (patch.warrantyDays && cur.kind !== 'account') throw badRequest('invalid_warranty', 'Only account listings can carry a warranty');
   // Round 24: a list must be a non-empty subset of the game's methods. Round 25: null stores all of them.
   let methods: string[] | null | undefined;
@@ -511,7 +521,7 @@ export async function updateOffer(ctx: Ctx, sellerId: string, offerId: string, v
   if (patch.priceTiers) tiers = JSON.stringify(cleanTiers(priceCents ?? Number(cur.price_cents), patch.priceTiers, cur.kind));
   // Edited text is screened again; a listing in review can only be removed until staff decide.
   let screen: { review: boolean; reasons: string[] } = { review: false, reasons: [] };
-  if (patch.title != null || patch.description != null) screen = await listingStatusFor(ctx.db, patch.title ?? cur.title, patch.description ?? cur.description);
+  if (patch.title != null || patch.description != null) screen = await listingStatusFor(q, patch.title ?? cur.title, patch.description ?? cur.description);
   let attributes: string | null = null;
   let title = patch.title ?? null;
   if (patch.attributes) {
@@ -522,7 +532,7 @@ export async function updateOffer(ctx: Ctx, sellerId: string, offerId: string, v
     if (currency) title = currencyTitle(cur.game, cur.category_slug, attrs.value); // Round 26 (B4): the title follows the server/faction
   } else if (currency && patch.title != null) title = null; // a currency listing's title is never hand-written
   if (!currency && title != null && title.trim().length < 3) throw badRequest('title_required', 'Give the listing a title (at least 3 characters)');
-  const res = await ctx.db.query(
+  const res = await q.query(
     `UPDATE offers SET
         title = COALESCE($4, title), description = COALESCE($5, description), price_cents = COALESCE($6, price_cents),
         stock = CASE WHEN delivery_mode = 'manual' THEN COALESCE($7, stock) ELSE stock END,
@@ -548,12 +558,12 @@ export async function updateOffer(ctx: Ctx, sellerId: string, offerId: string, v
      micros, discounts, minutes],
   );
   if (res.rowCount === 0) {
-    const now = await maybeOne(ctx.db, 'SELECT seller_id, version FROM offers WHERE id = $1', [offerId]);
+    const now = await maybeOne(q, 'SELECT seller_id, version FROM offers WHERE id = $1', [offerId]);
     if (!now || now.seller_id !== sellerId) throw notFound('Offer');
     throw conflict('version_conflict', `Offer was modified concurrently (current version ${now.version})`);
   }
-  if (screen.review) await notify(ctx.db, sellerId, 'listing_review', { offer_id: offerId, title: patch.title ?? '' }, `listing:${offerId}:review:${Date.now()}`);
-  return getOffer(ctx.db, offerId);
+  if (screen.review) await notify(q, sellerId, 'listing_review', { offer_id: offerId, title: patch.title ?? '' }, `listing:${offerId}:review:${Date.now()}`);
+  return getOffer(q, offerId);
 }
 
 export async function uploadInventory(ctx: Ctx, sellerId: string, offerId: string, format: 'txt' | 'json', content: string) {
