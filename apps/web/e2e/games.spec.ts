@@ -52,13 +52,15 @@ test.describe('launch games: in-game delivery', () => {
   test('the sell form shows league and mode for Path of Exile, with the open challenge league', async ({ page }) => {
     await signIn(page, 'Seller');
     await startOffer(page, 'currency', 'Path of Exile');
-    const league = page.locator('select[name="attr.league"]');
-    await expect(league).toBeVisible();
-    await expect(league.locator('option')).toContainText(['Standard', 'Hardcore', 'Mercenaries']);
-    await expect(league.locator('option', { hasText: 'Settlers' })).toHaveCount(0); // ended
+    const league = page.locator('input[name="attr.league"]'); // Round 26b: searchable list ("Type to filter")
+    await expect(league).toHaveAttribute('placeholder', 'Type to filter');
+    await league.focus();
+    await expect(page.getByRole('listbox').getByRole('option')).toContainText(['Standard', 'Hardcore', 'Mercenaries']);
+    await expect(page.getByRole('listbox').getByRole('option', { name: /Settlers/ })).toHaveCount(0); // ended
     await expect(page.locator('select[name="attr.mode"]').locator('option')).toContainText(['Softcore', 'Hardcore']);
     await startOffer(page, 'currency', 'Albion Online');
-    await expect(page.locator('select[name="attr.server"]').locator('option')).toContainText(['Americas', 'Europe', 'Asia']);
+    await page.locator('input[name="attr.server"]').focus();
+    await expect(page.getByRole('listbox').getByRole('option')).toHaveText(['Americas', 'Europe', 'Asia']);
   });
 
   test('a listing expired by a league ending can be moved to an open league', async ({ page }) => {

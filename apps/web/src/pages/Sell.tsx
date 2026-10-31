@@ -21,9 +21,8 @@ import { rankName, rankPerk } from '@/lib/ranks';
 import { BulkListings } from '../components/BulkListings';
 import { LinkedAccounts, platformName, type LinkedAccount } from '../components/LinkedAccounts';
 import { platformForGame } from '../../../api/src/domain/platforms';
-import { ListingPreview } from '../components/ListingPreview';
-import { OrderLimits, limitsError } from '../components/OrderLimits';
-import type { Offer } from './Market';
+import { ListingPreview, type PreviewResponse } from '../components/ListingPreview';
+import { MinPerOrder, limitsError } from '../components/OrderLimits';
 
 interface Dashboard {
   tier: { name: string; accountRateBps: number; otherRateBps: number };
@@ -81,8 +80,12 @@ export interface SellerOffer {
   /** Round 26: what the edit form needs, and open orders (delete is refused while there are any). */
   description?: string;
   min_qty?: number | null;
-  max_qty?: number | null;
-  volume_discounts?: Array<{ minQty: number; percentOff: number }>;
+  volume_discounts?: Array<{ minQty: number; percentOff: number } | { minQty: number; type: 'percent' | 'fixed'; value: number }>;
+  /** Round 26b: the seller's own tier values (fixed prices before fees). */
+  seller_volume_discounts?: Array<{ minQty: number; type: 'percent' | 'fixed'; value: number }>;
+  delivery_minutes?: number | null;
+  /** Round 26 (B8): out_of_stock = live but nothing left, hidden from buyers until restocked. */
+  listing_state?: 'active' | 'out_of_stock' | 'paused' | 'removed' | 'review' | 'expired';
   delivery_methods?: string[] | null;
   delivery_time?: string | null;
   seller_price_tiers?: Array<{ minQty: number; priceCents: number }>;
@@ -419,15 +422,16 @@ function OfferRow({ offer, linked, onChange, founding }: { offer: SellerOffer; l
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [rowError, setRowError] = useState('');
   const openOrders = offer.open_orders ?? 0;
-  const outOfStock = offer.status === 'active' && offer.available <= 0;
-  // Round 26 (B2): pause, resume and delete go through PATCH /offers/:id with the listing's version.
+  const outOfStock = offer.listing_state ? offer.listing_state === 'out_of_stock' : offer.status === 'active' && offer.available <= 0;
+  // Round 26 (B2): POST /offers/:id/pause, POST /offers/:id/resume, DELETE /offers/:id (refused with open orders).
   const setStatus = async (status: 'active' | 'paused' | 'removed') => {
     setRowError('');
     try {
-      await api(`/offers/${offer.id}`, { method: 'PATCH', body: { version: offer.version, status } });
+      if (status === 'removed') await api(`/offers/${offer.id}`, { method: 'DELETE' });
+      else await api(`/offers/${offer.id}/${status === 'paused' ? 'pause' : 'resume'}`, { body: {} });
       onChange();
     } catch (e: any) {
-      setRowError(e.code === 'open_orders' ? t('lst.deleteBlocked', { n: openOrders || 1 }) : e.message);
+      setRowError(e.code === 'has_open_orders' ? t('lst.deleteBlocked', { n: e.details?.openOrders ?? (openOrders || 1) }) : e.message);
       setConfirmDelete(false);
     }
   };
@@ -583,7 +587,7 @@ function DuplicateForm({ offer, onDone, onCancel }: { offer: SellerOffer; onDone
       await api(`/offers/${offer.id}/duplicate`, { body: { attributes: attrs, stock: Math.floor(Number(stock)) } });
       onDone();
     } catch (err: any) {
-      setError(err.code === 'same_server' ? t('lst.sameServer') : err.message);
+      setError(err.message);
       setBusy(false);
     }
   };
@@ -624,9 +628,9 @@ function DuplicateForm({ offer, onDone, onCancel }: { offer: SellerOffer; onDone
 export function OtherOfferForm({ category, game, onCreated, offers, linked, initial }: { category: string; game: string; onCreated: () => void; offers: SellerOffer[]; linked: LinkedAccount[]; initial?: SellerOffer }) {
   const [error, setError] = useState('');
   const [minQty, setMinQty] = useState(String(initial?.min_qty ?? 1));
-  const [maxQty, setMaxQty] = useState(initial?.max_qty != null ? String(initial.max_qty) : '');
   const [pending, setPending] = useState<Record<string, any> | null>(null);
-  const [preview, setPreview] = useState<{ offer: Offer; review: boolean } | null>(null);
+  const [preview, setPreview] = useState<PreviewResponse | null>(null);
+  const { user } = useSession();
   const [busy, setBusy] = useState(false);
   const [bundleOn, setBundleOn] = useState(false);
   const [parts, setParts] = useState<Record<string, number>>({});
@@ -643,7 +647,7 @@ export function OtherOfferForm({ category, game, onCreated, offers, linked, init
     const form = e.currentTarget;
     const f = Object.fromEntries(new FormData(form)) as Record<string, string>;
     setError('');
-    const limits = category === 'accounts' ? '' : limitsError(minQty, maxQty, f.deliveryMode === 'manual' ? Number(f.stock || 1) : undefined);
+    const limits = category === 'accounts' ? '' : limitsError(minQty, f.deliveryMode === 'manual' ? Number(f.stock || 1) : undefined);
     if (limits) return setError(limits);
     if (!f.description?.trim()) return setError(t('lst.descriptionRequired'));
     setBusy(true);
@@ -662,9 +666,9 @@ export function OtherOfferForm({ category, game, onCreated, offers, linked, init
           ...(f.linkedAccountId ? { linkedAccountId: f.linkedAccountId } : {}),
           ...(methodsForListing(f.game, f.categorySlug).length ? { deliveryMethods: new FormData(form).getAll('deliveryMethods') } : {}),
           ...(bundleOn ? { bundle: Object.entries(parts).map(([offerId, quantity]) => ({ offerId, quantity })) } : {}),
-          ...(category === 'accounts' ? {} : { minQty: Math.floor(Number(minQty)), maxQty: maxQty.trim() ? Math.floor(Number(maxQty)) : null }),
+          ...(category === 'accounts' ? {} : { minQty: Math.floor(Number(minQty)) }),
       };
-      setPreview(await api<{ offer: Offer; review: boolean }>('/offers/preview', { body }));
+      setPreview(await api<PreviewResponse>('/offers/preview', { body }));
       setPending(body);
       window.scrollTo({ top: 0 });
     } catch (err: any) {
@@ -690,7 +694,7 @@ export function OtherOfferForm({ category, game, onCreated, offers, linked, init
   };
   return (
     <>
-    {preview && <ListingPreview offer={preview.offer} review={preview.review} busy={busy} error={error} publishLabel={initial ? t('lst.saveChanges') : t('sell.f.create')} onEdit={() => (setPreview(null), setError(''))} onPublish={publish} />}
+    {preview && <ListingPreview preview={preview} game={game} category={category} stock={Number(pending?.stock ?? 1)} sellerName={user?.display_name ?? ''} busy={busy} error={error} publishLabel={initial ? t('lst.saveChanges') : t('sell.f.create')} onEdit={() => (setPreview(null), setError(''))} onPublish={publish} />}
     <form className="pg-sell" id="create-offer" onSubmit={submit} aria-labelledby="create-offer-title" hidden={!!preview}>
       <h2 id="create-offer-title" className="sr-only">{t('sell.new')}</h2>
       <input type="hidden" name="categorySlug" value={category} />
@@ -716,7 +720,7 @@ export function OtherOfferForm({ category, game, onCreated, offers, linked, init
           <input type="hidden" name="deliveryMode" value="manual" />
         )}
         {category !== 'accounts' && <label className="field">{t('sell.f.stock')}<input name="stock" type="number" min="1" defaultValue={initial ? String(initial.available) : '1'} /></label>}
-        {category !== 'accounts' && <OrderLimits min={minQty} max={maxQty} onMin={setMinQty} onMax={setMaxQty} />}
+        {category !== 'accounts' && <MinPerOrder min={minQty} onMin={setMinQty} />}
         {methodsForListing(game, category).length > 0 && (
           <fieldset className="field sell-methods">
             <legend>{t('of.deliveryMethods')}</legend>

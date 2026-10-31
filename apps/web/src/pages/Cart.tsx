@@ -7,6 +7,9 @@ import { api, money } from '../api';
 import { useSession } from '../session';
 import { clearCart, removeFromCart, setQuantity, useCart } from '@/lib/cart';
 import { unitPriceFor } from '@/lib/tiers';
+import { unitMicrosAt } from '@/lib/volume';
+import { unitMoney } from '@/lib/prefs';
+import { totalCentsFor } from '../../../api/src/domain/unitPrice';
 import { usePageMeta } from '@/lib/seo';
 import { usePrice } from '@/lib/prefs';
 import { useTermsVersion } from '@/lib/terms';
@@ -38,7 +41,10 @@ export function CartPage() {
   const lines = items.map((i) => {
     const o = offers[i.offerId];
     const ok = !!o && (o.status ?? 'active') === 'active' && i.quantity <= o.stock && !o.shop_paused && o.seller_id !== user?.id;
-    return { ...i, offer: o, ok, unit: o ? unitPriceFor(o, i.quantity) : 0 };
+    // Round 26b: currency lines are priced per unit in micro-units (full precision), the line total rounded up to the cent.
+    const micros = o?.unit_price_micros != null ? unitMicrosAt(Number(o.unit_price_micros), o.volume_discounts, i.quantity) : null;
+    const unit = o ? unitPriceFor(o, i.quantity) : 0;
+    return { ...i, offer: o, ok, unit, micros, lineCents: micros != null ? totalCentsFor(micros, i.quantity) : unit * i.quantity };
   });
   const groups = useMemo(() => {
     const m = new Map<string, typeof lines>();
@@ -53,7 +59,7 @@ export function CartPage() {
   const needsName = (l: { offer: Offer | null }) => !!l.offer && !!handoverFieldFor(l.offer.game, l.offer.category_slug);
   const namesOk = payable.every((l) => !needsName(l) || names[l.offerId]?.ok);
   const currencies = new Set(payable.map((l) => l.offer!.currency));
-  const total = payable.reduce((s, l) => s + l.unit * l.quantity, 0);
+  const total = payable.reduce((s, l) => s + l.lineCents, 0);
   const loading = items.some((i) => !(i.offerId in offers));
 
   const checkout = async () => {
@@ -114,7 +120,7 @@ export function CartPage() {
                     {l.offer ? <Link to={`/offers/${l.offerId}`} className="block truncate font-medium no-underline hover:underline">{l.offer.title}</Link> : <span className="muted">{offers[l.offerId] === null ? t('cart.gone') : t('common.loading')}</span>}
                     {l.offer && (
                       <div className="text-xs text-muted-foreground">
-                        {money(l.unit, l.offer.currency)} {t('cart.each')}
+                        <span className="num" data-testid="cart-unit">{l.micros != null ? unitMoney(l.micros, l.offer.currency) : money(l.unit, l.offer.currency)}</span> {t('cart.each')}
                         {!l.ok && <span className="text-disputed"> · {l.offer.seller_id === user?.id ? t('offer.yours') : t('cart.unavailable')}</span>}
                       </div>
                     )}
@@ -134,7 +140,7 @@ export function CartPage() {
                         style={{ width: 72, height: 34, padding: '4px 8px' }}
                       />
                     )}
-                    {l.offer && <span className="font-mono font-semibold" style={{ minWidth: 80, textAlign: 'end' }}>{money(l.unit * l.quantity, l.offer.currency)}</span>}
+                    {l.offer && <span className="font-mono font-semibold" style={{ minWidth: 80, textAlign: 'end' }}>{money(l.lineCents, l.offer.currency)}</span>}
                     <button className="btn ghost" aria-label={t('cart.remove')} onClick={() => removeFromCart(l.offerId)}><Trash2 className="size-4" /></button>
                   </div>
                 </li>

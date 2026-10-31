@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { signIn, startOffer, publishOffer } from './helpers';
+import { signIn, startOffer, publishOffer, pickServer, setSpeed } from './helpers';
 
 test.describe('seller side', () => {
   test('a seller lists currency with a 6-decimal unit price and volume discounts, and picks the badges buyers see', async ({ page }) => {
@@ -9,16 +9,16 @@ test.describe('seller side', () => {
     await startOffer(page, 'currency', 'Albion Online');
     await expect(page.getByText(/established buyers/i)).toHaveCount(0);
     await expect(page.locator('input[name=title]')).toHaveCount(0);
-    await page.locator('select[name="attr.server"]').selectOption('Europe');
+    await pickServer(page, 'Europe');
     await page.locator('input[name=stock]').fill('50000000');
     await page.locator('input[name=unitPrice]').fill('0.000123');
     await page.locator('input[name=unitPrice]').blur();
     await expect(page.locator('input[name=unitPrice]')).toHaveValue('0.000123');
-    await page.getByRole('button', { name: 'Add discount' }).click();
+    await page.getByLabel('Create a volume discount').check();
     await page.getByLabel('Discount 1: from quantity').fill('20000000');
     await page.getByLabel('Discount 1: percent off').fill('5');
-    await page.getByLabel('Market order').uncheck();
-    await page.locator('select[name=deliveryTime]').selectOption('15m');
+    await page.getByLabel('Market order', { exact: true }).uncheck();
+    await setSpeed(page, 15, 'minutes');
     await publishOffer(page);
     await expect(page.getByText('Your offer is live.')).toBeVisible();
     await page.goto('/games/albion-online/currency');

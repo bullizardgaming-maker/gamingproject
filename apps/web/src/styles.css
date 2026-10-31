@@ -1,4 +1,6 @@
+/* Round 26b: typed text is black in light mode, white in dark mode, in every input. */
 :root {
+  --input-ink: #000;
   /* Frost: a cool, clerical steel palette. Colour is reserved for money states. */
   --frost: #eef1f5;
   --paper: #f8fafc;
@@ -316,6 +318,7 @@ table.data td { padding: 12px 8px; border-bottom: 1px solid var(--rule); vertica
 
 /* ---------- Dark theme (html.dark, set from the header toggle or the system setting) ---------- */
 html.dark {
+  --input-ink: #fff;
   --band: #0a0a0a;
   --frost: #0a0a0a;
   --paper: #242424;
@@ -1441,3 +1444,41 @@ html.dark .auth-faces .avatar-ini { background: #3a3a3a; }
 .lp-banner b { margin-inline-end: 4px; }
 .lp .of-buy { display: flex; flex-direction: column; gap: 12px; }
 .lp-limits { margin: 0; }
+
+/* Round 26b: input text colour (same in every form); placeholders stay muted */
+input, select, textarea, .auth-form > input, .auth-form .field input { color: var(--input-ink); }
+input::placeholder, textarea::placeholder { color: var(--steel); opacity: 1; }
+input[type=checkbox], input[type=radio] { color: inherit; }
+
+/* Round 26b: create offer (currency) */
+.co-sections { gap: 16px; }
+.co-h2 { margin: 0; font-size: 17px; }
+.co-ro { background: var(--raised); cursor: default; }
+.co-method { display: flex; align-items: center; gap: 6px; }
+.co-method .check-row { color: var(--ink); }
+.co-sections .co-methods { border: 0; padding: 0; margin: 10px 0 0; display: flex; flex-direction: column; flex-wrap: nowrap; gap: 8px; }
+.co-sections .co-methods .co-legend { margin-bottom: 2px; }
+.co-sections .co-speed { margin-top: 14px; }
+.co-tiers26 { display: flex; flex-direction: column; gap: 10px; }
+.co-methods[aria-invalid='true'] .check-row input { outline: 2px solid var(--disputed); outline-offset: 1px; }
+.co-field-err { margin: 2px 0 0; color: var(--disputed); font-size: 13px; }
+.co-speed { border: 0; padding: 0; margin: 0; }
+.co-speed-row { display: grid; grid-template-columns: minmax(0, 140px) minmax(0, 160px); gap: 8px; }
+.co-tier26 { display: grid; grid-template-columns: 1fr 1.3fr 1fr auto; gap: 8px; align-items: end; border: 1px solid var(--rule); border-radius: var(--radius); padding: 10px; margin: 0; }
+.co-tier26 .co-tier-x { height: 42px; }
+@media (max-width: 640px) { .co-tier26 { grid-template-columns: 1fr 1fr; } }
+.help-tip { position: relative; display: inline-flex; }
+.help-tip-btn { display: inline-grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 1px solid var(--rule); border-radius: 999px; background: transparent; color: var(--ink); cursor: help; }
+.help-tip-text { position: absolute; inset-inline-start: 50%; bottom: calc(100% + 6px); transform: translateX(-50%); z-index: 40; width: max-content; max-width: 240px; padding: 8px 10px; border-radius: 8px; background: var(--ink); color: var(--paper); font-size: 12.5px; line-height: 1.4; visibility: hidden; opacity: 0; transition: opacity .12s; pointer-events: none; }
+[dir='rtl'] .help-tip-text { transform: translateX(50%); }
+.help-tip:hover .help-tip-text, .help-tip-btn:focus + .help-tip-text { visibility: visible; opacity: 1; }
+.pg26 { border-top: 1px solid var(--rule); padding-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.pg26-title { margin: 0; font-size: 14px; }
+.pg26-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.pg26-rows li { display: grid; grid-template-columns: 96px 1fr auto; gap: 8px; align-items: center; }
+.pg26-k { font-size: 13px; color: var(--ink); }
+.pg26-v { display: flex; flex-direction: column; font-size: 14px; }
+.lp-tiers { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.lp-tiers li { border: 1px solid var(--rule); border-radius: 999px; padding: 2px 10px; }
+
+.co-tier26 .field { align-self: end; }

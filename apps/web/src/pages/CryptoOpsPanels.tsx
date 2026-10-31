@@ -227,20 +227,29 @@ const STATE_LABEL: Record<string, string> = {
   held_for_review: 'Held for review', credited_to_balance: 'Credited to balance', failed: 'Failed', expired: 'Expired',
 };
 const STATE_CHIP: Record<string, string> = { paid: 'released', credited_to_balance: 'released', held_for_review: 'disputed', underpaid: 'held', failed: 'disputed', received_applying: 'held' };
+const PROVIDER_STATUS = ['waiting', 'confirming', 'confirmed', 'sending', 'partially_paid', 'finished', 'failed', 'refunded', 'expired'] as const;
 export function CryptoPaymentsPanel() {
-  const [filter, setFilter] = useState('');
-  return <CryptoPaymentsTable key={filter} filter={filter} setFilter={setFilter} />;
+  const [filter, setFilter] = useState({ status: '', q: '' });
+  return <CryptoPaymentsTable key={`${filter.status}|${filter.q}`} filter={filter} setFilter={setFilter} />;
 }
-function CryptoPaymentsTable({ filter, setFilter }: { filter: string; setFilter: (v: string) => void }) {
-  const { data, error, reload } = useLoad(() => api<any[]>(`/admin/crypto/payments${filter ? `?state=${filter}` : ''}`));
+// HANDOFF Round 26 (A3): GET /admin/crypto/payments?status=&q=&limit=; POST …/:paymentId/recheck → { before, provider_status, payment }.
+function CryptoPaymentsTable({ filter, setFilter }: { filter: { status: string; q: string }; setFilter: (v: { status: string; q: string }) => void }) {
+  const { data, error, reload } = useLoad(() => {
+    const p = new URLSearchParams({ limit: '100' });
+    if (filter.status) p.set('status', filter.status);
+    if (filter.q) p.set('q', filter.q);
+    return api<any[]>(`/admin/crypto/payments?${p}`);
+  });
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState('');
-  const recheck = async (id: string) => {
+  const [q, setQ] = useState(filter.q);
+  const recheck = async (paymentId: string) => {
     setMsg('');
-    setBusy(id);
+    setBusy(paymentId);
     try {
-      const p = await api<any>(`/admin/crypto/payments/${id}/recheck`, { body: {} });
-      setMsg(`Re-checked ${p.payment_id}: ${p.status} · ${STATE_LABEL[p.state] ?? p.state}${p.order_status ? ` · order ${p.order_status}` : ''}.`);
+      const r = await api<{ before: any; provider_status: string; payment: any }>(`/admin/crypto/payments/${encodeURIComponent(paymentId)}/recheck`, { body: {} });
+      const p = r.payment;
+      setMsg(`Re-checked ${p.payment_id}: NOWPayments says ${r.provider_status} · ${STATE_LABEL[r.before?.state] ?? r.before?.state ?? '—'} → ${STATE_LABEL[p.state] ?? p.state}${p.order_status ? ` · order ${p.order_status}` : ''}.`);
       reload();
     } catch (e: any) {
       setMsg(e.message);
@@ -251,17 +260,20 @@ function CryptoPaymentsTable({ filter, setFilter }: { filter: string; setFilter:
   const amount = (v: string | null | undefined, c: string | null | undefined) => (v == null ? '—' : `${v} ${String(c ?? '').toUpperCase()}`);
   return (
     <div className="stack">
-      <p className="small muted" style={{ margin: 0 }}>
-        Every crypto payment from buyers. &ldquo;Re-check&rdquo; asks NOWPayments for the payment again and applies what it says (logged in the audit log).
-        A payment the buyer sees as &ldquo;Received, applying&rdquo; for more than a few minutes needs a re-check.
-      </p>
-      <label className="field" style={{ maxWidth: 260 }}>
-        Show
-        <select value={filter} onChange={(e) => setFilter(e.target.value)}>
-          <option value="">All payments</option>
-          {Object.entries(STATE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-        </select>
-      </label>
+      <form className="row" style={{ alignItems: 'end' }} onSubmit={(e) => (e.preventDefault(), setFilter({ ...filter, q: q.trim() }))}>
+        <label className="field" style={{ maxWidth: 220 }}>
+          Status
+          <select value={filter.status} onChange={(e) => setFilter({ ...filter, status: e.target.value })}>
+            <option value="">All payments</option>
+            {PROVIDER_STATUS.map((k) => <option key={k} value={k}>{k.replace('_', ' ')}</option>)}
+          </select>
+        </label>
+        <label className="field" style={{ flex: 1, minWidth: 220 }}>
+          Payment, order ref or checkout
+          <input type="search" value={q} onChange={(e) => setQ(e.target.value)} />
+        </label>
+        <button className="btn ghost" type="submit">Search</button>
+      </form>
       {error && <div className="alert" role="alert">{error}</div>}
       {msg && <div className="notice" role="status">{msg}</div>}
       <div className="card table-wrap" style={{ padding: 0 }}>
@@ -274,7 +286,7 @@ function CryptoPaymentsTable({ filter, setFilter }: { filter: string; setFilter:
               <tr><td colSpan={9} className="muted">No payments.</td></tr>
             ) : (
               data.map((p) => (
-                <tr key={p.id}>
+                <tr key={p.payment_id}>
                   <td className="mono">{p.payment_id}<div className="small muted">{fmt(p.created_at)}</div></td>
                   <td>{p.order_id ? <Link to={`/orders/${p.order_id}`}>{p.order_ref ?? p.order_id.slice(0, 8)}</Link> : p.checkout_id ? <span className="mono">cart {p.checkout_id.slice(0, 8)}</span> : '—'}<div className="small muted">{p.buyer_name ?? ''}{p.order_status ? ` · ${p.order_status}` : ''}</div></td>
                   <td><span className={`chip ${STATE_CHIP[p.state] ?? ''}`}>{STATE_LABEL[p.state] ?? p.state}</span><div className="small muted">{p.status}{p.review_reason ? ` · ${p.review_reason}` : ''}</div></td>
@@ -283,7 +295,7 @@ function CryptoPaymentsTable({ filter, setFilter }: { filter: string; setFilter:
                   <td className="mono">{amount(p.outcome_amount, p.outcome_currency)}</td>
                   <td className="mono">{money(Number(p.applied_cents ?? 0))}{Number(p.credited_cents) ? <div className="small muted">+{money(Number(p.credited_cents))} to balance</div> : null}</td>
                   <td className="small">{p.last_ipn_at ? fmt(p.last_ipn_at) : '—'}</td>
-                  <td><button className="btn ghost sm" disabled={busy === p.id} onClick={() => recheck(p.id)}>{busy === p.id ? 'Checking…' : 'Re-check with NOWPayments'}</button></td>
+                  <td><button className="btn ghost sm" disabled={busy === p.payment_id} onClick={() => recheck(p.payment_id)}>{busy === p.payment_id ? 'Checking…' : 'Re-check with NOWPayments'}</button></td>
                 </tr>
               ))
             )}

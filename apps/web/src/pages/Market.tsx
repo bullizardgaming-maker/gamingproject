@@ -38,8 +38,6 @@ export interface Offer {
   unit_label?: string | null;
   unit_size?: number | null;
   min_qty?: number | null;
-  /** Round 26 (B1): optional most a buyer can take in one order. */
-  max_qty?: number | null;
   price_per_unit_cents?: number;
   stock_qty?: number;
   /** Only on the seller's own shop (GET /offers?seller=): a featured listing, pinned first there. */
@@ -50,7 +48,7 @@ export interface Offer {
   /** The same in the `currency=` the list was asked for. */
   display_unit_price_micros?: number | null;
   /** Up to four tiers: from this many units, this % off. */
-  volume_discounts?: Array<{ minQty: number; percentOff: number }>;
+  volume_discounts?: Array<{ minQty: number; percentOff: number } | { minQty: number; type: 'percent' | 'fixed'; value: number }>;
   /** Promised delivery time in minutes (0 = instant) and as the seller's pick (15m … 24h; null = instant or longer). */
   delivery_minutes?: number | null;
   delivery_time?: '15m' | '1h' | '3h' | '6h' | '12h' | '24h' | null;

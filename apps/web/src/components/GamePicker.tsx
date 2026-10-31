@@ -5,7 +5,7 @@ import { t } from '../i18n';
  * Type a game name, then choose it from the list. Free text is not accepted: the field is only
  * valid when it matches one of `options` (case-insensitive), and then takes that spelling.
  */
-export function GamePicker({ options, value, onChange, label, name, placeholder, required, className }: {
+export function GamePicker({ options, value, onChange, label, name, placeholder, required, className, limit = 8, invalidMessage, noneMessage }: {
   options: readonly string[];
   value: string;
   onChange: (v: string) => void;
@@ -14,6 +14,10 @@ export function GamePicker({ options, value, onChange, label, name, placeholder,
   placeholder?: string;
   required?: boolean;
   className?: string;
+  /** How many matches to list (Round 26b server picker: all of them, in a scrolling list). */
+  limit?: number;
+  invalidMessage?: string;
+  noneMessage?: string;
 }) {
   const id = useId();
   const input = useRef<HTMLInputElement>(null);
@@ -23,15 +27,15 @@ export function GamePicker({ options, value, onChange, label, name, placeholder,
   const matches = useMemo(() => {
     const starts = options.filter((o) => o.toLowerCase().startsWith(q));
     const contains = options.filter((o) => !o.toLowerCase().startsWith(q) && o.toLowerCase().includes(q));
-    return [...starts, ...contains].slice(0, 8);
-  }, [options, q]);
+    return [...starts, ...contains].slice(0, limit);
+  }, [options, q, limit]);
   const exact = options.find((o) => o.toLowerCase() === q);
   const pick = (o: string) => {
     onChange(o);
     setOpen(false);
     input.current?.setCustomValidity('');
   };
-  const check = (v: string) => input.current?.setCustomValidity(!v.trim() || options.some((o) => o.toLowerCase() === v.trim().toLowerCase()) ? '' : t('picker.choose'));
+  const check = (v: string) => input.current?.setCustomValidity(!v.trim() || options.some((o) => o.toLowerCase() === v.trim().toLowerCase()) ? '' : invalidMessage ?? t('picker.choose'));
 
   return (
     <label className={`field gp ${className ?? ''}`}>
@@ -77,7 +81,7 @@ export function GamePicker({ options, value, onChange, label, name, placeholder,
             ))}
           </ul>
         )}
-        {open && q && matches.length === 0 && <span className="gp-none small muted" role="status">{t('picker.none')}</span>}
+        {open && q && matches.length === 0 && <span className="gp-none small muted" role="status">{noneMessage ?? t('picker.none')}</span>}
       </span>
     </label>
   );

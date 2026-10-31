@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { buy, buyNow, fillCharacter, pickCoin, previewOffer, signIn, startOffer } from './helpers';
+import { buy, buyNow, fillCharacter, pickCoin, previewOffer, setSpeed, signIn, startOffer } from './helpers';
 
 const SELLER_ID = 'u-sell1-0000-4000-8000-000000000002';
 
@@ -45,33 +45,28 @@ test.describe('Round 26: crypto never goes blank (A4)', () => {
     await page.getByRole('tab', { name: 'Crypto payments' }).click();
     const table = page.getByTestId('crypto-payments');
     await expect(table.getByText('Held for review').first()).toBeVisible();
-    await page.getByRole('combobox', { name: 'Show', exact: true }).selectOption('held_for_review');
+    await page.getByRole('combobox', { name: 'Status', exact: true }).selectOption('finished');
     await table.getByRole('button', { name: 'Re-check with NOWPayments' }).first().click();
     await expect(page.getByRole('status').filter({ hasText: /^Re-checked/ })).toBeVisible();
   });
 });
 
 test.describe('Round 26: create and manage listings (B1–B10)', () => {
-  test('Aion currency asks for a faction, and the preview shows the buyer price with min and max per order', async ({ page }) => {
+  test('Aion currency asks for a faction, and the preview shows the buyer price and the minimum per order', async ({ page }) => {
     await signIn(page, 'Seller');
     await startOffer(page, 'currency', 'Albion Online');
     await expect(page.locator('select[name="attr.faction"]')).toHaveCount(0);
     await startOffer(page, 'currency', 'Aion');
     await expect(page.locator('input[name=title]')).toHaveCount(0); // currency titles are made from game and server
+    await expect(page.locator('input[name=maxQty]')).toHaveCount(0); // Round 26b: the max per order is the stock
     await page.locator('input[name="attr.server"]').fill('Israphel');
     await page.locator('select[name="attr.faction"]').selectOption('Asmodian');
     await page.locator('select[name="attr.region"]').selectOption('Europe');
     await page.locator('input[name=stock]').fill('500');
     await page.locator('input[name=unitPrice]').fill('0.5');
     await page.locator('input[name=minQty]').fill('10');
-    await page.locator('input[name=maxQty]').fill('5');
-    await page.locator('select[name=deliveryTime]').selectOption('1h');
+    await setSpeed(page, 1, 'hours');
     await page.locator('textarea[name=description]').fill('Face to face in Pandaemonium. Whisper me when you are online.');
-    await page.getByRole('button', { name: 'Preview', exact: true }).click();
-    // A max below the min is refused before anything is sent.
-    expect(await page.locator('input[name=maxQty]').evaluate((e: HTMLInputElement) => e.validity.rangeUnderflow)).toBe(true);
-    await expect(page.getByTestId('listing-preview')).toHaveCount(0);
-    await page.locator('input[name=maxQty]').fill('200');
     await previewOffer(page);
 
     const preview = page.getByTestId('listing-preview');
@@ -79,12 +74,11 @@ test.describe('Round 26: create and manage listings (B1–B10)', () => {
     await expect(preview.locator('.of-rows').first()).toContainText('Asmodian');
     await expect(preview).toContainText('Face to face in Pandaemonium');
     await expect(preview.locator('.lp-limits')).toContainText('10');
-    await expect(preview.locator('.lp-limits')).toContainText('200');
     // The buyer pays more than the seller's $0.50 (fees on top): 10 × more than $0.50.
     const total = Number((await preview.getByTestId('preview-total').innerText()).replace(/[^0-9.]/g, ''));
     expect(total).toBeGreaterThan(5);
     await preview.getByRole('button', { name: 'Back to edit' }).click();
-    await expect(page.locator('input[name=maxQty]')).toHaveValue('200');
+    await expect(page.locator('input[name=minQty]')).toHaveValue('10');
     await previewOffer(page);
     await page.getByRole('button', { name: 'Publish offer' }).click();
     await expect(page.getByText('Your offer is live.')).toBeVisible();
@@ -94,7 +88,9 @@ test.describe('Round 26: create and manage listings (B1–B10)', () => {
     await row.getByRole('link', { name: 'Edit' }).click();
     await expect(page.getByRole('heading', { name: 'Edit listing' })).toBeVisible();
     await expect(page.locator('input[name=minQty]')).toHaveValue('10');
-    await page.locator('input[name=maxQty]').fill('150');
+    await expect(page.getByLabel('Delivery speed, number')).toHaveValue('1');
+    await expect(page.getByLabel('Delivery speed, unit')).toHaveValue('hours');
+    await page.locator('input[name=minQty]').fill('20');
     await previewOffer(page);
     await page.getByRole('button', { name: 'Save changes' }).click();
     await expect(page.getByText('Changes saved.')).toBeVisible();
@@ -125,10 +121,7 @@ test.describe('Round 26: create and manage listings (B1–B10)', () => {
     const row = page.getByRole('row', { name: /100M kinah — Siel/ });
     await row.getByRole('button', { name: 'Duplicate to another server' }).click();
     const form = page.getByRole('form', { name: /Duplicate/ });
-    await form.getByLabel(/^New /).fill('Siel');
     await form.getByLabel('Stock').fill('25');
-    await form.getByRole('button', { name: 'Create copy' }).click();
-    await expect(form.getByRole('alert')).toHaveText('Pick a different server.'); // same server and faction as the original
     await form.getByLabel(/^New /).fill('Israphel');
     await form.getByLabel('Faction').selectOption('Elyos');
     await form.getByRole('button', { name: 'Create copy' }).click();
@@ -154,18 +147,11 @@ test.describe('Round 26: create and manage listings (B1–B10)', () => {
     await expect(page.getByText('hidden until you restock')).toHaveCount(0);
   });
 
-  test('the offer page caps the quantity at the max per order', async ({ page }) => {
-    await signIn(page, 'Seller');
-    await page.goto('/sell');
-    await page.getByRole('row', { name: /100k Gold — Stormrage/ }).getByRole('link', { name: 'Edit' }).click();
-    await page.locator('input[name=maxQty]').fill('3');
-    await previewOffer(page);
-    await page.getByRole('button', { name: 'Save changes' }).click();
-    await expect(page.getByText('Changes saved.')).toBeVisible();
+  test('the offer page caps the quantity at the stock (no separate max per order)', async ({ page }) => {
     await signIn(page, 'Buyer');
-    await page.goto('/offers/offer-7');
-    await expect(page.getByTestId('offer-max')).toContainText('Max. 3');
-    await page.locator('#of-qty').fill('3');
+    await page.goto('/offers/offer-14');
+    const stock = Number((await page.locator('.of-avail').innerText()).replace(/[^0-9]/g, ''));
+    await page.locator('#of-qty').fill(String(stock));
     await expect(page.getByRole('button', { name: 'More' })).toBeDisabled();
   });
 });

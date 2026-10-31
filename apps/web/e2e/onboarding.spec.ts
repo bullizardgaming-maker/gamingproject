@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { signIn, signOut, startOffer, publishOffer } from './helpers';
+import { signIn, signOut, startOffer, publishOffer, pickServer, setSpeed } from './helpers';
 
 test.describe('seller onboarding', () => {
   test('a new seller passes the rules test before the first listing and sees the ID deadline', async ({ page }) => {
@@ -30,10 +30,10 @@ test.describe('seller onboarding', () => {
     // First listing: allowed on Tier 1; the ID deadline then shows on the hub.
     // Round 25: the currency form is server, stock, unit price (6 decimals), delivery methods and time.
     await startOffer(page, 'currency', 'Albion Online');
-    await page.locator('select[name="attr.server"]').selectOption('Europe');
+    await pickServer(page, 'Europe');
     await page.locator('input[name=stock]').fill('5000000');
     await page.locator('input[name=unitPrice]').fill('0.000012');
-    await page.locator('select[name=deliveryTime]').selectOption('1h');
+    await setSpeed(page, 1, 'hours');
     await publishOffer(page);
     await expect(page.getByText('Your offer is live.')).toBeVisible();
     await expect(page.getByText('Albion Online · Europe').first()).toBeVisible();
