@@ -16,7 +16,7 @@ import { parseCsv } from '../../../api/src/domain/csv';
 import { platformForGame } from '../../../api/src/domain/platforms';
 import { DELIVERY_TIMES, MIN_CURRENCY_ORDER_USD_CENTS, centsForMicros, checkVolumeDiscounts, deliveryTimeFor, formatUnitPrice, grossMicros, isDeliveryTime, parseUnitPrice, totalCentsFor, unitMicrosFor, volumePercentFor } from '../../../api/src/domain/unitPrice';
 import { slugify } from '@/lib/catalog';
-import { MAX_DELIVERY_MINUTES, checkTiers as checkVolumeTiers, normTiers, tierFor, tierPercent, unitMicrosAt, type VolumeTier } from '@/lib/volume';
+import { MAX_DELIVERY_MINUTES, checkTiers as checkVolumeTiers, microsText, normTiers, tierFor, tierMicros, tierPercent, unitMicrosAt, type VolumeTier } from '@/lib/volume';
 import { LAUNCH_GAMES, isLaunchGame } from '../lib/launch';
 
 /** Which games sellers may list (staff-set; the launch games by default, every game in the full demo). */
@@ -261,8 +261,8 @@ function unitView(o: any, rate: number) {
     seller_unit_price_micros: sm,
     price_settlement_micros: buyer,
     // Round 26b: tiers are % off or a fixed unit price; buyers see fixed prices grossed up like the base price.
-    volume_discounts: o.category_slug === 'currency' ? normTiers(o.volume_discounts).map((x) => (x.type === 'fixed' ? { ...x, value: grossMicros(x.value, rate) } : x)) : [],
-    seller_volume_discounts: o.category_slug === 'currency' ? normTiers(o.volume_discounts) : [],
+    // HANDOFF Round 26b: the seller's raw tiers (a fixed value is the seller's price); buyers' prices are grossed up.
+    volume_discounts: o.category_slug === 'currency' ? normTiers(o.volume_discounts) : [],
     delivery_minutes: dm,
     delivery_time: dm === 0 || dm > 1440 ? null : deliveryTimeFor(dm),
   };
@@ -1235,20 +1235,21 @@ route('GET', '/offers/price-guide', ({ me, query }) => {
   const server = query.get('server') ?? '';
   const faction = query.get('faction') ?? '';
   const first = attributesFor(query.get('game') ?? '', category)[0]?.key;
-  const prices = state.offers
+  const rows = state.offers
     .filter((o) => listed(o) && o.seller_id !== u.id && o.category_slug === category && o.game.toLowerCase() === game && availableOf(o) > 0)
     .filter((o) => !server || !first || String(o.attributes?.[first] ?? '').toLowerCase() === server.toLowerCase())
-    .filter((o) => !faction || String(o.attributes?.faction ?? '').toLowerCase() === faction.toLowerCase())
+    .filter((o) => !faction || String(o.attributes?.faction ?? '').toLowerCase() === faction.toLowerCase());
+  const prices = rows
     .map((o) => grossMicros(sellerMicrosOf(o) ?? o.price_cents * 10_000, rateFor(o)))
     .sort((a, b) => a - b);
   const rate = tierOf(u.id).rateBps;
   const net = (m: number | null) => (m == null ? null : Math.floor((m * (10_000 - rate)) / 10_000));
   const lowest = prices[0] ?? null;
   const median = prices.length ? (prices.length % 2 ? prices[(prices.length - 1) / 2]! : Math.round((prices[prices.length / 2 - 1]! + prices[prices.length / 2]!) / 2)) : null;
-  const recommended = lowest == null || median == null ? null : Math.max(Math.floor(lowest * 0.99), Math.ceil(median * 0.8));
+  const recommended = lowest == null || median == null ? null : Math.max(Math.round(lowest * 0.99), Math.ceil(median * 0.8));
   return {
-    sellers: prices.length, lowest_micros: lowest, median_micros: median, recommended_micros: recommended, as_of: now(),
-    seller: { commission_bps: rate, lowest_micros: net(lowest), median_micros: net(median), recommended_micros: net(recommended) },
+    sellers: new Set(rows.map((o) => o.seller_id)).size, listings: prices.length, lowest_micros: lowest, median_micros: median, recommended_micros: recommended,
+    seller_net: { commission_bps: rate, lowest_micros: net(lowest), median_micros: net(median), recommended_micros: net(recommended) }, as_of: now(),
   };
 });
 route('GET', '/offers/:id', ({ me, params }) => {
@@ -1651,6 +1652,14 @@ if (typeof window !== 'undefined') {
       const u = token.startsWith('demo:') ? userById(token.slice(5)) : null;
       if (!u) throw new Error('no session');
       state.credit[u.id] = (state.credit[u.id] ?? 0) + cents;
+      save();
+    },
+    /** Round 26c: a change made elsewhere (another tab, a sale): bumps a listing's version so the next save gets 409. */
+    touchOffer(offerId: string, stockDelta = 0) {
+      const o: any = state.offers.find((x) => x.id === offerId);
+      if (!o) throw new Error('no offer');
+      o.stock = Math.max(1, Number(o.stock) + stockDelta);
+      o.version++;
       save();
     },
   };
@@ -2354,7 +2363,15 @@ route('GET', '/seller/offers', ({ me }) => {
   return state.offers
     .filter((o) => o.seller_id === u.id)
     .filter((o) => o.status !== 'removed')
-    .map((o) => ({ ...offerView(o), available: availableOf(o), linked_account_id: o.linked_account_id ?? null, featured: isFeatured(o), featured_until: o.featured_until ?? null, open_orders: openOrdersOf(o.id), listing_state: listingStateOf(o) }));
+    // As the API: the seller's own rows (f.*: seller prices, raw tiers) + listing_state and open_orders.
+    .map((o: any) => {
+      const { inventory: _i, bundle, review_reasons: _r, request_id: _q, ...row } = o;
+      return {
+        ...row, unit_price_micros: sellerMicrosOf(o), volume_discounts: o.category_slug === 'currency' ? normTiers(o.volume_discounts) : [], price_tiers: o.price_tiers ?? [],
+        delivery_minutes: deliveryMinutesOf(o), is_bundle: !!bundle?.length, available: availableOf(o), max_qty: null, linked_account_id: o.linked_account_id ?? null,
+        featured_until: isFeatured(o) ? o.featured_until : null, listing_state: listingStateOf(o), open_orders: openOrdersOf(o.id),
+      };
+    });
 });
 /**
  * Round 26: a listing from a create body, checked as the API checks it, not saved. Currency listings get an
@@ -2474,6 +2491,11 @@ route('POST', '/offers/preview', ({ me, body }) => {
       delivery_time: v.delivery_time, delivery_minutes: v.delivery_minutes, delivery_methods: v.delivery_methods, min_qty: v.min_qty, max_qty: null,
       stock: v.stock, price_cents: v.price_cents, unit_price_micros: v.unit_price_micros, unit_price: v.unit_price_micros == null ? null : formatUnitPrice(v.unit_price_micros),
       volume_discounts: v.volume_discounts, price_tiers: v.price_tiers, listing_state: 'active',
+      volume_tiers: sm == null ? [] : normTiers((o as any).volume_discounts).map((x) => {
+        const s = tierMicros(sm, x);
+        return { ...x, seller_unit_micros: s, seller_unit_price: microsText(s), unit_price_micros: grossMicros(s, rate), unit_price: microsText(grossMicros(s, rate)) };
+      }),
+      delivery_minutes_text: v.delivery_minutes >= 60 ? `${Math.floor(v.delivery_minutes / 60)}h${v.delivery_minutes % 60 ? ` ${v.delivery_minutes % 60}m` : ''}` : `${v.delivery_minutes}m`,
     },
     seller: { commission_bps: rate, price_cents: v.seller_price_cents, unit_price_micros: sm, unit_price: sm == null ? null : formatUnitPrice(sm) },
     buyer: { unit_price_micros: v.unit_price_micros, unit_price: v.unit_price_micros == null ? null : formatUnitPrice(v.unit_price_micros), price_cents: v.price_cents, min_order_cents: MIN_CURRENCY_ORDER_USD_CENTS, currency: 'USD' },
@@ -2502,6 +2524,7 @@ route('PATCH', '/offers/:id', ({ me, params, body }) => {
   const o: any = state.offers.find((x) => x.id === params[0] && x.seller_id === u.id && x.status !== 'removed') ?? fail(404, 'not_found', 'Offer not found');
   if (body.version !== o.version) fail(409, 'version_conflict', 'This listing changed in another tab. Reload and try again');
   if (body.status === 'removed') refuseOpenOrders(o);
+  if (body.status === 'active' && o.status === 'paused' && o.expired_reason) fail(403, 'paused_by_staff', 'Bullizard paused this listing. Contact support to have it reopened');
   const merged = {
     categorySlug: o.category_slug, game: o.game, title: body.title ?? o.title, description: body.description ?? o.description, deliveryMode: o.delivery_mode,
     priceCents: body.priceCents ?? o.price_cents, attributes: body.attributes ?? o.attributes, stock: body.stock ?? o.stock,
@@ -2534,7 +2557,9 @@ route('POST', '/offers/:id/pause', ({ me, params }) => {
 route('POST', '/offers/:id/resume', ({ me, params }) => {
   const o: any = ownOffer(me, params[0]!);
   if (o.status === 'removed') fail(409, 'listing_removed', 'This listing was deleted');
-  if (o.status !== 'paused') fail(409, 'not_paused', 'This listing isn’t paused');
+  if (o.status !== 'paused') fail(409, 'not_paused', `This listing is ${o.status === 'active' ? (availableOf(o) > 0 ? 'already live' : 'out of stock: add stock and it goes live by itself') : o.status}`);
+  // Round 26c: a listing Bullizard paused (ID overdue, listing ban…) is resumed by staff only.
+  if (o.expired_reason) fail(403, 'paused_by_staff', 'Bullizard paused this listing. Contact support to have it reopened');
   o.status = 'active';
   o.version++;
   return { ...offerView(o), available: availableOf(o), listing_state: listingStateOf(o) };

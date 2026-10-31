@@ -1482,3 +1482,9 @@ input[type=checkbox], input[type=radio] { color: inherit; }
 .lp-tiers li { border: 1px solid var(--rule); border-radius: 999px; padding: 2px 10px; }
 
 .co-tier26 .field { align-self: end; }
+
+/* Round 26c: list-mode dropdowns (type to filter) */
+.gp-listmode { position: relative; display: block; }
+.gp-listmode input { padding-inline-end: 34px; cursor: pointer; }
+.gp-caret { position: absolute; inset-inline-end: 12px; top: 50%; transform: translateY(-50%); color: var(--steel); pointer-events: none; }
+.gp-list li[data-chosen] { font-weight: 600; }

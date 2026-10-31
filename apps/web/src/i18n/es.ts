@@ -1101,5 +1101,11 @@ const es: Messages = {
   "vt.fixedBelowBase": "A fixed unit price must be lower than your unit price.",
   "vt.cheaper": "Each discount must give a lower unit price than the one before.",
   "vt.rowFixed": "{qty}+ · {price} each",
+  "lst.pausedByStaff": "Paused by Bullizard – contact support",
+  "lst.pausedByBz": "Paused by Bullizard",
+  "lst.contactSupport": "contact support",
+  "co.pickFromList2": "Choose an option from the list.",
+  "co.noMatch2": "Nothing matches.",
+  "lst.conflict": "This listing changed – review and save again",
 };
 export default es;

@@ -133,5 +133,12 @@ export async function pickServer(page: Page, name: string) {
 /** Round 26b: delivery speed is a number plus minutes or hours. */
 export async function setSpeed(page: Page, value: number, unit: 'minutes' | 'hours') {
   await page.getByLabel('Delivery speed, number').fill(String(value));
-  await page.getByLabel('Delivery speed, unit').selectOption(unit);
+  await choose(page, page.getByLabel('Delivery speed, unit'), unit === 'hours' ? 'Hours' : 'Minutes');
+}
+
+/** Round 26c: list-mode dropdowns open on click and list every option; pick one by its label. */
+export async function choose(page: Page, field: import('@playwright/test').Locator, option: string) {
+  await field.click();
+  await page.getByRole('listbox').getByRole('option', { name: option, exact: true }).click();
+  await expect(field).toHaveValue(option);
 }

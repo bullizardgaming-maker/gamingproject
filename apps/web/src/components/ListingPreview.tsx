@@ -3,7 +3,7 @@ import { categoryLabel } from '@/lib/catalog';
 import { attributePairs } from '@/lib/attributes';
 import { unitPriceFor } from '@/lib/tiers';
 import { METHODS, methodLabel, methodsOf } from '@/lib/delivery';
-import { normTiers, tierText, unitMicrosAt } from '@/lib/volume';
+import { normTiers, tierFor, tierText } from '@/lib/volume';
 import { handoverFieldFor } from './CharacterField';
 import { usePrice } from '@/lib/prefs';
 import { intlLocale, t } from '../i18n';
@@ -30,6 +30,8 @@ export interface PreviewResponse {
     unit_price_micros?: number | null;
     unit_price?: string | null;
     volume_discounts?: Array<{ minQty: number; type: 'percent' | 'fixed'; value: number } | { minQty: number; percentOff: number }>;
+    /** Round 26b: each tier with the buyer's unit price (fees included), in micro-units. */
+    volume_tiers?: Array<{ minQty: number; type: 'percent' | 'fixed'; value: number; unit_price_micros: number; seller_unit_micros?: number }>;
     price_tiers?: Array<{ minQty: number; priceCents: number }>;
     listing_state?: string;
   };
@@ -57,8 +59,10 @@ export function ListingPreview({ preview, game, category, stock, sellerName, bus
   const l = preview.listing;
   const min = l.min_qty ?? 1;
   const micro = preview.buyer.unit_price_micros ?? l.unit_price_micros ?? null;
-  const tiers = normTiers(l.volume_discounts);
-  const total = micro != null ? totalCentsFor(unitMicrosAt(micro, tiers, min), min) : unitPriceFor({ price_cents: preview.buyer.price_cents ?? l.price_cents, price_tiers: l.price_tiers }, min) * min;
+  const tiers = (l.volume_tiers ?? []).map((x) => ({ ...normTiers([x])[0]!, buyerMicros: Number(x.unit_price_micros) }));
+  const reached = tierFor(tiers, min);
+  const minUnit = reached ? tiers.find((x) => x.minQty === reached.minQty)!.buyerMicros : micro;
+  const total = micro != null && minUnit != null ? totalCentsFor(minUnit, min) : unitPriceFor({ price_cents: preview.buyer.price_cents ?? l.price_cents, price_tiers: l.price_tiers }, min) * min;
   const methods = handoverFieldFor(game, category) ? methodsOf({ game, category_slug: category, delivery_methods: l.delivery_methods ?? null }) : [];
   const pairs = attributePairs(game, category, l.attributes);
   const n = (v: number) => v.toLocaleString(intlLocale());

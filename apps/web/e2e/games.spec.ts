@@ -57,7 +57,9 @@ test.describe('launch games: in-game delivery', () => {
     await league.focus();
     await expect(page.getByRole('listbox').getByRole('option')).toContainText(['Standard', 'Hardcore', 'Mercenaries']);
     await expect(page.getByRole('listbox').getByRole('option', { name: /Settlers/ })).toHaveCount(0); // ended
-    await expect(page.locator('select[name="attr.mode"]').locator('option')).toContainText(['Softcore', 'Hardcore']);
+    await page.keyboard.press('Escape'); // close the league list
+    await page.locator('input[name="attr.mode"]').click();
+    await expect(page.getByRole('listbox').getByRole('option')).toHaveText(['Softcore', 'Hardcore']);
     await startOffer(page, 'currency', 'Albion Online');
     await page.locator('input[name="attr.server"]').focus();
     await expect(page.getByRole('listbox').getByRole('option')).toHaveText(['Americas', 'Europe', 'Asia']);

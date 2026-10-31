@@ -9,11 +9,12 @@ import { attrLabel, attributesFor, useLeagues, type AttributeDef } from '@/lib/a
 import { categoryLabel, isCategoryOpen, useCategoryOrder } from '@/lib/catalog';
 import { CATEGORY_ICON } from '../components/CatalogUi';
 import { GamePicker } from '../components/GamePicker';
+import { ListPicker } from '../components/ListPicker';
 import { sellableGames } from '@/lib/launch';
 import { KNOWN_GAMES } from '@/lib/gameList';
 import { methodLabel, methodsForListing } from '@/lib/delivery';
 import { unitMoney } from '@/lib/prefs';
-import { OtherOfferForm, type SellerOffer } from './Sell';
+import { OtherOfferForm, sellerOfferOf, type SellerOffer } from './Sell';
 import { ListingPreview, type PreviewResponse } from '../components/ListingPreview';
 import { MinPerOrder, limitsError } from '../components/OrderLimits';
 import { PriceGuide } from '../components/PriceGuide';
@@ -44,7 +45,7 @@ export function CreateOffer() {
   const load = useCallback(async () => {
     const [d, o, l] = await Promise.all([api<{ rateBps: number }>('/seller/dashboard'), api<SellerOffer[]>('/seller/offers'), api<LinkedAccount[]>('/seller/linked-accounts').catch(() => [])]);
     setRateBps(d.rateBps);
-    setOffers(o);
+    setOffers(o.map(sellerOfferOf));
     setLinked(l);
   }, []);
   useEffect(() => {
@@ -124,12 +125,17 @@ export function EditOffer() {
   const [offers, setOffers] = useState<SellerOffer[] | null>(null);
   const [linked, setLinked] = useState<LinkedAccount[]>([]);
   const [error, setError] = useState('');
-  useEffect(() => {
-    if (!user) return;
+  const [conflict, setConflict] = useState(false);
+  const load = useCallback(() => {
     Promise.all([api<{ rateBps: number }>('/seller/dashboard'), api<SellerOffer[]>('/seller/offers'), api<LinkedAccount[]>('/seller/linked-accounts').catch(() => [])])
-      .then(([d, o, l]) => (setRateBps(d.rateBps), setOffers(o), setLinked(l)))
+      .then(([d, o, l]) => (setRateBps(d.rateBps), setOffers(o.map(sellerOfferOf)), setLinked(l)))
       .catch((e) => setError(e.message));
-  }, [user]);
+  }, []);
+  useEffect(() => {
+    if (user) load();
+  }, [user, load]);
+  // 409 version_conflict on save: someone (another tab, a sale) changed the listing. Reload it into the form.
+  const onConflict = () => (setConflict(true), load(), window.scrollTo({ top: 0 }));
   if (!user) return <p className="muted"><Link to={`/login?next=/sell/edit/${id}`}>{t('sell.signIn')}</Link></p>;
   const offer = offers?.find((o) => o.id === id);
   const done = () => nav('/sell', { state: { saved: true } });
@@ -137,6 +143,7 @@ export function EditOffer() {
     <div className="stack co" style={{ maxWidth: 980 }}>
       <nav className="crumbs" aria-label="Breadcrumb"><Link to="/sell">{t('sell.title')}</Link><span>/</span><span>{t('lst.editTitle')}</span></nav>
       <h1 className="pg-h1" style={{ margin: 0 }}>{t('lst.editTitle')}</h1>
+      {conflict && <div className="notice" role="alert" data-testid="edit-conflict">{t('lst.conflict')}</div>}
       {error ? <div className="alert" role="alert">{error}</div> : offers === null ? <p className="muted">{t('sp.loading')}</p> : !offer ? <div className="card muted">{t('lst.notFound')}</div> : (
         <>
           {offer.category_slug !== 'currency' && (
@@ -146,9 +153,9 @@ export function EditOffer() {
             </div>
           )}
           {offer.category_slug === 'currency' ? (
-            <CurrencyOfferForm game={offer.game} rateBps={rateBps} onCreated={done} initial={offer} />
+            <CurrencyOfferForm key={offer.version} game={offer.game} rateBps={rateBps} onCreated={done} initial={offer} onConflict={onConflict} />
           ) : (
-            <OtherOfferForm category={offer.category_slug} game={offer.game} offers={offers} linked={linked} onCreated={done} initial={offer} />
+            <OtherOfferForm key={offer.version} category={offer.category_slug} game={offer.game} offers={offers} linked={linked} onCreated={done} initial={offer} onConflict={onConflict} />
           )}
         </>
       )}
@@ -165,12 +172,12 @@ interface TierRow { minQty: string; type: TierType; value: string }
  * volume discount (up to 4 tiers, % off or a fixed unit price). The side panel shows the unit price the seller gets
  * and what buyers pay, at full precision. No max per order: the max is the stock. With `initial` it edits a listing.
  */
-export function CurrencyOfferForm({ game, rateBps, onCreated, initial, onChangeType }: { game: string; rateBps: number | null; onCreated: () => void; initial?: SellerOffer; onChangeType?: () => void }) {
+export function CurrencyOfferForm({ game, rateBps, onCreated, initial, onChangeType, onConflict }: { game: string; rateBps: number | null; onCreated: () => void; initial?: SellerOffer; onChangeType?: () => void; onConflict?: () => void }) {
   useLeagues(game); // league options come from the table
   const { user } = useSession();
   const fields = attributesFor(game, 'currency').filter((d, i) => i === 0 || d.required);
   const methods = methodsForListing(game, 'currency');
-  const startTiers = initial?.seller_volume_discounts?.length ? initial.seller_volume_discounts : normTiers(initial?.volume_discounts);
+  const startTiers = normTiers(initial?.volume_discounts); // the seller's raw tiers (fixed values in the seller's price)
   const speed0 = splitMinutes(initial?.delivery_minutes);
   const [attrs, setAttrs] = useState<Record<string, string>>(initial?.attributes ?? {});
   const [stock, setStock] = useState(initial ? String(initial.available ?? '') : '');
@@ -242,6 +249,7 @@ export function CurrencyOfferForm({ game, rateBps, onCreated, initial, onChangeT
       } else await api('/offers', { body: body() });
       onCreated();
     } catch (err: any) {
+      if (initial && err.code === 'version_conflict' && onConflict) return onConflict();
       setError(err.message);
       setBusy(false);
     }
@@ -278,6 +286,7 @@ export function CurrencyOfferForm({ game, rateBps, onCreated, initial, onChangeT
                   limit={500}
                   invalidMessage={t('co.pickFromList')}
                   noneMessage={t('co.noMatch')}
+                  listMode
                 />
               ) : (
                 <AttrInput key={`${game}-${d.key}`} def={d} value={attrs[d.key] ?? ''} onChange={(v) => setAttrs((a) => ({ ...a, [d.key]: v }))} />
@@ -318,11 +327,8 @@ export function CurrencyOfferForm({ game, rateBps, onCreated, initial, onChangeT
             <div className="co-speed-row">
               <label className="sr-only" htmlFor="co-speed-n">{t('co.speedValue')}</label>
               <input id="co-speed-n" name="deliveryValue" className="num" type="number" inputMode="numeric" min={1} max={unit === 'hours' ? 72 : MAX_DELIVERY_MINUTES} step={1} required value={speed} onChange={(e) => setSpeed(e.target.value)} />
-              <label className="sr-only" htmlFor="co-speed-u">{t('co.speedUnit')}</label>
-              <select id="co-speed-u" name="deliveryUnit" value={unit} onChange={(e) => setUnit(e.target.value as 'minutes' | 'hours')}>
-                <option value="minutes">{t('co.minutes')}</option>
-                <option value="hours">{t('co.hours')}</option>
-              </select>
+              <ListPicker label={t('co.speedUnit')} hideLabel name="deliveryUnit" required value={unit} onChange={(v) => v && setUnit(v as 'minutes' | 'hours')}
+                options={[{ value: 'minutes', label: t('co.minutes') }, { value: 'hours', label: t('co.hours') }]} />
             </div>
           </fieldset>
         </section>
@@ -342,13 +348,8 @@ export function CurrencyOfferForm({ game, rateBps, onCreated, initial, onChangeT
                     {t('co.tierFrom')}
                     <input className="num" type="number" inputMode="numeric" min={2} max={2_000_000_000} step={1} required aria-label={t('co.tierQtyN', { n: i + 1 })} value={x.minQty} onChange={(e) => setTier(i, { minQty: e.target.value })} />
                   </label>
-                  <label className="field">
-                    {t('co.tierType')}
-                    <select aria-label={t('co.tierTypeN', { n: i + 1 })} value={x.type} onChange={(e) => setTier(i, { type: e.target.value as TierType, value: '' })}>
-                      <option value="percent">{t('co.tierPercent')}</option>
-                      <option value="fixed">{t('co.tierFixed')}</option>
-                    </select>
-                  </label>
+                  <ListPicker label={t('co.tierType')} ariaLabel={t('co.tierTypeN', { n: i + 1 })} required value={x.type} onChange={(v) => v && v !== x.type && setTier(i, { type: v as TierType, value: '' })}
+                    options={[{ value: 'percent', label: t('co.tierPercent') }, { value: 'fixed', label: t('co.tierFixed') }]} />
                   <label className="field">
                     {x.type === 'percent' ? t('co.tierPct') : t('co.tierUnitPrice')}
                     {x.type === 'percent' ? (
@@ -412,17 +413,14 @@ function HelpTip({ id, label, text }: { id: string; label: string; text: string 
 }
 
 function AttrInput({ def: d, value, onChange }: { def: AttributeDef; value: string; onChange: (v: string) => void }) {
+  // Round 26c: every choice field is a list-mode dropdown (type to filter); free-text fields stay inputs.
+  if (d.type === 'select') {
+    return <ListPicker label={attrLabel(d.label)} name={`attr.${d.key}`} required value={value} onChange={onChange} options={(d.options ?? []).map((o) => ({ value: o, label: o }))} />;
+  }
   return (
     <label className="field">
       {attrLabel(d.label)}
-      {d.type === 'select' ? (
-        <select name={`attr.${d.key}`} required value={value} onChange={(e) => onChange(e.target.value)}>
-          <option value="">{t('sell.f.choose')}</option>
-          {d.options!.map((o) => <option key={o}>{o}</option>)}
-        </select>
-      ) : (
-        <input name={`attr.${d.key}`} required maxLength={60} value={value} onChange={(e) => onChange(e.target.value)} />
-      )}
+      <input name={`attr.${d.key}`} required maxLength={60} value={value} onChange={(e) => onChange(e.target.value)} />
     </label>
   );
 }

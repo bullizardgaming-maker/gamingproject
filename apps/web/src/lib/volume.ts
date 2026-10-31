@@ -81,9 +81,9 @@ export const splitMinutes = (m: number | null | undefined): { value: string; uni
   !m ? { value: '', unit: 'minutes' } : m % 60 === 0 ? { value: String(m / 60), unit: 'hours' } : { value: String(m), unit: 'minutes' };
 
 /** A tier as buyers see it: "20,000+ · 5% off" or "20,000+ · $0.12 each" (fixed prices at full precision). */
-export function tierText(x: VolumeTier, unit: (micros: number) => string, locale?: string): string {
+export function tierText(x: VolumeTier & { buyerMicros?: number }, unit: (micros: number) => string, locale?: string): string {
   const qty = x.minQty.toLocaleString(locale);
-  return x.type === 'fixed' ? t('vt.rowFixed', { qty, price: unit(x.value) }) : t('vd.row', { qty, n: x.value });
+  return x.type === 'fixed' ? t('vt.rowFixed', { qty, price: unit(x.buyerMicros ?? x.value) }) : t('vd.row', { qty, n: x.value });
 }
 
 /** 140000 → "0.14" (exact, trailing zeros trimmed): micro-units back into a price field. */
@@ -92,3 +92,30 @@ export function microsText(micros: number): string {
   const frac = String(micros % 1_000_000).padStart(6, '0').replace(/0+$/, '');
   return frac ? `${whole}.${frac}` : String(whole);
 }
+
+/**
+ * Offer reads (HANDOFF Round 26b): `unit_price_micros` is the buyer's base price, `seller_unit_price_micros` the seller's,
+ * `seller_rate_bps` the seller's commission and `volume_discounts` the seller's raw tiers (a fixed tier's value is the
+ * seller's price). The buyer pays the seller's tier price grossed up at the seller's rate, like the API's quote.
+ */
+type PricedOffer = {
+  unit_price_micros?: number | string | null;
+  seller_unit_price_micros?: number | string | null;
+  seller_rate_bps?: number | string | null;
+  volume_discounts?: readonly AnyTier[] | null;
+};
+const grossUpMicros = (sellerMicros: number, rateBps: number) => Number((BigInt(sellerMicros) * 10_000n + BigInt(10_000 - rateBps) - 1n) / BigInt(10_000 - rateBps));
+
+/** The buyer's unit price for `quantity` (micro-units), or null for listings not priced per unit. */
+export function buyerUnitAt(o: PricedOffer, quantity: number): number | null {
+  if (o.unit_price_micros == null) return null;
+  const buyer = Number(o.unit_price_micros);
+  const tier = tierFor(o.volume_discounts, quantity);
+  if (!tier) return buyer;
+  if (o.seller_unit_price_micros != null && o.seller_rate_bps != null) return grossUpMicros(tierMicros(Number(o.seller_unit_price_micros), tier), Number(o.seller_rate_bps));
+  return tier.type === 'percent' ? tierMicros(buyer, tier) : buyer; // no seller price to gross up from: show the base
+}
+
+/** Each tier with the buyer's unit price (for the tier buttons). */
+export const buyerTiers = (o: PricedOffer): Array<VolumeTier & { buyerMicros: number }> =>
+  o.unit_price_micros == null ? [] : normTiers(o.volume_discounts).map((x) => ({ ...x, buyerMicros: buyerUnitAt(o, x.minQty)! }));

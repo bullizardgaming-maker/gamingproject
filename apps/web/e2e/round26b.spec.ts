@@ -1,6 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
-import { pickServer, previewOffer, setSpeed, signIn, startOffer } from './helpers';
+import { pickServer, previewOffer, setSpeed, signIn, startOffer, choose } from './helpers';
 
 test.describe('Round 26b: create offer redesign', () => {
   test('three sections; ".14" is 0.14; unit prices at full precision; the price helper fills the price', async ({ page }) => {
@@ -51,7 +51,7 @@ test.describe('Round 26b: create offer redesign', () => {
     await expect(page.getByLabel('Discount 1: from quantity')).toHaveCount(0); // off by default
     await page.getByLabel('Create a volume discount').check();
     await page.getByLabel('Discount 1: from quantity').fill('5000000');
-    await page.getByLabel('Discount 1: type').selectOption('fixed');
+    await choose(page, page.getByLabel('Discount 1: type'), 'Fixed unit price');
     await page.getByLabel('Discount 1: unit price').fill('.00018');
     await page.getByRole('button', { name: 'Add discount' }).click();
     await page.getByLabel('Discount 2: from quantity').fill('8000000');
@@ -70,7 +70,7 @@ test.describe('Round 26b: create offer redesign', () => {
     await expect(row).toContainText('$0.0002');
     await row.getByRole('link', { name: 'Edit' }).click();
     await expect(page.getByLabel('Create a volume discount')).toBeChecked();
-    await expect(page.getByLabel('Discount 1: type')).toHaveValue('fixed');
+    await expect(page.getByLabel('Discount 1: type')).toHaveValue('Fixed unit price');
     await expect(page.getByLabel('Discount 1: unit price')).toHaveValue('0.00018');
   });
 
@@ -96,10 +96,52 @@ test.describe('Round 26b: create offer redesign', () => {
     await startOffer(page, 'currency', 'Albion Online');
     await pickServer(page, 'Europe');
     await page.getByLabel('Create a volume discount').check();
-    await page.getByLabel('Discount 1: type').selectOption('fixed');
+    await choose(page, page.getByLabel('Discount 1: type'), 'Fixed unit price');
     const axe = () => new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
     expect((await axe()).violations.map((v) => v.id)).toEqual([]);
     await page.evaluate(() => document.documentElement.classList.add('dark'));
     expect((await axe()).violations.map((v) => v.id)).toEqual([]);
+  });
+
+  test('edit uses the create layout with list-mode dropdowns, pre-filled, and recovers from a 409', async ({ page }) => {
+    await signIn(page, 'Seller');
+    await page.goto('/sell');
+    await page.getByRole('row', { name: /100M kinah — Siel/ }).getByRole('link', { name: 'Edit' }).click();
+    await expect(page.getByRole('heading', { name: 'Edit listing' })).toBeVisible();
+    for (const h of ['Details', 'Delivery details', 'Volume discount']) await expect(page.getByRole('heading', { name: h, exact: true })).toBeVisible();
+    await expect(page.getByLabel('Product type', { exact: true })).toHaveAttribute('readonly', '');
+    await expect(page.getByLabel('Game', { exact: true })).toHaveValue('Aion');
+    await expect(page.getByTestId('price-guide')).toBeVisible();
+    // Pre-filled from the listing; every choice is a list-mode dropdown (type to filter), methods stay checkboxes.
+    await expect(page.locator('input[name="attr.server"]')).toHaveValue('Siel');
+    const faction = page.locator('input[name="attr.faction"]');
+    await expect(faction).toHaveAttribute('role', 'combobox');
+    await expect(faction).toHaveAttribute('placeholder', 'Type to filter');
+    await faction.click();
+    await expect(page.getByRole('listbox').getByRole('option')).toHaveText(['Elyos', 'Asmodian']);
+    await faction.fill('ely');
+    await expect(page.getByRole('listbox').getByRole('option')).toHaveText(['Elyos']);
+    await page.getByRole('listbox').getByRole('option', { name: 'Elyos' }).click();
+    await expect(faction).toHaveValue('Elyos');
+    await expect(page.getByLabel('Delivery speed, unit')).toHaveAttribute('role', 'combobox');
+    await expect(page.locator('input[name=deliveryMethods]').first()).toHaveAttribute('type', 'checkbox');
+    await setSpeed(page, 2, 'hours');
+    await page.getByLabel('Create a volume discount').check();
+    await page.getByLabel('Discount 1: from quantity').fill('10');
+    await choose(page, page.getByLabel('Discount 1: type'), 'Fixed unit price');
+    await page.getByLabel('Discount 1: unit price').fill('.5');
+
+    // Someone else changes the listing before we save: 409 → reload and say so.
+    await page.evaluate(() => (window as any).__bzDemo.touchOffer('offer-55', 5));
+    await previewOffer(page);
+    await page.getByRole('button', { name: 'Save changes' }).click();
+    await expect(page.getByTestId('edit-conflict')).toHaveText('This listing changed – review and save again');
+    await expect(page.locator('input[name=stock]')).toHaveValue('55'); // reloaded with the new values
+    await expect(faction).toHaveValue('Asmodian'); // the unsaved choice is gone
+    await choose(page, faction, 'Elyos');
+    await previewOffer(page);
+    await page.getByRole('button', { name: 'Save changes' }).click();
+    await expect(page.getByText('Changes saved.')).toBeVisible();
+    await expect(page.getByRole('row', { name: /Aion · Siel · Elyos/ })).toBeVisible();
   });
 });

@@ -19,7 +19,7 @@ import { intlLocale, t } from '../i18n';
 import { BuyerProtection } from '../components/Brand';
 import { usePrice } from '@/lib/prefs';
 import { MIN_CURRENCY_ORDER_USD_CENTS, totalCentsFor } from '../../../api/src/domain/unitPrice';
-import { normTiers, tierFor, tierPercent, tierText, unitMicrosAt } from '@/lib/volume';
+import { buyerTiers, buyerUnitAt, tierFor, tierText } from '@/lib/volume';
 
 /**
  * One offer, Eldorado-style: what you get and from whom on the left (kept short), the buy box on
@@ -67,10 +67,10 @@ export function OfferPage() {
   // to the cent (the order quote at checkout is the amount charged).
   const micro = offer.unit_price_micros != null ? Number(offer.unit_price_micros) : null;
   // Round 26b: tiers are % off or a fixed unit price (buyer prices, fees included).
-  const volume = normTiers(offer.volume_discounts);
-  const unitMicros = micro != null ? unitMicrosAt(micro, volume, Math.max(qty, 1)) : null;
-  const reached = micro != null ? tierFor(volume, Math.max(qty, 1)) : null;
-  const pctOff = reached && micro != null ? tierPercent(micro, reached) : 0;
+  const volume = buyerTiers(offer);
+  const unitMicros = buyerUnitAt(offer, Math.max(qty, 1));
+  const reached = micro != null ? tierFor(offer.volume_discounts, Math.max(qty, 1)) : null;
+  const pctOff = reached && micro != null && unitMicros != null ? Math.round(((micro - unitMicros) / micro) * 100) : 0;
   const unit = unitPriceFor(offer, Math.max(qty, 1));
   const total = unitMicros != null ? totalCentsFor(unitMicros, Math.max(qty, 1)) : unit * Math.max(qty, 1);
   const belowMin = micro != null && total < MIN_CURRENCY_ORDER_USD_CENTS;

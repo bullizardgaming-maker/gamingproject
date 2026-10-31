@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
 import { attributePairs } from '@/lib/attributes';
 import { usePrice } from '@/lib/prefs';
 import { unitPriceFor } from '@/lib/tiers';
-import { unitMicrosAt } from '@/lib/volume';
+import { buyerUnitAt } from '@/lib/volume';
 import { totalCentsFor } from '../../../api/src/domain/unitPrice';
 import type { Offer } from '../pages/Market';
 import { OnlineDot, lastSeenLabel } from '@/lib/presence';
@@ -116,7 +116,7 @@ export function OfferTable({ offers, showGame = false, showSeller = true, empty,
           const unit = withTotal ? unitPriceFor(o, qty) : o.price_cents;
           const tooMany = withTotal && amount! > o.stock;
           // Round 26b: currency is priced per unit at full precision; the total for the amount is rounded up to the cent.
-          const micros = o.unit_price_micros != null ? unitMicrosAt(Number(o.unit_price_micros), o.volume_discounts, qty) : null;
+          const micros = buyerUnitAt(o, qty);
           return (
             <li key={o.id} className="lt-row group">
               <div className="lt-offer">

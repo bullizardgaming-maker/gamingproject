@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { buy, buyNow, fillCharacter, pickCoin, previewOffer, setSpeed, signIn, startOffer } from './helpers';
+import { buy, buyNow, fillCharacter, pickCoin, previewOffer, setSpeed, signIn, startOffer, choose } from './helpers';
 
 const SELLER_ID = 'u-sell1-0000-4000-8000-000000000002';
 
@@ -55,13 +55,13 @@ test.describe('Round 26: create and manage listings (B1–B10)', () => {
   test('Aion currency asks for a faction, and the preview shows the buyer price and the minimum per order', async ({ page }) => {
     await signIn(page, 'Seller');
     await startOffer(page, 'currency', 'Albion Online');
-    await expect(page.locator('select[name="attr.faction"]')).toHaveCount(0);
+    await expect(page.locator('[name="attr.faction"]')).toHaveCount(0);
     await startOffer(page, 'currency', 'Aion');
     await expect(page.locator('input[name=title]')).toHaveCount(0); // currency titles are made from game and server
     await expect(page.locator('input[name=maxQty]')).toHaveCount(0); // Round 26b: the max per order is the stock
     await page.locator('input[name="attr.server"]').fill('Israphel');
-    await page.locator('select[name="attr.faction"]').selectOption('Asmodian');
-    await page.locator('select[name="attr.region"]').selectOption('Europe');
+    await choose(page, page.locator('input[name="attr.faction"]'), 'Asmodian');
+    await choose(page, page.locator('input[name="attr.region"]'), 'Europe');
     await page.locator('input[name=stock]').fill('500');
     await page.locator('input[name=unitPrice]').fill('0.5');
     await page.locator('input[name=minQty]').fill('10');
@@ -89,7 +89,7 @@ test.describe('Round 26: create and manage listings (B1–B10)', () => {
     await expect(page.getByRole('heading', { name: 'Edit listing' })).toBeVisible();
     await expect(page.locator('input[name=minQty]')).toHaveValue('10');
     await expect(page.getByLabel('Delivery speed, number')).toHaveValue('1');
-    await expect(page.getByLabel('Delivery speed, unit')).toHaveValue('hours');
+    await expect(page.getByLabel('Delivery speed, unit')).toHaveValue('Hours');
     await page.locator('input[name=minQty]').fill('20');
     await previewOffer(page);
     await page.getByRole('button', { name: 'Save changes' }).click();
@@ -127,6 +127,25 @@ test.describe('Round 26: create and manage listings (B1–B10)', () => {
     await form.getByRole('button', { name: 'Create copy' }).click();
     await expect(page.getByRole('row', { name: /Aion · Israphel · Elyos/ })).toContainText('25');
     await expect(page.getByRole('row', { name: /100M kinah — Siel/ })).toBeVisible(); // the original stays
+  });
+
+  test('a listing Bullizard paused shows "Paused by Bullizard – contact support" and no Resume', async ({ page }) => {
+    await signIn(page, 'Seller');
+    await page.addInitScript(() => {
+      const raw = localStorage.getItem('bz.demo.v29');
+      if (!raw) return;
+      const s = JSON.parse(raw);
+      Object.assign(s.offers.find((o: { id: string }) => o.id === 'offer-3'), { status: 'paused', expired_reason: 'listing_ban' });
+      Object.assign(s.offers.find((o: { id: string }) => o.id === 'offer-4'), { status: 'paused', expired_reason: null });
+      localStorage.setItem('bz.demo.v29', JSON.stringify(s));
+    });
+    await page.goto('/sell');
+    const staff = page.getByRole('row', { name: /Cyberpunk 2077/ });
+    await expect(staff.getByTestId('paused-by-staff')).toHaveText('Paused by Bullizard – contact support');
+    await expect(staff.getByRole('link', { name: 'contact support' })).toHaveAttribute('href', '/support/new');
+    await expect(staff.getByRole('button', { name: 'Resume' })).toHaveCount(0);
+    const own = page.getByRole('row', { name: /Steam Wallet \$50/ });
+    await expect(own.getByRole('button', { name: 'Resume' })).toBeVisible();
   });
 
   test('out of stock shows on the seller’s listing only', async ({ page }) => {

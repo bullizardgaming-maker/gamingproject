@@ -1680,5 +1680,11 @@ const ar: Messages = {
   "vt.fixedBelowBase": "يجب أن يكون سعر الوحدة الثابت أقل من سعر الوحدة لديك.",
   "vt.cheaper": "يجب أن يعطي كل خصم سعر وحدة أقل من السابق.",
   "vt.rowFixed": "{qty}+ · {price} للوحدة",
+  "lst.pausedByStaff": "أوقفته Bullizard – تواصل مع الدعم",
+  "lst.pausedByBz": "أوقفته Bullizard",
+  "lst.contactSupport": "تواصل مع الدعم",
+  "co.pickFromList2": "اختر خيارًا من القائمة.",
+  "co.noMatch2": "لا توجد نتائج مطابقة.",
+  "lst.conflict": "تغيّر هذا الإعلان – راجعه واحفظ مرة أخرى",
 };
 export default ar;

@@ -45,6 +45,9 @@ export interface Offer {
   is_bundle?: boolean;
   /** Round 25, currency listings: buyer's price of one unit in USD micro-units (123 = 0.000123); null otherwise. */
   unit_price_micros?: number | null;
+  /** The seller's own unit price and commission (offer reads): fixed tiers are grossed up from these. */
+  seller_unit_price_micros?: number | null;
+  seller_rate_bps?: number | null;
   /** The same in the `currency=` the list was asked for. */
   display_unit_price_micros?: number | null;
   /** Up to four tiers: from this many units, this % off. */

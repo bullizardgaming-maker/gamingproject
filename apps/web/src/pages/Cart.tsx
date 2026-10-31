@@ -7,7 +7,7 @@ import { api, money } from '../api';
 import { useSession } from '../session';
 import { clearCart, removeFromCart, setQuantity, useCart } from '@/lib/cart';
 import { unitPriceFor } from '@/lib/tiers';
-import { unitMicrosAt } from '@/lib/volume';
+import { buyerUnitAt } from '@/lib/volume';
 import { unitMoney } from '@/lib/prefs';
 import { totalCentsFor } from '../../../api/src/domain/unitPrice';
 import { usePageMeta } from '@/lib/seo';
@@ -42,7 +42,7 @@ export function CartPage() {
     const o = offers[i.offerId];
     const ok = !!o && (o.status ?? 'active') === 'active' && i.quantity <= o.stock && !o.shop_paused && o.seller_id !== user?.id;
     // Round 26b: currency lines are priced per unit in micro-units (full precision), the line total rounded up to the cent.
-    const micros = o?.unit_price_micros != null ? unitMicrosAt(Number(o.unit_price_micros), o.volume_discounts, i.quantity) : null;
+    const micros = o ? buyerUnitAt(o, i.quantity) : null;
     const unit = o ? unitPriceFor(o, i.quantity) : 0;
     return { ...i, offer: o, ok, unit, micros, lineCents: micros != null ? totalCentsFor(micros, i.quantity) : unit * i.quantity };
   });
