@@ -150,6 +150,7 @@ export async function handleCheckoutCaptured(ctx: Ctx, ev: Extract<PaymentEvent,
   const fees = ev.details.feeCents != null ? splitProportional(ev.details.feeCents, weights) : null;
   const over = ev.details.overpaidCents ? splitProportional(ev.details.overpaidCents, weights) : null;
   const fxGap = ev.details.fxGapCents ? splitProportional(ev.details.fxGapCents, weights) : null;
+  const pfee = ev.details.processingFeeCents ? splitProportional(ev.details.processingFeeCents, weights) : null;
   // Each order is captured in its own transaction and is idempotent, so a replayed webhook (or one
   // that failed halfway) completes the rest without double-capturing.
   for (const [i, o] of orders.entries()) {
@@ -157,7 +158,7 @@ export async function handleCheckoutCaptured(ctx: Ctx, ev: Extract<PaymentEvent,
       ...ev,
       orderId: o.id,
       amountCents: Number(o.presentment_amount_cents),
-      details: { ...ev.details, settledAmountCents: settled?.[i], feeCents: fees?.[i], overpaidCents: over?.[i], fxGapCents: fxGap?.[i] },
+      details: { ...ev.details, settledAmountCents: settled?.[i], feeCents: fees?.[i], overpaidCents: over?.[i], fxGapCents: fxGap?.[i], processingFeeCents: pfee?.[i] },
     });
   }
   await ctx.db.query(`UPDATE checkouts SET status = 'paid', paid_at = COALESCE(paid_at, now()) WHERE id = $1`, [checkout.id]);
@@ -177,12 +178,13 @@ export async function handleCheckoutCapturedIn(ctx: Ctx, s: TxScope, ev: Extract
   const fees = ev.details.feeCents != null ? splitProportional(ev.details.feeCents, weights) : null;
   const over = ev.details.overpaidCents ? splitProportional(ev.details.overpaidCents, weights) : null;
   const fxGap = ev.details.fxGapCents ? splitProportional(ev.details.fxGapCents, weights) : null;
+  const pfee = ev.details.processingFeeCents ? splitProportional(ev.details.processingFeeCents, weights) : null;
   for (const [i, o] of orders.entries()) {
     await handlePaymentCapturedIn(ctx, s, {
       ...ev,
       orderId: o.id,
       amountCents: Number(o.presentment_amount_cents),
-      details: { ...ev.details, settledAmountCents: settled?.[i], feeCents: fees?.[i], overpaidCents: over?.[i], fxGapCents: fxGap?.[i] },
+      details: { ...ev.details, settledAmountCents: settled?.[i], feeCents: fees?.[i], overpaidCents: over?.[i], fxGapCents: fxGap?.[i], processingFeeCents: pfee?.[i] },
     });
   }
   await s.tx.query(`UPDATE checkouts SET status = 'paid', paid_at = COALESCE(paid_at, now()) WHERE id = $1`, [checkout.id]);

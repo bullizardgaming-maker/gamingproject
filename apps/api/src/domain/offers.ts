@@ -72,7 +72,7 @@ export const MAX_BUNDLE_PARTS = 10;
  * Currency sold by amount (Albion silver, kinah, orbs): the listing says what one unit of
  * `quantity` is and the smallest order. Other categories sell whole items: one unit, min 1.
  */
-export function cleanUnit(input: Pick<OfferInput, 'unitLabel' | 'unitSize' | 'minQty' | 'maxQty'>, categoryKind: string, stock: number) {
+export function cleanUnit(input: Pick<OfferInput, 'unitLabel' | 'unitSize' | 'minQty' | 'maxQty'>, categoryKind: string, stock: number, checkStock = true) {
   const label = input.unitLabel?.trim() || null;
   const size = input.unitSize ?? null;
   const minQty = input.minQty ?? 1;
@@ -81,7 +81,9 @@ export function cleanUnit(input: Pick<OfferInput, 'unitLabel' | 'unitSize' | 'mi
   if (label && label.length > 12) throw badRequest('invalid_unit', 'Keep the unit label short (e.g. "M", "k", "orbs")');
   if (size != null && !(Number.isInteger(size) && size >= 1)) throw badRequest('invalid_unit', 'unitSize is a whole number of game currency per unit');
   if (!Number.isInteger(minQty) || minQty < 1) throw badRequest('invalid_unit', 'minQty is at least 1');
-  if (stock > 0 && minQty > stock) throw badRequest('invalid_unit', 'The minimum order can’t be more than the stock');
+  // Round 28 (3): checked against stock the seller is setting now; a listing sold down below its minimum keeps the saved
+  // minimum (the market shows the stock left as the minimum until the seller restocks).
+  if (checkStock && stock > 0 && minQty > stock) throw badRequest('invalid_unit', 'The minimum order can’t be more than the stock');
   return { label, size, minQty, maxQty };
 }
 
@@ -119,6 +121,8 @@ export function cleanTiers(basePriceCents: number, tiers: PriceTier[] | undefine
 }
 
 /** Round 25: the listing's delivery time as its key on the fixed list (null for instant delivery, and above 24 hours: older non-currency listings). */
+/** Round 28 (3): stock left below the seller's minimum per order → the minimum is the stock left (the saved one returns on restock). */
+export const EFFECTIVE_MIN_QTY_SQL = `(CASE WHEN f.available > 0 AND f.available < f.min_qty THEN f.available ELSE f.min_qty END)`;
 export const DELIVERY_TIME_SQL = `(CASE WHEN f.delivery_mode = 'auto' THEN NULL WHEN f.delivery_minutes <= 15 THEN '15m' WHEN f.delivery_minutes <= 60 THEN '1h' WHEN f.delivery_minutes <= 180 THEN '3h'
   WHEN f.delivery_minutes <= 360 THEN '6h' WHEN f.delivery_minutes <= 720 THEN '12h' ELSE '24h' END)`;
 
@@ -139,7 +143,7 @@ export const OFFER_LIST_SQL = `
          (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now())) AS shop_paused,
          u.shop_paused_until, u.shop_pause_message, ${ONLINE_SQL} AS seller_online, u.response_minutes AS seller_response_minutes, u.trust_level AS seller_trust_level,
          f.available AS stock, f.is_bundle,
-         f.unit_label, f.unit_size, f.min_qty, ${GROSS_SQL(EFFECTIVE_PRICE_SQL)} AS price_per_unit_cents, f.available AS stock_qty,
+         f.unit_label, f.unit_size, f.min_qty AS seller_min_qty, ${EFFECTIVE_MIN_QTY_SQL} AS min_qty, ${GROSS_SQL(EFFECTIVE_PRICE_SQL)} AS price_per_unit_cents, f.available AS stock_qty,
          CASE WHEN f.status = 'active' AND f.available <= 0 THEN 'out_of_stock' ELSE f.status END AS listing_state,
          u.badges AS seller_badges, CASE WHEN u.show_online THEN u.last_seen_at END AS seller_last_seen_at,
          (c.kind = 'account' AND f.owner_proof_status <> 'verified') AS high_risk_secondary,
@@ -481,6 +485,7 @@ async function updateOfferTx(ctx: Ctx, q: Queryable, sellerId: string, offerId: 
       { unitLabel: patch.unitLabel === undefined ? cur.unit_label : patch.unitLabel, unitSize: patch.unitSize === undefined ? cur.unit_size : patch.unitSize, minQty: patch.minQty ?? Number(cur.min_qty) },
       cur.kind,
       patch.stock ?? Number(cur.stock),
+      patch.stock != null,
     );
   }
   // Round 26 (B2): deleting through PATCH follows the same rule as DELETE /offers/:id.

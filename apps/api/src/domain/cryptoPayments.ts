@@ -43,20 +43,13 @@ const NETWORKS: Record<string, string> = {
 export const coinNetwork = (c: string) => NETWORKS[c] ?? c.toUpperCase();
 /** Checkout order: the popular stablecoins and majors first, then everything else alphabetically. */
 const POPULAR = ['usdttrc20', 'usdtbsc', 'usdterc20', 'usdcmatic', 'usdcerc20', 'usdc', 'btc', 'eth', 'ltc', 'trx', 'sol'];
-/** Typical network fee the buyer pays on top, in USD, unless CRYPTO_NETWORK_FEES_JSON says otherwise. */
-const DEFAULT_FEES_USD: Record<string, number> = {
-  usdttrc20: 1, usdtbsc: 0.1, usdterc20: 3, usdtsol: 0.01, usdtmatic: 0.02, usdcmatic: 0.02, usdcerc20: 3, usdc: 3, usdcbsc: 0.1, usdcsol: 0.01,
-  btc: 1.5, eth: 1, ltc: 0.02, trx: 0.3, sol: 0.01, bnb: 0.05, doge: 0.1, xmr: 0.02, ton: 0.05, xrp: 0.01, matic: 0.02, bch: 0.01, dai: 3,
-};
-export function networkFeeCents(ctx: Ctx, coin: string) {
-  let overrides: Record<string, number> = {};
-  try {
-    overrides = JSON.parse(ctx.cfg.CRYPTO_NETWORK_FEES_JSON);
-  } catch {
-    /* bad JSON: defaults */
-  }
-  return toCents(Number(overrides[coin] ?? DEFAULT_FEES_USD[coin] ?? 0.5));
-}
+/**
+ * Round 28 (2): the buyer pays NOWPayments' processing fee on top of the order (NOWPAYMENTS_FEE_BPS, 0.5 %), rounded up
+ * to the cent. Blockchain network fees are the buyer's wallet's business and are no longer estimated.
+ */
+export const processingFeeFor = (ctx: Ctx, chargedCents: number) => Math.ceil((Math.max(0, chargedCents) * ctx.cfg.NOWPAYMENTS_FEE_BPS) / 10_000);
+/** What the buyer must send in total: the order plus the processing fee (the stored fee once the first invoice exists). */
+const dueCents = (ctx: Ctx, p: { charged_cents: number; processing_fee_cents: number | null }) => p.charged_cents + (p.processing_fee_cents ?? processingFeeFor(ctx, p.charged_cents));
 
 function provider(ctx: Ctx): NowPaymentsProvider {
   if (!(ctx.payments instanceof NowPaymentsProvider)) throw new AppError(503, 'crypto_unavailable', 'Crypto checkout is not configured');
@@ -100,6 +93,8 @@ interface Payable {
   fx_locked_at: string | null;
   /** An order that belongs to a cart checkout (Round 25b: it is paid and quoted through the checkout only). */
   checkout_id: string | null;
+  /** Round 28 (2): the processing fee fixed with the first crypto invoice; null until then (computed from config). */
+  processing_fee_cents: number | null;
   title: string;
 }
 
@@ -107,7 +102,7 @@ async function payable(q: Queryable, ref: PayableRef, buyerId: string, forPaying
   let p: Payable | null;
   if ('orderId' in ref) {
     const o = await maybeOne<any>(q, 'SELECT o.*, f.title FROM orders o JOIN offers f ON f.id = o.offer_id WHERE o.id = $1', [ref.orderId]);
-    p = o && { kind: 'order', id: o.id, buyer_id: o.buyer_id, status: o.status, payment_provider: o.payment_provider, payment_ref: o.payment_ref, charged_cents: Number(o.charged_cents), currency: o.currency, presentment_amount_cents: Number(o.presentment_amount_cents), presentment_currency: o.presentment_currency, fx_rate: Number(o.fx_rate ?? 1), fx_locked_at: o.fx_locked_at ?? null, checkout_id: o.checkout_id ?? null, title: `${o.title} x${o.quantity}` };
+    p = o && { kind: 'order', id: o.id, buyer_id: o.buyer_id, status: o.status, payment_provider: o.payment_provider, payment_ref: o.payment_ref, charged_cents: Number(o.charged_cents), currency: o.currency, presentment_amount_cents: Number(o.presentment_amount_cents), presentment_currency: o.presentment_currency, fx_rate: Number(o.fx_rate ?? 1), fx_locked_at: o.fx_locked_at ?? null, checkout_id: o.checkout_id ?? null, processing_fee_cents: o.processing_fee_cents != null && Number(o.processing_fee_cents) > 0 ? Number(o.processing_fee_cents) : null, title: `${o.title} x${o.quantity}` };
   } else {
     const c = await maybeOne<any>(
       q,
@@ -121,7 +116,7 @@ async function payable(q: Queryable, ref: PayableRef, buyerId: string, forPaying
     );
     // A cart whose orders all lapsed is closed even if the checkout row was never updated: a late deposit must not fund it.
     const status = c && c.status === 'awaiting_payment' && c.n > 0 && c.open_n === 0 ? 'cancelled' : c?.status;
-    p = c && { kind: 'checkout', id: c.id, buyer_id: c.buyer_id, status, payment_provider: c.payment_provider, payment_ref: c.payment_ref, charged_cents: Number(c.charged_cents ?? 0), currency: c.currency ?? 'USD', presentment_amount_cents: Number(c.presentment_amount_cents ?? 0), presentment_currency: c.presentment_currency ?? 'USD', fx_rate: Number(c.fx_rate ?? 1), fx_locked_at: c.fx_locked_at ?? null, checkout_id: null, title: `Bullizard order: ${c.n} item${c.n === 1 ? '' : 's'}` };
+    p = c && { kind: 'checkout', id: c.id, buyer_id: c.buyer_id, status, payment_provider: c.payment_provider, payment_ref: c.payment_ref, charged_cents: Number(c.charged_cents ?? 0), currency: c.currency ?? 'USD', presentment_amount_cents: Number(c.presentment_amount_cents ?? 0), presentment_currency: c.presentment_currency ?? 'USD', fx_rate: Number(c.fx_rate ?? 1), fx_locked_at: c.fx_locked_at ?? null, checkout_id: null, processing_fee_cents: c.processing_fee_cents != null && Number(c.processing_fee_cents) > 0 ? Number(c.processing_fee_cents) : null, title: `Bullizard order: ${c.n} item${c.n === 1 ? '' : 's'}` };
   }
   if (!p || p.buyer_id !== buyerId) throw notFound('orderId' in ref ? 'Order' : 'Checkout');
   if (forPaying) {
@@ -157,29 +152,30 @@ async function paidSoFarCents(q: Queryable, p: { kind: string; id: string }) {
 export async function coinsFor(ctx: Ctx, ref: PayableRef, buyerId: string) {
   const np = provider(ctx);
   const p = await payable(ctx.db, ref, buyerId);
-  const owed = p.charged_cents - (await paidSoFarCents(ctx.db, p));
+  const paidSoFar = await paidSoFarCents(ctx.db, p);
+  const fee = p.processing_fee_cents ?? processingFeeFor(ctx, p.charged_cents);
+  const owed = Math.max(0, p.charged_cents - paidSoFar);
+  const total = Math.max(0, p.charged_cents + fee - paidSoFar);
   const coins = await viaProvider(ctx, 'coins', async () => {
-    const list = await np.coinsFor(usd(owed));
+    const list = await np.coinsFor(usd(total));
     // Round 27 (3): within the deadline some minimums may still be loading — answer what is known, marked partial.
     if (!list.length && !list.partial) throw new Error('no coin minimums could be read');
     return list;
   });
   const pos = (c: string) => (POPULAR.includes(c) ? POPULAR.indexOf(c) : POPULAR.length);
   const list = coins
-    .map((c) => {
-      const fee = networkFeeCents(ctx, c.coin);
-      return {
-        ...c,
-        name: coinName(c.coin),
-        network: coinNetwork(c.coin),
-        fee_cents: fee,
-        total_cents: owed + fee,
-        disabled: !c.available,
-        reason: c.available ? null : `Minimum for this coin is $${c.minUsd.toFixed(2)}`,
-      };
-    })
+    .map((c) => ({
+      ...c,
+      name: coinName(c.coin),
+      network: coinNetwork(c.coin),
+      // Round 28 (2): the same processing fee whatever the coin; no network-fee estimate.
+      fee_cents: fee,
+      total_cents: total,
+      disabled: !c.available,
+      reason: c.available ? null : `Minimum for this coin is $${c.minUsd.toFixed(2)}`,
+    }))
     .sort((a, b) => Number(b.available) - Number(a.available) || pos(a.coin) - pos(b.coin) || a.coin.localeCompare(b.coin));
-  return { owedCents: owed, currency: p.currency, coins: list, partial: coins.partial === true };
+  return { owedCents: owed, processing_fee_cents: fee, fee_bps: ctx.cfg.NOWPAYMENTS_FEE_BPS, total_cents: total, currency: p.currency, coins: list, partial: coins.partial === true };
 }
 
 export interface CryptoPaymentView {
@@ -315,9 +311,15 @@ export async function startCryptoPayment(ctx: Ctx, ref: PayableRef, buyerId: str
   if (open && (!open.expires_at || new Date(open.expires_at) > new Date())) {
     throw new AppError(409, 'payment_open', `A ${coinName(open.pay_currency)} payment is already waiting for your transfer`, { paymentId: open.payment_id });
   }
-  const owed = o.charged_cents - (await paidSoFarCents(ctx.db, o));
+  // Round 28 (2): the invoice carries the processing fee on top of the order; the fee is fixed with the first invoice.
+  const fee = o.processing_fee_cents ?? processingFeeFor(ctx, o.charged_cents);
+  if (o.processing_fee_cents == null && fee > 0) {
+    await ctx.db.query(o.kind === 'order' ? 'UPDATE orders SET processing_fee_cents = $2 WHERE id = $1 AND processing_fee_cents = 0' : 'UPDATE checkouts SET processing_fee_cents = $2 WHERE id = $1 AND processing_fee_cents = 0', [o.id, fee]);
+    o.processing_fee_cents = fee;
+  }
+  const owed = o.charged_cents + fee - (await paidSoFarCents(ctx.db, o));
   if (owed <= 0) throw conflict('already_paid', 'This order is paid; waiting for the network to confirm');
-  // The invoice: USD as owed, or EUR at the locked quote.
+  // The invoice: USD as owed, or EUR at the locked quote (plus the fee at the same rate).
   let price = { currency: 'USD', amountCents: owed, rate: 1 };
   if (priceCurrency !== 'USD') {
     const q = await withTx(ctx.db, async (tx) => {
@@ -325,7 +327,7 @@ export async function startCryptoPayment(ctx: Ctx, ref: PayableRef, buyerId: str
       return lockFxQuote(ctx, tx, o, priceCurrency);
     });
     if (q.fresh) throw new AppError(409, 'fx_quote_expired', `The ${priceCurrency} price was refreshed; check it and pay again`, { currency: q.currency, rate: q.rate, amountCents: q.amountCents, usdCents: o.charged_cents, lockedUntil: q.lockedUntil });
-    price = { currency: priceCurrency, amountCents: owed === o.charged_cents ? q.amountCents : Math.ceil(owed * q.rate), rate: q.rate };
+    price = { currency: priceCurrency, amountCents: owed === o.charged_cents + fee ? q.amountCents + Math.ceil(fee * q.rate) : Math.ceil(owed * q.rate), rate: q.rate };
   }
   const coins = await viaProvider(ctx, 'coins', () => np.coinsFor(usd(owed)));
   if (!coins.some((c) => c.coin === coin && c.available)) throw badRequest('coin_unavailable', `${coinName(coin)} can’t be used for this amount`);
@@ -417,7 +419,7 @@ export async function applyCryptoPayment(ctx: Ctx, ev: Extract<PaymentEvent, { t
   // payment's own rate. Round 25: an EUR invoice is valued in USD in proportion to the invoice (paid EUR / invoiced EUR ×
   // the USD it covered), so paying the EUR shown settles exactly the USD owed. Settlement stays USD.
   const inv = await one<{ price_usd: string; price_amount: string | null; price_currency: string; fx_rate: string }>(ctx.db, 'SELECT price_usd::text, price_amount::text, price_currency, fx_rate::text FROM crypto_payments WHERE id = $1', [row0.id]);
-  const valued = depositUsd(inv, ev);
+  const valued = depositUsd(inv, { ...ev, status: ev.status });
   if (!valued.ok) {
     // Round 25b (M1): we can't tell what currency NOWPayments valued an EUR deposit in. Never guess (over-crediting is
     // the risk): nothing is credited or captured, the row is flagged for manual review and Ops is alerted.
@@ -452,11 +454,17 @@ export async function applyCryptoPayment(ctx: Ctx, ev: Extract<PaymentEvent, { t
     }
 
     const paid = await paidSoFarCents(s.tx, target);
-    const tolerance = Math.floor((target.charged_cents * ctx.cfg.CRYPTO_UNDERPAY_TOLERANCE_BPS) / 10_000);
-    if (paid + tolerance < target.charged_cents) {
-      if (ev.status === 'partially_paid' && row.status !== 'partially_paid') {
+    // Round 28 (2): the buyer owes the order plus the processing fee; the tolerance applies to that total.
+    const due = dueCents(ctx, target);
+    const tolerance = Math.floor((due * ctx.cfg.CRYPTO_UNDERPAY_TOLERANCE_BPS) / 10_000);
+    if (paid + tolerance < due) {
+      // Round 28 (1): a deposit the provider calls finished/confirmed that still values short is an underpayment — the row
+      // is marked partially_paid (the provider's answer stays in `raw`) so the buyer is told, never left "confirming".
+      const short = due - paid;
+      await s.tx.query(`UPDATE crypto_payments SET status = 'partially_paid', apply_note = $2 WHERE id = $1 AND status <> 'credited'`, [row.id, `short by ${(short / 100).toFixed(2)} ${target.currency}: paid ${(paid / 100).toFixed(2)} of ${(due / 100).toFixed(2)} (tolerance ${(tolerance / 100).toFixed(2)})`]);
+      if (row.status !== 'partially_paid') {
         const link = target.kind === 'order' ? target.id : `cart:${target.id}`;
-        await enqueueEmail(s.tx, target.buyer_id, 'crypto_underpaid', { order_id: link, paid_cents: paid, owed_cents: target.charged_cents - paid, currency: target.currency }, `crypto_underpaid:${ev.paymentId}`);
+        await enqueueEmail(s.tx, target.buyer_id, 'crypto_underpaid', { order_id: link, paid_cents: paid, owed_cents: short, currency: target.currency }, `crypto_underpaid:${ev.paymentId}`);
         if (target.kind === 'order') {
           const room = await maybeOne<{ id: string }>(s.tx, 'SELECT id FROM chat_rooms WHERE order_id = $1', [target.id]);
           if (room) await appendMessage(s, room.id, null, 'system', 'Payment arrived short. Buyer: send the rest or it goes to your balance.', [], undefined, { code: 'underpaid' });
@@ -464,6 +472,7 @@ export async function applyCryptoPayment(ctx: Ctx, ev: Extract<PaymentEvent, { t
       }
       return target;
     }
+    await s.tx.query('UPDATE crypto_payments SET apply_note = NULL WHERE id = $1', [row.id]);
     // Enough has arrived. `paid` is what the buyer sent, valued in USD (gross); what reached the store wallet in USDT/USDC
     // is the net; the gap is NOWPayments' fee — booked once, as psp_fee (CFO B1). Anything above the order total beyond the
     // tolerance is the buyer's money: it goes to their balance (CFO B6), not to FX gain.
@@ -482,14 +491,16 @@ export async function applyCryptoPayment(ctx: Ctx, ev: Extract<PaymentEvent, { t
     const fxGapBps = target.charged_cents > 0 ? Math.round((fxGap * 10_000) / target.charged_cents) : 0;
     if (eur) await s.tx.query('UPDATE crypto_payments SET fx_gap_cents = $2, fx_gap_bps = $3 WHERE id = $1', [row.id, fxGap, fxGapBps]);
     if (eur && Math.abs(fxGapBps) > ctx.cfg.FX_ALERT_BPS) ctx.log.error({ paymentId: ev.paymentId, fxGapCents: fxGap, fxGapBps }, 'crypto EUR invoice: FX gap above FX_ALERT_BPS');
-    const overpaid = paid - target.charged_cents > tolerance ? paid - target.charged_cents : 0;
+    const overpaid = paid - due > tolerance ? paid - due : 0;
+    // Round 28 (2): the processing fee the buyer paid on top (what arrived above the order, up to the fee) covers psp_fee.
+    const processingFee = Math.max(0, Math.min(due - target.charged_cents, paid - overpaid - target.charged_cents));
     const captured: Extract<PaymentEvent, { type: 'payment.captured' }> = {
       type: 'payment.captured',
       ref: target.payment_ref!,
       orderId: target.id,
       amountCents: target.presentment_amount_cents,
       currency: target.presentment_currency,
-      details: { settledAmountCents: paid, feeCents: fee, fxGapCents: fxGap, overpaidCents: overpaid, raw: { payments: await paymentsFor(s.tx, ref) } },
+      details: { settledAmountCents: paid, feeCents: fee, processingFeeCents: processingFee, fxGapCents: fxGap, overpaidCents: overpaid, raw: { payments: await paymentsFor(s.tx, ref) } },
     };
     for (const f of funding) await s.tx.query('UPDATE crypto_payments SET applied_at = now(), applied_cents = $2 WHERE id = $1', [f.id, settledOf(f)]);
     if (target.kind === 'checkout' && (await checkoutByRef(s.tx, target.payment_ref!))) return handleCheckoutCapturedIn(ctx, s, captured);
@@ -526,9 +537,12 @@ function expectedFeeCents(ctx: Ctx, rows: Array<{ actually_paid_usd: string | nu
  */
 export function depositUsd(
   inv: { price_usd: string; price_amount: string | null; price_currency: string; fx_rate: string },
-  ev: { actuallyPaidUsd: number | null; actuallyPaid: number; payAmount: number; priceUsd: number; raw?: unknown },
+  ev: { actuallyPaidUsd: number | null; actuallyPaid: number; payAmount: number; priceUsd: number; raw?: unknown; status?: string },
 ): { ok: true; usd: number } | { ok: false; reason: string } {
-  const coinShare = ev.payAmount > 0 ? ev.actuallyPaid / ev.payAmount : 0;
+  // Round 28 (1): `finished` means NOWPayments received the full invoice. The sandbox (and a late IPN) can report it with
+  // actually_paid 0 or missing — that is "not reported", never "nothing arrived": value it at the full pay_amount.
+  const fullyPaid = (ev.status === 'finished' || ev.status === 'confirmed' || ev.status === 'sending') && !(ev.actuallyPaid > 0);
+  const coinShare = fullyPaid ? 1 : ev.payAmount > 0 ? ev.actuallyPaid / ev.payAmount : 0;
   const round2 = (n: number) => Math.round(n * 100) / 100;
   // Round 26 (A1, the staging bug): NOWPayments sends `actually_paid_at_fiat: 0` whenever it has no fiat valuation —
   // its own IPN example does, the sandbox always does. Zero is "not provided", never "the buyer paid nothing": the
@@ -709,14 +723,19 @@ export async function markRefundSent(ctx: Ctx, id: string, staffId: string, inpu
 // ---------------------------------------------------------------------------
 // Round 26 (A3): Ops → Crypto payments. Render's free plan has no logs; this list is what staff look at instead.
 // ---------------------------------------------------------------------------
-export async function listCryptoPayments(q: Queryable, filter: { status?: string; q?: string; limit?: number } = {}) {
+export async function listCryptoPayments(q: Queryable, filter: { status?: string; q?: string; limit?: number } = {}, ctx?: Ctx) {
   const rows = await many<any>(
     q,
     `SELECT p.id, p.payment_id, p.purchase_id, p.order_id, p.checkout_id, o.ref AS order_ref, o.status AS order_status, c.status AS checkout_status,
             p.status, p.pay_currency, p.pay_amount::text, p.actually_paid::text, p.actually_paid_usd::text, p.price_usd::text, p.price_currency, p.price_amount::text, p.fx_rate::text,
             p.outcome_amount::text, p.outcome_currency, p.applied_at, p.applied_cents, p.credited_cents, p.review_reason, p.review_flagged_at, p.review_resolved_at,
-            p.fx_gap_cents, p.fx_gap_bps, p.expires_at, p.created_at, p.updated_at AS last_ipn_at,
-            COALESCE(o.buyer_id, c.buyer_id) AS buyer_id, u.display_name AS buyer_name
+            p.fx_gap_cents, p.fx_gap_bps, p.expires_at, p.created_at, p.updated_at AS last_ipn_at, p.apply_note,
+            COALESCE(o.buyer_id, c.buyer_id) AS buyer_id, u.display_name AS buyer_name,
+            COALESCE(o.charged_cents, (SELECT SUM(x.charged_cents) FROM orders x WHERE x.checkout_id = c.id))::bigint AS charged_cents,
+            COALESCE(o.processing_fee_cents, c.processing_fee_cents, 0)::bigint AS processing_fee_cents,
+            (SELECT SUM(COALESCE(s.actually_paid_usd, 0))::numeric FROM crypto_payments s
+              WHERE ((p.order_id IS NOT NULL AND s.order_id = p.order_id) OR (p.checkout_id IS NOT NULL AND s.checkout_id = p.checkout_id))
+                AND s.status IN ('partially_paid', 'finished', 'confirmed', 'sending'))::text AS paid_so_far
        FROM crypto_payments p
        LEFT JOIN orders o ON o.id = p.order_id LEFT JOIN checkouts c ON c.id = p.checkout_id
        LEFT JOIN users u ON u.id = COALESCE(o.buyer_id, c.buyer_id)
@@ -725,11 +744,55 @@ export async function listCryptoPayments(q: Queryable, filter: { status?: string
       ORDER BY p.created_at DESC LIMIT $3`,
     [filter.status ?? null, filter.q?.trim() || null, Math.min(filter.limit ?? 100, 500)],
   );
-  return rows.map((r) => ({
-    ...r,
-    pay_currency_name: coinName(r.pay_currency),
-    state: paymentState(r, r.order_status ?? r.checkout_status ?? 'awaiting_payment'),
-  }));
+  return rows.map(({ paid_so_far, ...r }) => {
+    const orderStatus = r.order_status ?? r.checkout_status ?? 'awaiting_payment';
+    const state = paymentState(r, orderStatus);
+    // Round 28 (1): the raw numbers and, for a deposit that has not funded its order, why — for Ops → Crypto payments.
+    const charged = Number(r.charged_cents ?? 0);
+    const due = charged + Number(r.processing_fee_cents ?? 0);
+    const paidSoFar = toCents(Number(paid_so_far ?? 0));
+    const tolerance = ctx ? Math.floor((due * ctx.cfg.CRYPTO_UNDERPAY_TOLERANCE_BPS) / 10_000) : 0;
+    let why: string | null = null;
+    if (r.applied_at) why = null;
+    else if (r.review_reason) why = `held for manual review: ${r.review_reason}`;
+    else if (Number(r.credited_cents ?? 0) > 0 || r.status === 'credited') why = 'credited to the buyer\'s balance (order not funded by this deposit)';
+    else if (!UNFUNDED.has(orderStatus)) why = 'order funded by other deposits';
+    else if (orderStatus !== 'awaiting_payment') why = `order is ${orderStatus}`;
+    else if (['partially_paid', 'finished', 'confirmed', 'sending'].includes(r.status)) why = r.apply_note ?? `short by ${((due - paidSoFar) / 100).toFixed(2)}: paid ${(paidSoFar / 100).toFixed(2)} of ${(due / 100).toFixed(2)} (tolerance ${(tolerance / 100).toFixed(2)})`;
+    else if (r.status === 'confirming') why = 'waiting for network confirmations';
+    else if (['failed', 'refunded', 'expired'].includes(r.status)) why = `provider status ${r.status}`;
+    else why = 'no deposit reported yet';
+    return { ...r, pay_currency_name: coinName(r.pay_currency), state, due_cents: due, paid_so_far_cents: paidSoFar, tolerance_cents: tolerance, why_not_applied: why };
+  });
+}
+
+/**
+ * Round 28 (1): a deposit the provider called finished/confirmed that has sat unapplied for over a minute (an IPN that
+ * never applied, a row updated by a path that did not run the apply) is asked about again and decided: paid, underpaid or
+ * held. Called from the buyer's payment reads and the unpaid-order reaper; a provider failure only means no change.
+ */
+export const STUCK_AFTER_MS = 60_000;
+export async function settleStuckPayments(ctx: Ctx, ref: PayableRef): Promise<number> {
+  if (!(ctx.payments instanceof NowPaymentsProvider)) return 0;
+  const p = 'orderId' in ref ? { kind: 'order', id: ref.orderId } : { kind: 'checkout', id: ref.checkoutId };
+  const status = await maybeOne<{ status: string }>(ctx.db, p.kind === 'order' ? 'SELECT status FROM orders WHERE id = $1' : 'SELECT status FROM checkouts WHERE id = $1', [p.id]);
+  if (!status || status.status !== 'awaiting_payment') return 0;
+  const stuck = await many<{ payment_id: string }>(
+    ctx.db,
+    `SELECT payment_id FROM crypto_payments WHERE ${whereRef(p)} AND status IN ('finished', 'confirmed', 'sending') AND applied_at IS NULL
+        AND review_reason IS NULL AND COALESCE(credited_cents, 0) = 0 AND updated_at < now() - make_interval(secs => $2)`,
+    [p.id, STUCK_AFTER_MS / 1000],
+  );
+  let n = 0;
+  for (const { payment_id } of stuck) {
+    try {
+      await recheckCryptoPayment(ctx, payment_id);
+      n++;
+    } catch (err) {
+      ctx.log.warn({ err: err instanceof Error ? err.message : err, paymentId: payment_id }, 'stuck crypto payment re-check failed');
+    }
+  }
+  return n;
 }
 
 /**
@@ -757,6 +820,6 @@ export async function recheckCryptoPayment(ctx: Ctx, paymentId: string) {
     outcomeCurrency: p.outcome_currency ?? null,
     raw: p,
   });
-  const after = (await listCryptoPayments(ctx.db, { q: paymentId, limit: 1 }))[0];
+  const after = (await listCryptoPayments(ctx.db, { q: paymentId, limit: 1 }, ctx))[0];
   return { before, provider_status: p.payment_status, payment: after };
 }

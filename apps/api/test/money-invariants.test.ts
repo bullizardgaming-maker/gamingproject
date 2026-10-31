@@ -94,7 +94,7 @@ describe('money invariants on the NOWPayments path (randomised scenarios)', () =
     fake = new FakeNow();
     fake.minUsd = { usdttrc20: 0.01, btc: 0.01 };
     const payments = new NowPaymentsProvider({ apiKey: 'k', ipnSecret: IPN_SECRET, apiUrl: 'https://np.test', email: 'e', password: 'p', twoFactorSecret: 'JBSWY3DPEHPK3PXP', fetch: fake.fetch as any });
-    h = await setup({ PAYMENT_PROVIDER: 'nowpayments', NOWPAYMENTS_API_KEY: 'k', NOWPAYMENTS_IPN_SECRET: IPN_SECRET }, { payments });
+    h = await setup({ PAYMENT_PROVIDER: 'nowpayments', NOWPAYMENTS_API_KEY: 'k', NOWPAYMENTS_IPN_SECRET: IPN_SECRET, NOWPAYMENTS_FEE_BPS: 0 /* Round 28: these tests predate the buyer-paid fee; round28.test.ts covers it */ }, { payments });
   });
   afterAll(async () => h.close());
 

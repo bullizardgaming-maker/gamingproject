@@ -922,6 +922,19 @@ Suites: API 85 files / 778 tests green (multinode excluded), typecheck clean, `n
 image start check: build, runtime imports, migrate through 081, `/readyz` + `/healthz` as `APP_ENV=staging` with
 `PAYMENT_PROVIDER=nowpayments` and `SANDBOX_MODE=false` (proxy CA in a scratch Dockerfile copy, repo Dockerfile unchanged).
 
+## Round 28 (Oct 31, 2026) — endless "Payment received", buyer-paid fee, sold-out stock (`claude/round-28-brief.md`)
+
+Migration `085_round28.sql` (orders/checkouts `processing_fee_cents`, crypto_payments `apply_note`). Pushed to main and staging.
+
+1. **No more endless "Payment received".**
+   - `depositUsd`: a `finished`/`confirmed`/`sending` deposit with `actually_paid` 0 or missing (the sandbox shape) is valued at the full `pay_amount` (= the invoice). `actually_paid` > 0 is still valued proportionally.
+   - A deposit the provider calls finished that still values short beyond the tolerance is marked `partially_paid` (provider answer kept in `raw`, the reason in `apply_note`) → state `underpaid`, email + chat line "Payment arrived short…"; never silent `received_applying`.
+   - `settleStuckPayments(ctx, ref)`: a finished/confirmed/sending row unapplied for > 60 s (`STUCK_AFTER_MS`) is re-asked from NOWPayments and decided (paid / underpaid / held). Runs on the buyer's `GET /orders|checkouts/:id/crypto/payments`, on the buyer's order read, and in the unpaid-order reaper — which now never cancels an order whose deposit the provider called finished while the provider can't be asked.
+   - Ops `GET /admin/crypto/payments` rows carry the raw numbers: `pay_amount`, `actually_paid`, `actually_paid_usd`, `price_amount`/`price_usd`, `outcome_amount`, `charged_cents`, `processing_fee_cents`, `due_cents`, `paid_so_far_cents`, `tolerance_cents`, `apply_note`, and `why_not_applied` (null once applied).
+2. **Buyer pays NOWPayments' fee on top.** `processing_fee_cents` = ceil(charged × `NOWPAYMENTS_FEE_BPS` / 10 000) (0.5 %), fixed on the order/checkout with the first invoice. `/crypto/coins` → `{ owedCents (order still owed), processing_fee_cents, fee_bps, total_cents (owed + fee), coins[] (fee_cents = the processing fee, total_cents), partial }` — **no network-fee estimates any more** (`CRYPTO_NETWORK_FEES_JSON` removed). Invoice = total; EUR invoice = locked price + fee × rate. Tolerance and overpayment apply to the total incl. fee. Ledger `payment_captured`: escrow +order, treasury +processing fee (covers the `psp_fee` line), fx_pnl the rest; seller net and commission unchanged. Order read carries `processing_fee_cents`.
+3. **Sold-out / below-minimum.** Diagnosis of "30 still available": stock is reserved at order creation and restored only by `releaseReservation` (cancel) or the seller's PATCH `stock` — the CEO's order was never funded (item 1) so the unpaid-order reaper cancelled it after the window and the 30 came back. Fixed at the root (1) and the reaper now funds instead of cancelling such orders. Rule: `min_qty` on every public offer read is the effective minimum (`EFFECTIVE_MIN_QTY_SQL`: the stock left when below the saved minimum); `seller_min_qty` (saved) is seller-only; `/seller/offers` has `effective_min_qty`. Quote/order `below_minimum` uses the effective one (`details.minQty`). Editing a sold-down listing keeps the saved minimum (the stock check only runs when `stock` is being set); restocking restores it. 0 left → `listing_state: out_of_stock`, gone from the market and server counts (unchanged).
+- Tests: `test/round28.test.ts` (6: sandbox finished + 0, short beyond tolerance → underpaid + Ops numbers, within tolerance, stuck 60 s re-ask + reaper, EUR invoice + fee, sold-out/minimum). Older crypto suites run with `NOWPAYMENTS_FEE_BPS: 0`.
+
 ## Round 27 (Oct 31, 2026) — CEO staging test fixes, back end (`claude/round-27-brief.md`)
 
 Migration `084_round27.sql` (risk_flags.reasons_text). Pushed to main and staging.

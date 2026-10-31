@@ -85,7 +85,6 @@ const Env = z.object({
   // Sellers must attach a photo/video of an in-game delivery before marking it delivered.
   DELIVERY_PROOF_REQUIRED: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
   /** Network-fee estimates shown at checkout (USD per coin code, buyer pays on top); JSON, e.g. {"usdttrc20":1,"eth":4}. */
-  CRYPTO_NETWORK_FEES_JSON: z.string().default('{}'),
   /** Underpayments within this share of the price are accepted as paid in full (network dust, rounding). */
   CRYPTO_UNDERPAY_TOLERANCE_BPS: z.coerce.number().int().min(0).max(500).default(50),
   KYC_PROVIDER: z.enum(['mock', 'sumsub']).default('mock'),

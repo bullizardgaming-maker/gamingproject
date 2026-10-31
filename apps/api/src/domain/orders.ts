@@ -34,7 +34,7 @@ import { listStatements, type DisputeCategory } from './disputes.js';
 import { claimsForOrder } from './warranty.js';
 import { progressFor } from './progress.js';
 import { buyerReputation, ratingForOrder } from './buyerReputation.js';
-import { creditPartialPayments, paymentsForOrder, refundForOrder } from './cryptoPayments.js';
+import { creditPartialPayments, paymentsForOrder, refundForOrder, settleStuckPayments } from './cryptoPayments.js';
 
 export type OrderStatus = 'awaiting_payment' | 'paid' | 'delivered' | 'completed' | 'disputed' | 'refunded' | 'cancelled' | 'charged_back';
 
@@ -373,6 +373,16 @@ export function usdCents(settlementCurrency: string, cents: number) {
  * Round 26b: the most a buyer may order is the stock on the listing (no seller-set cap, CEO). A quote above it says so
  * with the available amount; an order above it fails the stock check as before.
  */
+/** Round 28 (3): the minimum per order is the seller's, or the stock left when that is smaller (manual delivery). */
+function effectiveMinQty(offer: { min_qty?: number | string | null; available?: number | string | null; delivery_mode?: string }) {
+  const min = Number(offer.min_qty ?? 1);
+  const avail = offer.available != null ? Number(offer.available) : null;
+  return avail != null && avail > 0 && avail < min && offer.delivery_mode !== 'auto' ? avail : min;
+}
+function assertAtLeastMin(offer: { min_qty?: number | string | null; available?: number | string | null; delivery_mode?: string; unit_label?: string | null }, quantity: number) {
+  const min = effectiveMinQty(offer);
+  if (quantity < min) throw badRequest('below_minimum', `This listing sells at least ${min}${offer.unit_label ? ` ${offer.unit_label}` : ''} per order`, { minQty: min });
+}
 function assertWithinMax(offer: { available?: number | string | null; stock?: number | string | null; unit_label?: string | null; delivery_mode?: string }, quantity: number) {
   const avail = offer.available ?? offer.stock;
   if (avail != null && offer.delivery_mode !== 'auto' && quantity > Number(avail)) {
@@ -384,7 +394,7 @@ export async function quoteOrder(ctx: Ctx, buyerId: string, input: Pick<CreateOr
   return withTx(ctx.db, async (tx) => {
     const offer = await maybeOne(tx, `SELECT price_cents, currency, category_slug, seller_id, price_tiers, reserved_for, sale_price_cents, sale_starts_at, sale_ends_at, unit_price_micros, volume_discounts, min_qty, unit_label, available, delivery_mode FROM offers WHERE id = $1 AND status = 'active'`, [input.offerId]);
     if (!offer || (offer.reserved_for && offer.reserved_for !== buyerId)) throw notFound('Offer');
-    if (input.quantity < Number(offer.min_qty ?? 1)) throw badRequest('below_minimum', `This listing sells at least ${offer.min_qty}${offer.unit_label ? ` ${offer.unit_label}` : ''} per order`);
+    assertAtLeastMin(offer, input.quantity);
     assertWithinMax(offer, input.quantity);
     return priceOrder(ctx, tx, offer, buyerId, input);
   });
@@ -438,7 +448,7 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
     if (offer.shop_paused) throw conflict('shop_paused', offer.shop_pause_message || 'This seller is away and not taking orders right now');
     if (offer.seller_id === buyer.id) throw forbidden('own_offer', 'You cannot buy your own offer');
     if (offer.category_kind === 'account' && input.quantity !== 1) throw badRequest('invalid_quantity', 'Accounts are sold one at a time');
-    if (input.quantity < Number(offer.min_qty ?? 1)) throw badRequest('below_minimum', `This listing sells at least ${offer.min_qty}${offer.unit_label ? ` ${offer.unit_label}` : ''} per order`);
+    assertAtLeastMin(offer, input.quantity);
     assertWithinMax(offer, input.quantity);
     const price = await priceOrder(ctx, s.tx, offer, buyer.id, input);
     const amount = price.amountCents;
@@ -637,13 +647,13 @@ async function capturePayment(ctx: Ctx, s: TxScope, ev: Extract<PaymentEvent, { 
   if (order.status !== 'awaiting_payment') {
     if (order.status === 'cancelled' && !(await hasLedgerTxn(s.tx, order.id, 'payment_captured'))) {
       // Paid after the reservation expired: record the money (with the provider's fee, Round 22) and refund it.
-      await postCapture(s.tx, order, ev.details.feeCents, settled, ev.details.overpaidCents ?? 0, ev.details.fxGapCents ?? 0);
+      await postCapture(s.tx, order, ev.details.feeCents, settled, ev.details.overpaidCents ?? 0, ev.details.fxGapCents ?? 0, ev.details.processingFeeCents ?? 0);
       return { order, refundNeeded: order };
     }
     return { order, refundNeeded: null }; // idempotent replay
   }
 
-  await postCapture(s.tx, order, ev.details.feeCents, settled, ev.details.overpaidCents ?? 0, ev.details.fxGapCents ?? 0);
+  await postCapture(s.tx, order, ev.details.feeCents, settled, ev.details.overpaidCents ?? 0, ev.details.fxGapCents ?? 0, ev.details.processingFeeCents ?? 0);
   if (ev.details.overpaidCents) {
     const room = await roomOf(s.tx, order.id);
     await appendMessage(s, room.id, null, 'system', `The payment arrived ${(ev.details.overpaidCents / 100).toFixed(2)} ${order.currency} above the order total. The extra is in the buyer's balance.`, [], undefined, { code: 'overpaid', params: { amount_cents: ev.details.overpaidCents, currency: order.currency } });
@@ -669,17 +679,19 @@ async function hasLedgerTxn(q: Queryable, orderId: string, memo: string) {
   return !!(await maybeOne(q, 'SELECT 1 FROM ledger_entries WHERE order_id = $1 AND memo = $2 LIMIT 1', [orderId, memo]));
 }
 
-async function postCapture(tx: Tx, order: Order, feeCents = 0, settledCents = order.charged_cents, overpaidCents = 0, fxGapCents = 0) {
+async function postCapture(tx: Tx, order: Order, feeCents = 0, settledCents = order.charged_cents, overpaidCents = 0, fxGapCents = 0, processingFeeCents = 0) {
   const cur = order.currency;
   if (order.charged_cents > 0) {
     // settledCents is gross (before the PSP fee). An overpayment beyond the tolerance is the buyer's credit (CFO B6);
+    // Round 28 (2): the processing fee the buyer paid on top is the platform's (treasury) and covers the psp_fee below;
     // what is left (conversion differences, underpayment within the tolerance) is FX gain/loss.
-    const fx = settledCents - order.charged_cents - overpaidCents;
+    const fx = settledCents - order.charged_cents - overpaidCents - processingFeeCents;
     await post(
       tx,
       [
         { account: await accountId(tx, 'gateway_clearing', cur), amountCents: -settledCents },
         { account: await accountId(tx, 'escrow', cur), amountCents: order.charged_cents },
+        ...(processingFeeCents > 0 ? [{ account: await accountId(tx, 'treasury', cur), amountCents: processingFeeCents }] : []),
         ...(overpaidCents > 0 ? [{ account: await accountId(tx, 'user_credit', cur, order.buyer_id), amountCents: overpaidCents }] : []),
         ...(fx !== 0 ? [{ account: await accountId(tx, 'fx_pnl', cur), amountCents: fx }] : []),
       ],
@@ -1141,6 +1153,11 @@ export async function cancelUnpaidExpired(ctx: Ctx, limit = 200): Promise<number
   let n = 0;
   for (const { id } of due) {
     try {
+      // Round 28 (1): money the provider says arrived is decided (paid / underpaid) before the order can lapse; an order
+      // funded by that decision is no longer awaiting payment and cancelOrder refuses it below.
+      await settleStuckPayments(ctx, { orderId: id });
+      const stillArrived = await maybeOne(ctx.db, `SELECT 1 FROM crypto_payments WHERE order_id = $1 AND status IN ('finished', 'confirmed', 'sending') AND applied_at IS NULL AND review_reason IS NULL AND COALESCE(credited_cents, 0) = 0`, [id]);
+      if (stillArrived) continue; // the provider could not be asked: never cancel over money that may have arrived
       await cancelOrder(ctx, id, null, 'payment_window_expired');
       n++;
     } catch (err) {
@@ -1390,7 +1407,7 @@ export async function getOrderFor(ctx: Ctx, orderId: string, user: { id: string;
     order.category_kind === 'boosting' ? progressFor(q, orderId) : Promise.resolve([]),
     sellerView ? buyerReputation(q, order.buyer_id) : Promise.resolve(null),
     sellerView ? ratingForOrder(q, orderId) : Promise.resolve(null),
-    crypto && order.buyer_id === user.id ? paymentsForOrder(q, orderId) : Promise.resolve([]),
+    crypto && order.buyer_id === user.id ? settleStuckPayments(ctx, { orderId }).then(() => paymentsForOrder(q, orderId)) : Promise.resolve([]),
     // Round 23e (item 4): the refund (address, coin, transaction) is the buyer's and staff's; the seller sees none of it.
     crypto && (staff || order.buyer_id === user.id) ? refundForOrder(q, orderId) : Promise.resolve(null),
     // Round 27 (2): why the order is under security review, in plain words (staff only).

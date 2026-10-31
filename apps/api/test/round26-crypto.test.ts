@@ -13,7 +13,7 @@ let fake: FakeNow;
 beforeAll(async () => {
   fake = new FakeNow();
   const payments = new NowPaymentsProvider({ apiKey: 'k', ipnSecret: IPN_SECRET, apiUrl: 'https://np.test', email: 'e', password: 'p', twoFactorSecret: 'JBSWY3DPEHPK3PXP', fetch: fake.fetch as any });
-  h = await setup({ PAYMENT_PROVIDER: 'nowpayments', NOWPAYMENTS_API_KEY: 'k', NOWPAYMENTS_IPN_SECRET: IPN_SECRET, FX_STATIC_RATES: '{"EUR":0.92,"EGP":48.5}' }, { payments });
+  h = await setup({ PAYMENT_PROVIDER: 'nowpayments', NOWPAYMENTS_API_KEY: 'k', NOWPAYMENTS_IPN_SECRET: IPN_SECRET, NOWPAYMENTS_FEE_BPS: 0 /* Round 28: these tests predate the buyer-paid fee; round28.test.ts covers it */, FX_STATIC_RATES: '{"EUR":0.92,"EGP":48.5}' }, { payments });
 });
 afterAll(async () => h.close());
 

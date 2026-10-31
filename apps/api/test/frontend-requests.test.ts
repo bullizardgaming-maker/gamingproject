@@ -17,7 +17,7 @@ const fakeFetch = async (url: string, init?: RequestInit): Promise<Response> => 
 };
 beforeAll(async () => {
   const payments = new NowPaymentsProvider({ apiKey: 'k', ipnSecret: 's', apiUrl: 'https://np.test', fetch: fakeFetch as any });
-  h = await setup({ PAYMENT_PROVIDER: 'nowpayments', NOWPAYMENTS_API_KEY: 'k', NOWPAYMENTS_IPN_SECRET: 's', CRYPTO_NETWORK_FEES_JSON: '{"btc":2.5}' }, { payments });
+  h = await setup({ PAYMENT_PROVIDER: 'nowpayments', NOWPAYMENTS_API_KEY: 'k', NOWPAYMENTS_IPN_SECRET: 's', NOWPAYMENTS_FEE_BPS: 0 }, { payments });
 });
 afterAll(async () => h.close());
 
@@ -87,8 +87,8 @@ describe('front-end requests', () => {
     const coins = (await buyer.api.get(`/v1/orders/${order.id}/crypto/coins`)).body;
     expect(coins.owedCents).toBe(21_06);
     expect(coins.coins).toEqual([
-      expect.objectContaining({ coin: 'usdttrc20', network: 'TRC-20', fee_cents: 1_00, total_cents: 22_06, disabled: false, reason: null }),
-      expect.objectContaining({ coin: 'btc', network: 'Bitcoin', fee_cents: 2_50, total_cents: 23_56, disabled: false }), // fee from CRYPTO_NETWORK_FEES_JSON
+      expect.objectContaining({ coin: 'usdttrc20', network: 'TRC-20', fee_cents: 0, total_cents: 21_06, disabled: false, reason: null }),
+      expect.objectContaining({ coin: 'btc', network: 'Bitcoin', fee_cents: 0, total_cents: 21_06, disabled: false }), // Round 28: no network-fee estimates; the processing fee is off in this suite
     ]);
 
     // A second order funded from the buyer's balance, confirmed while it is still "paid".

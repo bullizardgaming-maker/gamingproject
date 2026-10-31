@@ -16,7 +16,7 @@ const sent: Array<{ to: string; subject?: string; body: string }> = [];
 beforeAll(async () => {
   fake = new FakeNow();
   const payments = new NowPaymentsProvider({ apiKey: 'k', ipnSecret: IPN_SECRET, apiUrl: 'https://np.test', email: 'e', password: 'p', twoFactorSecret: 'JBSWY3DPEHPK3PXP', fetch: fake.fetch as any });
-  h = await setup({ PAYMENT_PROVIDER: 'nowpayments', NOWPAYMENTS_API_KEY: 'k', NOWPAYMENTS_IPN_SECRET: IPN_SECRET }, { payments });
+  h = await setup({ PAYMENT_PROVIDER: 'nowpayments', NOWPAYMENTS_API_KEY: 'k', NOWPAYMENTS_IPN_SECRET: IPN_SECRET, NOWPAYMENTS_FEE_BPS: 0 /* Round 28: these tests predate the buyer-paid fee; round28.test.ts covers it */ }, { payments });
   const orig = h.messenger.send.bind(h.messenger);
   h.messenger.send = async (m: any) => {
     sent.push(m);
@@ -59,7 +59,7 @@ describe('crypto checkout (NOWPayments)', () => {
     // Popular coins first (USDT, BTC, …, LTC), unavailable ones last with the reason; each carries its network and a fee estimate.
     expect(coins.coins.map((c: any) => [c.coin, c.available])).toEqual([['usdttrc20', true], ['btc', true], ['ltc', true], ['eth', false]]);
     expect(coins.coins.find((c: any) => c.coin === 'eth')).toMatchObject({ minUsd: 12, disabled: true, reason: 'Minimum for this coin is $12.00', network: 'Ethereum' });
-    expect(coins.coins[0]).toMatchObject({ network: 'TRC-20', fee_cents: 1_00, total_cents: 11_53 });
+    expect(coins.coins[0]).toMatchObject({ network: 'TRC-20', fee_cents: 0, total_cents: 10_53 }); // Round 28: no network-fee estimate
     expect((await buyer.api.post(`/v1/orders/${order.id}/crypto/pay`, { coin: 'eth' })).body.error.code).toBe('coin_unavailable');
 
     const pay = await buyer.api.post(`/v1/orders/${order.id}/crypto/pay`, { coin: 'btc' });

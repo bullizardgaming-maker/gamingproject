@@ -21,7 +21,7 @@ beforeAll(async () => {
     return fake.fetch(url, init);
   };
   const payments = new NowPaymentsProvider({ apiKey: 'secret-api-key', ipnSecret: IPN_SECRET, apiUrl: 'https://np.test', fetch: fetch as any, timeoutMs: 300 });
-  h = await setup({ PAYMENT_PROVIDER: 'nowpayments', NOWPAYMENTS_API_KEY: 'k', NOWPAYMENTS_IPN_SECRET: IPN_SECRET }, { payments });
+  h = await setup({ PAYMENT_PROVIDER: 'nowpayments', NOWPAYMENTS_API_KEY: 'k', NOWPAYMENTS_IPN_SECRET: IPN_SECRET, NOWPAYMENTS_FEE_BPS: 0 /* Round 28: these tests predate the buyer-paid fee; round28.test.ts covers it */ }, { payments });
   const warn = h.ctx.log.warn.bind(h.ctx.log);
   (h.ctx.log as any).warn = (o: unknown, m?: string) => {
     warnings.push({ o, m });

@@ -18,7 +18,7 @@ import { CLAIM_REASONS, buyerRespond, openClaim, sellerRespond } from '../domain
 import { postProgress } from '../domain/progress.js';
 import { startHandover } from '../domain/linkedAccounts.js';
 import { createTicket } from '../domain/support.js';
-import { coinsFor, paymentsFor, quoteFx, refreshCryptoPayment, setRefundAddress, startCryptoPayment } from '../domain/cryptoPayments.js';
+import { coinsFor, paymentsFor, quoteFx, refreshCryptoPayment, setRefundAddress, settleStuckPayments, startCryptoPayment } from '../domain/cryptoPayments.js';
 import { BUYER_TAGS, buyerReputation, rateBuyer } from '../domain/buyerReputation.js';
 import { createReview, replyToReview, sellerProfile } from '../domain/reviews.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
@@ -201,6 +201,7 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
       const { id } = Id.parse(req.params);
       const o = await maybeOne<{ buyer_id: string }>(ctx.db, `SELECT buyer_id FROM ${kind} WHERE id = $1`, [id]);
       if (!o || o.buyer_id !== me(req).id) throw notFound(kind === 'orders' ? 'Order' : 'Checkout');
+      await settleStuckPayments(ctx, refOf(id)); // Round 28 (1): a finished deposit never waits more than a minute
       return paymentsFor(ctx.db, refOf(id));
     });
     app.post(`/${kind}/:id/crypto/payments/:pid/refresh`, async (req) => {

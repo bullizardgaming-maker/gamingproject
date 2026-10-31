@@ -9,7 +9,7 @@ import { MAX_SHOWN_BADGES, earnedBadges, setShownBadges, shownBadges } from '../
 import { onboardingStatus, rulesTestFor, submitRulesTest } from '../domain/onboarding.js';
 import { recordSignals } from '../domain/fraud.js';
 import { sellerAvailable } from '../domain/ledger.js';
-import {createOffer, getOffer, requireSeller, submitOwnerProof, updateOffer, uploadInventory, duplicateOffer, previewOffer, priceGuide, setListingState } from '../domain/offers.js';
+import { EFFECTIVE_MIN_QTY_SQL, createOffer, getOffer, requireSeller, submitOwnerProof, updateOffer, uploadInventory, duplicateOffer, previewOffer, priceGuide, setListingState } from '../domain/offers.js';
 import { createSellerCode, endSale, listSellerCodes, setSale, setSellerCodeActive } from '../domain/discounts.js';
 import { trustSummary } from '../domain/trust.js';
 import { exportListings, importListings } from '../domain/bulkListings.js';
@@ -232,6 +232,7 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     many(
       ctx.db,
       `SELECT f.*, CASE WHEN f.status = 'active' AND f.available <= 0 THEN 'out_of_stock' ELSE f.status END AS listing_state,
+              ${EFFECTIVE_MIN_QTY_SQL} AS effective_min_qty,
               (SELECT count(*)::int FROM orders o WHERE o.offer_id = f.id AND o.status IN ('awaiting_payment', 'paid', 'delivered', 'disputed')) AS open_orders
          FROM offers f WHERE seller_id = $1 AND status <> 'removed' ORDER BY created_at DESC`,
       [me(req).id],

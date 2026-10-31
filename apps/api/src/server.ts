@@ -84,7 +84,7 @@ export const ORDER_STAFF_FIELDS = new Set(['released_by', 'release_note', 'tax_c
  * from which it can be derived (what the seller entered next to what the buyer pays). Round 25: the seller's unit price in
  * micro-units too, and `featured_until` (a featured listing shows as such only on the seller's own shop page).
  */
-export const SELLER_ONLY_FIELDS = new Set(['seller_rate_bps', 'seller_price_cents', 'seller_price_tiers', 'seller_unit_price_micros', 'featured_until']);
+export const SELLER_ONLY_FIELDS = new Set(['seller_rate_bps', 'seller_price_cents', 'seller_price_tiers', 'seller_unit_price_micros', 'featured_until', 'seller_min_qty']); // Round 28: the saved minimum is the seller's; buyers see the effective one
 /** On an order (a row with both buyer_id and seller_id) the seller's side of the money is the seller's (item 7). */
 export const ORDER_SELLER_FIELDS = new Set(['commission_bps', 'commission_cents', 'seller_net_cents', 'commission_tax_cents', 'seller_received_cents']);
 /** Round 24: what the buyer gave for delivery (method, character, city, UID) is for the two parties and staff only. */
