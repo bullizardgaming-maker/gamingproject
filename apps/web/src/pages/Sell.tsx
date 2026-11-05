@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { SupportLink } from '../components/SupportLink';
 import { HELP_CENTER } from '@/lib/features';
 import { methodLabel, methodsForListing } from '@/lib/delivery';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
@@ -510,7 +511,7 @@ function OfferRow({ offer, linked, onChange, founding, rateBps }: { offer: Selle
           {offer.status === 'paused' && (
             <div className="small" data-testid={staffPaused ? 'paused-by-staff' : undefined}>
               {staffPaused ? (
-                <><span className="chip held">{t('lst.pausedByBz')}</span> – <Link to="/support/new">{t('lst.contactSupport')}</Link></>
+                <><span className="chip held">{t('lst.pausedByBz')}</span> – <SupportLink to="/support/new">{t('lst.contactSupport')}</SupportLink></>
               ) : (
                 <span className="chip">{t('lst.paused')}</span>
               )}

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { signIn } from './helpers';
+import { signIn, payoutCountry } from './helpers';
 
 /** Round 23f part B: copy deck §9 strings on the screens they belong to. */
 test.describe('copy deck §9', () => {
@@ -25,6 +25,7 @@ test.describe('copy deck §9', () => {
   test('the payout coin hint is shown with the coin picker', async ({ page }) => {
     await signIn(page, 'Seller');
     await page.goto('/sell/money');
+    await payoutCountry(page);
     await expect(page.getByText('USDT only, on TRC-20 or BEP-20.')).toBeVisible();
   });
 });

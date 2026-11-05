@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { SupportLink } from '../components/SupportLink';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Flag, MagnifyingGlass as Search } from '@phosphor-icons/react';
 import { api } from '../api';
@@ -154,9 +155,9 @@ export function Messages() {
               </Link>
             </>
           )}
-          <Link className="small inbox-report" to={`/support/new?category=${room.order_id ? `order&order=${room.order_id}` : 'report'}`}>
+          <SupportLink className="small inbox-report" to={`/support/new?category=${room.order_id ? `order&order=${room.order_id}` : 'report'}`}>
             <Flag className="size-4" aria-hidden /> {t('messages.report')}
-          </Link>
+          </SupportLink>
         </aside>
       )}
     </div>

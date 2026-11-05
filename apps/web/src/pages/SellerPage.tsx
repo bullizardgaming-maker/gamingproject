@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
+import { isRegion, regionLabel } from '@/lib/regions';
 import { Link, useParams } from 'react-router-dom';
-import { SealCheck as BadgeCheck, Star, ThumbsDown, ThumbsUp } from '@phosphor-icons/react';
+import { SealCheck as BadgeCheck, GlobeHemisphereEast, Star, ThumbsDown, ThumbsUp } from '@phosphor-icons/react';
 import { api, assetUrl } from '../api';
-import { DeliveryTag, FoundingBadge, SellerAvatar, TrustBadge, fmtUnits } from '../components/CatalogUi';
+import { DeliveryTag, SellerAvatar, SellerBadges, allBadgesOf, fmtUnits } from '../components/CatalogUi';
 import { categoryLabel } from '@/lib/catalog';
 import { usePrice } from '@/lib/prefs';
 import type { Offer } from './Market';
@@ -24,6 +25,8 @@ interface Profile {
   online?: boolean;
   trust_level?: string;
   founding?: boolean;
+  /** Round 29: a region, never a country. */
+  region?: string | null;
   last_seen_at?: string | null;
   response_minutes?: number | null;
   shop_paused: boolean;
@@ -31,7 +34,12 @@ interface Profile {
   shop_pause_message: string | null;
   rating: { average: number | string | null; count: number; positive_pct: number | string | null };
   storefront?: { intro: string; accent: string; banner_url: string | null; pinned: Offer[]; languages?: string[] };
-  badges?: string[];
+  badges?: Array<string | { key: string }>;
+  earned_badges?: Array<string | { key: string }>;
+  seller_badges?: string[];
+  seller_rank?: string | null;
+  rating_average?: number | string | null;
+  review_count?: number | null;
   reviews: Array<{ id: string; rating: number; comment: string; seller_reply: string | null; created_at: string; buyer_name: string; offer_title: string | null }>;
 }
 
@@ -77,7 +85,8 @@ export function SellerPage() {
   }, [offers]);
 
   if (!profile) return <p className="muted">{error || t('sp.loading')}</p>;
-  const r = profile.rating;
+  // Rating: the nested summary, or the flat fields (Round 27 API).
+  const r = profile.rating ?? { average: profile.rating_average ?? null, count: Number(profile.review_count ?? 0), positive_pct: (profile as any).positive_pct ?? null };
   const shown = (offers ?? []).filter((o) => !game || `${o.game} · ${categoryLabel(o.category_slug)}` === game);
   const shop = profile.storefront;
   const reply = replyLabel(profile.response_minutes);
@@ -97,13 +106,13 @@ export function SellerPage() {
         </div>
         <div className="sp-meta">
             <div className="sp-badges">
-              {profile.identity_verified && <span className="rank"><BadgeCheck className="size-3" aria-hidden /> {t('badge.idVerified')}</span>}
-              <TrustBadge level={profile.trust_level} />
-              {profile.founding && <FoundingBadge />}
+              {/* Round 29: every badge the seller holds */}
+              <SellerBadges badges={allBadgesOf(profile)} />
             </div>
             <p className="sp-presence small">
               {!profile.online && lastSeenLabel(profile.last_seen_at) && <span className="presence">{lastSeenLabel(profile.last_seen_at)}</span>}
               {reply && <span className="muted">{reply}</span>}
+              {isRegion(profile.region) && profile.region !== 'global' && <span className="muted" data-testid="sp-region"><GlobeHemisphereEast className="inline size-4 align-text-bottom" aria-hidden /> {regionLabel(profile.region)}</span>}
               {!!shop?.languages?.length && <span className="muted">{t('sp.speaks', { list: shop.languages.map(languageName).join(', ') })}</span>}
             </p>
         </div>

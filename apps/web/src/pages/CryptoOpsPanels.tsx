@@ -9,18 +9,61 @@ const hoursAgo = (d: string) => Math.floor((Date.now() - new Date(d).getTime()) 
 // ---------------------------------------------------------------------------
 // Payouts: seller withdrawals waiting for the CFO
 // ---------------------------------------------------------------------------
+/** The payout provider's own error, as "NOWPayments: 403 IP_NOT_WHITELISTED — message". */
+function providerText(e: any): string | null {
+  if (!e) return null;
+  // The API keeps the staff-facing reason on the row (failure_reason) and in the error details (reason).
+  if (typeof e === 'string') return /nowpayments/i.test(e) ? e : `NOWPayments: ${e}`;
+  if (typeof e.reason === 'string' && e.reason) return providerText(e.reason);
+  const status = e.provider_status ?? e.status ?? e.providerStatus;
+  const code = e.code ?? e.providerCode;
+  const message = e.provider_message ?? e.message ?? e.providerMessage;
+  if (!status && !code && !message) return null;
+  return `NOWPayments: ${[status, code].filter(Boolean).join(' ')}${message ? ` — ${message}` : ''}`;
+}
+const MANUAL = new Set(['wallet', 'instapay']);
+const METHOD_LABEL: Record<string, string> = { usdt: 'USDT', wallet: 'Mobile wallet', instapay: 'InstaPay' };
+
 export function PayoutsPanel() {
   const { data, error, reload } = useLoad(() => api<any[]>('/admin/withdrawals'));
   const [note, setNote] = useState<Record<string, string>>({});
+  const [txid, setTxid] = useState<Record<string, string>>({});
+  const [sentNote, setSentNote] = useState<Record<string, string>>({});
+  const [dest, setDest] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState('');
   const decide = async (id: string, approve: boolean) => {
     setMsg('');
     try {
       const w = await api<any>(`/admin/withdrawals/${id}/decide`, { body: { approve, note: note[id] || undefined } });
-      setMsg(approve ? `Approved: ${money(Number(w.net_cents), w.currency)} is being sent.` : 'Rejected; the amount is back in the seller’s balance.');
+      setMsg(!approve ? 'Rejected; the amount is back in the seller’s balance.' : w.manual ? `Approved: send ${money(Number(w.net_cents), w.currency)} by hand, then mark it as sent.` : `Approved: ${money(Number(w.net_cents), w.currency)} is being sent.`);
       reload();
     } catch (e: any) {
-      setMsg(e.message);
+      // Round 29: the provider's own answer (status + message), never a bare "didn't respond".
+      setMsg(providerText(e.details) ?? e.serverMessage ?? e.message);
+      reload();
+    }
+  };
+  /**
+   * Round 29: a payout sent by hand — wallet / InstaPay always, USDT on staging only (the sandbox can't whitelist IPs; the
+   * API refuses USDT in production). Two people: one asks, the other role (Finance + Lead) confirms. Audited.
+   */
+  const markSent = async (id: string) => {
+    setMsg('');
+    try {
+      const w = await api<any>(`/admin/withdrawals/${id}/mark-sent`, { body: { hash: txid[id]?.trim() || undefined, note: sentNote[id]?.trim() } });
+      setMsg(w.status === 'paid' ? `Marked as sent: ${money(Number(w.net_cents), w.currency)}${w.tx_hash ? ` (transaction ${w.tx_hash})` : ''}.` : 'Recorded. A second person (Finance + Lead) must confirm it was sent.');
+      reload();
+    } catch (e: any) {
+      setMsg(e.serverMessage ?? e.message);
+    }
+  };
+  /** Round 29: the phone / IPA a wallet / InstaPay payout goes to — Finance only, audited, shown on request. */
+  const showDestination = async (id: string) => {
+    try {
+      const d = await api<any>(`/admin/withdrawals/${id}/destination`);
+      setDest({ ...dest, [id]: d.destination });
+    } catch (e: any) {
+      setMsg(e.serverMessage ?? e.message);
     }
   };
   const recheck = async (id: string) => {
@@ -61,14 +104,39 @@ export function PayoutsPanel() {
                   <td className="mono">{money(Number(w.amount_cents), w.currency)}</td>
                   <td className="mono muted">{money(Number(w.fee_cents), w.currency)}</td>
                   <td className="mono">{money(Number(w.net_cents), w.currency)}</td>
-                  <td className="small"><code className="mono" style={{ wordBreak: 'break-all' }}>{w.destination_address}</code><div className="muted">{String(w.destination_currency).toUpperCase()}</div></td>
+                  <td className="small">
+                    {MANUAL.has(w.method) ? (
+                      <>
+                        <b>{METHOD_LABEL[w.method]}</b>
+                        <div><code className="mono" data-testid="payout-destination">{dest[w.id] ?? w.destination_hint ?? w.destination_address ?? '—'}</code></div>
+                        {!dest[w.id] && <button className="btn ghost small" onClick={() => showDestination(w.id)}>Show number</button>}
+                      </>
+                    ) : (
+                      <>
+                        <code className="mono" style={{ wordBreak: 'break-all' }}>{w.destination_address}</code><div className="muted">{String(w.destination_currency).toUpperCase()}</div>
+                      </>
+                    )}
+                  </td>
                   <td className="small">{fmt(w.created_at)}</td>
-                  <td><span className={`chip ${w.status === 'processing' ? 'held' : w.status === 'unknown' ? 'disputed' : ''}`}>{w.status === 'processing' ? 'sending' : w.status === 'unknown' ? 'provider did not answer' : 'awaiting approval'}</span></td>
+                  <td><span className={`chip ${w.status === 'processing' ? 'held' : w.status === 'unknown' ? 'disputed' : ''}`}>{w.status === 'processing' ? (MANUAL.has(w.method) ? 'send by hand' : 'sending') : w.status === 'unknown' ? 'provider did not answer' : 'awaiting approval'}</span></td>
                   <td>
                     {w.status === 'unknown' && (
                       <div className="stack" style={{ gap: 6, minWidth: 200 }}>
-                        <span className="small muted">The payout call timed out. Nothing is reversed until NOWPayments says whether it exists (checked hourly).</span>
+                        {providerText(w.failure_reason ?? w.provider_error ?? w.last_error) ? (
+                          <span className="small" style={{ color: 'var(--disputed)' }} data-testid="payout-provider-error">{providerText(w.failure_reason ?? w.provider_error ?? w.last_error)}</span>
+                        ) : (
+                          <span className="small muted">The payout call timed out. Nothing is reversed until NOWPayments says whether it exists (checked hourly).</span>
+                        )}
                         <button className="btn ghost" onClick={() => recheck(w.id)}>Check with provider now</button>
+                      </div>
+                    )}
+                    {(w.status === 'unknown' || w.status === 'processing') && (
+                      <div className="stack" style={{ gap: 6, minWidth: 220, marginTop: 8 }} data-testid="mark-sent">
+                        {!MANUAL.has(w.method) && <span className="chip held" style={{ alignSelf: 'start' }}>Staging only</span>}
+                        {w.manual_send_requested_by && <span className="small">Asked by {w.manual_send_requested_by_name ?? 'a staff member'}; the other role (Finance + Lead) confirms.</span>}
+                        <input placeholder="Transaction ID or reference" value={txid[w.id] ?? ''} onChange={(e) => setTxid({ ...txid, [w.id]: e.target.value })} aria-label={`Transaction ID for withdrawal ${w.id.slice(0, 8)}`} className="mono" />
+                        <input placeholder="Note" value={sentNote[w.id] ?? ''} onChange={(e) => setSentNote({ ...sentNote, [w.id]: e.target.value })} aria-label={`Note on the manual send for withdrawal ${w.id.slice(0, 8)}`} />
+                        <button className="btn ghost" disabled={(sentNote[w.id] ?? '').trim().length < 3} onClick={() => markSent(w.id)}>{w.manual_send_requested_by ? 'Confirm sent' : 'Mark as sent manually'}</button>
                       </div>
                     )}
                     {w.status === 'pending_approval' && (
@@ -269,7 +337,7 @@ function CryptoPaymentsTable({ filter, setFilter }: { filter: { status: string; 
           </select>
         </label>
         <label className="field" style={{ flex: 1, minWidth: 220 }}>
-          Payment, order ref or checkout
+          Payment or order ref
           <input type="search" value={q} onChange={(e) => setQ(e.target.value)} />
         </label>
         <button className="btn ghost" type="submit">Search</button>
@@ -288,7 +356,7 @@ function CryptoPaymentsTable({ filter, setFilter }: { filter: { status: string; 
               data.map((p) => (
                 <tr key={p.payment_id}>
                   <td className="mono">{p.payment_id}<div className="small muted">{fmt(p.created_at)}</div></td>
-                  <td>{p.order_id ? <Link to={`/orders/${p.order_id}`}>{p.order_ref ?? p.order_id.slice(0, 8)}</Link> : p.checkout_id ? <span className="mono">cart {p.checkout_id.slice(0, 8)}</span> : '—'}<div className="small muted">{p.buyer_name ?? ''}{p.order_status ? ` · ${p.order_status}` : ''}</div></td>
+                  <td>{p.order_id ? <Link to={`/orders/${p.order_id}`}>{p.order_ref ?? p.order_id.slice(0, 8)}</Link> : p.checkout_id ? <span className="mono">{p.checkout_id.slice(0, 8)}</span> : '—'}<div className="small muted">{p.buyer_name ?? ''}{p.order_status ? ` · ${p.order_status}` : ''}</div></td>
                   <td><span className={`chip ${STATE_CHIP[p.state] ?? ''}`}>{STATE_LABEL[p.state] ?? p.state}</span><div className="small muted">{p.status}{p.review_reason ? ` · ${p.review_reason}` : ''}</div></td>
                   <td className="mono">{amount(p.price_amount, p.price_currency)}</td>
                   <td className="mono">{amount(p.actually_paid, p.pay_currency)}<div className="small muted">of {amount(p.pay_amount, p.pay_currency)}</div></td>

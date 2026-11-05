@@ -103,10 +103,10 @@ test.describe('launch extras', () => {
     await expect(page.getByText('Recovery email is pat@example.com, please add it')).toBeVisible();
     // The safety panel carries the same sentence; no warning message was posted in the log.
     await expect(page.locator('.msg.warning')).toHaveCount(0);
-    // Outside contact is blocked, not delivered: the sender sees "Not sent".
+    // Outside contact is blocked, not delivered: the sender sees the "Stay safe" warning.
     await page.getByPlaceholder(/Write a message/).fill('or d1scord me: pat#1234');
     await page.keyboard.press('Enter');
-    await expect(page.getByText('Not sent. Sharing outside contacts can get your account banned right away.')).toBeVisible();
+    await expect(page.getByTestId('hidden-for-safety').last()).toContainText('Not delivered.');
     await expect(page.locator('.msg', { hasText: 'd1scord' })).toHaveCount(0);
   });
 });

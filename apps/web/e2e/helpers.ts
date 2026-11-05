@@ -41,7 +41,7 @@ export async function buyNow(page: Page, name = 'TestChar_01', save = true) {
   await dialog.getByRole('button', { name: 'Continue to checkout' }).click();
 }
 
-/** Pay the crypto checkout on the current page (order or cart): pick a coin, then the demo network confirms it. */
+/** Pay the crypto checkout on the current page (the order): pick a coin, then the demo network confirms it. */
 export async function payCrypto(page: Page) {
   const checkout = page.locator('.crypto-checkout');
   await pickCoin(page);
@@ -143,4 +143,12 @@ export async function choose(page: Page, field: import('@playwright/test').Locat
   await field.click();
   await page.getByRole('listbox').getByRole('option', { name: option, exact: true }).click();
   await expect(field).toHaveValue(option);
+}
+
+/** Round 29: the payout method starts with the withdrawal country (the only place a country is chosen). */
+export async function payoutCountry(page: Page, country = 'Germany') {
+  const input = page.locator('#payout-address input[name="withdrawCountry"]');
+  await input.fill(country.slice(0, -1));
+  await page.getByRole('listbox').getByRole('option', { name: country, exact: true }).click();
+  await expect(input).toHaveValue(country);
 }

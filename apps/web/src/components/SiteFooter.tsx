@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { SupportLink } from './SupportLink';
 import { Link } from 'react-router-dom';
 import { DownloadSimple as Download, Moon, ShareNetwork as Share, Sun } from '@phosphor-icons/react';
 import { useInstall } from '@/lib/pwa';
@@ -12,6 +13,7 @@ const links = (): Array<[string, string]> => [
   [t('footer.openShop'), '/sell'],
   [t('footer.games'), '/games'],
   [t('footer.contact'), '/support/new'],
+  [t('footer.requests'), '/support'],
   [t('footer.status'), '/status'],
 ];
 /** Legal pages (Legal pack, Oct 24): all five, always in the footer. */
@@ -78,7 +80,7 @@ export function SiteFooter() {
         <div className="ftr-bottom">
           <span className="num">© {new Date().getFullYear()} Bullizard</span>
           <nav className="ftr-links" aria-label={t('footer.nav')}>
-            {links().map(([label, to]) => <Link key={to} to={to} className="ftr-link">{label}</Link>)}
+            {links().map(([label, to]) => (to.startsWith('/support') || to.startsWith('/help') ? <SupportLink key={to} to={to} className="ftr-link">{label}</SupportLink> : <Link key={to} to={to} className="ftr-link">{label}</Link>))}
           </nav>
           <InstallApp />
         </div>

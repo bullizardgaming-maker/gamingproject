@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { buy, signIn } from './helpers';
+import { buy, signIn, payoutCountry } from './helpers';
 
 const SELLER_ID = 'u-sell1-0000-4000-8000-000000000002';
 
@@ -63,8 +63,9 @@ test.describe('Round 27: staging test fixes', () => {
     await signIn(page, 'Seller');
     await page.goto('/sell/money');
     const card = page.locator('#payout-address');
+    await payoutCountry(page);
     await card.getByLabel('Address').fill('TXYZabcdefghijk1234567890');
-    await card.getByRole('button', { name: 'Use this address' }).click();
+    await card.getByRole('button', { name: 'Use this method' }).click();
     await expect(page).toHaveURL(/\/sell\/payout-address\/confirm/);
     await expect(page.getByRole('heading', { name: 'Confirm your payout address' })).toBeVisible();
     await expect(page.getByText('We sent a code to your email to confirm your payout address — this protects your money.')).toBeVisible();

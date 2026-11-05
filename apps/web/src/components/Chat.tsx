@@ -3,16 +3,20 @@ import { Link } from 'react-router-dom';
 import { Check, Image as ImageIcon, ShieldCheck } from '@phosphor-icons/react';
 import { api, money, realtime, type ChatMessage } from '../api';
 import { detectOffPlatform } from '@/lib/safety';
-import { blockedAction, blockedNoticeKeys, isBlockedError, type BlockedAction } from '@/lib/chatBlocked';
+import { blockedAction, blockedNoticeKeys, isBlockedError, isHiddenForSafety, type BlockedAction } from '@/lib/chatBlocked';
 import { BrandMark } from './Brand';
 import { currentLocale, t, type MessageKey } from '../i18n';
 
 const time = (iso: string) => new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 function BlockedNotice({ action }: { action: BlockedAction }) {
-  const [first, second] = blockedNoticeKeys(action);
+  const [first] = blockedNoticeKeys(action);
+  if (action === 'ban') return <div className="msg mine blocked" role="alert">{t(first!)}</div>;
+  // Round 29: the same "Stay safe" warning every chat shows, under a one-line "not delivered".
   return (
-    <div className="msg mine blocked" role={action === 'ban' ? 'alert' : 'status'}>
-      {second ? <><b>{t(first!)}</b> {t(second)}</> : t(first!)}
+    <div className="msg mine blocked chat-hidden-safety" role="status" data-testid="hidden-for-safety">
+      <b>{t(first!)}</b>
+      <span className="chat-hidden-title"><ShieldCheck className="size-4" aria-hidden /> {t('chat.staySafe')}</span>
+      {t('chat.safetyBody').split('\n').map((line, i) => <span key={i} className="chat-hidden-line" dir="auto">{line}</span>)}
     </div>
   );
 }
@@ -79,6 +83,7 @@ export function Chat({ roomId, meId, names, accountOrder = false }: { roomId: st
     return realtime.subscribe(roomId, (f) => {
       if (f.type === 'history' && f.roomId === roomId) merge(f.messages);
       if (f.type === 'message' && f.roomId === roomId) merge([f.message]);
+      if (isHiddenForSafety(f) && (f as any).roomId === roomId) markBlocked('safety');
       if (f.type === 'error') (isBlockedError(f) ? markBlocked(blockedAction(f)) : setError(f.message));
     });
   }, [roomId]);
@@ -115,8 +120,9 @@ export function Chat({ roomId, meId, names, accountOrder = false }: { roomId: st
     } catch {
       // Socket down: fall back to REST so the message is still recorded.
       try {
-        const m = await api<ChatMessage>(`/chat/rooms/${roomId}/messages`, { body: { body } });
-        setMessages((prev) => new Map(prev).set(m.seq, m));
+        const m = await api<ChatMessage & { hidden_for_safety?: boolean }>(`/chat/rooms/${roomId}/messages`, { body: { body } });
+        if (isHiddenForSafety(m)) markBlocked('safety');
+        else setMessages((prev) => new Map(prev).set(m.seq, m));
       } catch (err: any) {
         if (isBlockedError(err)) markBlocked(blockedAction(err));
         else {

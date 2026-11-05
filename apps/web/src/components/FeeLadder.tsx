@@ -23,7 +23,7 @@ export const DEFAULT_RANKS: RankTable = {
     { position: 2, name: 'Scale', minMonthlySalesCents: 500_00, rateBps: 1299, perks: [] },
     { position: 3, name: 'Fang', minMonthlySalesCents: 2_000_00, rateBps: 1199, perks: [] },
     { position: 4, name: 'Basilisk', minMonthlySalesCents: 5_000_00, rateBps: 1099, perks: [] },
-    { position: 5, name: 'Dragon', minMonthlySalesCents: 15_000_00, rateBps: 999, perks: [] },
+    { position: 5, name: 'Dragon', minMonthlySalesCents: 15_000_00, rateBps: 799, perks: [] },
   ],
   settings: { promoRateBps: 500, promoDays: 60 },
 };

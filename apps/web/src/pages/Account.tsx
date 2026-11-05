@@ -10,6 +10,7 @@ import { BrandMark, BrandWordmark } from '../components/Brand';
 import { CodeStep as SignInCode, YoureIn } from '../components/AuthSteps';
 import { useSession } from '../session';
 import { currentLocale, t } from '../i18n';
+import { REGIONS, isRegion, regionLabel, type Region } from '@/lib/regions';
 import { usePageMeta } from '@/lib/seo';
 
 export function Login({ initialMode = 'login' }: { initialMode?: 'login' | 'register' }) {
@@ -287,6 +288,8 @@ export function Account() {
     <div className="stack" style={{ maxWidth: 720 }}>
       <h1 style={{ fontSize: 40 }}>{t('account.title')}</h1>
       <p className="lede">{t('account.lede', { tier: String(user.kyc_tier) })}</p>
+
+      <RegionSettings />
 
       <div className="card stack">
         <div className="eyebrow">{t('account.level1')}</div>
@@ -713,4 +716,41 @@ function GoBack() {
     void nav(-1);
   }, [nav]);
   return null;
+}
+
+/**
+ * Round 29 (CEO, 5 Nov): a region, never a country. Shown on the seller profile and shop; saved as soon as it's picked.
+ */
+export function RegionSettings() {
+  const { user, refresh } = useSession();
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'alert'; text: string } | null>(null);
+  const [current, setCurrent] = useState<Region>(isRegion(user?.region) ? user.region : 'global');
+  if (!user) return null;
+  const pick = async (region: Region) => {
+    const before = current;
+    setMsg(null);
+    setCurrent(region); // shown at once; put back if the save fails
+    try {
+      await api('/me/region', { method: 'PUT', body: { region } });
+      await refresh();
+      setMsg({ kind: 'ok', text: t('region.saved') });
+    } catch (err: any) {
+      setCurrent(before);
+      setMsg({ kind: 'alert', text: err.message });
+    }
+  };
+  return (
+    <section className="card stack" id="region" aria-labelledby="region-title" data-testid="region-settings">
+      <h3 id="region-title" style={{ margin: 0 }}>{t('region.label')}</h3>
+      <div className="region-choice" role="radiogroup" aria-labelledby="region-title">
+        {REGIONS.map((r) => (
+          <label key={r} className={`region-opt${current === r ? ' is-on' : ''}`}>
+            <input type="radio" name="region" value={r} checked={current === r} onChange={() => void pick(r)} />
+            <span>{regionLabel(r)}</span>
+          </label>
+        ))}
+      </div>
+      {msg && <div className={msg.kind} role={msg.kind === 'alert' ? 'alert' : 'status'}>{msg.text}</div>}
+    </section>
+  );
 }

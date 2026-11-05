@@ -37,6 +37,8 @@ export interface User {
   /** Newsletter consent (Round 23a). */
   news_opt_in?: boolean;
   news_opt_in_at?: string | null;
+  /** Round 29: the user's region (asia / middle_east / america / europe / global) — never a country. */
+  region?: string | null;
 }
 
 /**
@@ -44,6 +46,7 @@ export interface User {
  * otherwise the server's own message (validation text stays useful); `err.generic` for 5xx and
  * unknown failures, `err.network` when the request never reached the API.
  */
+const GENERIC_CODES = new Set(['internal', 'internal_error', 'service_unavailable', 'unavailable', 'network']);
 export function errorMessage(status: number, code: string, serverMessage?: string): string {
   if (code === 'network') return t('err.network');
   // Round 23f (copy deck §9.2): the code's own text first, so account_locked (429) and scanner_unavailable (503) say
@@ -51,6 +54,9 @@ export function errorMessage(status: number, code: string, serverMessage?: strin
   const key = `err.${code}`;
   if (code && key in en) return t(key as MessageKey);
   if (code === 'too_many_requests' || status === 429) return t('err.too_many');
+  // Round 29: a 503 with a known code (screening_unavailable, payouts paused, provider down…) says what the server says,
+  // not "Something broke". Unknown 5xx failures stay generic.
+  if (status === 503 && code && !GENERIC_CODES.has(code) && serverMessage) return serverMessage;
   if (status >= 500 || status === 0 || !serverMessage || code === 'internal') return t('err.generic');
   return serverMessage;
 }

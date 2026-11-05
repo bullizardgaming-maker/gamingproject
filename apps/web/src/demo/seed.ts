@@ -33,6 +33,8 @@ export interface DemoUser {
   email: string;
   password: string;
   locale?: string;
+  /** Round 29: display/browse region, never a country. */
+  region?: string | null;
   /** Newsletter consent (Round 23a). */
   news_opt_in?: boolean;
   news_opt_in_at?: string | null;
@@ -90,6 +92,7 @@ const u = (id: string, email: string, name: string, role: DemoUser['role'], tier
   founding: tier >= 2,
   rules_attempts: tier >= 2 ? 1 : 0,
   selling_restricted_at: null,
+  region: 'europe',
   created_at: ago(120 * day),
   ...extra,
 });
@@ -496,7 +499,6 @@ export function seed() {
     sellerCodes: [
       { id: 'code-1', seller_id: users[1]!.id, code: 'NORTHWIND10', percent_off: 10, min_order_cents: 20_00, max_uses: 500, per_buyer_limit: 1, starts_at: ago(10 * day), ends_at: ago(-20 * day), active: true, created_at: ago(10 * day), uses_before: 37 },
     ] as any[],
-    checkouts: [] as Array<{ id: string; buyer_id: string; order_ids: string[]; created_at: string }>,
     // "Online now" and typical reply time per seller (minutes).
     presence: {
       [users[1]!.id]: { online: false, last_seen_at: ago(40 * 60_000), response_minutes: 12 },

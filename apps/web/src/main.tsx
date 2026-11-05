@@ -8,7 +8,6 @@ import { WalletPage } from './pages/Wallet';
 import { Market } from './pages/Market';
 import { OfferPage } from './pages/OfferPage';
 import { OrderPage } from './pages/OrderPage';
-import { CartPayPage } from './pages/Cart';
 import { InquiryChat, Orders } from './pages/Orders';
 import { Sell } from './pages/Sell';
 import { CreateOffer, EditOffer } from './pages/CreateOffer';
@@ -16,6 +15,7 @@ import { PayoutAddressConfirm } from './pages/SellerMoney';
 import { Messages } from './pages/Messages';
 import { LegalHistory, LegalPage } from './pages/Legal';
 import { Account, ForgotPassword, Login, ResetPassword } from './pages/Account';
+import { MAIN_ORIGIN, onSupportHost, supportHostServes } from '@/lib/support';
 import { Admin } from './pages/Admin';
 import { GamePage, Games } from './pages/Games';
 import { GameVotes } from './pages/GameVotes';
@@ -76,6 +76,20 @@ function RouteAnnouncer() {
   return <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">{message}</div>;
 }
 
+/**
+ * Round 29: on support.bullizard.com the home page is "Contact support", and pages that aren't support (market, offers,
+ * selling) open on the main site.
+ */
+function SupportHost() {
+  const { pathname, search, hash } = useLocation();
+  const elsewhere = onSupportHost() && pathname !== '/' && !supportHostServes(pathname);
+  useEffect(() => {
+    if (elsewhere) window.location.replace(MAIN_ORIGIN + pathname + search + hash);
+  }, [elsewhere, pathname, search, hash]);
+  if (onSupportHost() && pathname === '/') return <Navigate to={HELP_CENTER ? '/help' : '/support/new'} replace />;
+  return null;
+}
+
 function App() {
   // A language switch remounts the app so every string, date and number re-renders in it.
   const locale = useLocale();
@@ -88,6 +102,7 @@ function App() {
       <ScrollToTop />
       <RouteAnnouncer />
       <TurnstileUnloader />
+      <SupportHost />
       <main className="shell" id="main" tabIndex={-1}>
         <Routes>
           <Route path="/" element={<Home />} />
@@ -113,7 +128,6 @@ function App() {
           <Route path="/orders" element={<Orders />} />
           <Route path="/wallet" element={<WalletPage />} />
           <Route path="/orders/:id" element={<OrderPage />} />
-          <Route path="/checkouts/:id/pay" element={<CartPayPage />} />
           <Route path="/chat/:id" element={<InquiryChat />} />
           <Route path="/messages" element={<Messages />} />
           <Route path="/sell" element={<Sell />} />

@@ -1494,3 +1494,23 @@ input[type=checkbox], input[type=radio] { color: inherit; }
 html.dark .od-review { background: transparent; color: var(--disputed-ink, #f6a39b); }
 .od-review-reason { color: var(--disputed-ink); }
 html.dark .od-review-reason { color: #f6a39b; }
+
+/* Round 29: a message hidden for safety shows the sender the standard "Stay safe" warning */
+.chat-hidden-safety { display: flex; flex-direction: column; gap: 4px; text-align: start; }
+.chat-hidden-title { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; margin-top: 2px; }
+.chat-hidden-line { display: block; }
+
+/* Round 29: region (never a country) and the withdrawal form */
+.region-choice { display: flex; flex-wrap: wrap; gap: 8px; }
+.region-opt { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border: 1px solid var(--rule); border-radius: 999px; cursor: pointer; font-size: 14px; }
+.region-opt input { width: auto; margin: 0; accent-color: var(--ink); }
+.region-opt.is-on { border-color: var(--ink); font-weight: 600; }
+.wd-methods { display: grid; gap: 8px; border: 0; padding: 0; margin: 0; }
+.wd-method { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 10px; cursor: pointer; }
+.wd-method input { width: auto; margin: 0; }
+.wd-method.is-on { border-color: var(--ink); }
+.wd-method.is-off { opacity: .6; cursor: not-allowed; }
+.wd-method .wd-soon { margin-inline-start: auto; }
+
+/* Round 29: order page link to support. */
+.od-support { display: flex; align-items: center; gap: 6px; margin: 12px 0 0; }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { SupportLink } from './SupportLink';
 import { Link, useNavigate } from 'react-router-dom';
 import { CircleNotch, Hourglass, Wallet, CheckCircle } from '@phosphor-icons/react';
 import QRCode from 'qrcode';
@@ -7,7 +8,7 @@ import { t, type MessageKey } from '../i18n';
 import { useDisplayCurrency, usePrice } from '@/lib/prefs';
 
 /**
- * Crypto checkout. `base` is `/orders/<id>` or `/checkouts/<id>`; the API under it offers the
+ * Crypto checkout. `base` is `/orders/<id>`; the API under it offers the
  * coins whose minimum fits what is owed, creates a payment (address + exact amount), and reports
  * status. The page polls while a payment is waiting; an underpayment shows the shortfall and
  * offers a top-up. Nothing is typed in: the buyer sends from their own wallet.
@@ -51,14 +52,15 @@ const hm = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digi
 /**
  * Checkout payment (Round 25): first the payment method (from GET /payment-methods; only Crypto now), then what
  * the crypto invoice is priced in (USD or EUR; EGP viewers pay a USD invoice), then the coin. `base` is
- * `/orders/<id>` or `/checkouts/<id>` (a cart is quoted as one; a single order inside it is never re-quoted).
+ * `/orders/<id>`.
  * An EUR price is held 15 minutes; if it lapsed, the API answers 409 fx_quote_expired with the new price, which
  * the buyer confirms before paying. A provider outage shows its message and a Retry, never an endless "Loading".
  */
 /** Order / checkout statuses that mean the money was applied. */
 const PAID_ORDER = new Set(['paid', 'delivered', 'completed', 'disputed', 'released', 'refunded']);
 
-export function CryptoCheckout({ base, amountCents, currency, onPaid, orderRef }: { base: string; amountCents: number; currency: string; onPaid: () => void; orderRef?: string | null }) {
+type CheckoutProps = { base: string; amountCents: number; currency: string; onPaid: () => void; orderRef?: string | null };
+export function CryptoCheckout({ base, amountCents, currency, onPaid, orderRef }: CheckoutProps) {
   const viewer = useDisplayCurrency();
   const nav = useNavigate();
   const [coins, setCoins] = useState<Coins | null>(null);
@@ -103,7 +105,7 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid, orderRef }
   const underpaid = list.find((p) => stateOf(p) === 'underpaid');
   // Round 26 (A4): the money has arrived: never fall back to the coin list or a blank card while the order catches up.
   const latest = list[0] ? [...list].sort((a, b) => b.created_at.localeCompare(a.created_at))[0] : undefined;
-  // Round 27: once the order (or cart) is paid — the payment's state says paid, or its order_status is past
+  // Round 27: once the order is paid — the payment's state says paid, or its order_status is past
   // awaiting payment — stop polling and hand over to the paid order. "Confirming" is only for money not yet applied.
   const funded = list.find((p) => stateOf(p) === 'paid' || (!!p.order_status && PAID_ORDER.has(p.order_status)));
   const received = funded ? undefined : list.find((p) => stateOf(p) === 'received_applying');
@@ -176,9 +178,7 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid, orderRef }
     try {
       setQuote(await api<FxQuote>(`${base}/fx-quote`, { body: { currency: c } }));
     } catch (e: any) {
-      // Round 25b: an order inside a cart is quoted and paid through its checkout only (409 use_checkout).
-      if (e?.code === 'use_checkout' && e.details?.checkoutId) return nav(`/checkouts/${e.details.checkoutId}/pay`, { replace: true });
-      setError(e?.code === 'use_checkout' ? t('crypto.useCheckout') : e.message);
+      setError(e.message);
       setInvoice(null);
     } finally {
       setBusy(false);
@@ -197,8 +197,7 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid, orderRef }
         const q = e.details as FxQuote;
         setQuote(q);
         setRequote({ coin, quote: q });
-      } else if (e?.code === 'use_checkout' && e.details?.checkoutId) nav(`/checkouts/${e.details.checkoutId}/pay`, { replace: true });
-      else setError(e?.code === 'payment_provider_unavailable' ? t('crypto.unavailable') : e?.code === 'use_checkout' ? t('crypto.useCheckout') : e.message);
+      } else setError(e?.code === 'payment_provider_unavailable' ? t('crypto.unavailable') : e.message);
     } finally {
       setBusy(false);
     }
@@ -244,7 +243,7 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid, orderRef }
             <h3>{t('pay28.slow')}</h3>
             <p className="small muted">{t('pay28.slowText')}</p>
             {orderRef && <p className="small" style={{ margin: 0 }}>{t('pay28.orderNumber', { ref: orderRef })}</p>}
-            <Link className="btn ghost sm" to={supportLink}>{t('pay26.contactSupport')}</Link>
+            <SupportLink className="btn ghost sm" to={supportLink}>{t('pay26.contactSupport')}</SupportLink>
           </div>
         ) : (
           <div className="card pay-state" role="status" aria-live="polite" data-testid="pay-confirming">
@@ -258,7 +257,7 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid, orderRef }
           <span className="pay-state-icon is-held" aria-hidden><Hourglass className="size-6" /></span>
           <h3>{t('pay26.held')}</h3>
           <p className="small muted">{t('pay26.heldText')}</p>
-          <Link className="btn ghost sm" to="/support/new">{t('pay26.contactSupport')}</Link>
+          <SupportLink className="btn ghost sm" to="/support/new">{t('pay26.contactSupport')}</SupportLink>
         </div>
       ) : credited && !open ? (
         <div className="card pay-state" role="status" aria-live="polite" data-testid="pay-credited">
@@ -267,7 +266,7 @@ export function CryptoCheckout({ base, amountCents, currency, onPaid, orderRef }
           <p className="small muted">{t('pay26.creditedText')}</p>
           <div className="row" style={{ gap: 8, justifyContent: 'center' }}>
             <Link className="btn sm" to="/wallet">{t('pay26.seeBalance')}</Link>
-            <Link className="btn ghost sm" to="/support/new">{t('pay26.contactSupport')}</Link>
+            <SupportLink className="btn ghost sm" to="/support/new">{t('pay26.contactSupport')}</SupportLink>
           </div>
         </div>
       ) : (
@@ -360,7 +359,8 @@ function MethodStep({ methods, owed, onPick }: { methods: PaymentMethod[]; owed:
         <span className="small muted num">{t('crypto.toPayShort', { amount: price(owed) })}</span>
       </div>
       {methods.length === 0 ? (
-        <p className="small" role="status">{t('pay.noMethod')}</p>
+        // Round 29: no method offered where the buyer is connecting from (crypto in Egypt); never named as a country.
+        <p className="notice small" role="status" data-testid="pay-unavailable" style={{ margin: 0 }}>{t('pay29.unavailable')}</p>
       ) : (
         <div className="pg-coin-list">
           {methods.map((m) => {

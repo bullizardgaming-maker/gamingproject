@@ -11,7 +11,7 @@ test.describe('safety and moderation', () => {
     await box.fill('add me on telegram, I pay with paypal');
     await expect(page.getByRole('status').filter({ hasText: /Sharing outside contacts can get your account banned right away/ })).toBeVisible();
     await page.getByRole('button', { name: 'Send', exact: true }).click();
-    await expect(page.getByText('Not sent.')).toBeVisible();
+    await expect(page.getByTestId('hidden-for-safety').last()).toContainText('Stay safe');
     await expect(page.getByRole('log').getByText('add me on telegram')).toHaveCount(0);
   });
 

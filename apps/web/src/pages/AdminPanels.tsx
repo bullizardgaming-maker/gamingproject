@@ -30,6 +30,63 @@ export function useLoad<T>(fn: () => Promise<T>) {
 // ---------------------------------------------------------------------------
 const STATUS_CHIP: Record<string, string> = { open: 'held', escalated: 'disputed', cleared: 'released', reported: 'disputed' };
 
+/**
+ * Round 29: the sanctions lists the screening uses (GET /admin/aml/lists) with their date, and a refresh
+ * (POST /admin/aml/lists/refresh, audited) that reloads them and re-screens sellers. Lists older than 7 days are flagged.
+ */
+function SanctionsLists() {
+  const [lists, setLists] = useState<Array<{ list: string; version: string | null; entries: number; loaded_at: string | null }> | null>(null);
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'alert'; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => api<any[]>('/admin/aml/lists').then(setLists).catch((e) => (setLists([]), setMsg({ kind: 'alert', text: e.message }))), []);
+  useEffect(() => {
+    load();
+  }, [load]);
+  const refresh = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await api<{ changed: number | string[]; rescreened: number }>('/admin/aml/lists/refresh', { body: {} });
+      const changed = Array.isArray(r.changed) ? r.changed.length : Number(r.changed ?? 0);
+      setMsg({ kind: 'ok', text: `Lists refreshed: ${changed} changed, ${r.rescreened ?? 0} sellers re-screened.` });
+      load();
+    } catch (e: any) {
+      setMsg({ kind: 'alert', text: e.message });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const stale = (d: string | null) => !d || Date.now() - Date.parse(d) > 7 * 86_400_000;
+  return (
+    <section className="card stack" aria-labelledby="sanctions-title" data-testid="sanctions-lists">
+      <div className="row spread">
+        <h3 id="sanctions-title" style={{ margin: 0 }}>Sanctions lists</h3>
+        <button type="button" className="btn ghost sm" disabled={busy} onClick={refresh}>{busy ? 'Refreshing…' : 'Refresh sanctions lists'}</button>
+      </div>
+      {msg && <div className={msg.kind} role={msg.kind === 'alert' ? 'alert' : 'status'}>{msg.text}</div>}
+      {lists === null ? (
+        <p className="small muted" style={{ margin: 0 }}>Loading…</p>
+      ) : lists.length === 0 ? (
+        <div className="alert small" role="alert">No sanctions lists loaded: withdrawals can’t be screened. Refresh them.</div>
+      ) : (
+        <table className="data">
+          <thead><tr><th>List</th><th>Version</th><th>Entries</th><th>Loaded</th></tr></thead>
+          <tbody>
+            {lists.map((l) => (
+              <tr key={l.list}>
+                <td>{l.list}</td>
+                <td className="mono small">{l.version ?? '—'}</td>
+                <td className="num">{Number(l.entries).toLocaleString()}</td>
+                <td className="small">{l.loaded_at ? fmt(l.loaded_at) : '—'}{stale(l.loaded_at) && <span className="chip disputed" style={{ marginInlineStart: 6 }}>older than 7 days</span>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
 export function AmlPanel() {
   const [status, setStatus] = useState('open');
   const [selected, setSelected] = useState<string | null>(null);
@@ -50,6 +107,7 @@ export function AmlPanel() {
 
   return (
     <div className="stack">
+      <SanctionsLists />
       <div className="notice small">
         Never tell a user they are under review or why: their payouts show as a “routine review”. Everything you do here is in the audit log.
       </div>

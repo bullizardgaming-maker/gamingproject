@@ -227,9 +227,30 @@ export function SellerBadges({ badges }: { badges?: string[] | null }) {
   if (!badges?.length) return null;
   return (
     <>
-      {badges.slice(0, 2).map((b) => <SellerBadge key={b} badge={b} />)}
+      {badges.map((b) => <SellerBadge key={b} badge={b} />)}
     </>
   );
+}
+
+const BADGE_ORDER = (b: string) => (b.startsWith('rank:') ? 0 : b === 'founding' ? 1 : b === 'id_verified' ? 2 : b === 'top_seller' ? 3 : 4);
+/**
+ * Round 29: every badge a seller holds (rank, Founding Seller, ID verified, Top seller…), from whatever the read carries:
+ * a full `badges` / `earned_badges` list (keys or {key}), the shown `seller_badges`, and the flat fields.
+ */
+export function allBadgesOf(src: {
+  badges?: Array<string | { key: string }> | null; earned_badges?: Array<string | { key: string }> | null; seller_badges?: string[] | null;
+  seller_rank?: string | null; rank?: string | null; founding?: boolean | null; seller_founding?: boolean | null;
+  identity_verified?: boolean | null; seller_identity_verified?: boolean | null; trust_level?: string | null; seller_trust_level?: string | null;
+}): string[] {
+  const set = new Set<string>();
+  for (const b of [...(src.badges ?? []), ...(src.earned_badges ?? []), ...(src.seller_badges ?? [])]) set.add(typeof b === 'string' ? b : b.key);
+  const rank = src.seller_rank ?? src.rank;
+  if (rank && ![...set].some((b) => b.startsWith('rank:'))) set.add(`rank:${rank.toLowerCase()}`);
+  if (src.founding || src.seller_founding) set.add('founding');
+  if (src.identity_verified || src.seller_identity_verified) set.add('id_verified');
+  if ((src.trust_level ?? src.seller_trust_level) === 'top') set.add('top_seller');
+  set.delete('trust:top');
+  return [...set].sort((a, b) => BADGE_ORDER(a) - BADGE_ORDER(b));
 }
 
 /** One badge by its API key: rank:<name>, founding, id_verified, top_seller. */
@@ -238,7 +259,10 @@ export function SellerBadge({ badge: b }: { badge: string }) {
   if (b === 'founding') return <FoundingBadge />;
   if (b === 'top_seller' || b === 'trust:top') return <TrustBadge level="top" />;
   if (b.startsWith('trust:')) return <TrustBadge level={b.slice(6)} />;
-  return <span className="rank"><BadgeCheck className="size-3" aria-hidden /> {t('badge.idVerified')}</span>;
+  if (b === 'id_verified' || b === 'identity_verified' || b === 'verified') return <span className="rank"><BadgeCheck className="size-3" aria-hidden /> {t('badge.idVerified')}</span>;
+  // A badge this build doesn't know yet (Round 29: every badge shows): its name, readable.
+  const name = b.replace(/^badge:/, '').replace(/[_:-]+/g, ' ').trim();
+  return <span className="rank" data-badge={b}>{name.charAt(0).toUpperCase() + name.slice(1)}</span>;
 }
 
 /** "Online now", or how long the seller has been away. */
@@ -262,7 +286,7 @@ export function CurrencyTable({ offers, empty, current }: { offers: Offer[]; emp
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-1.5">
                 <Link to={`/offers/${o.id}`} className="ct-name after:absolute after:inset-0" aria-label={o.unit_label ? undefined : `${o.title} · ${o.seller_name}`}>{o.seller_name}</Link>
-                <SellerBadges badges={o.seller_badges} />
+                <SellerBadges badges={allBadgesOf(o)} />
               </div>
               <Rating value={o.seller_rating} count={o.seller_review_count} />
               {!o.unit_label && <span className="block truncate text-xs text-muted-foreground" dir="auto">{o.title}</span>}

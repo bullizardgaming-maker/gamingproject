@@ -29,7 +29,7 @@ test.describe('messages inbox', () => {
     const box = page.locator('input[aria-label=Message]');
     await box.fill('add me on discord');
     await box.press('Enter');
-    await expect(page.getByText('Not sent.')).toBeVisible();
+    await expect(page.getByTestId('hidden-for-safety').last()).toContainText('Stay safe');
     await box.fill('All good, thanks');
     await box.press('Enter');
     await expect(page.getByRole('log').getByText('All good, thanks')).toBeVisible();

@@ -1,4 +1,5 @@
-import { ShieldCheck, Star } from '@phosphor-icons/react';
+import { Headset, ShieldCheck, Star } from '@phosphor-icons/react';
+import { SupportLink } from '../components/SupportLink';
 import { BuyerProtection } from '../components/Brand';
 import { StatusEye } from '../components/StatusEye';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -17,8 +18,6 @@ import { unitMoney, usePrice } from '@/lib/prefs';
 import { attributePairs } from '@/lib/attributes';
 
 interface OrderDetail {
-  /** Set when the order was bought in a cart: it is paid through that checkout only (Round 25b/25c). */
-  checkout_id?: string | null;
   tos_version?: string | null;
   tos_accepted_at?: string | null;
   created_at: string;
@@ -319,8 +318,6 @@ export function OrderPage() {
   ];
   const checkoutMode = order.status === 'awaiting_payment' && isBuyer && order.payment_provider === 'nowpayments';
 
-  // Round 25c: a cart order is quoted and paid through its checkout (the API answers 409 use_checkout otherwise).
-  if (checkoutMode && order.checkout_id) return <Navigate to={`/checkouts/${order.checkout_id}/pay`} replace />;
   if (checkoutMode) {
     return (
       <div className="stack pg-checkout">
@@ -405,6 +402,10 @@ export function OrderPage() {
               )}
               {order.escrow_frozen && order.status !== 'disputed' && !underReview && <span className="small muted">{t('order.frozenNote')}</span>}
             </div>
+            <p className="od-support small" data-testid="order-support">
+              <Headset className="size-4" aria-hidden />
+              <SupportLink to={`/support/new?category=order&order=${encodeURIComponent(order.id)}`}>{t('pay26.contactSupport')}</SupportLink>
+            </p>
             {(isBuyer && order.status === 'delivered' && order.rail === 'fiat') || ((isBuyer || isSeller) && ['paid', 'delivered'].includes(order.status) && order.rail === 'fiat') ? (
               <div className="od-actions">
                 <span className="pg-label">{t('od.actions')}</span>

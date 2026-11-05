@@ -92,7 +92,7 @@ export function PrefsMenu() {
 
 const initials = (n = '?') => n.split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 
-/** The avatar menu: everything that used to crowd the top bar (orders, shop, cart, watchlist…). */
+/** The avatar menu: everything that used to crowd the top bar (orders, shop, watchlist…). */
 export function AccountMenu() {
   const { user, signOut } = useSession();
   const p = usePopover();

@@ -90,7 +90,7 @@ const RANKS = [
   { position: 2, name: 'Scale', minMonthlySalesCents: 500_00, rateBps: 1299, perks: [] as string[] },
   { position: 3, name: 'Fang', minMonthlySalesCents: 2_000_00, rateBps: 1199, perks: [] as string[] },
   { position: 4, name: 'Basilisk', minMonthlySalesCents: 5_000_00, rateBps: 1099, perks: [] as string[] },
-  { position: 5, name: 'Dragon', minMonthlySalesCents: 15_000_00, rateBps: 999, perks: [] as string[] },
+  { position: 5, name: 'Dragon', minMonthlySalesCents: 15_000_00, rateBps: 799, perks: [] as string[] },
 ];
 const PROMO = { promoRateBps: 500, promoDays: 60 };
 const asTier = (r: (typeof RANKS)[number]) => ({ ...r, accountRateBps: r.rateBps, otherRateBps: r.rateBps });
@@ -115,6 +115,22 @@ function rateFor(offer: any) {
 }
 
 const userById = (id: string) => state.users.find((u) => u.id === id);
+const SANCTIONED_COUNTRIES = new Set(['IR', 'KP', 'SY', 'CU']);
+/**
+ * Round 29: the connection's country (Cloudflare CF-IPCountry on the real API). The demo reads it from
+ * localStorage `bz.demo.ipCountry` so the Egypt and sanctions paths can be tried. Never shown to the user.
+ */
+const ipCountry = () => {
+  try {
+    return (localStorage.getItem('bz.demo.ipCountry') ?? '').toUpperCase();
+  } catch {
+    return '';
+  }
+};
+const CRYPTO_BLOCKED_COUNTRIES = new Set(['EG']);
+const blockSanctionedConnection = () => {
+  if (SANCTIONED_COUNTRIES.has(ipCountry())) fail(451, 'country_not_supported', 'Bullizard isn’t available here.');
+};
 const publicUser = (u: DemoUser) => {
   const { password: _p, legal_name: _l, ...rest } = u;
   return rest;
@@ -522,7 +538,6 @@ function rememberCharacter(u: DemoUser, offer: any, o: any, name: string) {
 function createOrderRecord(buyer: DemoUser, offer: any, quantity: number, rail: 'fiat' | 'crypto', sellerDiscount = 0) {
   const priced = orderPrice(offer, quantity);
   const sellerAmount = priced.sellerCents - sellerDiscount;
-  // (a cart sets checkout_id on the orders it creates)
   const bps = rateFor(offer);
   const amount = grossUp(sellerAmount, bps);
   if (priced.unitMicros != null && amount < MIN_CURRENCY_ORDER_USD_CENTS) fail(400, 'below_minimum_order', 'The smallest order is $1.00; add more units', { minCents: MIN_CURRENCY_ORDER_USD_CENTS, currency: 'USD' });
@@ -621,6 +636,7 @@ route('POST', '/auth/register', ({ body }) => {
   const codes = [body.code, body.referralCode, body.creatorCode].filter((c: unknown) => typeof c === 'string' && c.trim()).map((c: string) => c.trim().toUpperCase());
   if (new Set(codes).size > 1) fail(400, 'one_code_only', 'Enter one code: a friend’s invite code or a creator code, not both');
   const code: string | undefined = codes[0];
+  blockSanctionedConnection();
   const creator = code ? state.affiliates.find((a) => a.code === code && a.status === 'active') : null;
   const u: DemoUser = {
     id: rid(), email: body.email, password: body.password, display_name: body.displayName ?? 'New user', role: 'user', kyc_tier: 0, status: 'active',
@@ -628,6 +644,7 @@ route('POST', '/auth/register', ({ body }) => {
     locale: ['ar', 'es', 'fr', 'de', 'pt'].includes(body.locale) ? body.locale : 'en',
     tos_version: TOS_VERSION, tos_accepted_at: now(),
     news_opt_in: body.newsOptIn === true, news_opt_in_at: body.newsOptIn === true ? now() : null,
+    region: 'global',
   };
   state.users.push(u);
   let codeApplied: 'referral' | 'creator' | null = null;
@@ -641,6 +658,13 @@ route('PUT', '/me/locale', ({ me, body }) => {
   if (!['en', 'ar', 'es', 'fr', 'de', 'pt'].includes(body.locale)) fail(400, 'validation_error', 'Unknown language');
   u.locale = body.locale;
   return { locale: body.locale };
+});
+// Round 29 (CEO, 5 Nov): a region, never a country, on the account.
+route('PUT', '/me/region', ({ me, body }) => {
+  const u = need(me);
+  if (!['asia', 'middle_east', 'america', 'europe', 'global'].includes(body.region)) fail(400, 'validation_error', 'Unknown region');
+  u.region = body.region;
+  return { region: body.region };
 });
 route('POST', '/auth/refresh', () => fail(401, 'session_expired', 'You were signed out. Sign in again.'));
 route('POST', '/auth/password/forgot', ({ body }) => (demoCaptcha(body), { message: 'If an account uses this email, a reset link is on its way.' }));
@@ -1161,7 +1185,7 @@ route('GET', '/sellers/:id', ({ params, query }) => {
     active_listings: state.offers.filter((o) => o.seller_id === u.id && listed(o)).length,
     on_time_delivery_pct: before ? Math.min(100, 93 + (before.count % 7)) : null, shop_paused: false, shop_paused_until: null, shop_pause_message: null,
     ...presenceOf(u.id),
-    trust_level: state.trust[u.id] ?? 'new',
+    trust_level: state.trust[u.id] ?? 'new', seller_rank: tierOf(u.id).rank.name, region: u.region ?? 'global', // Round 29: all badges; a region, never a country
     rating: { average: s.rating, count: s.count, positive_pct: s.count ? Math.round(((s.rating ?? 0) / 5) * 1000) / 10 : null },
     storefront: storefrontOf(u.id),
     reviews: reviews.slice(offset, offset + limit),
@@ -1318,6 +1342,7 @@ function assertTosVersion(v: unknown) {
 }
 route('POST', '/orders', ({ me, body }) => {
   const u = need(me);
+  blockSanctionedConnection();
   assertTosVersion(body.tosVersion); // Round 23e: the Terms version loaded with the page is required
   if (u.kyc_tier < 1) fail(403, 'kyc_required', 'Verify your email first.');
   const offer = state.offers.find((x) => x.id === body.offerId && (!x.reserved_for || x.reserved_for === u.id)) ?? fail(404, 'not_found', 'Listing not found');
@@ -1348,7 +1373,6 @@ const DEMO_COINS = [
 const PROCESSING_FEE_BPS = 50;
 const feeOnCents = (cents: number) => (cents > 0 ? Math.ceil((cents * PROCESSING_FEE_BPS) / 10_000) : 0);
 function processingFeeOf(o: any) {
-  if (o.checkout_id) return null; // a cart pays one fee on the checkout
   return feeOnCents(o.charged_cents ?? o.amount_cents);
 }
 /** Network each coin travels on (names only: network fees are the buyer's wallet's business, Round 28). */
@@ -1358,25 +1382,15 @@ const DEMO_NETWORK: Record<string, [string, number]> = {
 };
 const DEMO_RATE: Record<string, number> = { usdttrc20: 1, usdtbsc: 1, usdcmatic: 1, usdterc20: 1, btc: 97_000, eth: 3_400, ltc: 95, trx: 0.24, sol: 190, doge: 0.33, xmr: 160, ton: 5.4 };
 const coinNameOf = (c: string) => DEMO_COINS.find((x) => x[0] === c)?.[1] ?? c.toUpperCase();
-/** Round 25b: an order inside a cart is quoted and paid through its checkout only. */
-const notInCart = (p: { kind: string; orders: any[] }) => {
-  if (p.kind === 'orders' && p.orders[0]?.checkout_id) fail(409, 'use_checkout', 'This order is part of a cart; pay for it from the cart checkout', { checkoutId: p.orders[0].checkout_id });
-};
-function payableOf(u: DemoUser, kind: 'orders' | 'checkouts', id: string) {
-  if (kind === 'orders') {
-    const o = orderFor(u, id);
-    const base = o.charged_cents ?? o.amount_cents;
-    return { kind, id, orders: [o], base, fee: feeOnCents(base), owed: base + feeOnCents(base), status: o.status };
-  }
-  const c = state.checkouts.find((x) => x.id === id && x.buyer_id === u.id) ?? fail(404, 'not_found', 'Checkout not found');
-  const orders = c.order_ids.map((oid: string) => state.orders.find((o) => o.id === oid)!);
-  const base = orders.reduce((s: number, o: any) => s + (o.charged_cents ?? o.amount_cents), 0);
-  return { kind, id, orders, base, fee: feeOnCents(base), owed: base + feeOnCents(base), status: orders.every((o: any) => o.status !== 'awaiting_payment') ? 'paid' : 'awaiting_payment' };
+function payableOf(u: DemoUser, kind: 'orders', id: string) {
+  const o = orderFor(u, id);
+  const base = o.charged_cents ?? o.amount_cents;
+  return { kind, id, orders: [o], base, fee: feeOnCents(base), owed: base + feeOnCents(base), status: o.status };
 }
 const paymentsOf = (kind: string, id: string) => state.cryptoPayments.filter((p) => p.ref_kind === kind && p.ref_id === id);
 const paidSoFar = (kind: string, id: string) => paymentsOf(kind, id).reduce((s, p) => s + (['partially_paid', 'finished'].includes(p.status) ? Math.round(Number(p.actually_paid_usd) * 100) : 0), 0);
 /** Orders a payment pays for. */
-const ordersOfPayment = (p: any) => (p.ref_kind === 'orders' ? state.orders.filter((o) => o.id === p.ref_id) : state.orders.filter((o) => (state.checkouts.find((c) => c.id === p.ref_id)?.order_ids ?? []).includes(o.id)));
+const ordersOfPayment = (p: any) => state.orders.filter((o) => o.id === p.ref_id);
 /**
  * Round 26 (A2): one clear state per payment for the buyer, plus the order's status. "finished" with the order not
  * funded yet is received_applying (the page keeps checking); held / credited come from staff or the provider.
@@ -1425,10 +1439,9 @@ function lockFx(p: ReturnType<typeof payableOf>, currency: string) {
   save();
   return { currency, rate: rate.toFixed(8), amountCents, usdCents: p.owed, lockedUntil: new Date(Date.parse(first.fx_locked_at) + FX_TTL_MS).toISOString(), fresh: !live };
 }
-for (const kind of ['orders', 'checkouts'] as const) {
+for (const kind of ['orders'] as const) {
   route('POST', `/${kind}/:id/fx-quote`, ({ me, params, body }) => {
     const p = payableOf(need(me), kind, params[0]!);
-    notInCart(p);
     const cur = String(body.currency ?? '').toUpperCase();
     if (!['USD', 'EUR'].includes(cur)) fail(400, 'unsupported_currency', 'Crypto payments are priced in USD or EUR');
     return lockFx(p, cur);
@@ -1443,9 +1456,10 @@ for (const kind of ['orders', 'checkouts'] as const) {
   });
   route('GET', `/${kind}/:id/crypto/payments`, ({ me, params }) => paymentsOf(kind, payableOf(need(me), kind, params[0]!).id).map(view));
   route('POST', `/${kind}/:id/crypto/pay`, ({ me, params, body }) => {
+    need(me);
+    if (CRYPTO_BLOCKED_COUNTRIES.has(ipCountry())) fail(403, 'method_unavailable_here', 'This payment method isn’t available here yet — you can still browse and sell.');
     const p = payableOf(need(me), kind, params[0]!);
     if (p.status !== 'awaiting_payment') fail(409, 'invalid_state', 'This order is already paid');
-    notInCart(p);
     if (paymentsOf(kind, p.id).some((x) => x.status === 'waiting')) fail(409, 'payment_open', 'A payment is already waiting for your transfer');
     providerDown();
     const owed = p.owed - paidSoFar(kind, p.id);
@@ -1504,7 +1518,7 @@ for (const kind of ['orders', 'checkouts'] as const) {
 const staffPaymentView = (p: any) => {
   const o = ordersOfPayment(p)[0];
   return {
-    id: p.id, payment_id: p.payment_id, order_id: p.ref_kind === 'orders' ? p.ref_id : null, checkout_id: p.ref_kind === 'checkouts' ? p.ref_id : null, order_ref: o?.ref ?? null,
+    id: p.id, payment_id: p.payment_id, order_id: p.ref_id, order_ref: o?.ref ?? null,
     buyer_name: o ? userById(o.buyer_id)?.display_name ?? null : null, status: p.status, state: paymentState(p), order_status: o?.status ?? null,
     pay_currency: p.pay_currency, pay_amount: p.pay_amount, actually_paid: p.actually_paid, price_amount: p.price_amount ?? p.price_usd, price_currency: p.price_currency ?? 'USD',
     outcome_amount: p.status === 'finished' ? p.actually_paid : null, outcome_currency: p.status === 'finished' ? 'usdtbsc' : null, review_reason: p.state_override === 'held_for_review' ? 'amount_mismatch' : null,
@@ -1521,7 +1535,7 @@ route('GET', '/admin/crypto/payments', ({ me, query }) => {
   const limit = Math.min(200, Number(query.get('limit') ?? 100) || 100);
   return state.cryptoPayments.map(staffPaymentView)
     .filter((x) => !st || x.status === st)
-    .filter((x) => !q || [x.payment_id, x.order_ref, x.order_id, x.checkout_id].some((v) => String(v ?? '').toLowerCase() === q || String(v ?? '').toLowerCase().startsWith(q)))
+    .filter((x) => !q || [x.payment_id, x.order_ref, x.order_id].some((v) => String(v ?? '').toLowerCase() === q || String(v ?? '').toLowerCase().startsWith(q)))
     .sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, limit);
 });
 route('POST', '/admin/crypto/payments/:id/recheck', ({ me, params }) => {
@@ -1603,20 +1617,57 @@ route('POST', '/admin/crypto/refunds/:id/sent', ({ me, params, body }) => {
 
 // --- Crypto payouts: a new address waits for the email link + emailed code (as the API); withdrawals wait for the CFO ---
 const PAYOUT_COINS = ['usdttrc20', 'usdtbsc']; // USDT only at launch (CEO, Oct 24): TRC-20 and BEP-20
-const payoutAddressView = (u: DemoUser) => ({
-  address: u.payout_address ?? null, currency: u.payout_address_currency ?? null, currencyName: u.payout_address_currency ? coinNameOf(u.payout_address_currency) : null, setAt: u.payout_address_set_at ?? null,
-  // demo_token stands in for the link in the email (the demo sends no email); the API never returns it.
-  pending: (u as any).payout_pending ? { address: (u as any).payout_pending.address, currency: (u as any).payout_pending.currency, since: (u as any).payout_pending.since, demo_token: (u as any).payout_pending.token } : null,
-  coins: PAYOUT_COINS.map((coin) => ({ coin, name: coinNameOf(coin) })),
-});
+const payoutAddressView = (u: DemoUser) => {
+  const x = u as any;
+  const p = x.payout_pending;
+  return {
+    // Round 29: the confirmed method, the withdrawal country it was set up for, and for a phone / IPA only a masked hint.
+    method: x.payout_method ?? 'usdt', country: x.payout_country ?? null, identifier_hint: x.payout_identifier_hint ?? null,
+    address: u.payout_address ?? null, currency: u.payout_address_currency ?? null, currencyName: u.payout_address_currency ? coinNameOf(u.payout_address_currency) : null, setAt: u.payout_address_set_at ?? null,
+    // demo_token stands in for the link in the email (the demo sends no email); the API never returns it.
+    pending: p ? { method: p.method, address: p.address, currency: p.currency, identifier_hint: p.identifier_hint, since: p.since, demo_token: p.token } : null,
+    coins: PAYOUT_COINS.map((coin) => ({ coin, name: coinNameOf(coin) })),
+  };
+};
+// Round 29: withdrawal methods by the country picked on the withdrawal form (the only place a country is chosen), as the
+// API's domain/withdrawalMethods.ts: USDT everywhere not sanctioned; wallet / InstaPay (sent by Finance) in MANUAL_PAYOUT_COUNTRIES.
+const MANUAL_PAYOUT_COUNTRIES = new Set(['EG']);
+function withdrawalMethodsFor(raw: unknown) {
+  const country = String(raw ?? '').trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(country)) fail(400, 'validation_error', 'Choose your country');
+  if (SANCTIONED_COUNTRIES.has(country)) fail(451, 'country_not_supported', 'Bullizard isn’t available here.', { action: 'withdraw' });
+  const fee = { bps: WITHDRAWAL_FEE_BPS, minCents: WITHDRAWAL_FEE_MIN };
+  const manual = MANUAL_PAYOUT_COUNTRIES.has(country);
+  const all = [
+    { id: 'usdt', label: 'USDT (crypto)', fields: ['network', 'address'], networks: PAYOUT_COINS, fee, sent_by: 'provider', available: true },
+    { id: 'wallet', label: 'Mobile wallet', fields: ['phone'], fee, sent_by: 'finance', available: manual },
+    { id: 'instapay', label: 'InstaPay', fields: ['ipa'], fee, sent_by: 'finance', available: manual },
+  ];
+  return { country, methods: all.filter((m) => m.available) };
+}
+route('GET', '/seller/withdrawal-methods', ({ me, query }) => (need(me), withdrawalMethodsFor(query.get('country'))));
+const hintOf = (method: string, v: string) => (method === 'instapay' && v.includes('@') ? `${v[0]}•••@${v.split('@')[1]!.toLowerCase()}` : `•••• ${v.replace(/\D/g, '').slice(-4)}`);
 route('GET', '/seller/payout-address', ({ me }) => payoutAddressView(need(me)));
 route('POST', '/seller/payout-address', ({ me, body }) => {
   const u = need(me);
-  const currency = String(body.currency).toLowerCase();
-  if (!PAYOUT_COINS.includes(currency)) fail(400, 'unsupported_coin', 'That coin is not supported for payouts');
-  if (!/^[A-Za-z0-9:_-]{10,128}$/.test(String(body.address).trim())) fail(400, 'invalid_address', 'That does not look like a wallet address');
+  const { country, methods } = withdrawalMethodsFor(body.country);
+  const method = String(body.method ?? 'usdt');
+  if (!methods.some((m) => m.id === method)) fail(400, 'method_unavailable_in_country', 'That withdrawal method is not available in the country you picked');
+  let pending: any;
+  if (method === 'usdt') {
+    const currency = String(body.currency ?? '').toLowerCase();
+    if (!PAYOUT_COINS.includes(currency)) fail(400, 'unsupported_coin', 'That coin is not supported for payouts');
+    if (!/^[A-Za-z0-9:_-]{10,128}$/.test(String(body.address ?? '').trim())) fail(400, 'invalid_address', 'That does not look like a wallet address');
+    pending = { method, country, address: String(body.address).trim(), currency, identifier_hint: null };
+  } else {
+    const v = String(body.identifier ?? '').trim();
+    const digits = v.replace(/[\s()-]/g, '');
+    if (method === 'wallet' && !/^\+?\d{8,15}$/.test(digits)) fail(400, 'invalid_phone', 'Enter the wallet’s phone number (digits only, e.g. 01012345678 or +201012345678)');
+    if (method === 'instapay' && !/^\+?\d{8,15}$/.test(digits) && !/^[a-z0-9._-]{2,64}@[a-z0-9-]{2,32}$/i.test(v)) fail(400, 'invalid_ipa', 'Enter your InstaPay address (name@bank) or the phone number linked to it');
+    pending = { method, country, address: null, currency: null, identifier_hint: hintOf(method, v) };
+  }
   // As the API: a link and a 6-digit code go to the seller's email; nothing changes until both come back.
-  (u as any).payout_pending = { address: String(body.address).trim(), currency, since: now(), token: `demo-${rid()}`, attempts: 0 };
+  (u as any).payout_pending = { ...pending, since: now(), token: `demo-${rid()}`, attempts: 0 };
   save();
   return payoutAddressView(u);
 });
@@ -1630,13 +1681,16 @@ route('POST', '/seller/payout-address/confirm', ({ me, body }) => {
     if (p.attempts >= 5) u.payout_pending = null;
     fail(401, 'invalid_code', 'Incorrect code');
   }
-  Object.assign(u, { payout_address: p.address, payout_address_currency: p.currency, payout_address_set_at: now(), payouts_enabled: true, payout_pending: null });
+  Object.assign(u, {
+    payout_method: p.method ?? 'usdt', payout_country: p.country ?? null, payout_identifier_hint: p.identifier_hint ?? null,
+    payout_address: p.address, payout_address_currency: p.currency, payout_address_set_at: now(), payouts_enabled: true, payout_pending: null,
+  });
   save();
   return payoutAddressView(u);
 });
 route('DELETE', '/seller/payout-address', ({ me }) => {
   const u = need(me);
-  Object.assign(u, { payout_address: null, payout_address_currency: null, payout_address_set_at: null, payouts_enabled: false });
+  Object.assign(u, { payout_address: null, payout_address_currency: null, payout_address_set_at: null, payouts_enabled: false, payout_method: 'usdt', payout_country: null, payout_identifier_hint: null });
   save();
   return payoutAddressView(u);
 });
@@ -1715,7 +1769,7 @@ route('GET', '/seller/withdrawals/quote', ({ query }) => {
   const amountCents = /^\d{1,12}$/.test(raw) ? Number(raw) : NaN;
   if (!(amountCents > 0)) fail(400, 'amount_required', 'Enter an amount to see the fee'); // Round 24, as the API
   const fee = feeFor(amountCents);
-  return { amountCents, feeCents: fee, netCents: amountCents - fee, feeBps: WITHDRAWAL_FEE_BPS, feeMinCents: WITHDRAWAL_FEE_MIN };
+  return { amountCents, feeCents: fee, netCents: amountCents - fee, method: String(query.get('method') ?? 'usdt'), feeBps: WITHDRAWAL_FEE_BPS, feeMinCents: WITHDRAWAL_FEE_MIN };
 });
 route('GET', '/seller/withdrawals', ({ me }) => state.withdrawals.filter((w) => w.user_id === need(me).id).sort((a, b) => b.created_at.localeCompare(a.created_at)));
 route('GET', '/admin/withdrawals', ({ me }) => {
@@ -1726,17 +1780,69 @@ route('GET', '/admin/withdrawals', ({ me }) => {
     return { ...w, email: u?.email, display_name: u?.display_name, kyc_tier: u?.kyc_tier, trust_level: state.trust[w.user_id] ?? 'new' };
   });
 });
+// Round 29: a payout sent by hand — wallet / InstaPay always (Finance sends them), USDT on staging only (the sandbox can't
+// whitelist IPs). Two people, as the API: the first (Finance or Lead) asks, the other role confirms; then it is paid.
+route('POST', '/admin/withdrawals/:id/mark-sent', ({ me, params, body }) => {
+  const staff = me && permsOf(me).has('withdrawals.second_approve') ? me : needPerm(me, 'treasury.approve');
+  const w: any = state.withdrawals.find((x) => x.id === params[0]) ?? fail(404, 'not_found', 'Withdrawal not found');
+  if (!['unknown', 'processing'].includes(w.status)) fail(409, 'not_sendable', `A ${w.status} withdrawal cannot be marked as sent`);
+  const note = String(body.note ?? '').trim();
+  if (note.length < 3) fail(400, 'validation_error', 'Add a note: who sent it and from where');
+  const hash = body.hash ? String(body.hash).trim() : null;
+  if (!w.manual_send_requested_by) {
+    Object.assign(w, { manual_send_requested_by: staff!.id, manual_send_requested_by_name: staff!.display_name, manual_send_requested_at: now(), manual_send_note: note, updated_at: now() });
+    state.audit.unshift({ id: rid(), created_at: now(), actor_name: staff!.display_name, actor_role: staff!.role, ip: '203.0.113.7', action: 'withdrawal.manual_send_requested', target_type: 'withdrawal', target_id: w.id, details: { hash, note } });
+    save();
+    return w;
+  }
+  if (w.manual_send_requested_by === staff!.id) fail(409, 'second_person_required', 'The second confirmation must come from another staff member (Finance + Lead)');
+  if (w.status === 'unknown') state.platform.treasury += w.fee_cents;
+  Object.assign(w, { status: 'paid', tx_hash: hash ?? w.tx_hash, provider_ref: w.provider_ref ?? 'manual', failure_reason: null, manual_send_note: `${w.manual_send_note} | confirmed: ${note}`, updated_at: now() });
+  state.audit.unshift({ id: rid(), created_at: now(), actor_name: staff!.display_name, actor_role: staff!.role, ip: '203.0.113.7', action: 'withdrawal.manual_sent', target_type: 'withdrawal', target_id: w.id, details: { hash, note } });
+  notify(w.user_id, 'selling', 'payout.paid', 'Payout sent', `$${(w.net_cents / 100).toFixed(2)} is on its way to you.`, '/sell/money');
+  save();
+  return w;
+});
+/** Round 29: the phone / IPA a manual payout goes to — Finance only, audited (the demo shows the masked hint). */
+route('GET', '/admin/withdrawals/:id/destination', ({ me, params }) => {
+  const staff = needPerm(me, 'treasury.approve');
+  const w: any = state.withdrawals.find((x) => x.id === params[0]) ?? fail(404, 'not_found', 'Withdrawal not found');
+  if (w.method === 'usdt') fail(400, 'not_manual', 'This payout goes out through the provider');
+  state.audit.unshift({ id: rid(), created_at: now(), actor_name: staff.display_name, actor_role: staff.role, ip: '203.0.113.7', action: 'withdrawal.destination_viewed', target_type: 'withdrawal', target_id: w.id, details: { method: w.method } });
+  return { method: w.method, destination: w.destination_address, hint: w.destination_address, status: w.status };
+});
 route('POST', '/admin/withdrawals/:id/decide', ({ me, params, body }) => {
   const staff = needPerm(me, 'treasury.approve');
   const w = state.withdrawals.find((x) => x.id === params[0]) ?? fail(404, 'not_found', 'Withdrawal not found');
   if (w.user_id === staff.id) fail(403, 'own_withdrawal', 'You cannot decide your own withdrawal');
   if (w.status !== 'pending_approval') fail(409, 'invalid_state', `This withdrawal is ${w.status}`);
   // Round 22b: a coin we no longer pay out in is rejected, money back.
-  if (body.approve && !PAYOUT_COINS.includes(w.destination_currency)) {
+  if (body.approve && (w as any).method !== 'wallet' && (w as any).method !== 'instapay' && !PAYOUT_COINS.includes(w.destination_currency)) {
     Object.assign(w, { status: 'rejected', decided_at: now(), decision_note: 'unsupported_coin', refused: 'unsupported_coin' });
     state.balances[w.user_id] = (state.balances[w.user_id] ?? 0) + w.amount_cents;
     save();
     return w;
+  }
+  // Round 29: localStorage bz.demo.payoutOutcome = "error" plays NOWPayments refusing the payout (e.g. IP not whitelisted).
+  let payoutOutcome: string | null = null;
+  try {
+    payoutOutcome = localStorage.getItem('bz.demo.payoutOutcome');
+  } catch {
+    /* no storage */
+  }
+  // Round 29: wallet / InstaPay are sent by Finance by hand — approved, then "mark as sent" (two people).
+  if (body.approve && ((w as any).method === 'wallet' || (w as any).method === 'instapay')) {
+    Object.assign(w, { status: 'processing', decided_at: now(), decision_note: body.note ?? null });
+    state.platform.treasury += w.fee_cents;
+    save();
+    return { ...w, manual: true };
+  }
+  if (body.approve && payoutOutcome === 'error') {
+    // As the API: the row keeps the staff-facing reason; the error carries the provider's status and message (no secrets).
+    const reason = 'NOWPayments 403: Request IP 34.211.200.85 is not whitelisted for payouts (IP_NOT_WHITELISTED)';
+    Object.assign(w, { status: 'unknown', decided_at: now(), decision_note: body.note ?? null, failure_reason: reason });
+    save();
+    fail(502, 'payout_unknown', `NOWPayments did not answer (${reason}); the payout is being checked with the provider before anything is reversed`, { reason, provider_status: 403, provider_message: 'Request IP 34.211.200.85 is not whitelisted for payouts' });
   }
   if (body.approve) {
     Object.assign(w, { status: 'processing', decided_at: now(), decision_note: body.note ?? null, provider_ref: `batch_${rid().slice(0, 8)}`, payout_id: String(7_000_000 + state.withdrawals.length) });
@@ -1858,48 +1964,7 @@ route('PATCH', '/seller/codes/:id', ({ me, params, body }) => {
   c.active = !!body.active;
   return codeView(c);
 });
-// Cart: one demo payment for several orders (one per listing, each in its own escrow).
-route('POST', '/orders/cart', ({ me, body }) => {
-  const u = need(me);
-  assertTosVersion(body.tosVersion); // Round 23e: the Terms version loaded with the page is required
-  if (u.kyc_tier < 1) fail(403, 'kyc_required', 'Verify your email first.');
-  const items: Array<{ offerId: string; quantity: number; characterName?: string }> = body.items ?? [];
-  if (!items.length || items.length > 20) fail(400, 'invalid_cart', 'A cart holds 1 to 20 listings');
-  if (new Set(items.map((i) => i.offerId)).size !== items.length) fail(400, 'invalid_cart', 'Each listing can appear once; change its quantity instead');
-  // Check everything first so a cart either fully goes through or not at all.
-  const lines = items.map((i) => {
-    const offer = state.offers.find((x) => x.id === i.offerId && (!x.reserved_for || x.reserved_for === u.id) && x.status === 'active') ?? fail(404, 'not_found', 'Listing not found');
-    if (offer.seller_id === u.id) fail(403, 'own_offer', 'You cannot buy your own offer');
-    const qty = Number(i.quantity ?? 1);
-    if (availableOf(offer) < qty) fail(409, 'out_of_stock', `Not enough stock for "${offer.title}"`);
-    return { offer, qty, choice: deliveryChoiceFor(offer, i), saveInfo: (i as any).saveInfo };
-  });
-  const checkout = { id: `cart-${rid().slice(0, 8)}`, buyer_id: u.id, order_ids: lines.map(({ offer, qty, choice, saveInfo }) => {
-    const o = createOrderRecord(u, offer, qty, 'fiat');
-    applyDeliveryChoice(u, offer, o, choice, saveInfo);
-    return o.id;
-  }), created_at: now() };
-  for (const id of checkout.order_ids) {
-    const o = state.orders.find((x) => x.id === id)!;
-    o.checkout_id = checkout.id;
-    if (body.useCredit) applyCredit(u, o);
-  }
-  state.checkouts.push(checkout);
-  const v = checkoutView(checkout);
-  return { ...v, checkoutUrl: v.checkout.status === 'paid' ? null : `/checkouts/${checkout.id}/pay`, replayed: false };
-});
-const checkoutView = (c: any) => {
-  const orders = c.order_ids.map((id: string) => state.orders.find((o) => o.id === id)!);
-  return {
-    checkout: { id: c.id, status: orders.every((o: any) => o.status !== 'awaiting_payment') ? 'paid' : 'awaiting_payment', presentment_amount_cents: orders.reduce((s: number, o: any) => s + (o.charged_cents ?? o.amount_cents), 0), presentment_currency: 'USD', created_at: c.created_at,
-      processing_fee_cents: feeOnCents(orders.reduce((s: number, o: any) => s + (o.charged_cents ?? o.amount_cents), 0)) },
-    orders: orders.map((o: any) => ({ id: o.id, ref: o.ref, status: o.status, seller_id: o.seller_id, offer_id: o.offer_id, offer_title: o.offer_title, quantity: o.quantity, amount_cents: o.amount_cents, credit_cents: o.credit_cents ?? 0, charged_cents: o.charged_cents ?? o.amount_cents, currency: o.currency, character_name: o.character_name ?? null, seller_name: userById(o.seller_id)?.display_name })),
-  };
-};
-route('GET', '/checkouts/:id', ({ me, params }) => {
-  const u = need(me);
-  return checkoutView(state.checkouts.find((c) => c.id === params[0] && c.buyer_id === u.id) ?? fail(404, 'not_found', 'Checkout not found'));
-});
+// Round 29: no cart — one listing per purchase (POST /orders).
 route('GET', '/orders', ({ me, query }) => {
   const u = need(me);
   const as = query.get('as') === 'seller' ? 'seller' : 'buyer';
@@ -2243,6 +2308,8 @@ route('POST', '/chat/rooms/:id/messages', ({ me, params, body }) => {
       live(appendMessage(r.id, null, 'warning', 'This account has been banned for trying to move the deal outside Bullizard. Do not continue this trade anywhere else; staff will review the case.'));
     }
     save();
+    // Round 29: a queued message is hidden (not delivered) and the sender gets hidden_for_safety; a ban is still 422.
+    if (action !== 'ban') return { hidden_for_safety: true, seq: null };
     fail(422, 'offplatform_blocked', 'Not sent. Sharing outside contacts can get your account banned right away.', { action }); // Round 23f: queue | ban, as the API
   }
   const m = appendMessage(r.id, u.id, 'text', text, reasons.map((x) => `offplatform:${x}`));
@@ -2498,6 +2565,7 @@ function buildOffer(u: DemoUser, body: any) {
 }
 route('POST', '/offers', ({ me, body }) => {
   const u = needSeller(me);
+  blockSanctionedConnection();
   const { o, reviewReasons } = buildOffer(u, body);
   if (!u.seller_since) {
     u.seller_since = now(); // the launch promo and the ID deadline count from here
@@ -2699,7 +2767,11 @@ route('POST', '/seller/withdrawals', ({ me, body }) => {
   const u = needSeller(me);
   // Round 22b: withdrawals are USD only.
   if (body.currency && String(body.currency).toUpperCase() !== 'USD') fail(400, 'unsupported_currency', 'Withdrawals are in USD only; contact support about a balance in another currency');
-  if (!u.payout_address) fail(400, 'no_payout_address', 'Add and confirm a payout address first');
+  const x = u as any;
+  if (SANCTIONED_COUNTRIES.has(String(x.payout_country ?? ''))) fail(451, 'country_not_supported', 'Bullizard isn’t available here.', { action: 'withdraw' });
+  const method = x.payout_method ?? 'usdt';
+  // Round 29: wallet / InstaPay need their confirmed phone / IPA; USDT needs the address.
+  if (method === 'usdt' ? !u.payout_address : !x.payout_identifier_hint) fail(400, 'no_payout_address', 'Add and confirm a withdrawal method first');
   const available = state.balances[u.id] ?? 0;
   const { withdrawableCents } = holdOf(u.id);
   if (!(body.amountCents > 0) || body.amountCents > withdrawableCents) fail(400, 'insufficient_funds', `You can withdraw up to ${withdrawableCents} cents right now`);
@@ -2708,7 +2780,8 @@ route('POST', '/seller/withdrawals', ({ me, body }) => {
   state.balances[u.id] = available - body.amountCents;
   const w = {
     id: rid(), user_id: u.id, amount_cents: body.amountCents, fee_cents: fee, net_cents: body.amountCents - fee, currency: 'USD', status: 'pending_approval',
-    destination_address: u.payout_address, destination_currency: u.payout_address_currency, provider_ref: null as string | null, payout_id: null as string | null, tx_hash: null as string | null, created_at: now(), updated_at: now(),
+    country: x.payout_country ?? null, method,
+    destination_address: method === 'usdt' ? u.payout_address : x.payout_identifier_hint, destination_currency: u.payout_address_currency, provider_ref: null as string | null, payout_id: null as string | null, tx_hash: null as string | null, created_at: now(), updated_at: now(),
   };
   state.withdrawals.push(w);
   notify(u.id, 'selling', 'payout.requested', 'Withdrawal requested', `$${(body.amountCents / 100).toFixed(2)} requested; $${((body.amountCents - fee) / 100).toFixed(2)} is sent once the treasury approves it.`, '/sell/money');
@@ -3309,9 +3382,10 @@ route('GET', '/fx/rates', () => {
   };
 });
 // Round 25 (B5): payment methods for the viewer's currency (only crypto for the beta).
-route('GET', '/payment-methods', ({ query }) => {
+route('GET', '/payment-methods', ({ me, query }) => {
   const cur = String(query.get('currency') ?? 'USD').toUpperCase();
   if (!RATES[cur]) fail(400, 'unsupported_currency', 'Unsupported currency');
+  if (CRYPTO_BLOCKED_COUNTRIES.has(ipCountry())) return []; // Round 29: no crypto when connecting from Egypt (CF-IPCountry)
   return [{ id: 'crypto', currencies: ['USD', 'EUR'], enabled: true, pay_currency: cur === 'EUR' ? 'EUR' : 'USD' }];
 });
 route('GET', '/admin/fx/position', ({ me }) => {
@@ -3689,6 +3763,19 @@ const audit = (u: DemoUser, action: string, target_type: string, target_id: stri
 route('GET', '/me/permissions', ({ me }) => ({ permissions: [...permsOf(need(me))] }));
 
 const caseView = (c: any) => ({ ...c, display_name: userById(c.user_id)?.display_name ?? 'Unknown user' });
+// Round 29: sanctions lists (date + refresh) for Ops → Compliance.
+const demoLists = [
+  { list: 'ofac_sdn', version: '2026-10-28', entries: 18_412, loaded_at: new Date(Date.now() - 9 * 86_400_000).toISOString() },
+  { list: 'eu_consolidated', version: '2026-10-30', entries: 5_903, loaded_at: new Date(Date.now() - 2 * 86_400_000).toISOString() },
+  { list: 'un_consolidated', version: '2026-10-25', entries: 1_031, loaded_at: new Date(Date.now() - 2 * 86_400_000).toISOString() },
+];
+route('GET', '/admin/aml/lists', ({ me }) => (needStaff(me), demoLists));
+route('POST', '/admin/aml/lists/refresh', ({ me }) => {
+  const staff = needStaff(me);
+  for (const l of demoLists) Object.assign(l, { loaded_at: now(), version: now().slice(0, 10) });
+  state.audit.unshift({ id: rid(), created_at: now(), actor_name: staff.display_name, actor_role: staff.role, ip: '203.0.113.7', action: 'aml.lists_refreshed', target_type: 'sanctions_lists', target_id: null, details: { changed: 1, rescreened: 4 } });
+  return { changed: 1, rescreened: 4 };
+});
 route('GET', '/admin/aml/cases', ({ me, query }) => {
   needPerm(me, 'aml.review');
   const status = query.get('status');

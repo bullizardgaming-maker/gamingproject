@@ -172,7 +172,7 @@ const BASE_ARTICLES: HelpArticle[] = [
     body: [
         'You enter the price you want. The commission for your rank is added on top for the buyer, so the amount you typed is exactly what lands in your balance when the order completes. Ranks are set by your completed sales over the last 30 days; new sellers pay a reduced launch rate for their first 60 days.',
         'The sell form shows what buyers will pay in each currency before you publish. Your rank and progress are on the seller hub.',
-        'Ranks by 30-day sales: Hatchling $0 · 13.99% → Scale $500 · 12.99% → Fang $2,000 · 11.99% → Basilisk $5,000 · 10.99% → Dragon $15,000 · 9.99%. New sellers pay 5% for their first 60 days. Example: you set $10 → the buyer pays $11.63 (or $10.53 in the promo), and you earn $10.',
+        'Ranks by 30-day sales: Hatchling $0 · 13.99% → Scale $500 · 12.99% → Fang $2,000 · 11.99% → Basilisk $5,000 · 10.99% → Dragon $15,000 · 7.99%. New sellers pay 5% for their first 60 days. Example: you set $10 → the buyer pays $11.63 (or $10.53 in the promo), and you earn $10.',
       ],
     ticket: 'selling',
   },

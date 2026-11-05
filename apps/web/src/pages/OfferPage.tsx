@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
+import { SupportLink } from '../components/SupportLink';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ChatCircle, Coins, Flag, Headset, Minus, Plus } from '@phosphor-icons/react';
 import { api, money } from '../api';
 import { useSession } from '../session';
 import { OfferBadges, type Offer } from './Market';
 import { WatchButton } from '../components/WatchButton';
-import { CurrencyList, DeliveryTag, fmtUnits, LevelTag, OfferTable, PresenceText, Rating, SellerAvatar } from '../components/CatalogUi';
+import { CurrencyList, DeliveryTag, fmtUnits, LevelTag, OfferTable, PresenceText, Rating, SellerAvatar, SellerBadges, allBadgesOf } from '../components/CatalogUi';
 import { categoryLabel, slugify } from '@/lib/catalog';
 import { usePageMeta } from '@/lib/seo';
 import { useTermsVersion } from '@/lib/terms';
@@ -44,6 +45,13 @@ export function OfferPage() {
   const lastChoice = useRef<DeliveryChoice | undefined>(undefined); // kept so accepting new Terms re-sends the same delivery choice
   usePageMeta({ title: offer?.title, description: offer ? `${offer.title} · ${offer.game}. Paid into escrow, released when you confirm delivery.` : undefined });
 
+  // Round 29: the payment methods offered where the buyer is connecting from (no crypto in Egypt, by the connection
+  // country; the page never names it). false = nothing to pay with here: say so instead of "Buy now".
+  const [payable, setPayable] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!user) return;
+    api<Array<{ enabled: boolean }>>('/payment-methods?currency=USD').then((m) => setPayable(m.some((x) => x.enabled))).catch(() => setPayable(null));
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     setOffer(null);
     api<Offer>(`/offers/${id}`).then((o) => (setOffer(o), setQtyText((q) => q || String(effectiveMin(o))))).catch((e) => setError(e.message));
@@ -152,6 +160,7 @@ export function OfferPage() {
               <div className="flex flex-wrap items-center gap-1.5">
                 <Link to={`/sellers/${offer.seller_id}`} className="of-name">{offer.seller_name}</Link>
                 <LevelTag offer={offer} />
+                <SellerBadges badges={allBadgesOf(offer)} />
               </div>
               <div className="flex flex-wrap items-center gap-x-3">
                 <Rating value={offer.seller_rating} count={offer.seller_review_count} />
@@ -243,17 +252,18 @@ export function OfferPage() {
             <p className="muted small" style={{ margin: 0 }}>{t('offer.yours')}</p>
           ) : (
             gone ? <p className="alert small" role="status" style={{ margin: 0 }} data-testid="sold-out">{t('of.soldOut')}</p> :
+            payable === false ? <p className="notice small" role="status" style={{ margin: 0 }} data-testid="pay-unavailable">{t('pay29.unavailable')}</p> :
             <button className="btn go lg block" disabled={busy || !qtyOk || belowMin} onClick={() => (methods.length ? (setError(''), setDialog(true)) : buy())}>
               {busy && !dialog ? t('offer.opening') : t('of.buyNow')}
             </button>
           )}
           <ul className="of-trust">
             <li className="of-bp"><BuyerProtection short /></li>
-            <li className="of-help"><Headset className="size-4" aria-hidden /> <Link to="/support/new" className="of-help-link"><b>{t('offer.support')} 24/7</b></Link></li>
+            <li className="of-help"><Headset className="size-4" aria-hidden /> <SupportLink to="/support/new" className="of-help-link"><b>{t('offer.support')} 24/7</b></SupportLink></li>
           </ul>
           <p className="of-id small muted">
             <span>{t('of.offerId')} <span className="num" data-testid="offer-id">#{offer.public_id ?? offer.id}</span></span>
-            <Link to={`/support/new?${new URLSearchParams({ category: 'report', offer: offer.id })}`}><Flag className="size-3.5" aria-hidden /> {t('of.report')}</Link>
+            <SupportLink to={`/support/new?${new URLSearchParams({ category: 'report', offer: offer.id })}`}><Flag className="size-3.5" aria-hidden /> {t('of.report')}</SupportLink>
           </p>
           {methods.length > 0 && (
             <DeliveryDialog open={dialog} game={offer.game} methods={methods} busy={busy} error={error} onClose={() => setDialog(false)} onContinue={(c) => buy(c)} />

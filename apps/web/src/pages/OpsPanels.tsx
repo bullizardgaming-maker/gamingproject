@@ -486,7 +486,7 @@ export function ControlsPanel() {
         <h3 style={{ margin: 0 }}>Kill switches</h3>
         <p className="small muted" style={{ margin: 0 }}>Each switch stops one thing for everyone within seconds; existing orders keep moving and balances stay where they are. Every change is in the audit log.</p>
         <Switch k="pause_withdrawals" label="Withdrawals" hint="No new withdrawal requests; approved payouts in flight still finish." />
-        <Switch k="pause_orders" label="New orders" hint="Nobody can start an order or a cart; paid orders continue to delivery and release." />
+        <Switch k="pause_orders" label="New orders" hint="Nobody can start an order; paid orders continue to delivery and release." />
         <Switch k="pause_chat" label="Chat" hint="Users cannot send messages; staff still can and all records stay." />
         <Switch k="pause_signups" label="Sign-ups" hint="No new accounts; sign-in keeps working." />
         <label className="field">Message shown to users while something is paused (optional)

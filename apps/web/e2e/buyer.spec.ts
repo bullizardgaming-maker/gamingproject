@@ -14,7 +14,7 @@ test.describe('buyer', () => {
     await expect(page.getByText('Rate this seller')).toBeVisible();
     await page.fill('input[aria-label=Message]', 'add me on discord');
     await page.click('form button[type=submit]');
-    await expect(page.getByText('Not sent.')).toBeVisible();
+    await expect(page.getByTestId('hidden-for-safety').last()).toContainText('Stay safe');
     done();
   });
 

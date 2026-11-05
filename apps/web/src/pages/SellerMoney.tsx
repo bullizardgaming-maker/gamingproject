@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { usePageMeta } from '@/lib/seo';
 import { DownloadSimple as Download, FileText, Lock, Receipt as ReceiptText } from '@phosphor-icons/react';
 import { api, download, money } from '../api';
 import { useSession } from '../session';
 import { cn } from '@/lib/utils';
-import { t, type MessageKey } from '../i18n';
+import { currentLocale, t, type MessageKey } from '../i18n';
+import { ListPicker } from '../components/ListPicker';
+import { countryOptions, isSanctioned } from '@/lib/countries';
 import { PHASE2_UI } from '@/lib/launch';
 
 /** Round 24b (CEO): tax, invoices and exports are not shown to sellers. */
@@ -151,19 +153,12 @@ export function SellerMoney() {
             currency={currency}
             max={hold.withdrawableCents}
             disabled={!user?.payouts_enabled || dash.withdrawalsFrozen}
-            onWithdraw={(cents) => run(() => api('/seller/withdrawals', { body: { amountCents: cents, currency } }), t('money.onItsWay', { amount: money(cents, currency) }))}
+            onWithdraw={(body) => run(() => api('/seller/withdrawals', { body: { ...body, currency } }), t('money.onItsWay', { amount: money(body.amountCents, currency) }))}
           />
           {!user?.payouts_enabled && <p className="small muted" style={{ margin: 0 }}>{t('money.setUpFirst')}</p>}
           {dash.withdrawalsFrozen && <p className="small muted" style={{ margin: 0 }}>{t('money.frozen')}</p>}
           {others.map((b: any) => (
-            <div key={b.currency} className="notice row spread">
-              <span>{t('money.alsoHold', { amount: money(b.cents, b.currency) })}</span>
-              {b.cents > 0 && b.currency === 'USD' /* withdrawals are USD only (Round 22b) */ && (
-                <button className="btn ghost" disabled={!user?.payouts_enabled} onClick={() => run(() => api('/seller/withdrawals', { body: { amountCents: b.cents, currency: b.currency } }), t('money.onItsWayShort', { amount: money(b.cents, b.currency) }))}>
-                  {t('money.withdraw')}
-                </button>
-              )}
-            </div>
+            <div key={b.currency} className="notice">{t('money.alsoHold', { amount: money(b.cents, b.currency) })}</div>
           ))}
         </aside>
       </div>
@@ -271,43 +266,46 @@ function Stat({ label, value, tone, icon }: { label: string; value: string; tone
   );
 }
 
-function Withdraw({ currency, max, disabled, onWithdraw }: { currency: string; max: number; disabled: boolean; onWithdraw: (cents: number) => void }) {
+/** What a method is called and where it sends (Round 29): USDT to an address, wallet / InstaPay to a masked phone / IPA. */
+const methodLabel = (m: string | null | undefined) => t(`wd29.m.${m === 'wallet' || m === 'instapay' ? m : 'usdt'}` as MessageKey);
+function destinationOf(pa: PayoutAddress | null) {
+  if (!pa) return null;
+  if (pa.method === 'wallet' || pa.method === 'instapay') return pa.identifier_hint ? { name: methodLabel(pa.method), value: pa.identifier_hint } : null;
+  return pa.address ? { name: pa.currencyName ?? methodLabel('usdt'), value: pa.address } : null;
+}
+
+function Withdraw({ currency, max, disabled, onWithdraw }: { currency: string; max: number; disabled: boolean; onWithdraw: (body: { amountCents: number }) => void }) {
   const [amount, setAmount] = useState('');
   const [checked, setChecked] = useState(false);
-  const [dest, setDest] = useState<{ address: string | null; currencyName: string | null } | null>(null);
+  const [pa, setPa] = useState<PayoutAddress | null>(null);
   const [quote, setQuote] = useState<{ feeCents: number; netCents: number; feeBps: number; feeMinCents: number } | null>(null);
   const cents = amount ? Math.round(Number(amount) * 100) : 0; // nothing until the seller types an amount
+  const dest = destinationOf(pa);
   useEffect(() => {
-    api<{ address: string | null; currencyName: string | null }>('/seller/payout-address').then(setDest).catch(() => {});
+    api<PayoutAddress>('/seller/payout-address').then(setPa).catch(() => {});
   }, []);
   useEffect(() => {
     if (cents <= 0) return setQuote(null);
     let live = true;
-    api<any>(`/seller/withdrawals/quote?amountCents=${cents}`).then((q) => live && setQuote(q)).catch(() => live && setQuote(null));
+    // Round 29: the fee of the confirmed method.
+    api<any>(`/seller/withdrawals/quote?${new URLSearchParams({ amountCents: String(cents), method: pa?.method ?? 'usdt' })}`).then((q) => live && setQuote(q)).catch(() => live && setQuote(null));
     return () => {
       live = false;
     };
-  }, [cents]);
+  }, [cents, pa?.method]);
   return (
     <div className="pg-withdraw-body">
       <div className="field">
         <span className="pg-wlabel">{t('wallet.sendTo')}</span>
-        {dest?.address ? (
-          <div className="pg-addr"><span className="small"><b>{dest.currencyName}</b></span><code className="num">{dest.address}</code><a className="small" href="#payout-address">{t('handover.change')}</a></div>
+        {dest ? (
+          <div className="pg-addr" data-testid="withdraw-to"><span className="small"><b>{dest.name}</b></span><code className="num">{dest.value}</code><a className="small" href="#payout-address">{t('handover.change')}</a></div>
         ) : (
           <a className="small" href="#payout-address">{t('money.payoutAddress.none')}</a>
         )}
       </div>
       <label className="field">
         <span className="pg-wlabel">{t('money.amountIn', { currency })}</span>
-        <input
-          className="num"
-          type="number"
-          min={0}
-          step="0.01"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-        />
+        <input className="num" type="number" min={0} step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
       </label>
       {quote && cents > 0 && (
         <div className="pg-rows" data-testid="withdrawal-fee">
@@ -319,7 +317,7 @@ function Withdraw({ currency, max, disabled, onWithdraw }: { currency: string; m
         <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} />
         {t('wallet.checked')}
       </label>
-      <button className="btn lg block" disabled={disabled || !checked || cents <= 0 || cents > max} onClick={() => (onWithdraw(cents), setAmount(''), setChecked(false))}>
+      <button className="btn lg block" disabled={disabled || !dest || !checked || cents <= 0 || cents > max} onClick={() => (onWithdraw({ amountCents: cents }), setAmount(''), setChecked(false))}>
         {cents > 0 ? t('money.withdrawAmount', { amount: money(cents, currency) }) : t('money.withdraw')}
       </button>
     </div>
@@ -359,16 +357,38 @@ const WSTATUS: Record<string, MessageKey> = {
   failed: 'money.wstatus.failed', rejected: 'money.wstatus.rejected', pending: 'money.wstatus.pending',
 };
 
-interface PayoutAddress { address: string | null; currency: string | null; currencyName: string | null; setAt: string | null; clearedAt?: string | null; pending: { address: string; currency: string; since: string } | null; coins: Array<{ coin: string; name: string }> }
+interface PayoutAddress {
+  /** Round 29: usdt | wallet | instapay, the withdrawal country it was set up for, and a masked phone / IPA. */
+  method?: string | null;
+  country?: string | null;
+  identifier_hint?: string | null;
+  address: string | null;
+  currency: string | null;
+  currencyName: string | null;
+  setAt: string | null;
+  clearedAt?: string | null;
+  pending: { method?: string | null; address: string | null; currency: string | null; identifier_hint?: string | null; since: string } | null;
+  coins: Array<{ coin: string; name: string }>;
+}
+/** GET /seller/withdrawal-methods?country=XX (Round 29): what can be paid out there and what each method asks for. */
+interface WithdrawalMethod { id: string; label: string; fields: string[]; networks?: string[]; fee: { bps: number; minCents: number }; available: boolean }
 
 /**
- * The crypto address withdrawals go to. Round 27: saving a new address opens its own confirmation page (the email link
- * and the emailed code, or the authenticator code); the email link lands there too.
+ * Where withdrawals go. Round 27: saving opens its own confirmation page (the email link and the emailed code, or the
+ * authenticator code). Round 29 (CEO, 5 Nov): country first — the only place a country is chosen — then the methods
+ * available there, then what that method asks for (USDT: network + address; wallet: phone; InstaPay: IPA or phone).
  */
 function PayoutAddressCard({ onMessage }: { onChanged: () => void; onMessage: (m: { kind: 'ok' | 'alert'; text: string }) => void }) {
+  const locale = currentLocale();
+  const countries = useMemo(() => countryOptions(locale), [locale]);
   const [pa, setPa] = useState<PayoutAddress | null>(null);
+  const [country, setCountry] = useState('');
+  const [methods, setMethods] = useState<WithdrawalMethod[] | null>(null);
+  const [methodsError, setMethodsError] = useState('');
+  const [methodId, setMethodId] = useState('');
   const [coin, setCoin] = useState('usdttrc20');
   const [address, setAddress] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [params] = useSearchParams();
   const nav = useNavigate();
   const token = params.get('confirm-payout-address');
@@ -376,11 +396,33 @@ function PayoutAddressCard({ onMessage }: { onChanged: () => void; onMessage: (m
   useEffect(() => {
     load();
   }, [load]);
+  const blocked = isSanctioned(country);
+  useEffect(() => {
+    setMethods(null);
+    setMethodId('');
+    setMethodsError('');
+    if (!country || blocked) return;
+    let live = true;
+    api<{ country: string; methods: WithdrawalMethod[] }>(`/seller/withdrawal-methods?country=${country}`)
+      .then((r) => {
+        if (!live) return;
+        const list = r.methods.filter((m) => m.available !== false);
+        setMethods(list);
+        if (list.length === 1) setMethodId(list[0]!.id);
+      })
+      .catch((e) => live && setMethodsError(e.message));
+    return () => {
+      live = false;
+    };
+  }, [country, blocked]);
+  const method = methods?.find((m) => m.id === methodId) ?? null;
+  const usdt = method?.id === 'usdt';
 
   const request = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!method) return;
     try {
-      await api<PayoutAddress>('/seller/payout-address', { body: { address, currency: coin } });
+      await api<PayoutAddress>('/seller/payout-address', { body: usdt ? { country, method: 'usdt', address, currency: coin } : { country, method: method.id, identifier } });
       nav('/sell/payout-address/confirm');
     } catch (err: any) {
       onMessage({ kind: 'alert', text: err.message });
@@ -390,12 +432,14 @@ function PayoutAddressCard({ onMessage }: { onChanged: () => void; onMessage: (m
   // The link in the email: confirm on its own page.
   if (token) return <Navigate to={`/sell/payout-address/confirm?token=${encodeURIComponent(token)}`} replace />;
   if (!pa) return null;
+  const current = destinationOf(pa);
+  const coins = method?.networks?.length ? pa.coins.filter((c) => method.networks!.includes(c.coin)) : pa.coins;
   return (
     <div className="card stack" id="payout-address">
       <div className="eyebrow" style={{ marginBottom: 0 }}>{t('money.payoutAddress')}</div>
       <p className="small muted" style={{ margin: 0 }}>{t('money.payoutAddress.text')}</p>
-      {pa.address ? (
-        <p className="small" style={{ margin: 0 }}><b>{pa.currencyName}</b> · <code className="mono" style={{ wordBreak: 'break-all' }}>{pa.address}</code></p>
+      {current ? (
+        <p className="small" style={{ margin: 0 }} data-testid="payout-current"><b>{current.name}</b> · <code className="mono" style={{ wordBreak: 'break-all' }}>{current.value}</code></p>
       ) : pa.clearedAt ? (
         <p className="small" role="status" style={{ margin: 0 }}>{t('money.payoutAddress.cleared')}</p>
       ) : (
@@ -403,20 +447,49 @@ function PayoutAddressCard({ onMessage }: { onChanged: () => void; onMessage: (m
       )}
       {pa.pending && (
         <p className="small" role="status" style={{ margin: 0 }}>
-          {t('money.payoutAddress.pending', { address: pa.pending.address })} <Link to="/sell/payout-address/confirm">{t('pa27.enterCode')}</Link>
+          {t('money.payoutAddress.pending', { address: pa.pending.address ?? pa.pending.identifier_hint ?? '' })} <Link to="/sell/payout-address/confirm">{t('pa27.enterCode')}</Link>
         </p>
       )}
-      <form className="row" onSubmit={request} style={{ alignItems: 'end', flexWrap: 'wrap' }}>
-        <label className="field" style={{ margin: 0 }}>
-          {t('money.payoutAddress.coin')}
-          <select value={coin} onChange={(e) => setCoin(e.target.value)} aria-describedby="payout-coin-hint">{pa.coins.map((c) => <option key={c.coin} value={c.coin}>{c.name}</option>)}</select>
-          <span id="payout-coin-hint" className="small muted">{t('money.payoutAddress.coinHint')}</span>
-        </label>
-        <label className="field" style={{ margin: 0, flex: 1, minWidth: 220 }}>
-          {t('money.payoutAddress.address')}
-          <input value={address} onChange={(e) => setAddress(e.target.value)} required minLength={10} maxLength={128} />
-        </label>
-        <button className="btn ghost" type="submit">{t('money.payoutAddress.save')}</button>
+      <form className="stack" onSubmit={request} style={{ gap: 12, maxWidth: 520 }}>
+        <ListPicker label={t('wd29.country')} name="withdrawCountry" required value={country} onChange={setCountry} options={countries} />
+        {blocked && <p className="auth-error" role="alert" data-testid="withdraw-blocked" style={{ margin: 0 }}>{t('err.country_not_supported')}</p>}
+        {methodsError && <p className="alert small" role="alert" style={{ margin: 0 }}>{methodsError}</p>}
+        {methods && (
+          methods.length === 0 ? (
+            <p className="small muted" role="status" style={{ margin: 0 }}>{t('wd29.none')}</p>
+          ) : (
+            <fieldset className="wd-methods" data-testid="withdraw-methods">
+              <legend className="pg-wlabel">{t('wd29.method')}</legend>
+              {methods.map((m) => (
+                <label key={m.id} className={`wd-method${m.id === methodId ? ' is-on' : ''}`}>
+                  <input type="radio" name="withdrawMethod" value={m.id} checked={m.id === methodId} onChange={() => (setMethodId(m.id), setIdentifier(''))} />
+                  <span>{methodLabel(m.id)}</span>
+                  <span className="small muted num wd-soon">{t('wd29.fee', { pct: (m.fee.bps / 100).toFixed(m.fee.bps % 100 ? 2 : 0), min: money(m.fee.minCents, 'USD') })}</span>
+                </label>
+              ))}
+            </fieldset>
+          )
+        )}
+        {usdt && (
+          <div className="row" style={{ alignItems: 'end', flexWrap: 'wrap' }}>
+            <label className="field" style={{ margin: 0 }}>
+              {t('money.payoutAddress.coin')}
+              <select value={coin} onChange={(e) => setCoin(e.target.value)} aria-describedby="payout-coin-hint">{coins.map((c) => <option key={c.coin} value={c.coin}>{c.name}</option>)}</select>
+              <span id="payout-coin-hint" className="small muted">{t('money.payoutAddress.coinHint')}</span>
+            </label>
+            <label className="field" style={{ margin: 0, flex: 1, minWidth: 220 }}>
+              {t('money.payoutAddress.address')}
+              <input value={address} onChange={(e) => setAddress(e.target.value)} required minLength={10} maxLength={128} dir="ltr" />
+            </label>
+          </div>
+        )}
+        {method && !usdt && (
+          <label className="field" style={{ margin: 0 }}>
+            {t(method.id === 'wallet' ? 'wd29.f.phone' : 'wd29.f.ipa')}
+            <input name={`payout.${method.id}`} type={method.id === 'wallet' ? 'tel' : 'text'} autoComplete={method.id === 'wallet' ? 'tel' : 'off'} dir="ltr" value={identifier} onChange={(e) => setIdentifier(e.target.value)} required minLength={3} maxLength={120} />
+          </label>
+        )}
+        {method && <button className="btn ghost" type="submit" style={{ alignSelf: 'start' }}>{t('money.payoutAddress.save')}</button>}
       </form>
     </div>
   );
@@ -465,7 +538,7 @@ export function PayoutAddressConfirm() {
         <p id="pa27-why" style={{ margin: 0 }}>{t('pa27.why')}</p>
         {pa?.pending && (
           <p className="small" style={{ margin: 0 }} data-testid="pa27-address">
-            {t('pa27.newAddress')} <b>{pa.pending.currency ? pa.coins.find((c) => c.coin === pa.pending!.currency)?.name ?? pa.pending.currency : ''}</b> · <code className="mono" style={{ wordBreak: 'break-all' }}>{pa.pending.address}</code>
+            {t('pa27.newAddress')} <b>{pa.pending.currency ? pa.coins.find((c) => c.coin === pa.pending!.currency)?.name ?? pa.pending.currency : methodLabel(pa.pending.method)}</b> · <code className="mono" style={{ wordBreak: 'break-all' }}>{pa.pending.address ?? pa.pending.identifier_hint}</code>
           </p>
         )}
         {pa && !pa.pending && !params.get('token') && <p className="small muted" style={{ margin: 0 }}>{t('pa27.nothingPending')}</p>}
@@ -476,7 +549,7 @@ export function PayoutAddressConfirm() {
         </label>
         {error && <div id="pa27-err" className="alert" role="alert">{error}</div>}
         <div className="row">
-          <button className="btn" type="submit" disabled={busy}>{t('money.payoutAddress.confirm')}</button>
+          <button className="btn" type="submit" disabled={busy || !pa}>{t('money.payoutAddress.confirm')}</button>
           <Link className="btn ghost" to="/sell/money">{t('lst.cancel')}</Link>
         </div>
       </form>

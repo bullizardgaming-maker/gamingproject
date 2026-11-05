@@ -90,7 +90,7 @@ test.describe('crypto money paths', () => {
   test('seller withdrawal shows the fee, waits for the CFO, then pays out', async ({ page }) => {
     await signIn(page, 'Seller');
     await page.goto('/sell/money');
-    await expect(page.getByText('Payout address', { exact: true })).toBeVisible();
+    await expect(page.getByText('Payout method', { exact: true })).toBeVisible();
     await expect(page.getByText(/Tether \(TRC-20\)/).first()).toBeVisible();
     await page.getByLabel(/Amount in USD/).fill('20');
     await expect(page.getByTestId('withdrawal-fee')).toContainText('Fee (6%, minimum $1.50)$1.50');
