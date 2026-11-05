@@ -142,8 +142,15 @@ export function allowedWebOrigins(cfg: { PUBLIC_WEB_URL: string; EXTRA_WEB_ORIGI
  * Round 29 (12): the apex the refresh cookie is set on (".bullizard.com"), so the web app and support.bullizard.com share
  * it. COOKIE_DOMAIN overrides; localhost and bare hosts get no Domain attribute.
  */
-export function refreshCookieDomain(cfg: { PUBLIC_WEB_URL: string; COOKIE_DOMAIN?: string }): string | undefined {
-  if (cfg.COOKIE_DOMAIN) return cfg.COOKIE_DOMAIN;
+/**
+ * Round 29 fix: the refresh cookie is host-only on the API host (support.bullizard.com is same-site, so it is sent anyway, and a
+ * ".bullizard.com" cookie would be shared between the staging and production APIs). A Domain is set only with COOKIE_DOMAIN.
+ */
+export function refreshCookieDomain(cfg: { PUBLIC_WEB_URL?: string; COOKIE_DOMAIN?: string }): string | undefined {
+  return cfg.COOKIE_DOMAIN || undefined;
+}
+/** The apex Domain the Round 29 cookie used (".bullizard.com") — only to clear that old cookie from browsers. */
+export function legacyCookieDomain(cfg: { PUBLIC_WEB_URL: string }): string | undefined {
   try {
     const u = new URL(cfg.PUBLIC_WEB_URL);
     if (u.protocol !== 'https:') return undefined;

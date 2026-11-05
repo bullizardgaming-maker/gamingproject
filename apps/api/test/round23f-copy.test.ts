@@ -204,7 +204,7 @@ describe('§9.2 / §9.8 web error display and keys', () => {
       'auth.botCheck', 'err.captcha_required', 'err.captcha_failed', 'auth.botCheckExpired', 'err.invalid_credentials', 'err.session_expired', 'err.reauth_required', 'err.wrong_current_password', 'err.account_locked', 'auth.resetSent',
       'upload.videoTooLarge', 'err.file_too_large', 'err.direct_upload_unavailable', 'err.malware_detected', 'err.scanner_unavailable', 'err.upload_missing', 'upload.uploading', 'upload.scanning',
       'err.balance_remaining', 'err.open_orders', 'err.balance_owed', 'account.data.before',
-      'chat.notSent', 'chat.blocked.queue', 'chat.blocked.ban', 'chat.ev.account_suspended_offplatform', 'chat.ev.account_banned_offplatform', 'chat.ev.security_review', 'mod.inReview', 'mod.inReviewHint',
+      'chat.notDelivered', 'chat.blocked.ban', 'chat.ev.account_suspended_offplatform', 'chat.ev.account_banned_offplatform', 'chat.ev.security_review', 'mod.inReview', 'mod.inReviewHint',
       'err.unsupported_coin', 'err.unsupported_currency', 'money.payoutAddress.coinHint', 'money.payoutAddress.cleared',
     ];
     const en = (await import('../../web/src/i18n/en.ts')).default as Record<string, string>;

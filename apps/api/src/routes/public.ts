@@ -38,7 +38,7 @@ import { LOCALES } from '../domain/locales/index.js';
 import { TICKET_CATEGORIES, createTicket, customerReply, customerResolve, getTicket, listMyTickets } from '../domain/support.js';
 import { createWatch, deleteWatch, listWatches, updateWatch } from '../domain/watches.js';
 import { confirmSubscription, getIncident, statusSummary, subscribe, unsubscribe } from '../domain/status.js';
-import { me, refreshCookieDomain, requestMeta } from '../server.js';
+import { legacyCookieDomain, me, refreshCookieDomain, requestMeta } from '../server.js';
 import { REGIONS, assertCryptoAllowedHere, assertNotSanctioned, isCryptoBlockedCountry } from '../domain/geo.js';
 import { DEPOSIT_METHODS, createDeposit, depositMethodsFor, depositOf, depositQuote, listDeposits } from '../domain/walletDeposits.js';
 import { coinsFor, paymentsFor, refreshCryptoPayment, settleStuckPayments, startCryptoPayment } from '../domain/cryptoPayments.js';
@@ -56,34 +56,38 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   // --- Auth -----------------------------------------------------------------
   // Browsers get the refresh token as an httpOnly, SameSite=Strict cookie scoped to /v1/auth,
   // so page scripts can never read it. Native/mobile clients send `X-Token-Delivery: body`.
-  const COOKIE = 'bz_rt';
+  // Round 29 fix: `bz_rt2`, host-only on the API host (support.bullizard.com is same-site, so it is sent there too). The
+  // Round 29 `bz_rt` cookie (host-only and `.bullizard.com`) is cleared on every login / refresh / logout: browsers that
+  // carried both sent the stale one first, which signed everyone out right after signing in.
+  const COOKIE = 'bz_rt2';
+  const LEGACY_COOKIE = 'bz_rt';
   const secure = ctx.cfg.NODE_ENV === 'production';
-  // Round 29 (12): the refresh cookie is scoped to the apex (".bullizard.com") so support.bullizard.com shares the session.
   const cookieDomain = refreshCookieDomain(ctx.cfg);
+  const legacyDomain = legacyCookieDomain(ctx.cfg);
   const cookieOpts = { path: '/v1/auth', ...(cookieDomain ? { domain: cookieDomain } : {}) };
-  /** Every value the browser sent under the cookie name — there can be two after the domain change (a host-only one from before). */
-  const cookieValues = (req: FastifyRequest): string[] => {
+  /** Every value the browser sent under a cookie name (a browser can carry two cookies of one name with different domains). */
+  const cookieValues = (req: FastifyRequest, name: string): string[] => {
     const raw = req.headers.cookie;
     if (typeof raw !== 'string') return [];
     const out: string[] = [];
     for (const part of raw.split(';')) {
       const i = part.indexOf('=');
-      if (i < 0 || part.slice(0, i).trim() !== COOKIE) continue;
+      if (i < 0 || part.slice(0, i).trim() !== name) continue;
       const v = decodeURIComponent(part.slice(i + 1).trim());
       if (v && !out.includes(v)) out.push(v);
     }
     return out;
   };
-  /** Drops the host-only cookie set before Round 29 (its stale token was read first and signed every browser out). */
-  const clearLegacyCookie = (reply: FastifyReply) => {
-    if (cookieDomain) reply.clearCookie(COOKIE, { path: '/v1/auth' });
+  const clearLegacyCookies = (reply: FastifyReply) => {
+    reply.clearCookie(LEGACY_COOKIE, { path: '/v1/auth' });
+    if (legacyDomain) reply.clearCookie(LEGACY_COOKIE, { path: '/v1/auth', domain: legacyDomain });
   };
   const clearCookies = (reply: FastifyReply) => {
     reply.clearCookie(COOKIE, cookieOpts);
-    clearLegacyCookie(reply);
+    clearLegacyCookies(reply);
   };
   const deliver = (req: FastifyRequest, reply: FastifyReply, res: { refreshToken: string } & Record<string, unknown>) => {
-    clearLegacyCookie(reply);
+    clearLegacyCookies(reply);
     reply.setCookie(COOKIE, res.refreshToken, {
       httpOnly: true, secure, sameSite: 'strict', maxAge: REFRESH_TTL_DAYS * 86_400, ...cookieOpts,
     });
@@ -159,10 +163,9 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.post('/auth/refresh', { config: { rateLimit: { max: ctx.cfg.NODE_ENV === 'test' ? 10_000 : 60, timeWindow: '1 minute' } } }, async (req, reply) => {
     const { refreshToken } = z.object({ refreshToken: z.string().optional() }).parse(req.body ?? {});
-    const tokens = refreshToken ? [refreshToken] : cookieValues(req);
+    const tokens = refreshToken ? [refreshToken] : [...cookieValues(req, COOKIE), ...cookieValues(req, LEGACY_COOKIE)];
     if (!tokens.length) throw new AppError(401, 'session_expired', 'You were signed out. Sign in again.');
-    // Round 29 fix: a browser may still carry the old host-only cookie next to the new ".bullizard.com" one; the first value
-    // is stale, so every value is tried and the one that works wins (the stale ones are dropped from the browser).
+    // Every value is tried (the new cookie first, then any old `bz_rt`) and the one that works wins; stale ones are cleared.
     let lastErr: unknown;
     for (const token of tokens) {
       try {
@@ -178,7 +181,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   app.post('/auth/logout', async (req, reply) => {
-    const tokens = (req.body as any)?.refreshToken ? [(req.body as any).refreshToken as string] : cookieValues(req);
+    const tokens = (req.body as any)?.refreshToken ? [(req.body as any).refreshToken as string] : [...cookieValues(req, COOKIE), ...cookieValues(req, LEGACY_COOKIE)];
     if (tokens.length) for (const token of tokens) await revokeByRefreshToken(ctx, token);
     else if (req.user?.session_family) await revokeFamily(ctx, req.user.id, req.user.session_family, 'signed_out');
     clearCookies(reply);

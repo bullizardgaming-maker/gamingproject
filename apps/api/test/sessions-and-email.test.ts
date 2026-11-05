@@ -66,11 +66,15 @@ describe('sessions and refresh tokens', () => {
     const u = await makeUser(h, { tier: 1 });
     const res = await client(h.app).post('/v1/auth/login', { email: u.email, password: PASSWORD });
     expect(res.body.refreshToken).toBeUndefined();
-    const cookie = String(res.headers['set-cookie']);
-    expect(cookie).toMatch(/bz_rt=rt_/);
+    const cookies = ([] as string[]).concat(res.headers['set-cookie'] as any);
+    const cookie = cookies.find((c) => c.startsWith('bz_rt2=rt_'))!;
+    expect(cookie).toMatch(/bz_rt2=rt_/);
     expect(cookie).toMatch(/HttpOnly/);
     expect(cookie).toMatch(/SameSite=Strict/);
     expect(cookie).toMatch(/Path=\/v1\/auth/);
+    expect(cookie).not.toMatch(/Domain=/); // host-only: never shared between the staging and production APIs
+    // the Round 29 `bz_rt` cookie is cleared (host-only) on every login
+    expect(cookies.some((c) => c.startsWith('bz_rt=') && /Max-Age=0|Expires=Thu, 01 Jan 1970/.test(c))).toBe(true);
     const r = await client(h.app, undefined, { cookie: cookie.split(';')[0]! }).post('/v1/auth/refresh');
     expect(r.status).toBe(200);
     expect(r.body.token).toBeTruthy();

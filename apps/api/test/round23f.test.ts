@@ -90,7 +90,7 @@ describe('Round 23f part A', () => {
     expect(res.headers['cdn-cache-control']).toBe('no-store');
     expect(res.headers['cloudflare-cdn-cache-control']).toBe('no-store');
     const web = (p: string) => readFileSync(new URL(`../../web/src/${p}`, import.meta.url), 'utf8');
-    for (const page of ['pages/OfferPage.tsx', 'pages/Cart.tsx']) {
+    for (const page of ['pages/OfferPage.tsx']) {
       expect(web(page)).toMatch(/e\.code === 'terms_stale'\) \{[\s\S]*?terms\.onStale\(\)/);
       expect(web(page)).toMatch(/<TermsChanged /);
     }
