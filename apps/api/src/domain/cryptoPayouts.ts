@@ -285,7 +285,9 @@ export function withdrawalView<T extends Record<string, any>>(w: T) {
 export async function listPendingWithdrawals(q: Queryable, ctx?: Ctx) {
   const rows = await many<any>(
     q,
-    `SELECT w.*, u.email, u.display_name, u.kyc_tier, u.trust_level, u.seller_rank FROM withdrawals w JOIN users u ON u.id = w.user_id
+    `SELECT w.*, u.email, u.display_name, u.kyc_tier, u.trust_level, u.seller_rank,
+            (SELECT s.display_name FROM users s WHERE s.id = w.manual_send_requested_by) AS manual_send_requested_by_name
+       FROM withdrawals w JOIN users u ON u.id = w.user_id
       WHERE w.status IN ('pending_approval', 'processing', 'unknown') OR (w.status = 'failed' AND w.updated_at > now() - interval '7 days') ORDER BY w.created_at`,
   );
   // Round 29 (5): `manual_send_allowed` — Ops shows the "Mark as sent" button only where the server will accept it.

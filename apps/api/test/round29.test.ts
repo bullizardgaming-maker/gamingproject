@@ -4,7 +4,7 @@ import { depositUsd, paymentState } from '../src/domain/cryptoPayments.js';
 import { grossUp, refreshSellerRate } from '../src/domain/commission.js';
 import { dispatchEmails } from '../src/domain/notifications.js';
 import { detectOpsAlerts } from '../src/domain/opsAlerts.js';
-import { allowedWebOrigins } from '../src/server.js';
+import { allowedWebOrigins, refreshCookieDomain } from '../src/server.js';
 import { cleanIdentifier, withdrawalFeeTable } from '../src/domain/withdrawalMethods.js';
 import { FakeNow } from './fakeNowPayments.js';
 import { client, makeOffer, makeUser, setup, type Harness } from './helpers.js';
@@ -525,6 +525,27 @@ describe('Round 29 — CEO decisions and test findings', () => {
     expect(ar.body).toContain('المنطقة: الشرق الأوسط');
     expect(ar.body).toContain('/account/secure');
     expect(ar.body).not.toContain('18+');
+  });
+
+  it('12b. a browser carrying two refresh cookies (the old host-only one + the .bullizard.com one) stays signed in — the working value wins, stale ones are dropped', async () => {
+    const r = await client(h.app).post('/v1/auth/register', { email: `cookie_${Date.now()}@example.com`, password: 'correct horse battery', displayName: 'Cookie Tester', acceptTerms: true });
+    expect(r.status).toBe(201);
+    const setCookie = ([] as string[]).concat(r.headers['set-cookie'] as any).find((c) => c.startsWith('bz_rt='))!;
+    const valid = decodeURIComponent(setCookie.split(';')[0]!.slice('bz_rt='.length));
+    const stale = 'stale-token-from-before-the-domain-change';
+    // the stale cookie is sent first, as a browser does with the older cookie
+    const ok = await h.app.inject({ method: 'POST', url: '/v1/auth/refresh', headers: { cookie: `bz_rt=${stale}; bz_rt=${encodeURIComponent(valid)}` } });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().token).toBeTruthy();
+    const rotated = ([] as string[]).concat(ok.headers['set-cookie'] as any).filter((c) => c.startsWith('bz_rt='));
+    expect(rotated.some((c) => !c.includes('Max-Age=0') && c.includes('Path=/v1/auth'))).toBe(true);
+    // only stale values → signed out, both cookie variants cleared
+    const bad = await h.app.inject({ method: 'POST', url: '/v1/auth/refresh', headers: { cookie: `bz_rt=${stale}` } });
+    expect(bad.statusCode).toBe(401);
+    expect(bad.json().error.code).toBe('session_expired');
+    expect(refreshCookieDomain({ PUBLIC_WEB_URL: 'https://staging.bullizard.com' })).toBe('.bullizard.com');
+    expect(refreshCookieDomain({ PUBLIC_WEB_URL: 'https://bullizard.com', COOKIE_DOMAIN: '.bullizard.com' })).toBe('.bullizard.com');
+    expect(refreshCookieDomain({ PUBLIC_WEB_URL: 'http://localhost:5173' })).toBeUndefined();
   });
 
   it('12. support.bullizard.com may call the API with cookies', () => {

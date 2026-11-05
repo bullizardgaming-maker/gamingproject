@@ -117,7 +117,8 @@ export function withdrawalMethodsFor(ctx: Ctx, country?: string | null) {
   const fees = withdrawalFeeTable(ctx);
   const c = normCountry(country);
   const manualHere = !!c && ctx.cfg.MANUAL_PAYOUT_COUNTRIES.split(',').map((x) => x.trim().toUpperCase()).includes(c);
-  const pub = (r: FeeRule) => ({ pct_bps: r.pctBps, fixed_cents: r.fixedCents, min_cents: r.minCents, max_cents: r.maxCents, currency: r.currency });
+  // `bps` / `minCents` are the names the web used first (frontend-requests §4); the snake_case ones carry the full CFO rule.
+  const pub = (r: FeeRule) => ({ bps: r.pctBps, minCents: r.minCents, pct_bps: r.pctBps, fixed_cents: r.fixedCents, min_fee_cents: r.minFeeCents ?? 0, min_cents: r.minCents, max_cents: r.maxCents, currency: r.currency });
   const all = [
     {
       id: 'usdt', label: 'USDT (crypto)', fields: ['network', 'address'], sent_by: 'provider', available: true, currency: 'USD',
