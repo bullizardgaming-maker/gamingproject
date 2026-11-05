@@ -132,12 +132,12 @@ test.describe('Round 26: create and manage listings (B1–B10)', () => {
   test('a listing Bullizard paused shows "Paused by Bullizard – contact support" and no Resume', async ({ page }) => {
     await signIn(page, 'Seller');
     await page.addInitScript(() => {
-      const raw = localStorage.getItem('bz.demo.v29');
+      const raw = localStorage.getItem('bz.demo.v30');
       if (!raw) return;
       const s = JSON.parse(raw);
       Object.assign(s.offers.find((o: { id: string }) => o.id === 'offer-3'), { status: 'paused', expired_reason: 'listing_ban' });
       Object.assign(s.offers.find((o: { id: string }) => o.id === 'offer-4'), { status: 'paused', expired_reason: null });
-      localStorage.setItem('bz.demo.v29', JSON.stringify(s));
+      localStorage.setItem('bz.demo.v30', JSON.stringify(s));
     });
     await page.goto('/sell');
     const staff = page.getByRole('row', { name: /Cyberpunk 2077/ });
@@ -152,11 +152,11 @@ test.describe('Round 26: create and manage listings (B1–B10)', () => {
     await signIn(page, 'Seller');
     // Sold out: set the listing's stock to 0 before the demo loads its saved state.
     await page.addInitScript(() => {
-      const raw = localStorage.getItem('bz.demo.v29');
+      const raw = localStorage.getItem('bz.demo.v30');
       if (!raw) return;
       const s = JSON.parse(raw);
       s.offers.find((o: { id: string }) => o.id === 'offer-14').stock = 0;
-      localStorage.setItem('bz.demo.v29', JSON.stringify(s));
+      localStorage.setItem('bz.demo.v30', JSON.stringify(s));
     });
     await page.goto('/sell');
     await expect(page.getByRole('row', { name: /AK-47 \| Redline/ }).getByTestId('out-of-stock')).toHaveText('Out of stock – hidden until you restock');

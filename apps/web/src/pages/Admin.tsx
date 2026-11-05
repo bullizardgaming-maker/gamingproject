@@ -14,6 +14,7 @@ import { DisputeCase } from './DisputeCase';
 import { DISPUTE_CATEGORY } from './OrderPage';
 import { ModerationPanel } from './ModerationPanel';
 import { WarrantyPanel } from './WarrantyPanel';
+import { FraudReviewPanel } from './ops/FraudReviewPanel';
 import {
   ArrowsClockwise, ArrowsLeftRight, Book, Brain, Certificate, ChartLineUp, ClipboardText, CreditCard, CurrencyBtc, Detective, EnvelopeSimple, Exam,
   FileText, Flag, Gavel, HandCoins, Headset, LockKey, List, ListChecks, Medal, PaperPlaneTilt, Prohibit, Pulse, Receipt, Scales, Scroll, ShieldCheck,
@@ -23,8 +24,8 @@ import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
 
-type ListTab = 'disputes' | 'risk' | 'proofs' | 'chargebacks' | 'ledger' | 'recon' | 'audit';
-type PanelTab = 'business' | 'retention' | 'support' | 'releases' | 'moderation' | 'warranty' | 'aml' | 'treasury' | 'payouts' | 'refunds' | 'tax' | 'staff' | 'status' | 'debts' | 'currency' | 'model' | 'privacy' | 'ranks' | 'leagues' | 'rules' | 'affiliates' | 'legal' | 'listingban' | 'controls' | 'newsletter' | 'cryptopay';
+type ListTab = 'disputes' | 'proofs' | 'chargebacks' | 'ledger' | 'recon' | 'audit';
+type PanelTab = 'risk' | 'business' | 'retention' | 'support' | 'releases' | 'moderation' | 'warranty' | 'aml' | 'treasury' | 'payouts' | 'refunds' | 'tax' | 'staff' | 'status' | 'debts' | 'currency' | 'model' | 'privacy' | 'ranks' | 'leagues' | 'rules' | 'affiliates' | 'legal' | 'listingban' | 'controls' | 'newsletter' | 'cryptopay';
 type Tab = ListTab | PanelTab;
 
 /** Each tab is shown to whoever holds its permission (see the API's domain/permissions.ts). */
@@ -81,7 +82,7 @@ const ICONS: Partial<Record<Tab, Icon>> = {
 };
 
 const PANELS: Record<PanelTab, () => React.ReactElement> = {
-  business: BusinessPanel, retention: RetentionPanel, newsletter: NewsletterExport, support: SupportPanel, moderation: ModerationPanel, warranty: WarrantyPanel, aml: AmlPanel, treasury: TreasuryPanel, tax: TaxPanel, staff: StaffPanel,
+  risk: FraudReviewPanel, business: BusinessPanel, retention: RetentionPanel, newsletter: NewsletterExport, support: SupportPanel, moderation: ModerationPanel, warranty: WarrantyPanel, aml: AmlPanel, treasury: TreasuryPanel, tax: TaxPanel, staff: StaffPanel,
   status: IncidentsPanel, debts: DebtsPanel, currency: CurrencyPanel, model: FraudModelPanel, privacy: PrivacyPanel, legal: LegalPanel, listingban: ListingBanPanel, controls: ControlsPanel,
   releases: ReleasesPanel, payouts: PayoutsPanel, cryptopay: CryptoPaymentsPanel, refunds: CryptoRefundsPanel, ranks: RanksPanel, leagues: LeaguesPanel, rules: RulesTestPanel, affiliates: AffiliatesPanel,
 };
@@ -104,7 +105,6 @@ export function Admin() {
 
   const path: Record<ListTab, string> = {
     disputes: '/admin/disputes',
-    risk: '/admin/risk-flags',
     proofs: '/admin/owner-proofs',
     chargebacks: '/admin/chargebacks',
     ledger: '/admin/ledger/summary',
@@ -187,27 +187,6 @@ export function Admin() {
       ) : tab === 'disputes' ? (
         <div className="stack">
           {rows.map((d) => <DisputeCard key={d.id} d={d} onResolve={(outcome, note, refundCents) => act(() => api(`/admin/disputes/${d.id}/resolve`, { body: refundCents ? { outcome, note, refundCents } : { outcome, note } }))} />)}
-        </div>
-      ) : tab === 'risk' ? (
-        <div className="card table-wrap">
-          <table className="data">
-            <thead><tr><th>Account</th><th>Score</th><th>Why</th><th /></tr></thead>
-            <tbody>
-              {rows.map((f) => (
-                <tr key={f.id}>
-                  <td>{f.display_name}<div className="small muted">{f.email}{f.withdrawals_frozen ? ' · payouts frozen' : ''}</div></td>
-                  <td className="mono">{Number(f.score).toFixed(2)}</td>
-                  <td className="small">{(f.reasons as any[]).map((r) => r.code.replace(/_/g, ' ')).join(', ')}{f.order_id && <> · <Link to={`/orders/${f.order_id}`}>order</Link></>}</td>
-                  <td>
-                    <div className="row">
-                      <button className="btn ghost" onClick={() => act(() => api(`/admin/risk-flags/${f.id}/review`, { body: { decision: 'clear' } }))}>Clear and unfreeze</button>
-                      <button className="btn dispute" onClick={() => confirm(`Suspend ${f.display_name}?`) && act(() => api(`/admin/risk-flags/${f.id}/review`, { body: { decision: 'confirm' } }))}>Confirm fraud</button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         </div>
       ) : tab === 'proofs' ? (
         <div className="card table-wrap">

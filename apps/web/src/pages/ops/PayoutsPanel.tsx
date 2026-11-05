@@ -6,6 +6,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { Stat, initials } from './OpsStat';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
@@ -26,7 +27,6 @@ const MANUAL = new Set(['wallet', 'instapay']);
 const METHOD_LABEL: Record<string, string> = { usdt: 'USDT', wallet: 'Mobile wallet', instapay: 'InstaPay' };
 const isManual = (w: any) => MANUAL.has(w.method);
 const methodOf = (w: any) => (isManual(w) ? METHOD_LABEL[w.method] : `USDT · ${String(w.destination_currency ?? '').toLowerCase() === 'usdtbsc' ? 'BEP-20' : 'TRC-20'}`);
-const initials = (name: string) => name.split(/\s+/).map((p) => p[0]).join('').slice(0, 2).toUpperCase();
 const short = (a: string | null | undefined) => (!a ? '—' : a.length > 14 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a);
 
 /** The payout provider's own error, as "NOWPayments: 403 … — message". The API keeps the staff text in failure_reason. */
@@ -56,15 +56,6 @@ function StatusBadge({ w }: { w: any }) {
   return <Badge variant="warning" dot>Awaiting approval</Badge>;
 }
 
-function Stat({ icon: I, label, value, sub, bad }: { icon: typeof Clock; label: string; value: string; sub: string; bad?: boolean }) {
-  return (
-    <Card className={cn('gap-1.5 px-4 py-3.5', bad && 'border-destructive/50')}>
-      <div className="flex items-center gap-1.5 text-[13px] text-muted-foreground"><I className="size-4" aria-hidden /> {label}</div>
-      <div className={cn('text-2xl font-bold tabular-nums', bad && 'text-disputed-ink')}>{value}</div>
-      <div className="text-xs text-muted-foreground tabular-nums">{sub}</div>
-    </Card>
-  );
-}
 
 export function PayoutsPanel() {
   const { data, error, reload } = useLoad(() => api<any[]>('/admin/withdrawals'));

@@ -4,11 +4,11 @@ import { buyNow, fillCharacter, pickCoin, signIn } from './helpers';
 /** Change the demo's saved listings before the app loads them. */
 async function patchOffers(page: Page, patch: Record<string, Record<string, unknown>>) {
   await page.addInitScript((p) => {
-    const raw = localStorage.getItem('bz.demo.v29');
+    const raw = localStorage.getItem('bz.demo.v30');
     if (!raw) return;
     const s = JSON.parse(raw);
     for (const [id, fields] of Object.entries(p)) Object.assign(s.offers.find((o: { id: string }) => o.id === id) ?? {}, fields);
-    localStorage.setItem('bz.demo.v29', JSON.stringify(s));
+    localStorage.setItem('bz.demo.v30', JSON.stringify(s));
   }, patch);
 }
 

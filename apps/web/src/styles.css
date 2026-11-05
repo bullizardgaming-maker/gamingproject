@@ -1514,3 +1514,6 @@ html.dark .od-review-reason { color: #f6a39b; }
 
 /* Round 29: order page link to support. */
 .od-support { display: flex; align-items: center; gap: 6px; margin: 12px 0 0; }
+
+/* Round 30: Ops uses the full screen width (sidebar + wide tables). */
+.shell:has(> .ops) { max-width: none; }

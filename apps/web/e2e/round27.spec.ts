@@ -24,12 +24,12 @@ test.describe('Round 27: staging test fixes', () => {
 
     // Staff freeze the order for a security review.
     await page.addInitScript((id) => {
-      const raw = localStorage.getItem('bz.demo.v29');
+      const raw = localStorage.getItem('bz.demo.v30');
       if (!raw) return;
       const s = JSON.parse(raw);
       const o = s.orders.find((x: { id: string }) => x.id === id);
       if (o) o.escrow_frozen = true;
-      localStorage.setItem('bz.demo.v29', JSON.stringify(s));
+      localStorage.setItem('bz.demo.v30', JSON.stringify(s));
     }, orderId);
     await page.reload();
     await expect(page.getByTestId('under-review')).toHaveText('Under security review — staff will clear it shortly');

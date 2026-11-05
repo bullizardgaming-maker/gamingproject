@@ -27,7 +27,7 @@ const gameAllowed = (game: string) => {
   return list.some((g) => g.toLowerCase() === game.trim().toLowerCase());
 };
 
-const KEY = DEMO_FULL ? 'bz.demo.v29' : 'bz.demo.launch.v5';
+const KEY = DEMO_FULL ? 'bz.demo.v30' : 'bz.demo.launch.v6';
 const day = 86_400_000;
 const now = () => new Date().toISOString();
 const rid = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2) + Date.now().toString(16));
@@ -3253,7 +3253,9 @@ route('GET', '/admin/risk-flags', ({ me }) => (needStaff(me), state.riskFlags.fi
 route('POST', '/admin/risk-flags/:id/review', ({ me, params, body }) => {
   needStaff(me);
   const f = state.riskFlags.find((x) => x.id === params[0]) ?? fail(404, 'not_found', 'Flag not found');
-  f.status = body.decision === 'clear' ? 'cleared' : 'confirmed';
+  // As the API: the decision closes every open flag of that account; clearing unfreezes its payouts.
+  for (const x of state.riskFlags) if (x.user_id === f.user_id && x.status === 'open') { x.status = body.decision === 'clear' ? 'cleared' : 'confirmed'; if (body.decision === 'clear') x.withdrawals_frozen = false; }
+  save();
   return f;
 });
 route('GET', '/admin/owner-proofs', ({ me }) => {

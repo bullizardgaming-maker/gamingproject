@@ -552,7 +552,20 @@ export function seed() {
     riskFlags: [
       {
         id: 'k1', user_id: 'u-x', display_name: 'fresh_seller_77', email: 'fresh77@example.test', withdrawals_frozen: true, score: 0.86, order_id: null, status: 'open',
-        reasons: [{ code: 'buyer_syndicate_cluster' }, { code: 'new_seller' }, { code: 'shared_device' }], created_at: ago(5 * 3_600_000),
+        reasons: [{ code: 'buyer_syndicate_cluster', weight: 0.4 }, { code: 'new_seller', weight: 0.25 }, { code: 'buyer_seller_shared_infra', weight: 0.21 }],
+        // As the API (Round 27): the reasons in plain words for staff.
+        reasons_text: [
+          'The buyer is one of 4 linked accounts buying from this seller in the last 72 h (40 %)',
+          'The seller’s account is under 7 days old and already has 6 buyers in 72 h (25 %)',
+          'Buyer and seller share a device and a network (21 %)',
+        ],
+        created_at: ago(5 * 3_600_000),
+      },
+      {
+        id: 'k2', user_id: 'u-y', display_name: 'quickbuy_2', email: 'quickbuy2@example.test', withdrawals_frozen: false, score: 0.64, order_id: 'b7f3a2c1-0000-4000-8000-000000000099', order_ref: 'BZ-7F3A2C', amount_cents: 240_00, status: 'open',
+        reasons: [{ code: 'new_buyer_high_value', weight: 0.35 }, { code: 'ip_country_change', weight: 0.29 }],
+        reasons_text: ['The buyer’s account is under 24 h old and this order is $200 or more (35 %)', 'The order came from a different region than the sign-up (29 %)'],
+        created_at: ago(26 * 3_600_000),
       },
     ] as any[],
     chargebacks: [

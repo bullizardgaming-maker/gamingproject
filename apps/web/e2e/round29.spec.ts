@@ -128,7 +128,7 @@ test('a 503 with a known code shows the server’s own message, not “Something
   await page.addInitScript(() => {
     if (sessionStorage.getItem('r29.paused')) return;
     sessionStorage.setItem('r29.paused', '1');
-    const key = 'bz.demo.v29';
+    const key = 'bz.demo.v30';
     const s = JSON.parse(localStorage.getItem(key)!);
     s.controls.pause_orders = true;
     s.controls.pause_message = 'New orders are back at 14:00 UTC.';
