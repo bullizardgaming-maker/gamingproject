@@ -10,6 +10,7 @@ import { AppError, badRequest, conflict, forbidden } from '../lib/errors.js';
 import { outranks, rolesOf } from './permissions.js';
 import { liftIdRestriction } from './onboarding.js';
 import { attributeBuyer, isAffiliateCode } from './affiliates.js';
+import { assertNotSanctioned, isRegion, type Region } from './geo.js';
 import { assertNotPaused, assertWithdrawalWithinLimits } from './controls.js';
 import { withScope } from './events.js';
 import { recordSignals, subnetOf } from './fraud.js';
@@ -51,6 +52,8 @@ export interface User {
   /** Newsletter consent (Round 23a): unticked by default; the time of the current choice. */
   news_opt_in?: boolean;
   news_opt_in_at?: string | null;
+  /** Round 29 (1): the user's region (asia / middle_east / america / europe / global) — a display preference, never a country. */
+  region?: Region;
   /** True when the current session was established with a second factor. */
   session_mfa?: boolean;
   session_id?: string;
@@ -58,7 +61,7 @@ export interface User {
 }
 
 export const PUBLIC_USER_COLUMNS =
-  'id, email, display_name, role, kyc_tier, status, email_verified_at, phone, phone_verified_at, withdrawals_frozen, stripe_account_id, legal_name, created_at, (totp_enabled_at IS NOT NULL) AS totp_enabled, payouts_enabled, staff_roles, locale, handover_names, rules_passed_at, selling_restricted_at, seller_since, listing_banned_at, suspended_until, news_opt_in, news_opt_in_at';
+  'id, email, display_name, role, kyc_tier, status, email_verified_at, phone, phone_verified_at, withdrawals_frozen, stripe_account_id, legal_name, created_at, (totp_enabled_at IS NOT NULL) AS totp_enabled, payouts_enabled, staff_roles, locale, handover_names, rules_passed_at, selling_restricted_at, seller_since, listing_banned_at, suspended_until, news_opt_in, news_opt_in_at, region';
 
 // ---------------------------------------------------------------------------
 // Authentication. Sessions live in ./sessions.ts (15-minute access tokens +
@@ -142,6 +145,8 @@ export async function userFromToken(ctx: Ctx, token: string): Promise<User> {
 
 export interface AuthMeta {
   ip?: string;
+  /** Round 29 (1): the edge's country for the client IP (recorded on the session; blocks sanctioned countries only). */
+  ipCountry?: string;
   device?: string;
   userAgent?: string;
 }
@@ -151,8 +156,11 @@ function sessionResponse(user: User, s: IssuedSession) {
   return { user, token: s.accessToken, refreshToken: s.refreshToken, expiresIn: s.expiresIn };
 }
 
-export async function register(ctx: Ctx, input: { email: string; password: string; displayName: string; code?: string; referralCode?: string; creatorCode?: string; locale?: string; newsOptIn?: boolean } & AuthMeta) {
+export async function register(ctx: Ctx, input: { email: string; password: string; displayName: string; region?: string; code?: string; referralCode?: string; creatorCode?: string; locale?: string; newsOptIn?: boolean } & AuthMeta) {
   await assertNotPaused(ctx.db, 'signups'); // kill switch (Ops → Controls)
+  // Round 29 (1): a sanctioned connection cannot sign up; the region is a preference (Global when not picked).
+  assertNotSanctioned(ctx, input.ipCountry, 'signup');
+  const region: Region = isRegion(input.region) ? input.region : 'global';
   const hash = await hashPassword(input.password);
   // One code per user, entered at sign-up only (CEO, Oct 24): a friend's invite code or a creator code, whichever this is.
   const codes = [input.code, input.referralCode, input.creatorCode].filter((c): c is string => !!c?.trim());
@@ -164,9 +172,9 @@ export async function register(ctx: Ctx, input: { email: string; password: strin
   try {
     const user = await one<User>(
       ctx.db,
-      `INSERT INTO users (email, password_hash, display_name, referred_by, locale, tos_version, tos_accepted_at, news_opt_in, news_opt_in_at)
-       VALUES ($1, $2, $3, $4, $5, $6, now(), $7, CASE WHEN $7 THEN now() END) RETURNING ${PUBLIC_USER_COLUMNS}`,
-      [input.email, hash, input.displayName, referrer, isLocale(input.locale) ? input.locale : 'en', termsVersion, input.newsOptIn === true],
+      `INSERT INTO users (email, password_hash, display_name, referred_by, locale, tos_version, tos_accepted_at, news_opt_in, news_opt_in_at, region)
+       VALUES ($1, $2, $3, $4, $5, $6, now(), $7, CASE WHEN $7 THEN now() END, $8) RETURNING ${PUBLIC_USER_COLUMNS}`,
+      [input.email, hash, input.displayName, referrer, isLocale(input.locale) ? input.locale : 'en', termsVersion, input.newsOptIn === true, region],
     );
     await recordAcceptance(ctx.db, user.id, termsVersion, 'signup', input.ip ?? null); // Round 23d
     await recordSignals(ctx.db, user.id, { device: input.device, ip_subnet: subnetOf(input.ip) });
@@ -174,7 +182,7 @@ export async function register(ctx: Ctx, input: { email: string; password: strin
     // A creator's code at signup (a wrong one is ignored rather than failing the signup).
     let applied: 'referral' | 'creator' | null = referrer ? 'referral' : null;
     if (code && creator) applied = (await attributeBuyer(ctx.db, user.id, code).then(() => 'creator' as const).catch(() => null));
-    return { ...sessionResponse(user, await createSession(ctx, user.id, { mfa: false, userAgent: input.userAgent, ip: input.ip })), codeApplied: applied };
+    return { ...sessionResponse(user, await createSession(ctx, user.id, { mfa: false, userAgent: input.userAgent, ip: input.ip, ipCountry: input.ipCountry })), codeApplied: applied };
   } catch (err: any) {
     if (err.code === '23505') throw conflict('email_taken', 'An account with this email already exists');
     throw err;
@@ -232,7 +240,7 @@ export async function login(ctx: Ctx, input: { email: string; password: string }
   if (user.totp_enabled) return { mfaRequired: true as const, mfaToken: await issueChallenge(ctx, user.id) };
   await clearFailedLogins(ctx.db, user.id);
   await noteSignIn(ctx, user.id, input);
-  return sessionResponse(user, await createSession(ctx, user.id, { mfa: false, userAgent: input.userAgent, ip: input.ip }));
+  return sessionResponse(user, await createSession(ctx, user.id, { mfa: false, userAgent: input.userAgent, ip: input.ip, ipCountry: input.ipCountry }));
 }
 
 /** Second login step: exchange the challenge token plus a TOTP or recovery code for a session. */
@@ -258,7 +266,7 @@ export async function completeMfaLogin(ctx: Ctx, mfaToken: string, code: string,
   await clearFailedLogins(ctx.db, userId);
   await noteSignIn(ctx, userId, meta);
   const user = await one<User>(ctx.db, `SELECT ${PUBLIC_USER_COLUMNS} FROM users WHERE id = $1`, [userId]);
-  return { ...sessionResponse(user, await createSession(ctx, userId, { mfa: true, userAgent: meta.userAgent, ip: meta.ip })), method };
+  return { ...sessionResponse(user, await createSession(ctx, userId, { mfa: true, userAgent: meta.userAgent, ip: meta.ip, ipCountry: meta.ipCountry })), method };
 }
 
 // ---------------------------------------------------------------------------

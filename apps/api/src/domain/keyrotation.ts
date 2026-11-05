@@ -46,6 +46,31 @@ export const TEXT_TARGETS: TextTarget[] = [
     write: 'UPDATE chat_user_keys SET key_ciphertext = $2 WHERE user_id = $1 AND key_ciphertext = $3',
     aad: `'chatkey:' || user_id`,
   },
+  // Round 29 (2): the phone / IPA of a wallet or InstaPay payout method (on the user, the pending change and each withdrawal).
+  {
+    name: 'payout_identifiers',
+    table: 'users',
+    id: 'id',
+    column: 'payout_identifier_ciphertext',
+    write: 'UPDATE users SET payout_identifier_ciphertext = $2 WHERE id = $1 AND payout_identifier_ciphertext = $3',
+    aad: `'payout_identifier:' || id`,
+  },
+  {
+    name: 'payout_identifier_changes',
+    table: 'payout_address_changes',
+    id: 'id',
+    column: 'identifier_ciphertext',
+    write: 'UPDATE payout_address_changes SET identifier_ciphertext = $2 WHERE id = $1 AND identifier_ciphertext = $3',
+    aad: `'payout_identifier:' || user_id`,
+  },
+  {
+    name: 'withdrawal_destinations',
+    table: 'withdrawals',
+    id: 'id',
+    column: 'destination_ciphertext',
+    write: 'UPDATE withdrawals SET destination_ciphertext = $2 WHERE id = $1 AND destination_ciphertext = $3',
+    aad: `'payout_identifier:' || user_id`,
+  },
   {
     name: 'owner_proof_evidence',
     table: 'owner_proofs',

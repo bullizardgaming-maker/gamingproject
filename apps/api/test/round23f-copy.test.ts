@@ -79,7 +79,7 @@ describe('§9.6 withdrawal_failed carries a reason code', () => {
     const legacy = render(h.ctx, 'withdrawal_failed', { ...data, reason: 'insufficient funds in hot wallet' }, 'ar');
     expect(legacy.text).toContain('رفضته شبكة الدفع.');
     expect(legacy.text).not.toContain('insufficient');
-    for (const pack of Object.values(PACKS)) expect(Object.keys(pack.withdrawalReasons).sort()).toEqual(['not_approved', 'provider_failed', 'unsupported_coin']);
+    for (const pack of Object.values(PACKS)) expect(Object.keys(pack.withdrawalReasons).sort()).toEqual(['not_approved', 'provider_auth', 'provider_failed', 'unsupported_coin']) // Round 29 (5): provider_auth;
   });
 });
 
@@ -175,7 +175,7 @@ describe('§9.5 chat "Not sent" follows the server action', () => {
       ws.on('message', (raw) => {
         const m = JSON.parse(raw.toString());
         if (m.type === 'ready') ws.send(JSON.stringify({ type: 'message', roomId: room, body: 'my telegram is @trader23f', clientMsgId: 'c1' }));
-        if (m.type === 'error') {
+        if (m.type === 'error' || m.type === 'hidden_for_safety') {
           ws.close();
           resolve(m);
         }
@@ -183,15 +183,13 @@ describe('§9.5 chat "Not sent" follows the server action', () => {
       ws.on('error', reject);
       setTimeout(() => reject(new Error('no error frame')), 5_000);
     });
-    expect(frame.code).toBe('offplatform_blocked');
-    expect(['queue', 'ban']).toContain(frame.details?.action);
+    expect(frame.type).toBe('hidden_for_safety'); // Round 29 (8): the standard warning, not an error frame
+    expect(frame.warning_key).toBe('chat_safety');
+    expect(['queue', 'ban']).toContain(frame.action);
     const rest = await seller.api.post(`/v1/chat/rooms/${room}/messages`, { body: 'text me on whatsapp +44 7700 900123' }); // the buyer may be banned by now
-    expect(rest.status).toBe(422);
-    expect(['queue', 'ban']).toContain(rest.body.error.details.action);
-    const web = await import('../../web/src/lib/chatBlocked.ts');
-    expect(web.blockedNoticeKeys(web.blockedAction({ code: 'offplatform_blocked', details: { action: 'queue' } }))).toEqual(['chat.blocked.queue']);
-    expect(web.blockedNoticeKeys(web.blockedAction({ code: 'offplatform_blocked', details: { action: 'ban' } }))).toEqual(['chat.blocked.ban']);
-    expect(web.blockedNoticeKeys(web.blockedAction({ code: 'offplatform_blocked' }))).toEqual(['chat.notSent', 'chat.bannable']);
+    expect(rest.status).toBe(200);
+    expect(rest.body.hidden_for_safety).toBe(true);
+    expect(['queue', 'ban']).toContain(rest.body.action);
   });
 });
 

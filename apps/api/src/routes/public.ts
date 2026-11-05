@@ -39,6 +39,7 @@ import { TICKET_CATEGORIES, createTicket, customerReply, customerResolve, getTic
 import { createWatch, deleteWatch, listWatches, updateWatch } from '../domain/watches.js';
 import { confirmSubscription, getIncident, statusSummary, subscribe, unsubscribe } from '../domain/status.js';
 import { me, requestMeta } from '../server.js';
+import { REGIONS, assertNotSanctioned, isCryptoBlockedCountry } from '../domain/geo.js';
 import { setNewsOptIn } from '../domain/newsletter.js';
 
 const Credentials = z.object({ email: z.string().email().max(254), password: z.string().min(10).max(200), captchaToken: z.string().max(4096).optional() });
@@ -64,7 +65,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   };
   const meta = (req: FastifyRequest) => {
     const m = requestMeta(req);
-    return { ip: m.ip, device: m.device, userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : undefined };
+    return { ip: m.ip, ipCountry: m.ipCountry, device: m.device, userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : undefined };
   };
 
   /** Throws unless the request carries a valid CAPTCHA token (no-op when CAPTCHA is off). */
@@ -101,6 +102,8 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
       newsOptIn: z.boolean().optional(),
       /** "I'm 18 or older and agree to the Terms and Privacy Policy" — required (Legal, Oct 24). */
       acceptTerms: z.literal(true, { message: 'You must be 18 or older and accept the Terms and Privacy Policy' }),
+      /** Round 29 (1): the region shown / browsed (never a country); Global when not picked. */
+      region: z.enum(REGIONS).optional(),
     }).parse(req.body);
     await requireCaptcha(req, body.captchaToken, 'signup');
     const res = await register(ctx, { ...body, ...meta(req) });
@@ -159,7 +162,15 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     return resetPassword(ctx, body.token, body.newPassword);
   });
 
-  app.get('/me', async (req) => ({ user: me(req) }));
+  // Round 29 (1): `crypto_unavailable_here` (from the connection's country) tells the web to say "This payment method
+  // isn't available here yet"; the country itself is never shown.
+  app.get('/me', async (req) => ({ user: me(req), crypto_unavailable_here: isCryptoBlockedCountry(ctx, requestMeta(req).ipCountry) }));
+  /** Round 29 (1): the user's region — a display / browse preference. */
+  app.put('/me/region', async (req) => {
+    const { region } = z.object({ region: z.enum(REGIONS) }).parse(req.body);
+    await ctx.db.query('UPDATE users SET region = $2 WHERE id = $1', [me(req).id, region]);
+    return { region };
+  });
   // Emails, notifications and SMS go out in this language; the web app sets it when the user switches.
   app.put('/me/locale', async (req) => {
     const { locale } = z.object({ locale: z.enum(LOCALES) }).parse(req.body);
@@ -418,7 +429,10 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   /** Round 25 (B5): how a viewer in this currency can pay (config PAYMENT_METHODS_JSON; only enabled methods). */
   app.get('/payment-methods', async (req) => {
     const { currency } = z.object({ currency: z.string().length(3).toUpperCase().optional() }).parse(req.query);
-    return paymentMethodsFor(ctx, currency);
+    // Round 29 (1): crypto is hidden for the account country in CRYPTO_BLOCKED_COUNTRIES (Egypt) — never by IP.
+    // Round 29 (1): crypto is hidden where the connection comes from a CRYPTO_BLOCKED_COUNTRIES country (Egypt) — the
+    // edge's CF-IPCountry decides; the user never sees a country.
+    return paymentMethodsFor(ctx, currency).filter((m) => m.id !== 'crypto' || !isCryptoBlockedCountry(ctx, requestMeta(req).ipCountry));
   });
 
   /** Withdraw credit (kept underpayments, promo credit) to the confirmed payout address, under the usual fee. */

@@ -29,7 +29,8 @@ const sandbox = (p: any, over: Record<string, unknown> = {}) => ({
   payment_id: Number(p.payment_id), parent_payment_id: null, invoice_id: null, payment_status: 'finished', pay_address: p.pay_address, payin_extra_id: null,
   price_amount: p.price_amount, price_currency: String(p.price_currency).toLowerCase(), pay_amount: p.pay_amount, actually_paid: p.pay_amount, actually_paid_at_fiat: 0,
   pay_currency: p.pay_currency, order_id: p.order_id, order_description: 'Bullizard order', purchase_id: p.purchase_id,
-  outcome_amount: Math.round(p.price_amount * 0.995 * 1e6) / 1e6, outcome_currency: 'usdtbsc', payment_extra_ids: null,
+  // The wallet receives USDT: the invoice's USD value (an EUR invoice at the 0.92 test rate) less the 0.5 % fee.
+  outcome_amount: Math.round((String(p.price_currency).toLowerCase() === 'eur' ? p.price_amount / 0.92 : p.price_amount) * 0.995 * 1e6) / 1e6, outcome_currency: 'usdtbsc', payment_extra_ids: null,
   fee: { currency: p.pay_currency, depositFee: 0.0000012, withdrawalFee: 0, serviceFee: 0.0000025 }, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), ...over,
 });
 const delivery = { acceptTos: true, deliveryMethod: 'f2f', deliveryInfo: { character: 'Buyer1' } };

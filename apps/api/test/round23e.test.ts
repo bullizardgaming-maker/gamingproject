@@ -314,11 +314,9 @@ describe('Round 23e', () => {
     const stale = await buyer.api.post('/v1/orders', { offerId: offer.id, quantity: 1, acceptTos: true, tosVersion: '1999-01-01' });
     expect(stale.status).toBe(409);
     expect(stale.body.error.code).toBe('terms_stale');
-    const cart = await buyer.api.post('/v1/orders/cart', { items: [{ offerId: offer.id, quantity: 1 }], acceptTos: true, tosVersion: undefined });
-    expect(cart.body.error.code).toBe('tos_version_required');
     // The web app sends the version loaded with the page, not one fetched at click time.
     const repo = (p: string) => readFileSync(new URL(`../../web/src/${p}`, import.meta.url), 'utf8');
-    for (const page of ['pages/OfferPage.tsx', 'pages/Cart.tsx']) {
+    for (const page of ['pages/OfferPage.tsx']) { // Round 29: no cart page
       expect(repo(page)).not.toMatch(/await api<\{ version: string \}>\('\/legal\/terms'\)/);
       expect(repo(page)).toMatch(/useTermsVersion\(\)/);
     }

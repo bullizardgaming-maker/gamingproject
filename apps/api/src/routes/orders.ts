@@ -12,7 +12,6 @@ import {
   STAFF_RELEASE_AFTER_HOURS,
 } from '../domain/orders.js';
 import { buildEscrowTerms } from '../domain/web3.js';
-import { MAX_CART_ITEMS, cartView, createCartCheckout } from '../domain/cart.js';
 import { DISPUTE_CATEGORIES, addStatement } from '../domain/disputes.js';
 import { CLAIM_REASONS, buyerRespond, openClaim, sellerRespond } from '../domain/warranty.js';
 import { postProgress } from '../domain/progress.js';
@@ -26,6 +25,7 @@ import { completeDirectVideoUpload, openAttachment, readAttachment, startDirectV
 import { audit, auditOncePerSession } from '../domain/audit.js';
 import { readBanner } from '../domain/storefront.js';
 import { me, requestMeta } from '../server.js';
+import { assertCryptoAllowedHere, assertNotSanctioned } from '../domain/geo.js';
 
 const Id = z.object({ id: z.string().uuid() });
 
@@ -62,6 +62,8 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
     requireTosVersion(body.tosVersion);
     const idem = req.headers['idempotency-key'];
     const m = requestMeta(req);
+    assertNotSanctioned(ctx, m.ipCountry, 'buy'); // Round 29 (1): a sanctioned connection cannot buy
+
     const res = await createOrder(ctx, {
       buyer: me(req),
       ...body,
@@ -73,33 +75,7 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
     return reply.status(res.replayed ? 200 : 201).send(res);
   });
 
-  /** Cart: several listings in one card payment; each listing becomes its own escrow order. */
-  app.post('/orders/cart', async (req, reply) => {
-    const body = z
-      .object({
-        items: z.array(z.object({ offerId: z.string().uuid(), quantity: z.number().int().positive().max(2_000_000_000).default(1), characterName: z.string().trim().min(1).max(60).optional(), ...DeliveryChoice })).min(1).max(MAX_CART_ITEMS),
-        acceptTos: z.literal(true),
-        tosVersion: z.string().trim().min(1).max(40).optional(),
-        currency: z.string().length(3).toUpperCase().optional(),
-        useCredit: z.boolean().optional(),
-      })
-      .parse(req.body);
-    requireTosVersion(body.tosVersion);
-    const idem = req.headers['idempotency-key'];
-    const m = requestMeta(req);
-    const res = await createCartCheckout(ctx, {
-      buyer: me(req), ...body, rail: 'fiat',
-      idempotencyKey: typeof idem === 'string' ? idem.slice(0, 100) : undefined,
-      ip: m.ip, ipCountry: m.ipCountry, device: m.device,
-    });
-    return reply.status(res.replayed ? 200 : 201).send(res);
-  });
-  app.get('/checkouts/:id', async (req) => {
-    const { id } = Id.parse(req.params);
-    const c = await maybeOne(ctx.db, 'SELECT buyer_id FROM checkouts WHERE id = $1', [id]);
-    if (!c || c.buyer_id !== me(req).id) throw notFound('Checkout');
-    return cartView(ctx.db, id);
-  });
+  // Round 29 (7): no cart — one listing per purchase (CEO decision 6). POST /orders/cart and GET /checkouts/:id are gone.
 
   /** Price breakdown before paying: FX conversion, promo discount, store credit, card amount. */
   app.post('/orders/quote', async (req) => {
@@ -185,11 +161,16 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
     priceCurrency: z.enum(['USD', 'EUR']).default('USD').describe('Round 25: what the invoice is priced in; an EGP viewer pays in USD'),
   });
   const PayId = z.object({ id: z.string().uuid(), pid: z.string().max(40) });
-  for (const kind of ['orders', 'checkouts'] as const) {
-    const refOf = (id: string) => (kind === 'orders' ? { orderId: id } : { checkoutId: id });
-    app.get(`/${kind}/:id/crypto/coins`, async (req) => coinsFor(ctx, refOf(Id.parse(req.params).id), me(req).id));
+  for (const kind of ['orders'] as const) {
+    const refOf = (id: string) => ({ orderId: id });
+    app.get(`/${kind}/:id/crypto/coins`, async (req) => {
+      assertCryptoAllowedHere(ctx, requestMeta(req).ipCountry); // Round 29 (1): hidden where the connection is from Egypt
+      return coinsFor(ctx, refOf(Id.parse(req.params).id), me(req).id);
+    });
     app.post(`/${kind}/:id/crypto/pay`, async (req, reply) => {
       const { coin, priceCurrency } = Coin.parse(req.body);
+      assertCryptoAllowedHere(ctx, requestMeta(req).ipCountry); // Round 29 (1): the connection's country decides, never shown
+      assertNotSanctioned(ctx, requestMeta(req).ipCountry, 'buy');
       return reply.status(201).send(await startCryptoPayment(ctx, refOf(Id.parse(req.params).id), me(req).id, coin, priceCurrency));
     });
     /** Round 25 (B6): lock (or refresh) the checkout price in USD or EUR for 15 minutes. */
@@ -200,7 +181,7 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
     app.get(`/${kind}/:id/crypto/payments`, async (req) => {
       const { id } = Id.parse(req.params);
       const o = await maybeOne<{ buyer_id: string }>(ctx.db, `SELECT buyer_id FROM ${kind} WHERE id = $1`, [id]);
-      if (!o || o.buyer_id !== me(req).id) throw notFound(kind === 'orders' ? 'Order' : 'Checkout');
+      if (!o || o.buyer_id !== me(req).id) throw notFound('Order');
       await settleStuckPayments(ctx, refOf(id)); // Round 28 (1): a finished deposit never waits more than a minute
       return paymentsFor(ctx.db, refOf(id));
     });
@@ -337,7 +318,8 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/chat/rooms/:id/messages', async (req, reply) => {
     const { body } = z.object({ body: z.string().trim().min(1).max(4_000) }).parse(req.body);
     const msg = await postUserMessage(ctx, Id.parse(req.params).id, me(req), body);
-    return reply.status(201).send(msg);
+    // Round 29 (8): 200 { hidden_for_safety: true, warning } for a message held back — the web shows the "Stay safe" panel.
+    return reply.status('hidden_for_safety' in msg ? 200 : 201).send(msg);
   });
 
   /** Upload a screenshot or a short video (raw PNG/JPEG/WebP/MP4/WebM body; file name in X-Filename). */

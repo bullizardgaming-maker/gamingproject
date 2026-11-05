@@ -11,6 +11,7 @@ import { checkoutByRef, handleCheckoutCapturedIn } from './cart.js';
 import { accountId, post } from './ledger.js';
 import { enqueueEmail } from './notifications.js';
 import { recordSignals } from './fraud.js';
+import { matchWallet, openCase } from './aml.js';
 import { withScope, type TxScope } from './events.js';
 import { appendMessage } from './chat.js';
 
@@ -212,6 +213,8 @@ export function paymentState(r: { status: string; applied_at: string | null; cre
   if (Number(r.credited_cents ?? 0) > 0 || r.status === 'credited') return 'credited_to_balance';
   // Round 27 (1): once the order (or cart checkout) is funded, the payment is paid whatever the provider row still
   // says (an IPN applied by another path, a poll that applied it before the row caught up) — never "confirming" forever.
+  // Round 29 (10): on a refunded order a deposit that never funded it is not "paid" — it was credited (above) or it failed.
+  if (orderStatus === 'refunded') return 'failed';
   if (!UNFUNDED.has(orderStatus)) return 'paid';
   switch (r.status) {
     case 'finished':
@@ -431,6 +434,26 @@ export async function applyCryptoPayment(ctx: Ctx, ev: Extract<PaymentEvent, { t
   }
   const paidUsd = valued.usd;
 
+  // Round 29 (3): clear automatic boundaries — only clear anomalies are held, everything else funds instantly.
+  // (a) the provider says paid but reports neither coins nor an outcome; (d) the paying wallet is on a sanctions list.
+  const hold = async (reason: string, extra: Record<string, unknown> = {}) => {
+    await ctx.db.query(`UPDATE crypto_payments SET status = $2, actually_paid = $3, outcome_amount = $4, outcome_currency = $5, raw = $6,
+                               review_reason = $7, review_flagged_at = COALESCE(review_flagged_at, now()), updated_at = now() WHERE id = $1 AND applied_at IS NULL`,
+      [row0.id, ev.status, ev.actuallyPaid, ev.outcomeAmount, ev.outcomeCurrency, JSON.stringify(ev.raw ?? {}), reason]);
+    ctx.log.error({ paymentId: ev.paymentId, reason, ...extra }, 'crypto deposit held for manual review');
+    return payable(ctx.db, ref, buyerId, false);
+  };
+  if (PAID_STATUSES.has(ev.status)) {
+    if (!(ev.actuallyPaid > 0) && !((ev.outcomeAmount ?? 0) > 0)) return hold('no_amounts_reported');
+    if (payer) {
+      const matches = await matchWallet(ctx.db, payer);
+      if (matches.length) {
+        await openCase(ctx, buyerId, { source: 'sanctions', rule: 'sanctions_payment_wallet', severity: 'high', holdsPayouts: true, details: { value: payer, matches } });
+        return hold('sanctioned_wallet', { payer });
+      }
+    }
+  }
+
   // Round 22 (7): one transaction from the decision to the capture, holding the order row(s) and then the payment row —
   // the same order the unpaid-order reaper takes them in (cancelOrder → creditPartialPayments) — so an IPN and the reaper
   // can never both act on the same money.
@@ -477,6 +500,17 @@ export async function applyCryptoPayment(ctx: Ctx, ev: Extract<PaymentEvent, { t
     // is the net; the gap is NOWPayments' fee — booked once, as psp_fee (CFO B1). Anything above the order total beyond the
     // tolerance is the buyer's money: it goes to their balance (CFO B6), not to FX gain.
     const settled = await settledCents(s.tx, target, paid);
+    // Round 29 (3b): what reached the wallet is far below what was due (beyond the expected fee): held, not funded.
+    {
+      const feeGuess = Math.round((due * ctx.cfg.NOWPAYMENTS_FEE_BPS) / 10_000);
+      const floor = due - feeGuess - Math.floor((due * ctx.cfg.CRYPTO_SETTLED_SHORT_BPS) / 10_000);
+      if (settled < floor) {
+        const reason = `settled_short: ${(settled / 100).toFixed(2)} reached the wallet for ${(due / 100).toFixed(2)} due`;
+        await s.tx.query(`UPDATE crypto_payments SET review_reason = $2, review_flagged_at = COALESCE(review_flagged_at, now()), updated_at = now() WHERE id = $1`, [row.id, reason]);
+        ctx.log.error({ paymentId: ev.paymentId, settled, due }, 'crypto deposit held: settled amount far below the amount due');
+        return target;
+      }
+    }
     // The deposits that fund this order are marked with what each was worth, so anything arriving later is treated as extra.
     const funding = await many<{ id: string; actually_paid_usd: string | null; outcome_amount: string | null; outcome_currency: string | null; price_currency: string; raw: any }>(
       s.tx, `SELECT id, actually_paid_usd::text, outcome_amount::text, outcome_currency, price_currency, raw FROM crypto_payments WHERE ${whereRef(target)} AND applied_at IS NULL AND status IN ('finished', 'confirmed', 'sending', 'partially_paid') FOR UPDATE`, [target.id],
@@ -550,13 +584,17 @@ export function depositUsd(
   const fiat = ev.actuallyPaidUsd != null && ev.actuallyPaidUsd > 0 ? ev.actuallyPaidUsd : null;
   // The invoice's own figure (price_usd for USD; price_amount × its USD value for EUR) is what the coins were priced at.
   const priceUsd = Number(inv.price_usd) > 0 ? Number(inv.price_usd) : ev.priceUsd;
-  if (inv.price_currency === 'USD' || !Number(inv.price_amount)) return { ok: true, usd: fiat ?? round2(coinShare * priceUsd) };
-  const invoiced = Number(inv.price_amount);
-  const usdPerInvoiced = priceUsd / invoiced;
   const raw = (ev.raw ?? {}) as Record<string, unknown>;
+  // Round 29 (3c): an IPN whose invoice currency or amount is not ours is held, whatever the invoice currency.
   if (typeof raw.price_currency === 'string' && raw.price_currency.toUpperCase() !== inv.price_currency) {
     return { ok: false, reason: `ipn_price_currency_${raw.price_currency.toLowerCase()}` };
   }
+  if (raw.price_amount != null && Number(inv.price_amount) > 0 && Number.isFinite(Number(raw.price_amount)) && Math.abs(Number(raw.price_amount) - Number(inv.price_amount)) > Math.max(0.01, 0.005 * Number(inv.price_amount))) {
+    return { ok: false, reason: `ipn_price_amount_mismatch: ${raw.price_amount} vs invoice ${inv.price_amount}` };
+  }
+  if (inv.price_currency === 'USD' || !Number(inv.price_amount)) return { ok: true, usd: fiat ?? round2(coinShare * priceUsd) };
+  const invoiced = Number(inv.price_amount);
+  const usdPerInvoiced = priceUsd / invoiced;
   if (fiat == null) return { ok: true, usd: round2(coinShare * invoiced * usdPerInvoiced) };
   if (!(coinShare > 0)) return { ok: false, reason: 'fiat_value_without_coins' };
   const asEur = coinShare * invoiced;

@@ -16,7 +16,8 @@ import { exportListings, importListings } from '../domain/bulkListings.js';
 import { listLinked, startLink, unlink } from '../domain/linkedAccounts.js';
 import { DELIVERY_TIME_KEYS, MAX_VOLUME_DISCOUNTS, MAX_VOLUME_PERCENT, parseUnitPrice } from '../domain/unitPrice.js';
 import { ACCENTS, MAX_INTRO, MAX_PINNED, deleteBanner, storefront, updateStorefront, uploadBanner } from '../domain/storefront.js';
-import { confirmPayoutAddress, payoutAddressOf, removePayoutAddress, requestCryptoWithdrawal, requestPayoutAddress, withdrawalFee } from '../domain/cryptoPayouts.js';
+import { confirmPayoutAddress, payoutAddressOf, removePayoutAddress, requestCryptoWithdrawal, requestPayoutAddress } from '../domain/cryptoPayouts.js';
+import { WITHDRAWAL_METHODS, isWithdrawalMethod, withdrawalFeeFor, withdrawalFeeTable, withdrawalMethodsFor } from '../domain/withdrawalMethods.js';
 import { NowPaymentsProvider } from '../providers/payments/nowpayments.js';
 import { withdrawable } from '../domain/payoutholds.js';
 import { EXPORT_KINDS, buildExport, exportRange, toCsv, type ExportKind } from '../domain/exports.js';
@@ -28,7 +29,8 @@ import { listCreditNotes } from '../domain/clawback.js';
 import { sellerAnalytics } from '../domain/analytics.js';
 import { sellerDebts, shopHeldForDebt, startDebtPayment } from '../domain/debts.js';
 import { AppError, badRequest, notFound } from '../lib/errors.js';
-import { me } from '../server.js';
+import { assertNotSanctioned } from '../domain/geo.js';
+import { me, requestMeta } from '../server.js';
 
 /** Query of the seller exports (statement, orders, payouts…). */
 const ExportQuery = z.object({
@@ -239,7 +241,10 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     ),
   );
 
-  app.post('/offers', async (req, reply) => reply.status(201).send(await createOffer(ctx, me(req), offerInput(OfferBody.parse(req.body)))));
+  app.post('/offers', async (req, reply) => {
+    assertNotSanctioned(ctx, requestMeta(req).ipCountry, 'sell'); // Round 29 (1): a sanctioned connection cannot sell
+    return reply.status(201).send(await createOffer(ctx, me(req), offerInput(OfferBody.parse(req.body))));
+  });
   /** Round 26 (B10): the listing as the buyer will see it (buyer prices at the seller's rate), without creating it. */
   /** Round 26b: the market for a game + server (+ faction) — lowest / median / recommended buyer unit price, as micros, and the same as the seller's net. */
   app.get('/offers/price-guide', async (req) => {
@@ -329,14 +334,33 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     const raw = (req.query as Record<string, unknown> | undefined)?.amountCents;
     const amountCents = typeof raw === 'string' && /^\d{1,12}$/.test(raw.trim()) ? Number(raw.trim()) : NaN;
     if (!(amountCents > 0)) throw badRequest('amount_required', 'Enter an amount to see the fee');
-    const fee = withdrawalFee(ctx, amountCents);
-    return { amountCents, feeCents: fee, netCents: amountCents - fee, feeBps: ctx.cfg.WITHDRAWAL_FEE_BPS, feeMinCents: ctx.cfg.WITHDRAWAL_FEE_MIN_CENTS };
+    // Round 29 (2): the fee of the user's confirmed method (or the one asked for with ?method=).
+    const q = (req.query as Record<string, unknown> | undefined)?.method;
+    const saved = (await ctx.db.query('SELECT payout_method FROM users WHERE id = $1', [me(req).id])).rows[0]?.payout_method;
+    const method = isWithdrawalMethod(q) ? q : isWithdrawalMethod(saved) ? saved : 'usdt';
+    const rule = withdrawalFeeTable(ctx)[method];
+    const fee = withdrawalFeeFor(ctx, method, amountCents);
+    return { amountCents, feeCents: fee, netCents: amountCents - fee, method, feeBps: rule.bps, feeMinCents: rule.minCents };
   });
 
   // --- Crypto payout address: confirmed by email link (+ 2FA when on) ------------------------
   app.get('/seller/payout-address', async (req) => payoutAddressOf(ctx.db, me(req).id));
+  /** Round 29 (1/2): the withdrawal methods available in the country picked on the withdrawal form, with their fields and fee rules. */
+  app.get('/seller/withdrawal-methods', async (req) => {
+    const { country } = z.object({ country: z.string().trim().length(2).optional() }).parse(req.query);
+    if (country) assertNotSanctioned(ctx, country, 'withdraw');
+    return withdrawalMethodsFor(ctx, country);
+  });
   app.post('/seller/payout-address', async (req) => {
-    const body = z.object({ address: z.string().trim().min(10).max(128), currency: z.string().min(2).max(20) }).parse(req.body);
+    const body = z.object({
+      /** Round 29 (1): the country picked on the withdrawal form — stored on the payout method only, never shown elsewhere. */
+      country: z.string().trim().length(2),
+      method: z.enum(WITHDRAWAL_METHODS).default('usdt'),
+      address: z.string().trim().min(10).max(128).optional(),
+      currency: z.string().min(2).max(20).optional(),
+      /** wallet: the phone number; instapay: the IPA (name@bank) or phone. Encrypted at rest, used for the payout only. */
+      identifier: z.string().trim().min(3).max(120).optional(),
+    }).parse(req.body);
     return requestPayoutAddress(ctx, me(req), body);
   });
   app.post('/seller/payout-address/confirm', async (req) => {

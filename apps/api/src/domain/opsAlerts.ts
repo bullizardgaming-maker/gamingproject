@@ -1,5 +1,6 @@
 import type { Ctx } from '../context.js';
 import { many, one } from '../db.js';
+import { sanctionsListsStatus } from './aml.js';
 import { controls } from './controls.js';
 import { enqueueEmail, enqueueMailboxEmail } from './notifications.js';
 
@@ -51,6 +52,17 @@ export async function detectOpsAlerts(ctx: Ctx): Promise<OpsAlert[]> {
   if (gaps.length) alerts.push({ key: 'crypto_fx_gap', title: `${gaps.length} EUR crypto payment(s) with an FX gap above ${(ctx.cfg.FX_ALERT_BPS / 100).toFixed(2)}%`, detail: gaps.map((g) => `payment ${g.payment_id}: ${(Number(g.fx_gap_cents) / 100).toFixed(2)} USD (${(g.fx_gap_bps / 100).toFixed(2)}%)`).join('; '), action: 'Compare the locked EUR rate with NOWPayments\' conversion; consider FX_SPREAD_BPS (CFO) if the gap repeats. Booked to fx_pnl.' });
   const held = await many<{ payment_id: string; review_reason: string }>(ctx.db, `SELECT payment_id, review_reason FROM crypto_payments WHERE review_reason IS NOT NULL AND review_resolved_at IS NULL ORDER BY review_flagged_at LIMIT 50`);
   if (held.length) alerts.push({ key: 'crypto_review', title: `${held.length} crypto deposit(s) held for manual review`, detail: held.map((r) => `payment ${r.payment_id}: ${r.review_reason}`).join('; '), action: 'Check each payment in the NOWPayments dashboard and credit the buyer by a manual ledger adjustment (Ops → Ledger); nothing was credited automatically.' });
+
+  // Round 29 (4): an order stuck with a deposit the provider called finished that we could not apply (the provider can't be reached).
+  const stuck = await many<{ payment_id: string; order_id: string | null; updated_at: string }>(ctx.db, `SELECT p.payment_id, p.order_id, p.updated_at FROM crypto_payments p LEFT JOIN orders o ON o.id = p.order_id
+     WHERE p.status IN ('finished', 'confirmed', 'sending') AND p.applied_at IS NULL AND p.review_reason IS NULL AND COALESCE(p.credited_cents, 0) = 0
+       AND (o.status = 'awaiting_payment' OR p.order_id IS NULL) AND p.updated_at < now() - interval '5 minutes' ORDER BY p.updated_at LIMIT 50`);
+  if (stuck.length) alerts.push({ key: 'crypto_stuck_finished', title: `${stuck.length} order(s) with a finished deposit not applied`, detail: stuck.map((r) => `payment ${r.payment_id} (order ${r.order_id ?? '?'}) finished at the provider since ${r.updated_at}, order still awaiting payment`).join('; '), action: 'NOWPayments could not be re-asked (check its status / our outbound network). Ops → Crypto payments → "Re-check" each one; the buyer is never cancelled over it.' });
+
+  // Round 29 (11): sanctions lists missing or older than 7 days — withdrawals answer 503 screening_unavailable when missing.
+  const lists = await sanctionsListsStatus(ctx.db);
+  if (lists.missing) alerts.push({ key: 'sanctions_missing', title: 'Sanctions lists are not loaded', detail: `SANCTIONS_SOURCE=${ctx.cfg.SANCTIONS_SOURCE}; no list in the database, so withdrawals are refused with screening_unavailable in production.`, action: 'Ops → Compliance → "Refresh sanctions lists" (POST /admin/aml/refresh); check that the API can reach treasury.gov.' });
+  else if (lists.stale) alerts.push({ key: 'sanctions_stale', title: `Sanctions lists are ${lists.age_days} days old`, detail: lists.lists.map((l) => `${l.list}: ${l.entries} entries, loaded ${l.loaded_at}`).join('; '), action: 'The 6-hourly refresh is failing: check the worker logs and that treasury.gov is reachable; Ops → Compliance → "Refresh sanctions lists".' });
 
   const big = await many<{ id: string; user_id: string; amount_cents: string }>(ctx.db, `SELECT id, user_id, amount_cents FROM withdrawals WHERE created_at > now() - interval '1 hour' AND amount_cents >= $1`, [c.alert_withdrawal_cents]);
   if (big.length) alerts.push({ key: 'withdrawals_large', title: `${big.length} large withdrawal request(s)`, detail: big.map((w) => `${(Number(w.amount_cents) / 100).toFixed(2)} USD by user ${w.user_id}`).join('; '), action: 'Finance checks the seller\'s recent sales and disputes before approving (Ops → Payouts).' });

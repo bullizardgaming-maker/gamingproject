@@ -33,7 +33,7 @@ export interface EmailLayout {
   button: string;
 }
 /** Round 23f (§9.6): why a withdrawal was not sent, as a code; each language words it. */
-export const WITHDRAWAL_REASONS = ['unsupported_coin', 'not_approved', 'provider_failed'] as const;
+export const WITHDRAWAL_REASONS = ['unsupported_coin', 'not_approved', 'provider_failed', 'provider_auth'] as const;
 export type WithdrawalReason = (typeof WITHDRAWAL_REASONS)[number];
 export const withdrawalReason = (v: unknown): WithdrawalReason => ((WITHDRAWAL_REASONS as readonly unknown[]).includes(v) ? (v as WithdrawalReason) : 'provider_failed');
 

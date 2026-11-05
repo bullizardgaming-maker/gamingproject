@@ -373,6 +373,23 @@ export function usdCents(settlementCurrency: string, cents: number) {
  * Round 26b: the most a buyer may order is the stock on the listing (no seller-set cap, CEO). A quote above it says so
  * with the available amount; an order above it fails the stock check as before.
  */
+/**
+ * Round 29 (3): per-account velocity for accounts younger than 7 days — at most NEW_ACCOUNT_MAX_PAID_ORDERS_PER_DAY paid
+ * orders and NEW_ACCOUNT_MAX_PAID_USD_PER_DAY in 24 h (config). A clear, automatic boundary; nothing manual.
+ */
+async function assertNewAccountVelocity(ctx: Ctx, buyer: { id: string; created_at?: string }) {
+  const u = await one<{ age_hours: number; n: number; usd_cents: string }>(
+    ctx.db,
+    `SELECT EXTRACT(EPOCH FROM (now() - u.created_at)) / 3600 AS age_hours,
+            (SELECT count(*)::int FROM orders o WHERE o.buyer_id = u.id AND o.paid_at > now() - interval '24 hours') AS n,
+            (SELECT COALESCE(SUM(o.charged_cents), 0)::bigint FROM orders o WHERE o.buyer_id = u.id AND o.paid_at > now() - interval '24 hours')::text AS usd_cents
+       FROM users u WHERE u.id = $1`,
+    [buyer.id],
+  );
+  if (Number(u.age_hours) >= 24 * 7) return;
+  if (u.n >= ctx.cfg.NEW_ACCOUNT_MAX_PAID_ORDERS_PER_DAY) throw new AppError(429, 'velocity_limit', `New accounts can pay for up to ${ctx.cfg.NEW_ACCOUNT_MAX_PAID_ORDERS_PER_DAY} orders a day during their first week`, { limit: 'orders', max: ctx.cfg.NEW_ACCOUNT_MAX_PAID_ORDERS_PER_DAY });
+  if (Number(u.usd_cents) >= ctx.cfg.NEW_ACCOUNT_MAX_PAID_USD_PER_DAY * 100) throw new AppError(429, 'velocity_limit', `New accounts can pay for up to $${ctx.cfg.NEW_ACCOUNT_MAX_PAID_USD_PER_DAY} a day during their first week`, { limit: 'usd', max: ctx.cfg.NEW_ACCOUNT_MAX_PAID_USD_PER_DAY });
+}
 /** Round 28 (3): the minimum per order is the seller's, or the stock left when that is smaller (manual delivery). */
 function effectiveMinQty(offer: { min_qty?: number | string | null; available?: number | string | null; delivery_mode?: string }) {
   const min = Number(offer.min_qty ?? 1);
@@ -410,6 +427,7 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
   if (input.rail === 'crypto' && !ctx.cfg.ONCHAIN_ESCROW_ENABLED) throw badRequest('rail_unavailable', 'On-chain escrow is not available; pay with crypto at checkout instead');
   if (input.rail === 'crypto' && !input.walletAddress) throw badRequest('wallet_required', 'walletAddress is required for crypto escrow');
   if (input.walletAddress) await assertWalletClear(ctx, buyer.id, input.walletAddress);
+  await assertNewAccountVelocity(ctx, buyer);
 
   if (input.idempotencyKey) {
     const existing = await maybeOne<Order>(ctx.db, 'SELECT * FROM orders WHERE buyer_id = $1 AND idempotency_key = $2', [buyer.id, input.idempotencyKey]);

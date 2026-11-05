@@ -118,6 +118,23 @@ export function parseTrustProxy(v: string): boolean | number | string[] {
   return v.split(',').map((s) => s.trim()).filter(Boolean);
 }
 
+/**
+ * Round 29 (12): the browser origins that may call the API with credentials — the web app, support.<apex> (help centre
+ * and tickets on the subdomain; the refresh cookie is same-site, so it travels) and EXTRA_WEB_ORIGINS.
+ */
+export function allowedWebOrigins(cfg: { PUBLIC_WEB_URL: string; EXTRA_WEB_ORIGINS?: string }): string[] {
+  const out = new Set<string>([cfg.PUBLIC_WEB_URL]);
+  try {
+    const u = new URL(cfg.PUBLIC_WEB_URL);
+    const host = u.hostname.replace(/^www\./, '');
+    if (u.protocol === 'https:' && host.includes('.')) out.add(`https://support.${host}`);
+  } catch {
+    /* a bare value: only itself */
+  }
+  for (const o of (cfg.EXTRA_WEB_ORIGINS ?? '').split(',').map((v) => v.trim()).filter(Boolean)) out.add(o.replace(/\/$/, ''));
+  return [...out];
+}
+
 /** Health checks Render (and uptime monitors) call directly on the origin, without Cloudflare's header. */
 const ORIGIN_AUTH_EXEMPT = new Set(['/readyz', '/healthz']);
 /** Round 26 (A1): PSP webhooks are signed by the provider (HMAC) and may be sent to the origin directly. */
@@ -191,7 +208,7 @@ export async function buildApp(ctx: Ctx, opts: { logger?: PinoLogger } = {}): Pr
   await app.register(cookie);
   await app.register(helmet, { contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: 'same-site' } });
   await app.register(cors, {
-    origin: [ctx.cfg.PUBLIC_WEB_URL],
+    origin: allowedWebOrigins(ctx.cfg),
     credentials: true,
     allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Device-Fingerprint'],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],

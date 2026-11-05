@@ -99,8 +99,10 @@ describe('chat ledger', () => {
     const { seller, buyer, roomId } = await orderRoom();
     const before = (await buyer.api.get(`/v1/chat/rooms/${roomId}/messages`)).body.length;
     const blocked = await seller.api.post(`/v1/chat/rooms/${roomId}/messages`, { body: 'add me on discord for a discount' });
-    expect(blocked.status).toBe(422);
-    expect(blocked.body.error).toMatchObject({ code: 'offplatform_blocked', message: 'Not sent. Sharing outside contacts can get your account banned right away.' });
+    // Round 29 (8): held back with the standard "Stay safe" warning (200), never delivered, never an error.
+    expect(blocked.status).toBe(200);
+    expect(blocked.body).toMatchObject({ hidden_for_safety: true, warning_key: 'chat_safety' });
+    expect(typeof blocked.body.warning).toBe('string');
     // The buyer never sees it, the sender neither; staff see the attempt in the queue with its context.
     let msgs = (await buyer.api.get(`/v1/chat/rooms/${roomId}/messages`)).body;
     expect(msgs).toHaveLength(before);
@@ -111,7 +113,7 @@ describe('chat ledger', () => {
     const flag = queue.find((f: any) => f.room_id === roomId);
     expect(flag.reasons).toContain('discord');
     expect(flag.context.at(-1)).toMatchObject({ body: 'add me on discord for a discount' });
-    expect(blocked.body.error.details.action).toBe('queue'); // Round 22: blocked and queued, no strike until staff confirm
+    expect(blocked.body.action).toBe('queue'); // Round 22: blocked and queued, no strike until staff confirm
     expect((await seller.api.get('/v1/me')).body.user.status).toBe('active');
 
     // Launch policy (CEO, Oct 24): warn → suspend → ban, applied when staff confirm a flag. Staff can shorten it.

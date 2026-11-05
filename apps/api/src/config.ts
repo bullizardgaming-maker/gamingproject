@@ -12,6 +12,9 @@ const Env = z.object({
   APP_ENV: z.enum(['development', 'test', 'staging', 'production']).optional(),
   PORT: z.coerce.number().default(4000),
   PUBLIC_WEB_URL: z.string().default('http://localhost:5173'),
+  // Round 29 (12): more browser origins allowed to call the API with cookies (comma list). support.<apex> of
+  // PUBLIC_WEB_URL is always allowed (the help centre + tickets live on support.bullizard.com).
+  EXTRA_WEB_ORIGINS: z.string().optional(),
   PUBLIC_API_URL: z.string().optional(), // defaults to http://localhost:PORT
   // Requests per minute per client IP (general limit; auth endpoints are stricter).
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(300),
@@ -80,6 +83,11 @@ const Env = z.object({
   /** Seller withdrawals: fee in basis points, with a floor in settlement minor units (6%, at least $1.50). */
   WITHDRAWAL_FEE_BPS: z.coerce.number().int().min(0).max(5000).default(600),
   WITHDRAWAL_FEE_MIN_CENTS: z.coerce.number().int().min(0).default(150),
+  // Round 29 (2): per-method fee rules (CFO), e.g. {"usdt":{"bps":600,"minCents":150},"wallet":{"bps":300,"minCents":100},"instapay":{"bps":200,"minCents":100}}.
+  // A method without an entry uses WITHDRAWAL_FEE_BPS / WITHDRAWAL_FEE_MIN_CENTS.
+  WITHDRAWAL_FEES_JSON: z.string().optional(),
+  // Round 29 (1/2): countries where the manual methods (mobile wallet, InstaPay) are offered on the withdrawal form.
+  MANUAL_PAYOUT_COUNTRIES: z.string().default('EG'),
   /** The on-chain MarketEscrow rail (USDC/USDT with the contract). Off at launch; NOWPayments covers crypto. */
   ONCHAIN_ESCROW_ENABLED: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
   // Sellers must attach a photo/video of an in-game delivery before marking it delivered.
@@ -87,6 +95,12 @@ const Env = z.object({
   /** Network-fee estimates shown at checkout (USD per coin code, buyer pays on top); JSON, e.g. {"usdttrc20":1,"eth":4}. */
   /** Underpayments within this share of the price are accepted as paid in full (network dust, rounding). */
   CRYPTO_UNDERPAY_TOLERANCE_BPS: z.coerce.number().int().min(0).max(500).default(50),
+  // Round 29 (3): a finished deposit whose settled USDT is more than this share below what was due (after the expected
+  // fee) is held for review; everything else funds the order instantly.
+  CRYPTO_SETTLED_SHORT_BPS: z.coerce.number().int().min(0).max(5_000).default(300),
+  // Round 29 (3): per-account velocity for accounts younger than 7 days (paid orders per 24 h and USD per 24 h).
+  NEW_ACCOUNT_MAX_PAID_ORDERS_PER_DAY: z.coerce.number().int().min(1).default(5),
+  NEW_ACCOUNT_MAX_PAID_USD_PER_DAY: z.coerce.number().int().min(1).default(500),
   KYC_PROVIDER: z.enum(['mock', 'sumsub']).default('mock'),
   SUMSUB_APP_TOKEN: z.string().optional(),
   SUMSUB_SECRET_KEY: z.string().optional(),
@@ -158,6 +172,10 @@ const Env = z.object({
   FX_ALERT_BPS: z.coerce.number().int().min(1).max(10_000).default(100),
   // NOWPayments' fee when its IPN carries no fee object (0.5 %); only used to split an EUR invoice's gap into fee and FX.
   NOWPAYMENTS_FEE_BPS: z.coerce.number().int().min(0).max(1000).default(50),
+  // Round 29 (1): crypto is hidden for accounts whose country of residence is one of these (CEO: Egypt only).
+  CRYPTO_BLOCKED_COUNTRIES: z.string().default('EG'),
+  // Round 29 (1): blocked by IP country OR account country — sign-up, buying, selling, withdrawing. No exceptions.
+  SANCTIONED_COUNTRIES: z.string().default('IR,KP,SY,CU'),
   // Round 25 (B5): payment methods per viewer currency (domain/paymentMethods.ts). Empty = crypto in USD and EUR.
   PAYMENT_METHODS_JSON: z.string().optional(),
   // Buying EUR/EGP ahead of seller payouts (domain/fxtopups.ts). none = planning only, record conversions by hand.

@@ -7,7 +7,7 @@ const fr: LocalePack = {
   verifySubject: (code) => `Votre code Bullizard : ${code}`,
   verifyCode: (code, minutes) => `Votre code est ${code}. Il est valable ${simpleDuration(minutes, U)}. Si vous ne l’avez pas demandé, ignorez cet e-mail.`,
   duration: (minutes) => simpleDuration(minutes, U),
-  withdrawalReasons: { unsupported_coin: "Les paiements partent uniquement en USDT. Ajoutez une adresse USDT (TRC-20 ou BEP-20) et réessayez.", not_approved: "Il n’a pas été approuvé. Contactez le support si vous voulez les détails.", provider_failed: "Le réseau de paiement l’a refusé. Vérifiez votre adresse et réessayez." },
+  withdrawalReasons: { unsupported_coin: "Les paiements partent uniquement en USDT. Ajoutez une adresse USDT (TRC-20 ou BEP-20) et réessayez.", not_approved: "Il n’a pas été approuvé. Contactez le support si vous voulez les détails.", provider_failed: "Le réseau de paiement l’a refusé. Vérifiez votre adresse et réessayez.", provider_auth: "Les paiements sont en pause de notre côté pour le moment. Ton solde est revenu ; nous l’enverrons dès que c’est réparé — rien à faire." },
   templates: {
     protection_ending: {
       subject: (d) => `Plus que 24 heures pour vérifier ${d.title}`,

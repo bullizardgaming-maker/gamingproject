@@ -15,7 +15,7 @@ describe('commission: ranks and gross-up', () => {
     { position: 2, name: 'Scale', minMonthlySalesCents: 500_00, rateBps: 1299, perks: [] },
     { position: 3, name: 'Fang', minMonthlySalesCents: 2_000_00, rateBps: 1199, perks: [] },
     { position: 4, name: 'Basilisk', minMonthlySalesCents: 5_000_00, rateBps: 1099, perks: [] },
-    { position: 5, name: 'Dragon', minMonthlySalesCents: 15_000_00, rateBps: 999, perks: [] },
+    { position: 5, name: 'Dragon', minMonthlySalesCents: 15_000_00, rateBps: 799, perks: [] }, // Round 29: 7.99 %
   ];
   it('maps monthly volume to ranks', () => {
     expect(rankForVolume(ranks, 0).name).toBe('Hatchling');
@@ -34,7 +34,7 @@ describe('commission: ranks and gross-up', () => {
     expect(grossUp(10_00, 1399)).toBe(11_63);
     expect(grossUp(10_00, 500)).toBe(10_53);
     for (const seller of [1, 99, 1000, 12345, 999_999]) {
-      for (const bps of [500, 999, 1399]) {
+      for (const bps of [500, 799, 999, 1399]) {
         const buyer = grossUp(seller, bps);
         const s = splitGross(buyer, seller);
         expect(s.sellerNetCents).toBe(seller);

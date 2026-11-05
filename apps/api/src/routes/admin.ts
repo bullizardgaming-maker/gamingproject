@@ -14,22 +14,23 @@ import { AppError, badRequest, conflict, forbidden, notFound } from '../lib/erro
 import { ROLE_PERMISSIONS, STAFF_ROLES, hasPermission, outranks, permissionsOf, rolesOf } from '../domain/permissions.js';
 import { notify } from '../domain/notifications.js';
 import { refundAfterRelease } from '../domain/clawback.js';
-import { addNote, decideCase, getCase, listCases, openCase, refreshLists, rescreenSellers, runMonitoring, screenUser } from '../domain/aml.js';
+import { addNote, decideCase, getCase, listCases, openCase, refreshLists, rescreenSellers, runMonitoring, sanctionsListsStatus, screenUser } from '../domain/aml.js';
 import { collectDebts, listDebts } from '../domain/debts.js';
 import { fraudModelReport, riskReasonsText } from '../domain/fraud.js';
 import { COMPONENTS, COMPONENT_IDS, createIncident, listIncidents, updateIncident } from '../domain/status.js';
 import { decideTopUp, listTopUps, planTopUps } from '../domain/fxtopups.js';
 import { chatLegalHold } from '../domain/chatkeys.js';
 import { eraseUserChat } from '../domain/privacy.js';
-import { assertMayChangeStatus } from '../domain/users.js';
+import { PUBLIC_USER_COLUMNS, assertMayChangeStatus } from '../domain/users.js';
 import { revokeOtherSessions } from '../domain/sessions.js';
 import { toCsv } from '../domain/exports.js';
 import { businessMetrics } from '../domain/analytics.js';
 import { getTicket, staffReply, ticketQueue, updateTicket } from '../domain/support.js';
 import { DISPUTE_CATEGORIES, caseFile } from '../domain/disputes.js';
 import { addTerm, chatFlagQueue, decideChatFlag, decideListing, listTerms, moderationCounts, removeTerm, reviewQueue } from '../domain/moderation.js';
-import { me, requirePermission } from '../server.js';
+import { me, requestMeta, requirePermission } from '../server.js';
 import { audit, listAudit } from '../domain/audit.js';
+import { ipCountriesOf } from '../domain/sessions.js';
 import { decideClaim, escalatedClaims } from '../domain/warranty.js';
 import { clearStorefront } from '../domain/storefront.js';
 import { createPromo, listPromos, setPromoActive } from '../domain/promos.js';
@@ -42,7 +43,7 @@ import { getInvoice, invoicePdf, issueMonthlyInvoices } from '../domain/invoices
 import { decideAdjustment, listAdjustments, requestAdjustment, userLedger } from '../domain/adjustments.js';
 import { decideTreasuryWithdrawal, listTreasuryWithdrawals, requestTreasuryWithdrawal, treasuryBalance } from '../domain/treasury.js';
 import { listCryptoRefunds, markRefundSent, listCryptoPayments, recheckCryptoPayment } from '../domain/cryptoPayments.js';
-import { recheckUnknownPayout, decideWithdrawal, listPendingWithdrawals } from '../domain/cryptoPayouts.js';
+import { recheckUnknownPayout, decideWithdrawal, listPendingWithdrawals, manualPayoutDestination, markPayoutSentManually } from '../domain/cryptoPayouts.js';
 import { commissionSettings, listRanks, updateRanks } from '../domain/commission.js';
 import { referralSettings, updateReferralSettings } from '../domain/referrals.js';
 import { LEGAL_DOCS, publishDocument } from '../domain/legal.js';
@@ -252,6 +253,15 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   /** Round 23d: staff can only suspend or ban accounts below their own rank (a lead cannot touch an admin). */
   const assertOutranks = (actor: { id: string; role: string; staff_roles?: string[] | null }, targetId: string) => assertMayChangeStatus(ctx.db, actor, targetId);
+  /** Round 29 (1): the account as staff see it — region, the connection countries (sign-up and latest session), the withdrawal country. */
+  app.get('/admin/users/:id', async (req) => {
+    if (!hasPermission(me(req), 'users.suspend')) requirePermission(req, 'support.manage');
+    const { id } = Id.parse(req.params);
+    const user = await maybeOne<any>(ctx.db, `SELECT ${PUBLIC_USER_COLUMNS}, seller_rank, founding, trust_level, payout_country, payout_method FROM users WHERE id = $1`, [id]);
+    if (!user) throw notFound('User');
+    const ips = await ipCountriesOf(ctx.db, id);
+    return { ...user, ...ips, country_mismatch: !!(ips.signup_ip_country && ips.last_ip_country && ips.signup_ip_country !== ips.last_ip_country) };
+  });
   /** Suspend for a number of days (lifts itself) or until staff lift it (no days). */
   app.post('/admin/users/:id/suspend', async (req) => {
     const actor = requirePermission(req, 'users.suspend');
@@ -574,6 +584,23 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
       }
       throw err;
     }
+  });
+  /** Round 29 (5): staging only — the sandbox cannot send; Finance + Lead mark a payout as sent by hand (two calls, two people). */
+  app.post('/admin/withdrawals/:id/mark-sent', async (req) => {
+    const staff = withdrawalStaff(req);
+    const { id } = Id.parse(req.params);
+    const body = z.object({ hash: z.string().trim().min(4).max(120).optional(), note: z.string().trim().min(3).max(500) }).parse(req.body);
+    const w = await markPayoutSentManually(ctx, id, staff, body);
+    await audit(ctx.db, req, w.status === 'paid' ? 'withdrawal.manual_sent' : 'withdrawal.manual_send_requested', { type: 'withdrawal', id }, { ...body, status: w.status });
+    return w;
+  });
+  /** Round 29 (2): the phone / IPA a manual (wallet / InstaPay) payout goes to — Finance only, audited, never in a list. */
+  app.get('/admin/withdrawals/:id/destination', async (req) => {
+    const staff = requirePermission(req, 'treasury.approve');
+    const { id } = Id.parse(req.params);
+    const d = await manualPayoutDestination(ctx, staff, id);
+    await audit(ctx.db, req, 'withdrawal.destination_viewed', { type: 'withdrawal', id }, { method: d.method });
+    return d;
   });
   /** A payout whose provider call timed out: ask NOWPayments whether it exists before anything is reversed. */
   app.post('/admin/withdrawals/:id/recheck', async (req) => {
@@ -1054,7 +1081,9 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
   app.get('/admin/aml/lists', async (req) => {
     requirePermission(req, 'aml.review');
-    return many(ctx.db, 'SELECT list, version, entries, loaded_at FROM sanctions_lists ORDER BY list');
+    // Round 29 (11): the lists with their age (missing / stale flags) for Ops → Compliance.
+    const st = await sanctionsListsStatus(ctx.db);
+    return { ...st, source: ctx.cfg.SANCTIONS_SOURCE };
   });
   app.post('/admin/aml/lists/refresh', async (req) => {
     requirePermission(req, 'aml.review');

@@ -4,21 +4,15 @@ import { many, maybeOne, one } from '../db.js';
 import { badRequest } from '../lib/errors.js';
 import type { PaymentEvent } from '../providers/payments/types.js';
 import { closeChargeback, receiveChargeback } from './chargebacks.js';
-import { cancelOrder, createOrder, fundWithoutCard, handlePaymentCaptured, handlePaymentCapturedIn, type CreateOrderInput } from './orders.js';
+import { handlePaymentCaptured, handlePaymentCapturedIn } from './orders.js';
 import type { TxScope } from './events.js';
 
 /**
- * Cart checkout: several listings, possibly from several sellers, paid with one card payment.
- * Each listing becomes its own order (own escrow, delivery deadline, chat, dispute and refund),
- * created through the normal order path, so stock, fraud checks and pricing are identical. The
- * orders share one PSP payment; its capture is split back to them, refunds are made per order
- * (partial refunds of the shared payment) and a chargeback is shared out by what each order charged.
+ * Checkouts (the former cart: several orders on one PSP payment). Round 29 (7) removed the cart — one listing per
+ * purchase — so no checkout is created any more; what is left settles, refunds and charges back the rows that exist.
  */
-export const MAX_CART_ITEMS = 20;
-
-export interface CartInput extends Omit<CreateOrderInput, 'offerId' | 'quantity' | 'checkoutId' | 'promoCode' | 'walletAddress'> {
-  items: Array<{ offerId: string; quantity: number; characterName?: string } & Pick<CreateOrderInput, 'deliveryMethod' | 'deliveryInfo' | 'saveInfo'>>;
-}
+// Round 29 (7): the cart is gone (CEO decision 6) — one listing per purchase. What stays here handles the checkout rows
+// that already exist (webhooks for a card checkout in flight, chargebacks on one) and the proportional split helper.
 
 export async function checkoutByRef(q: Queryable, ref: string) {
   return maybeOne<any>(q, 'SELECT * FROM checkouts WHERE payment_ref = $1', [ref]);
@@ -32,73 +26,6 @@ export function splitProportional(total: number, weights: number[]): number[] {
   let rest = total - parts.reduce((a, b) => a + b, 0);
   for (let i = 0; rest > 0; i = (i + 1) % parts.length, rest--) parts[i]! += 1;
   return parts;
-}
-
-export async function createCartCheckout(ctx: Ctx, input: CartInput) {
-  if (input.rail !== 'fiat') throw badRequest('cart_card_only', 'A cart is paid by card; buy crypto-escrow listings one at a time');
-  if (!input.items.length || input.items.length > MAX_CART_ITEMS) throw badRequest('invalid_cart', `A cart holds 1 to ${MAX_CART_ITEMS} listings`);
-  if (new Set(input.items.map((i) => i.offerId)).size !== input.items.length) throw badRequest('invalid_cart', 'Each listing can appear once; change its quantity instead');
-  const currency = (input.currency ?? ctx.cfg.SETTLEMENT_CURRENCY).toUpperCase();
-
-  if (input.idempotencyKey) {
-    const existing = await maybeOne<any>(ctx.db, 'SELECT * FROM checkouts WHERE buyer_id = $1 AND idempotency_key = $2', [input.buyer.id, input.idempotencyKey]);
-    if (existing) return { ...(await cartView(ctx.db, existing.id)), checkoutUrl: null, replayed: true };
-  }
-  const checkout = await one<{ id: string }>(
-    ctx.db,
-    'INSERT INTO checkouts (buyer_id, idempotency_key) VALUES ($1, $2) RETURNING id',
-    [input.buyer.id, input.idempotencyKey ?? null],
-  );
-
-  const created: Array<{ id: string; presentment_amount_cents: number }> = [];
-  const fail = async (err: unknown) => {
-    for (const o of created) await cancelOrder(ctx, o.id, null, 'cart_checkout_failed').catch(() => {});
-    await ctx.db.query(`UPDATE checkouts SET status = 'cancelled' WHERE id = $1`, [checkout.id]);
-    throw err;
-  };
-  try {
-    for (const item of input.items) {
-      const { order } = await createOrder(ctx, { ...input, idempotencyKey: undefined, currency, offerId: item.offerId, quantity: item.quantity, characterName: item.characterName, deliveryMethod: item.deliveryMethod, deliveryInfo: item.deliveryInfo, saveInfo: item.saveInfo, checkoutId: checkout.id });
-      created.push(order as any);
-    }
-  } catch (err) {
-    return fail(err);
-  }
-
-  const total = created.reduce((s, o) => s + Number(o.presentment_amount_cents), 0);
-  if (total === 0) {
-    // The buyer's balance covers everything: no payment to wait for.
-    try {
-      for (const o of created) await fundWithoutCard(ctx, o.id);
-      await ctx.db.query(
-        `UPDATE checkouts SET status = 'paid', paid_at = now(), payment_provider = 'none', payment_ref = $2, presentment_amount_cents = 0, presentment_currency = $3 WHERE id = $1`,
-        [checkout.id, `nocard_${checkout.id}`, currency],
-      );
-      return { ...(await cartView(ctx.db, checkout.id)), checkoutUrl: null, replayed: false };
-    } catch (err) {
-      return fail(err);
-    }
-  }
-  try {
-    const session = await ctx.payments.createCheckout({
-      orderId: checkout.id,
-      amountCents: total,
-      currency,
-      description: `Bullizard order: ${created.length} item${created.length === 1 ? '' : 's'}`,
-      buyerEmail: input.buyer.email,
-      successUrl: `${ctx.cfg.PUBLIC_WEB_URL}/orders?checkout=success`,
-      cancelUrl: `${ctx.cfg.PUBLIC_WEB_URL}/cart?checkout=cancelled`,
-      expiresAt: new Date(Date.now() + ctx.cfg.ORDER_PAYMENT_TTL_MINUTES * 60_000),
-    });
-    await ctx.db.query(
-      'UPDATE checkouts SET payment_provider = $2, payment_ref = $3, presentment_amount_cents = $4, presentment_currency = $5 WHERE id = $1',
-      [checkout.id, session.provider, session.ref, total, currency],
-    );
-    await ctx.db.query('UPDATE orders SET payment_provider = $2, payment_ref = $3 WHERE checkout_id = $1', [checkout.id, session.provider, session.ref]);
-    return { ...(await cartView(ctx.db, checkout.id)), checkoutUrl: session.redirectUrl, replayed: false };
-  } catch (err) {
-    return fail(err);
-  }
 }
 
 export async function cartView(q: Queryable, checkoutId: string) {

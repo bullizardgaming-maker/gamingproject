@@ -73,8 +73,8 @@ describe('1 + 20. chat filter decision through the API', () => {
     expect((await buyer.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'my UID: 0101234567' })).status).toBe(201);
     for (const phrase of QUEUE_R22) {
       const r = await buyer.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: phrase });
-      expect(r.status, phrase).toBe(422);
-      expect(r.body.error.details.action, phrase).toBe('queue');
+      expect(r.status, phrase).toBe(200); // Round 29 (8): hidden for safety, not an error
+      expect(r.body.action, phrase).toBe('queue');
     }
     const b = (await h.ctx.db.query('SELECT status, offplatform_strikes FROM users WHERE id = $1', [buyer.id])).rows[0];
     expect(b).toMatchObject({ status: 'active', offplatform_strikes: 0 });
@@ -86,7 +86,7 @@ describe('1 + 20. chat filter decision through the API', () => {
       const roomId = inq.body.id;
       expect(roomId, JSON.stringify(inq.body)).toBeTruthy();
       const r = await u.api.post(`/v1/chat/rooms/${roomId}/messages`, { body: phrase });
-      expect(r.body.error?.details?.action, phrase).toBe('ban');
+      expect(r.body.action, phrase).toBe('ban');
       expect((await h.ctx.db.query('SELECT status FROM users WHERE id = $1', [u.id])).rows[0].status).toBe('banned');
       // Item 20: like the admin ban, every session is revoked.
       expect(Number((await h.ctx.db.query('SELECT count(*) FROM sessions WHERE user_id = $1 AND revoked_at IS NULL', [u.id])).rows[0].count)).toBe(0);

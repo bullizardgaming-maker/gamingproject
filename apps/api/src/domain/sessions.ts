@@ -27,6 +27,8 @@ const REUSE_GRACE_SECONDS = 10;
 export interface SessionMeta {
   userAgent?: string;
   ip?: string;
+  /** Round 29 (1): the edge's country for the IP, shown to staff next to the account country. */
+  ipCountry?: string;
 }
 
 export interface IssuedSession {
@@ -50,9 +52,9 @@ export async function issueAccessToken(ctx: Ctx, userId: string, sessionId: stri
 async function insertSession(ctx: Ctx, q: Queryable, userId: string, familyId: string, mfa: boolean, meta: SessionMeta): Promise<IssuedSession> {
   const refreshToken = `rt_${randomToken(32)}`;
   const { rows } = await q.query(
-    `INSERT INTO sessions (user_id, family_id, token_hash, mfa, user_agent, ip, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6, now() + make_interval(days => $7)) RETURNING id`,
-    [userId, familyId, hashToken(ctx, refreshToken), mfa, meta.userAgent?.slice(0, 300) ?? null, meta.ip ?? null, REFRESH_TTL_DAYS],
+    `INSERT INTO sessions (user_id, family_id, token_hash, mfa, user_agent, ip, expires_at, ip_country)
+     VALUES ($1, $2, $3, $4, $5, $6, now() + make_interval(days => $7), $8) RETURNING id`,
+    [userId, familyId, hashToken(ctx, refreshToken), mfa, meta.userAgent?.slice(0, 300) ?? null, meta.ip ?? null, REFRESH_TTL_DAYS, meta.ipCountry && /^[A-Za-z]{2}$/.test(meta.ipCountry) ? meta.ipCountry.toUpperCase() : null],
   );
   const sessionId = rows[0].id as string;
   return { accessToken: await issueAccessToken(ctx, userId, sessionId), refreshToken, sessionId, expiresIn: ACCESS_TTL_SECONDS };
@@ -151,4 +153,15 @@ export async function listSessions(ctx: Ctx, userId: string, currentFamilyId?: s
 
 export async function revokeSessionById(ctx: Ctx, userId: string, familyId: string) {
   if ((await revokeFamily(ctx, userId, familyId, 'revoked_by_user')) === 0) throw notFound('Session');
+}
+
+/** Round 29 (1): the connection countries staff see — at sign-up (first session) and on the latest session. */
+export async function ipCountriesOf(q: Queryable, userId: string) {
+  const r = await maybeOne<{ first: string | null; last: string | null }>(
+    q,
+    `SELECT (SELECT ip_country FROM sessions WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1) AS first,
+            (SELECT ip_country FROM sessions WHERE user_id = $1 AND ip_country IS NOT NULL ORDER BY created_at DESC LIMIT 1) AS last`,
+    [userId],
+  );
+  return { signup_ip_country: r?.first ?? null, last_ip_country: r?.last ?? null };
 }

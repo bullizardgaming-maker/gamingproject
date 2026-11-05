@@ -173,23 +173,23 @@ describe('chat filter additions', () => {
     const order = await buyAndPay(h, buyer, offer.id);
     const { room_id } = (await buyer.api.get(`/v1/orders/${order.id}`)).body;
     const queued = await seller.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'Pay me on instapay next time, no fee' });
-    expect(queued.body.error.details.action).toBe('queue');
+    expect(queued.body.action).toBe('queue');
     const blocked = await seller.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'or vodafone cash 01012345678' });
-    expect(blocked.status).toBe(422);
-    expect(blocked.body.error.details.action).toBe('ban');
+    expect(blocked.status).toBe(200);
+    expect(blocked.body.action).toBe('ban');
     const u = await h.ctx.db.query('SELECT status, suspension_reason FROM users WHERE id = $1', [seller.id]);
     expect(u.rows[0]).toMatchObject({ status: 'banned', suspension_reason: 'off_platform_ban' });
     // A split platform name across two messages is caught on the second one.
     expect((await buyer.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'you on wh' })).status).toBe(201);
     const second = await buyer.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'atsapp later' });
-    expect(second.status).toBe(422);
+    expect(second.status).toBe(200);
     // A split hit is low confidence: blocked and queued for staff, no strike, account untouched (Round 20).
-    expect(second.body.error.details.action).toBe('queue');
+    expect(second.body.action).toBe('queue');
     const b = await h.ctx.db.query('SELECT status, offplatform_strikes FROM users WHERE id = $1', [buyer.id]);
     expect(b.rows[0]).toMatchObject({ status: 'active', offplatform_strikes: 0 });
     const loose = await buyer.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'pay outside the site and save the fee' });
-    expect(loose.status).toBe(422);
-    expect(loose.body.error.details.action).toBe('queue');
+    expect(loose.status).toBe(200);
+    expect(loose.body.action).toBe('queue');
     expect((await h.ctx.db.query('SELECT strike FROM chat_flags WHERE user_id = $1 ORDER BY id', [buyer.id])).rows.map((r) => r.strike)).toEqual([false, false]);
     // Normal trade talk is never touched.
     expect((await buyer.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'I need even more gold, send seven more' })).status).toBe(201);

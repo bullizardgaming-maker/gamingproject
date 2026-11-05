@@ -20,7 +20,8 @@ const silent = { info() {}, warn() {}, error: (o: unknown, m?: string) => consol
 export async function setup(overrides: Record<string, string> = {}, ctxOverrides: Partial<Ctx> = {}): Promise<Harness> {
   // Tests simulate clients on different IPs through X-Forwarded-For, as if behind a trusted proxy.
   // VIDEO_METADATA_STRIP off: the streaming tests use synthetic MP4 bytes; round23d.test.ts turns ffmpeg on.
-  const cfg = loadConfig({ TRUST_PROXY: 'true', RATE_LIMIT_PER_MINUTE: '100000', AUTH_RATE_LIMIT_PER_MINUTE: '100000', VIDEO_METADATA_STRIP: 'off', ...overrides } as any);
+  // Round 29 (3): the new-account velocity limits are off by default in tests (every test account is new); round29.test.ts turns them on.
+  const cfg = loadConfig({ TRUST_PROXY: 'true', RATE_LIMIT_PER_MINUTE: '100000', AUTH_RATE_LIMIT_PER_MINUTE: '100000', VIDEO_METADATA_STRIP: 'off', NEW_ACCOUNT_MAX_PAID_ORDERS_PER_DAY: '1000000', NEW_ACCOUNT_MAX_PAID_USD_PER_DAY: '1000000000', ...overrides } as any);
   const db = createPool(cfg.DATABASE_URL);
   await db.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
   await migrate(db);
@@ -51,7 +52,7 @@ export function client(app: FastifyInstance, token?: string, headers: Record<str
     // Round 23e (item 9): orders must name the Terms version the buyer saw. Like the web app (which sends the version it
     // loaded with the page), the harness sends the version in force unless the test sets `tosVersion` itself (even to
     // undefined, to send none).
-    if (method === 'POST' && (url === '/v1/orders' || url === '/v1/orders/cart') && payload && typeof payload === 'object' && !('tosVersion' in payload)) {
+    if (method === 'POST' && url === '/v1/orders' && payload && typeof payload === 'object' && !('tosVersion' in payload)) {
       const terms = await app.inject({ method: 'GET', url: '/v1/legal/terms', headers: { ...headers, ...extra } });
       if (terms.statusCode === 200) payload = { ...(payload as object), tosVersion: terms.json().version };
     }

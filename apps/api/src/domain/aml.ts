@@ -203,7 +203,7 @@ export async function screenUser(ctx: Ctx, userId: string) {
 export async function ensureScreenedForPayout(ctx: Ctx, userId: string) {
   const versions = await listVersions(ctx.db);
   if (!Object.keys(versions).length) {
-    if (ctx.cfg.NODE_ENV === 'production') throw new AppError(503, 'screening_unavailable', 'Payouts are paused for a moment. Please try again later.');
+    if (ctx.cfg.NODE_ENV === 'production') throw new AppError(503, 'screening_unavailable', 'Withdrawals are paused for a few minutes while our compliance lists reload. Your balance is safe — please try again shortly.');
     return;
   }
   const last = await maybeOne<{ versions: Record<string, string>; created_at: string }>(
@@ -309,6 +309,27 @@ export async function runMonitoring(ctx: Ctx) {
     }
   }
   return opened;
+}
+
+/** Round 29 (11): load the lists once at start-up if none are in the database (no await on the boot path). */
+export async function ensureSanctionsLoaded(ctx: Ctx) {
+  if (ctx.cfg.SANCTIONS_SOURCE === 'none' && !ctx.cfg.SANCTIONS_EXTRA_LISTS) return;
+  try {
+    const versions = await listVersions(ctx.db);
+    if (Object.keys(versions).length) return;
+    const changed = await refreshLists(ctx);
+    ctx.log.info({ changed }, 'sanctions lists loaded at start-up');
+  } catch (err) {
+    ctx.log.error({ err: (err as Error).message }, 'sanctions lists could not be loaded at start-up; withdrawals answer 503 screening_unavailable until they are');
+  }
+}
+
+/** Round 29 (11): the lists and their age, for Ops → Compliance and the Ops alert. */
+export async function sanctionsListsStatus(q: Queryable) {
+  const rows = await many<{ list: string; version: string; entries: number; loaded_at: string }>(q, 'SELECT list, version, entries, loaded_at FROM sanctions_lists ORDER BY list');
+  const oldest = rows.reduce<string | null>((a, r) => (!a || new Date(r.loaded_at) < new Date(a) ? r.loaded_at : a), null);
+  const ageDays = oldest ? (Date.now() - new Date(oldest).getTime()) / 86_400_000 : null;
+  return { lists: rows, missing: rows.length === 0, stale: ageDays != null && ageDays > 7, age_days: ageDays == null ? null : Math.round(ageDays * 10) / 10 };
 }
 
 let lastAml = 0;

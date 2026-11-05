@@ -97,10 +97,10 @@ describe('flagged chats', () => {
     await buyer.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'Is it the EU version?' });
     // Round 22: a payment name alone is blocked and queued (staff decide); a messenger name with a full number bans at once.
     const queued = await seller.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'Yes. Pay me with friends and family next time, cheaper' });
-    expect(queued.status).toBe(422);
-    expect(queued.body.error.details.action).toBe('queue');
+    expect(queued.status).toBe(200);
+    expect(queued.body.action).toBe('queue');
     const banned = await buyer.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'my whatsapp is +44 7700 900123' });
-    expect(banned.body.error.details.action).toBe('ban');
+    expect(banned.body.action).toBe('ban');
 
     const queue = (await mod.api.get('/v1/admin/moderation/chats')).body.filter((f: any) => f.room_id === room_id);
     expect(queue.map((f: any) => [f.role, f.reasons])).toEqual([

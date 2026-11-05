@@ -51,7 +51,9 @@ envVarGroups:
       - key: PAYOUT_CURRENCIES
         value: "USD" # CFO B12: payouts locked to USD (USDT TRC-20 / BEP-20)
       - key: FX_SPREAD_BPS
-        value: "0" # CFO B12: EUR/EGP are display-only approximations
+        value: "100" # Round 29 (11): 1 % spread on EUR quotes (CFO)
+      - key: SANCTIONS_SOURCE
+        value: "ofac" # Round 29 (11): OFAC SDN loaded at start-up and refreshed every 6 h; Ops alert when missing or > 7 days old
       - key: PAYOUT_HOLD_DAYS_NEW
         value: "1" # CFO B8
       - key: PAYOUT_HOLD_DAYS_ESTABLISHED

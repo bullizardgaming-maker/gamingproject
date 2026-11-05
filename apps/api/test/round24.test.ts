@@ -126,13 +126,13 @@ describe('§3 the buyer’s delivery choice on the order', () => {
     expect(legacy.status, JSON.stringify(legacy.body)).toBe(201);
     expect(legacy.body.order).toMatchObject({ delivery_method: 'f2f', delivery_info: { character: 'OldClient' }, character_name: 'OldClient' });
 
-    // UID games: the uid field; carts carry the choice per item.
+    // UID games: the uid field.
     const server = attributesFor('Genshin Impact', 'top-ups')[0]!.options![0]!;
     const gi = (await seller.api.post('/v1/offers', { categorySlug: 'top-ups', game: 'Genshin Impact', title: 'Crystals', priceCents: 3_00, deliveryMode: 'manual', stock: 9, attributes: { server } })).body;
     expect(gi.id, JSON.stringify(gi)).toBeTruthy();
-    const cart = await buyer.api.post('/v1/orders/cart', { acceptTos: true, items: [{ offerId: gi.id, quantity: 1, deliveryMethod: 'uid', deliveryInfo: { uid: '800123456' } }] });
-    expect(cart.status, JSON.stringify(cart.body)).toBe(201);
-    expect(cart.body.orders[0]).toMatchObject({ delivery_method: 'uid', delivery_info: { uid: '800123456' }, character_name: '800123456' });
+    const single = await buyer.api.post('/v1/orders', { acceptTos: true, offerId: gi.id, quantity: 1, deliveryMethod: 'uid', deliveryInfo: { uid: '800123456' } });
+    expect(single.status, JSON.stringify(single.body)).toBe(201);
+    expect(single.body.order).toMatchObject({ delivery_method: 'uid', delivery_info: { uid: '800123456' }, character_name: '800123456' });
     expect(cleanDeliveryChoice(['uid'], 'uid', {}, null)).toMatchObject({ ok: false, code: 'delivery_info_required', field: 'uid' });
   });
 });
@@ -276,7 +276,7 @@ describe('§6 no phone anywhere', () => {
     const seller = await makeUser(h, { tier: 2 });
     await h.ctx.db.query(`UPDATE users SET phone = '+201012345678', phone_verified_at = now() WHERE id = $1`, [seller.id]);
     const before = h.messenger.outbox.length;
-    expect((await seller.api.post('/v1/seller/payout-address', { address: 'TNoSmsAddress1234567890', currency: 'usdttrc20' })).status).toBe(200);
+    expect((await seller.api.post('/v1/seller/payout-address', { country: 'US', address: 'TNoSmsAddress1234567890', currency: 'usdttrc20' })).status).toBe(200);
     expect(h.messenger.outbox.slice(before).some((m) => m.channel === 'sms')).toBe(false);
     const row = (await h.ctx.db.query('SELECT code_via FROM payout_address_changes WHERE user_id = $1', [seller.id])).rows[0];
     expect(row.code_via).toBe('email');

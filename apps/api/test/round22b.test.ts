@@ -118,19 +118,19 @@ describe('2-5. false automatic bans', () => {
       expect(r.status, `${body}: ${JSON.stringify(r.body)}`).toBe(201);
     }
     const q = await buyer.api.post(`/v1/chat/rooms/${room}/messages`, { body: 'Should I send USDT to 0x52908400098527886E0F7030069857D2E4169EE7?' });
-    expect(q.status).toBe(422);
-    expect(q.body.error.details.action).toBe('queue');
+    expect(q.status).toBe(200);
+    expect(q.body.action).toBe('queue');
     expect((await h.ctx.db.query('SELECT status, offplatform_strikes FROM users WHERE id = $1', [buyer.id])).rows[0]).toMatchObject({ status: 'active', offplatform_strikes: 0 });
     const other = await makeUser(h, { tier: 1 });
     const { order: o2 } = await cryptoOrder(other, offer.id, false); // before the seller's ban takes the listing down
     const r = await seller.api.post(`/v1/chat/rooms/${room}/messages`, { body: 'pay me at 0x52908400098527886E0F7030069857D2E4169EE7' });
-    expect(r.body.error.details.action).toBe('ban');
+    expect(r.body.action).toBe('ban');
     // The rest of the message is still checked: our address plus a messenger and a phone number bans as usual.
     await h.ctx.db.query('UPDATE crypto_payments SET pay_address = $2 WHERE order_id = $1', [o2.id, DEPOSIT_R22B]);
     const room2 = (await other.api.post('/v1/chat/rooms', { offerId: offer.id })).body.id;
     const c = await other.api.post(`/v1/chat/rooms/${room2}/messages`, { body: OWN_DEPOSIT_WITH_CONTACT[0] });
-    expect(c.status).toBe(422);
-    expect(c.body.error.details.action).toBe('ban');
+    expect(c.status).toBe(200);
+    expect(c.body.action).toBe('ban');
   });
 
   it('account details in an account room (login method, labelled UID) are delivered, never banned', async () => {
@@ -151,8 +151,8 @@ describe('2-5. false automatic bans', () => {
     const buyer = await makeUser(h, { tier: 1 });
     const room = (await buyer.api.post('/v1/chat/rooms', { offerId: offer.id })).body.id;
     const r = await buyer.api.post(`/v1/chat/rooms/${room}/messages`, { body: 'my numbr is 0 1 0 1 2 3 4 5 6 7 8' });
-    expect(r.status).toBe(422);
-    expect(r.body.error.details.action).toBe('queue');
+    expect(r.status).toBe(200);
+    expect(r.body.action).toBe('queue');
   });
 
   it('dismissing the flag behind an automatic ban lifts it (audited), unless a confirmed offence remains', async () => {
@@ -163,7 +163,7 @@ describe('2-5. false automatic bans', () => {
 
     const u = await makeUser(h, { tier: 1 });
     const room = (await u.api.post('/v1/chat/rooms', { offerId: offer.id })).body.id;
-    expect((await u.api.post(`/v1/chat/rooms/${room}/messages`, { body: 'whatsapp 0101234567' })).body.error.details.action).toBe('ban');
+    expect((await u.api.post(`/v1/chat/rooms/${room}/messages`, { body: 'whatsapp 0101234567' })).body.action).toBe('ban');
     const flag = await flagOf(u.id);
     const d = await admin.api.post(`/v1/admin/moderation/chats/${flag}`, { confirm: false, note: 'a player ID' });
     expect(d.status, JSON.stringify(d.body)).toBe(200);
@@ -174,10 +174,10 @@ describe('2-5. false automatic bans', () => {
     // A confirmed offence before the ban: dismissing the ban's flag keeps the ban.
     const v = await makeUser(h, { tier: 1 });
     const room2 = (await v.api.post('/v1/chat/rooms', { offerId: offer.id })).body.id;
-    expect((await v.api.post(`/v1/chat/rooms/${room2}/messages`, { body: 'pay me on paypal' })).body.error.details.action).toBe('queue');
+    expect((await v.api.post(`/v1/chat/rooms/${room2}/messages`, { body: 'pay me on paypal' })).body.action).toBe('queue');
     expect((await admin.api.post(`/v1/admin/moderation/chats/${await flagOf(v.id)}`, { confirm: true })).status).toBe(200);
     expect((await h.ctx.db.query('SELECT status FROM users WHERE id = $1', [v.id])).rows[0].status).toBe('active'); // first offence: warn
-    expect((await v.api.post(`/v1/chat/rooms/${room2}/messages`, { body: 'telegram @cheapgold' })).body.error.details.action).toBe('ban');
+    expect((await v.api.post(`/v1/chat/rooms/${room2}/messages`, { body: 'telegram @cheapgold' })).body.action).toBe('ban');
     const d2 = await admin.api.post(`/v1/admin/moderation/chats/${await flagOf(v.id)}`, { confirm: false });
     expect(d2.body.banLifted).toBe(false);
     expect((await h.ctx.db.query('SELECT status FROM users WHERE id = $1', [v.id])).rows[0].status).toBe('banned');
@@ -295,7 +295,7 @@ describe('Round 22b, third pass', () => {
     for (const [stored, expected] of [[until, 'suspended'], [null, 'active']] as const) {
       const u = await makeUser(h, { tier: 1 });
       const room = (await u.api.post('/v1/chat/rooms', { offerId: offer.id })).body.id;
-      expect((await u.api.post(`/v1/chat/rooms/${room}/messages`, { body: 'whatsapp 0101234567' })).body.error.details.action).toBe('ban');
+      expect((await u.api.post(`/v1/chat/rooms/${room}/messages`, { body: 'whatsapp 0101234567' })).body.action).toBe('ban');
       const flag = (await h.ctx.db.query(`SELECT id FROM chat_flags WHERE user_id = $1 AND status = 'open'`, [u.id])).rows[0].id;
       // As if the user had been suspended (until `stored`) when the filter banned them.
       await h.ctx.db.query(`UPDATE chat_flags SET prior_status = 'suspended', prior_suspended_until = $2, prior_suspension_reason = 'off_platform_contact' WHERE id = $1`, [flag, stored]);

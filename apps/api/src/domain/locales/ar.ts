@@ -5,7 +5,7 @@ const ar: LocalePack = {
   verifySubject: (code) => `رمز Bullizard الخاص بك: ${code}`,
   verifyCode: (code, minutes) => `رمزك هو ${code}، وهو صالح لمدة ${arDuration(minutes)}. إن لم تطلبه فتجاهل هذه الرسالة.`,
   duration: (minutes) => arDuration(minutes),
-  withdrawalReasons: { unsupported_coin: "السحب بعملة USDT فقط. أضف عنوان USDT (TRC-20 أو BEP-20) وحاول مجددًا.", not_approved: "لم تتم الموافقة عليه. تواصل مع الدعم إن احتجت التفاصيل.", provider_failed: "رفضته شبكة الدفع. راجع عنوانك وحاول مجددًا." },
+  withdrawalReasons: { unsupported_coin: "السحب بعملة USDT فقط. أضف عنوان USDT (TRC-20 أو BEP-20) وحاول مجددًا.", not_approved: "لم تتم الموافقة عليه. تواصل مع الدعم إن احتجت التفاصيل.", provider_failed: "رفضته شبكة الدفع. راجع عنوانك وحاول مجددًا.", provider_auth: "السحب متوقف مؤقتًا من جهتنا. رصيدك عاد إلى حسابك وسنرسله فور إصلاح المشكلة — لا شيء مطلوب منك." },
   templates: {
     order_paid: {
       subject: (d) => `وصل الدفع. ${d.order_ref ?? d.title} عند البائع`,

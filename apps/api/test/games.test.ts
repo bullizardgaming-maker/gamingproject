@@ -90,12 +90,6 @@ describe('launch games', () => {
     expect((await buyer.api.get(`/v1/orders/${ok.body.order.id}`)).body).toMatchObject({ character_name: 'MyExile_One', handover_field: { key: 'character' } });
     expect((await buyer.api.get('/v1/me')).body.user.handover_names).toEqual({ 'path of exile': 'MyExile_One' });
 
-    // Carts carry a name per item; a key needs none.
-    const key = (await seller.api.post('/v1/offers', { categorySlug: 'keys', game: 'Elden Ring', title: 'Key', priceCents: 10_00, deliveryMode: 'manual', stock: 2 })).body;
-    const cart = await buyer.api.post('/v1/orders/cart', { items: [{ offerId: offer.id, quantity: 1, characterName: 'MyExile_Two', saveInfo: true }, { offerId: key.id, quantity: 1 }], acceptTos: true });
-    expect(cart.status, JSON.stringify(cart.body)).toBe(201);
-    expect(cart.body.orders.map((o: any) => o.character_name)).toEqual(['MyExile_Two', null]);
-    expect((await buyer.api.get('/v1/me')).body.user.handover_names).toEqual({ 'path of exile': 'MyExile_Two' });
   });
 
   it('requires a photo or video proof from the seller before an in-game delivery counts', async () => {

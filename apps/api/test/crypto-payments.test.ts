@@ -195,9 +195,9 @@ describe('crypto checkout (NOWPayments)', () => {
     const setupRes = await seller.api.post('/v1/me/2fa/setup');
     const secret = new URL(setupRes.body.otpauthUri).searchParams.get('secret')!;
     await seller.api.post('/v1/me/2fa/enable', { code: totpAt(secret, currentStep()) });
-    expect((await seller.api.post('/v1/seller/payout-address', { address: 'bad address with spaces!', currency: 'usdttrc20' })).body.error.code).toBe('invalid_address');
-    expect((await seller.api.post('/v1/seller/payout-address', { address: 'TSellerAddress1234567890', currency: 'shib' })).body.error.code).toBe('unsupported_coin');
-    const req = await seller.api.post('/v1/seller/payout-address', { address: 'TSellerAddress1234567890', currency: 'usdttrc20' });
+    expect((await seller.api.post('/v1/seller/payout-address', { country: 'US', address: 'bad address with spaces!', currency: 'usdttrc20' })).body.error.code).toBe('invalid_address');
+    expect((await seller.api.post('/v1/seller/payout-address', { country: 'US', address: 'TSellerAddress1234567890', currency: 'shib' })).body.error.code).toBe('unsupported_coin');
+    const req = await seller.api.post('/v1/seller/payout-address', { country: 'US', address: 'TSellerAddress1234567890', currency: 'usdttrc20' });
     expect(req.status, JSON.stringify(req.body)).toBe(200);
     expect(req.body.pending).toMatchObject({ address: 'TSellerAddress1234567890' });
     expect(req.body.address).toBeNull();
@@ -243,7 +243,7 @@ describe('crypto checkout (NOWPayments)', () => {
     expect(netFee).toEqual([{ kind: 'gateway_clearing', amount_cents: 120 }, { kind: 'treasury', amount_cents: -120 }]);
     expect((await h.ctx.db.query(`SELECT sum(amount_cents)::int AS s FROM ledger_entries WHERE memo = $1`, [`payout_network_fee:${w.body.id}`])).rows[0].s).toBe(0);
     // USDT only at launch: other coins are refused as payout addresses.
-    expect((await seller.api.post('/v1/seller/payout-address', { address: 'bc1qnotallowedatlaunch0000000', currency: 'btc' })).body.error.code).toBe('unsupported_coin');
+    expect((await seller.api.post('/v1/seller/payout-address', { country: 'US', address: 'bc1qnotallowedatlaunch0000000', currency: 'btc' })).body.error.code).toBe('unsupported_coin');
 
     // A second one, rejected: balance restored.
     const w2 = (await seller.api.post('/v1/seller/withdrawals', { amountCents: 1000 })).body;
@@ -261,7 +261,7 @@ describe('crypto checkout (NOWPayments)', () => {
 
   it('without an authenticator, a payout address needs the emailed link plus a one-time code by email (Round 24: never by SMS, even with a verified phone)', async () => {
     const seller = await makeUser(h, { tier: 2 });
-    const req = await seller.api.post('/v1/seller/payout-address', { address: 'TNoTotpAddress1234567890', currency: 'usdttrc20' });
+    const req = await seller.api.post('/v1/seller/payout-address', { country: 'US', address: 'TNoTotpAddress1234567890', currency: 'usdttrc20' });
     expect(req.status, JSON.stringify(req.body)).toBe(200);
     await dispatchEmails(h.ctx);
     const link = sent.filter((m) => m.to === seller.email && m.subject === 'Confirm your new payout address').at(-1)!;
@@ -279,7 +279,7 @@ describe('crypto checkout (NOWPayments)', () => {
     const phoneSeller = await makeUser(h, { tier: 2 });
     await h.ctx.db.query(`UPDATE users SET phone = '+201012345678', phone_verified_at = now() WHERE id = $1`, [phoneSeller.id]);
     const before = sent.length;
-    await phoneSeller.api.post('/v1/seller/payout-address', { address: 'TSmsAddress1234567890xyz', currency: 'usdttrc20' });
+    await phoneSeller.api.post('/v1/seller/payout-address', { country: 'US', address: 'TSmsAddress1234567890xyz', currency: 'usdttrc20' });
     await dispatchEmails(h.ctx);
     expect(sent.slice(before).some((m: any) => m.channel === 'sms')).toBe(false);
     expect(sent.slice(before).find((m: any) => m.to === phoneSeller.email && /code to confirm the new payout address/.test(m.subject ?? ''))?.body).toMatch(/\d{6}/);
@@ -406,28 +406,6 @@ describe('crypto checkout (NOWPayments)', () => {
     expect(await available()).toBe(before - 2000);
   });
 
-  it('a cart pays several orders with one crypto payment', async () => {
-    const s1 = await makeUser(h, { tier: 2 });
-    const s2 = await makeUser(h, { tier: 2 });
-    const buyer = await makeUser(h, { tier: 1 });
-    const a = await makeOffer(s1, { deliveryMode: 'manual', stock: 5, categorySlug: 'currency', title: 'Gold A', priceCents: 7_00 });
-    const b = await makeOffer(s2, { deliveryMode: 'manual', stock: 5, categorySlug: 'items', title: 'Item B', priceCents: 9_00 });
-    const cart = await buyer.api.post('/v1/orders/cart', { items: [{ offerId: a.id, quantity: 1 }, { offerId: b.id, quantity: 1 }], acceptTos: true });
-    expect(cart.status, JSON.stringify(cart.body)).toBe(201);
-    const checkoutId = cart.body.checkout.id;
-    expect(cart.body.checkoutUrl).toMatch(new RegExp(`/checkouts/${checkoutId}/pay$`));
-    const coins = (await buyer.api.get(`/v1/checkouts/${checkoutId}/crypto/coins`)).body;
-    expect(coins.owedCents).toBe(16_85); // 7.37 + 9.48
-    const pay = await buyer.api.post(`/v1/checkouts/${checkoutId}/crypto/pay`, { coin: 'btc' });
-    expect(pay.status, JSON.stringify(pay.body)).toBe(201);
-    expect(pay.body.price_usd).toBe('16.85');
-    await ipn(paidIpn(fake.payments.get(pay.body.payment_id)));
-    const view = (await buyer.api.get(`/v1/checkouts/${checkoutId}`)).body;
-    expect(view.checkout.status).toBe('paid');
-    expect(view.orders.map((o: any) => o.status)).toEqual(['paid', 'paid']);
-    expect((await buyer.api.get(`/v1/checkouts/${checkoutId}/crypto/payments`)).body[0].status).toBe('finished');
-  });
-
   it('the on-chain escrow rail is off unless enabled', async () => {
     const seller = await makeUser(h, { tier: 2 });
     const buyer = await makeUser(h, { tier: 1 });
@@ -521,7 +499,7 @@ describe('crypto checkout (NOWPayments)', () => {
     expect(sent.filter((m) => m.to === buyer.email && /kept in your balance/.test(m.subject ?? ''))).toHaveLength(2); // one per new amount
   });
 
-  it('a second deposit on an order already funded goes to the balance, and a cart credits a late deposit once across its orders', async () => {
+  it('a second deposit on an order already funded goes to the balance', async () => {
     const s1 = await makeUser(h, { tier: 2 });
     const buyer = await makeUser(h, { tier: 1 });
     const offer = await makeOffer(s1, { deliveryMode: 'manual', stock: 5, categorySlug: 'currency', title: 'Gold C', priceCents: 10_00 });
@@ -541,19 +519,6 @@ describe('crypto checkout (NOWPayments)', () => {
     await ipn(paidIpn(fake.payments.get(second.payment_id)));
     expect((await buyer.api.get('/v1/me/credit')).body.balanceCents).toBe(extra);
 
-    // A cart: both orders lapse, the one payment arrives late → credited once, not once per order.
-    const b = await makeOffer(s1, { deliveryMode: 'manual', stock: 5, categorySlug: 'items', title: 'Item D', priceCents: 9_00 });
-    const cart = await buyer.api.post('/v1/orders/cart', { items: [{ offerId: offer.id, quantity: 1 }, { offerId: b.id, quantity: 1 }], acceptTos: true });
-    const checkoutId = cart.body.checkout.id;
-    const pay = (await buyer.api.post(`/v1/checkouts/${checkoutId}/crypto/pay`, { coin: 'btc' })).body;
-    await h.ctx.db.query(`UPDATE orders SET payment_expires_at = now() - interval '2 hours' WHERE checkout_id = $1`, [checkoutId]);
-    await runJobsOnce(h.ctx);
-    expect((await buyer.api.get(`/v1/checkouts/${checkoutId}`)).body.orders.map((o: any) => o.status)).toEqual(['cancelled', 'cancelled']);
-    await ipn(paidIpn(fake.payments.get(pay.payment_id)));
-    await ipn(paidIpn(fake.payments.get(pay.payment_id)));
-    const cartSettled = Math.round(Number(fake.payments.get(pay.payment_id).price_amount) * 0.995 * 100);
-    const bal = (await buyer.api.get('/v1/me/credit')).body.balanceCents;
-    expect(bal, JSON.stringify({ extra, cartSettled, price: fake.payments.get(pay.payment_id).price_amount, cart: cart.body })).toBe(extra + cartSettled);
   });
 
   it('keeps an underpayment that never got its top-up in the buyer’s balance, spendable or withdrawable, never refunded', async () => {

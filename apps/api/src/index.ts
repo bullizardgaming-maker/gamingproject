@@ -6,6 +6,7 @@ import { buildApp } from './server.js';
 import { startWorker } from './worker.js';
 import { startIndexer } from './indexer.js';
 import { NowPaymentsProvider } from './providers/payments/nowpayments.js';
+import { ensureSanctionsLoaded } from './domain/aml.js';
 import { asCtxLogger, createLogger, initSentry } from './observability.js';
 
 const cfg = loadConfig();
@@ -24,6 +25,8 @@ const stopIndexer = startIndexer(ctx);
 await app.listen({ port: cfg.PORT, host: '0.0.0.0' });
 // Round 27 (3): warm the coin list and minimums so the first buyer's payment-method step answers from cache.
 if (ctx.payments instanceof NowPaymentsProvider) ctx.payments.warmCoins();
+// Round 29 (11): sanctions lists are loaded at start-up when missing (the worker refreshes them every 6 h).
+void ensureSanctionsLoaded(ctx);
 
 const shutdown = async () => {
   stopWorker();

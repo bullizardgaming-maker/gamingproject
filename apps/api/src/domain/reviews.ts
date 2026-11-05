@@ -7,6 +7,7 @@ import { ONLINE_SQL } from './presence.js';
 import { withScope } from './events.js';
 import { enqueueEmail } from './notifications.js';
 import { storefront } from './storefront.js';
+import { earnedBadges } from './badges.js';
 
 export const REVIEW_WINDOW_DAYS = 30;
 
@@ -97,7 +98,7 @@ export async function sellerProfile(q: Queryable, sellerId: string, limit = 20, 
                FROM orders o WHERE o.seller_id = u.id AND o.delivery_due_at IS NOT NULL AND o.delivery_due_at < now()
                 AND o.created_at > now() - interval '90 days' AND o.status NOT IN ('cancelled', 'awaiting_payment')) AS on_time_delivery_pct,
             (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now())) AS shop_paused, u.shop_paused_until, u.shop_pause_message,
-            ${ONLINE_SQL} AS online, u.response_minutes, u.trust_level, u.founding,
+            ${ONLINE_SQL} AS online, u.response_minutes, u.trust_level, u.founding, u.region,
             CASE WHEN u.show_online THEN u.last_seen_at END AS last_seen_at,
             u.completed_orders AS orders_sold, u.shop_intro AS about, u.languages, u.shop_pinned AS featured_offer_ids, u.badges AS seller_badges,
             (SELECT round(100.0 * count(*) FILTER (WHERE r.rating >= 4) / NULLIF(count(*), 0), 0)::int
@@ -108,9 +109,10 @@ export async function sellerProfile(q: Queryable, sellerId: string, limit = 20, 
     [sellerId],
   );
   if (!seller) throw notFound('Seller');
-  const [rating, shop, reviews] = await Promise.all([
+  const [rating, shop, badges, reviews] = await Promise.all([
     sellerRating(q, sellerId),
     storefront(q, sellerId),
+    earnedBadges(q, sellerId), // Round 29 (9): every badge the seller holds shows on the profile (CEO decision 4)
     many(
       q,
       `SELECT r.id, r.rating, r.comment, r.seller_reply, r.replied_at, r.created_at, left(b.display_name, 1) || '.' AS buyer_name, f.title AS offer_title
@@ -120,5 +122,5 @@ export async function sellerProfile(q: Queryable, sellerId: string, limit = 20, 
     ),
   ]);
   // Round 27 (4): the rating summary as numbers (never numeric strings), also flat for the shop header.
-  return { ...seller, rating, rating_average: rating.average, review_count: rating.count, positive_pct: rating.positive_pct, storefront: shop, reviews };
+  return { ...seller, rating, rating_average: rating.average, review_count: rating.count, positive_pct: rating.positive_pct, badges, storefront: shop, reviews };
 }

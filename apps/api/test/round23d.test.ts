@@ -526,7 +526,6 @@ describe('Round 23d', () => {
     const blocked = await buyer.api.post('/v1/orders', { offerId: offer.id, quantity: 1, acceptTos: true });
     expect(blocked.status).toBe(409);
     expect(blocked.body.error.code).toBe('terms_reacceptance_required');
-    expect((await buyer.api.post('/v1/orders/cart', { items: [{ offerId: offer.id, quantity: 1 }], acceptTos: true })).body.error.code).toBe('terms_reacceptance_required');
     // …and a checkout page still showing the old version is refused even after accepting.
     expect((await buyer.api.post('/v1/me/legal/accept', {})).body.tosVersion).toBe(v2);
     const stale = await buyer.api.post('/v1/orders', { offerId: offer.id, quantity: 1, acceptTos: true, tosVersion: current });

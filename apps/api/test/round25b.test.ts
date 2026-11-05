@@ -32,52 +32,6 @@ const ledger = async (orderId: string, memo: string) =>
 const gateway = async (orderId: string) =>
   Number((await h.ctx.db.query(`SELECT COALESCE(SUM(e.amount_cents), 0) AS s FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id WHERE a.kind = 'gateway_clearing' AND e.order_id = $1`, [orderId])).rows[0].s);
 
-async function cart() {
-  const s1 = await makeUser(h, { tier: 2 });
-  const s2 = await makeUser(h, { tier: 2 });
-  const buyer = await makeUser(h);
-  const a = await makeOffer(s1, { deliveryMode: 'manual', stock: 5, categorySlug: 'items', title: 'Item A', priceCents: 7_00 });
-  const b = await makeOffer(s2, { deliveryMode: 'manual', stock: 5, categorySlug: 'items', title: 'Item B', priceCents: 9_00 });
-  const res = await buyer.api.post('/v1/orders/cart', { items: [{ offerId: a.id, quantity: 1 }, { offerId: b.id, quantity: 1 }], acceptTos: true });
-  expect(res.status, JSON.stringify(res.body)).toBe(201);
-  return { buyer, checkoutId: res.body.checkout.id as string, orders: res.body.orders as any[] };
-}
-
-describe('H1 a cart stays capturable', () => {
-  it('refuses order-level fx-quote and crypto/pay on a cart order (409 use_checkout)', async () => {
-    const { buyer, checkoutId, orders } = await cart();
-    const q = await buyer.api.post(`/v1/orders/${orders[0].id}/fx-quote`, { currency: 'EUR' });
-    expect(q.status).toBe(409);
-    expect(q.body.error).toMatchObject({ code: 'use_checkout', details: { checkoutId } });
-    expect((await buyer.api.post(`/v1/orders/${orders[0].id}/crypto/pay`, { coin: 'usdttrc20' })).body.error.code).toBe('use_checkout');
-    // Through the checkout an EUR quote keeps every order in step.
-    const cq = await buyer.api.post(`/v1/checkouts/${checkoutId}/fx-quote`, { currency: 'EUR' });
-    expect(cq.status, JSON.stringify(cq.body)).toBe(200);
-    const rows = (await h.ctx.db.query('SELECT presentment_currency, presentment_amount_cents FROM orders WHERE checkout_id = $1', [checkoutId])).rows;
-    expect(rows.every((r: any) => r.presentment_currency === 'EUR')).toBe(true);
-    expect(rows.reduce((s: number, r: any) => s + Number(r.presentment_amount_cents), 0)).toBe(cq.body.amountCents);
-  });
-
-  it('the review repro: one cart order re-quoted alone in EUR, the cart paid with a USD invoice → captured, nothing left unapplied', async () => {
-    const { buyer, checkoutId, orders } = await cart();
-    // The state the old order-level endpoint could create: the first order quoted in EUR, the checkout still in USD.
-    await h.ctx.db.query(`UPDATE orders SET presentment_currency = 'EUR', presentment_amount_cents = round(charged_cents * 0.92), fx_rate = 0.92 WHERE id = $1`, [orders[0].id]);
-    const pay = await buyer.api.post(`/v1/checkouts/${checkoutId}/crypto/pay`, { coin: 'usdttrc20' });
-    expect(pay.status, JSON.stringify(pay.body)).toBe(201);
-    expect(pay.body.price_currency).toBe('USD');
-    const p = fake.payments.get(pay.body.payment_id);
-    expect((await ipn(finished(p, {}))).statusCode).toBe(200);
-    const view = (await buyer.api.get(`/v1/checkouts/${checkoutId}`)).body;
-    expect(view.checkout.status).toBe('paid');
-    expect(view.orders.map((o: any) => o.status)).toEqual(['paid', 'paid']);
-    expect(view.orders.map((o: any) => o.presentment_currency)).toEqual(['USD', 'USD']);
-    // All of the buyer's money funded the two orders: none of it sits unapplied in their balance.
-    expect(await userCredit(h.ctx.db, buyer.id, 'USD')).toBe(0);
-    const total = view.orders.reduce((s: number, o: any) => s + Number(o.charged_cents), 0);
-    expect(Math.round(Number(p.price_amount) * 100)).toBe(total);
-  });
-});
-
 describe('M1 an EUR invoice: fee and FX booked apart', () => {
   async function eurOrder() {
     const seller = await makeUser(h, { tier: 2 });

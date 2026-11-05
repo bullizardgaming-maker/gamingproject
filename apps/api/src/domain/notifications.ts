@@ -47,6 +47,7 @@ const EN_WITHDRAWAL_REASONS: Record<WithdrawalReason, string> = {
   unsupported_coin: 'Payouts go out in USDT only. Add a USDT (TRC-20 or BEP-20) address and try again.',
   not_approved: "It wasn't approved. Contact support if you need the details.",
   provider_failed: 'The payment network refused it. Check your address and try again.',
+  provider_auth: "Payouts are paused on our side for a moment. Your balance is back; we'll send it as soon as it's fixed — nothing to do.",
 };
 /** Round 23f (§9.7): the layout strings in English. */
 export const EN_LAYOUT: EmailLayout = {

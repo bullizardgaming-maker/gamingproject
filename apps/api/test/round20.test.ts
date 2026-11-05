@@ -49,8 +49,8 @@ describe('ban vs suspend', () => {
     const order = await buyAndPay(h, buyer, offer.id);
     const { room_id } = (await buyer.api.get(`/v1/orders/${order.id}`)).body;
     // Round 22: blocked and queued, no strike, until staff confirm.
-    expect((await buyer.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'my discord is pat#1' })).body.error.details.action).toBe('queue');
-    expect((await buyer.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'or telegram maybe' })).body.error.details.action).toBe('queue');
+    expect((await buyer.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'my discord is pat#1' })).body.action).toBe('queue');
+    expect((await buyer.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'or telegram maybe' })).body.action).toBe('queue');
     expect((await h.ctx.db.query('SELECT status FROM users WHERE id = $1', [buyer.id])).rows[0].status).toBe('active');
     const flags = (await mod.api.get('/v1/admin/moderation/chats')).body.filter((f: any) => f.user_id === buyer.id);
     expect((await mod.api.post(`/v1/admin/moderation/chats/${flags[0].id}`, { confirm: true })).body.action).toBe('warn');
@@ -58,9 +58,9 @@ describe('ban vs suspend', () => {
     const b = (await h.ctx.db.query('SELECT status, suspended_until FROM users WHERE id = $1', [buyer.id])).rows[0];
     expect(b.status).toBe('suspended');
     expect(new Date(b.suspended_until).getTime()).toBeGreaterThan(Date.now() + 6 * 86_400_000);
-    expect((await seller.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'pay me on paypal' })).body.error.details.action).toBe('queue');
+    expect((await seller.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'pay me on paypal' })).body.action).toBe('queue');
     const r = await seller.api.post(`/v1/chat/rooms/${room_id}/messages`, { body: 'paypal.me/patgold' });
-    expect(r.body.error.details.action).toBe('ban');
+    expect(r.body.action).toBe('ban');
     expect((await h.ctx.db.query('SELECT status FROM users WHERE id = $1', [seller.id])).rows[0].status).toBe('banned');
   });
 });

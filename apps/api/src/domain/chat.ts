@@ -268,12 +268,15 @@ export async function postUserMessage(ctx: Ctx, roomId: string, user: { id: stri
            FROM users u WHERE u.id = $3 ON CONFLICT (room_id, seq) DO NOTHING`,
         [roomId, msg.seq, user.id, violations, kind === 'ban'],
       );
-      if (kind === 'queue') return 'queue';
+      if (kind === 'queue') return { action: 'queue' as const, seq: msg.seq, id: msg.id };
       await s.tx.query('UPDATE users SET offplatform_strikes = offplatform_strikes + 1 WHERE id = $1', [user.id]);
       await applyOffplatformAction(s, user.id, roomId, 'ban');
-      return 'ban';
+      return { action: 'ban' as const, seq: msg.seq, id: msg.id };
     });
-    throw new AppError(422, 'offplatform_blocked', OFFPLATFORM_BLOCKED_TEXT, { action });
+    // Round 29 (8): not an error any more — the sender gets the standard "Stay safe" warning (the same text every chat
+    // shows, from site_texts), the other party sees nothing, staff see it in the queue; the strike rules are unchanged.
+    const warning = await maybeOne<{ body: string; link_label: string | null; link_href: string | null }>(ctx.db, `SELECT body, link_label, link_href FROM site_texts WHERE key = 'chat_safety' AND locale = 'en'`);
+    return { hidden_for_safety: true as const, action: action.action, seq: action.seq, id: action.id, warning: warning?.body ?? OFFPLATFORM_BLOCKED_TEXT, warning_key: 'chat_safety' as const, link_label: warning?.link_label ?? null, link_href: warning?.link_href ?? null };
   }
   return withScope(ctx, async (s) => {
     const room = await roomForParticipant(s.tx, roomId, user);

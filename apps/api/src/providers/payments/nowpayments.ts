@@ -38,8 +38,20 @@ export interface NowPayment {
 
 /** A provider answer with an HTTP status; a 4xx is a definite rejection, anything else leaves the outcome unknown. */
 export class NowPaymentsError extends Error {
+  /** Round 29 (5): which step failed, so staff see the real cause (credentials, IP whitelist, the payout itself). */
+  public step: 'auth' | 'config' | 'call' = 'call';
+  /** The provider's own message (no secrets), when it answered. */
+  public providerMessage: string | null = null;
   constructor(message: string, public readonly status: number) {
     super(message);
+  }
+  /** What Ops should see: status + provider message, with the fix for the two configuration cases. */
+  get staffMessage(): string {
+    if (this.step === 'config') return this.message;
+    if (this.step === 'auth')
+      return `NOWPayments payout login failed (${this.status || 'no answer'}): ${this.providerMessage ?? 'no message'}. Check NOWPAYMENTS_EMAIL / NOWPAYMENTS_PASSWORD / NOWPAYMENTS_2FA_SECRET and that this server's outbound IP is whitelisted for payouts in the NOWPayments dashboard (Settings → Payouts → IP whitelist).`;
+    const hint = this.status === 403 ? ' (403 on a payout usually means this server\'s outbound IP is not whitelisted for payouts in the NOWPayments dashboard)' : '';
+    return `${this.message}${hint}`;
   }
   /** The provider definitely did not act (bad request, auth, not found): safe to reverse. */
   get rejected() {
@@ -146,7 +158,11 @@ export class NowPaymentsProvider implements PaymentProvider {
     } catch {
       /* non-JSON error page */
     }
-    if (!res.ok) throw new NowPaymentsError(`NOWPayments ${method} ${path} failed (${res.status}): ${json?.message ?? text.slice(0, 200)}`, res.status);
+    if (!res.ok) {
+      const e = new NowPaymentsError(`NOWPayments ${method} ${path.split('?')[0]} failed (${res.status}): ${json?.message ?? text.slice(0, 200)}`, res.status);
+      e.providerMessage = String(json?.message ?? text.slice(0, 200));
+      throw e;
+    }
     return json as T;
   }
 
@@ -332,10 +348,27 @@ export class NowPaymentsProvider implements PaymentProvider {
 
   private async bearer(): Promise<string> {
     if (this.jwt && this.jwt.expiresAt > Date.now() + 15_000) return this.jwt.token;
-    if (!this.opts.email || !this.opts.password) throw new Error('NOWPAYMENTS_EMAIL and NOWPAYMENTS_PASSWORD are required for payouts');
-    const r = await this.call<{ token: string }>('POST', '/v1/auth', { email: this.opts.email, password: this.opts.password });
-    this.jwt = { token: r.token, expiresAt: Date.now() + 4.5 * 60_000 }; // tokens live five minutes
-    return r.token;
+    if (!this.opts.email || !this.opts.password) {
+      const e = new NowPaymentsError('NOWPayments payouts are not configured: NOWPAYMENTS_EMAIL and NOWPAYMENTS_PASSWORD (and NOWPAYMENTS_2FA_SECRET) are missing on this server', 0);
+      e.step = 'config';
+      throw e;
+    }
+    try {
+      const r = await this.call<{ token: string }>('POST', '/v1/auth', { email: this.opts.email, password: this.opts.password });
+      this.jwt = { token: r.token, expiresAt: Date.now() + 4.5 * 60_000 }; // tokens live five minutes
+      return r.token;
+    } catch (err) {
+      if (err instanceof NowPaymentsError) err.step = 'auth';
+      throw err;
+    }
+  }
+  /** Round 29 (5): logs in before a payout, so a credential or IP-whitelist problem is reported as such and nothing is reversed on a guess. */
+  async ensurePayoutAuth(): Promise<void> {
+    await this.bearer();
+  }
+  /** Whether payout credentials are configured at all (sandbox accounts often have none). */
+  get payoutsConfigured(): boolean {
+    return Boolean(this.opts.email && this.opts.password);
   }
 
   /**

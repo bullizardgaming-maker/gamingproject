@@ -131,6 +131,8 @@ export function registerGateway(app: FastifyInstance, ctx: Ctx) {
             if (!fresh || (user.session_id && !(await activeSession(ctx.db, user.session_id)))) return ws.close(4401, 'session ended');
             user = { ...fresh, session_id: user.session_id, session_family: user.session_family, session_mfa: user.session_mfa };
             const msg = await postUserMessage(ctx, frame.roomId, user, frame.body);
+            // Round 29 (8): a message hidden for safety is acknowledged with the standard warning, never as an error.
+            if ('hidden_for_safety' in msg) return send(ws, { type: 'hidden_for_safety', roomId: frame.roomId, clientMsgId: frame.clientMsgId, action: msg.action, warning: msg.warning, warning_key: msg.warning_key });
             return send(ws, { type: 'ack', roomId: frame.roomId, clientMsgId: frame.clientMsgId, seq: msg.seq, id: msg.id });
           }
         }

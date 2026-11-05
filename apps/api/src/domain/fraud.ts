@@ -79,14 +79,20 @@ class DisjointSet {
  * (max of the two).
  */
 export async function heuristicScore(q: Queryable, orderId: string): Promise<RiskAssessment> {
-  const order = await one<{ buyer_id: string; seller_id: string; amount_cents: number; seller_created: string; buyer_created: string }>(
+  const order = await one<{ buyer_id: string; seller_id: string; amount_cents: number; seller_created: string; buyer_created: string; signup_ip_country: string | null; buyer_ip_country: string | null }>(
     q,
-    `SELECT o.buyer_id, o.seller_id, o.amount_cents, s.created_at AS seller_created, b.created_at AS buyer_created
+    `SELECT o.buyer_id, o.seller_id, o.amount_cents, s.created_at AS seller_created, b.created_at AS buyer_created, o.buyer_ip_country,
+            (SELECT ip_country FROM sessions WHERE user_id = b.id ORDER BY created_at ASC LIMIT 1) AS signup_ip_country
        FROM orders o JOIN users s ON s.id = o.seller_id JOIN users b ON b.id = o.buyer_id WHERE o.id = $1`,
     [orderId],
   );
   const reasons: RiskAssessment['reasons'] = [];
   const hoursSince = (t: string) => (Date.now() - new Date(t).getTime()) / 3_600_000;
+
+  // 0. Round 29 (1): the order comes from a different country than the account signed up from — a signal, never a block.
+  if (order.signup_ip_country && order.buyer_ip_country && order.signup_ip_country !== order.buyer_ip_country) {
+    reasons.push({ code: 'ip_country_change', weight: 0.15, detail: { signup: order.signup_ip_country, order: order.buyer_ip_country } });
+  }
 
   // 1. Buyer and seller share infrastructure -> self-dealing / wash trading / card testing.
   const shared = await many<{ kind: string }>(
@@ -321,6 +327,8 @@ export function riskReasonText(r: { code: string; weight: number; detail?: unkno
       return `The buyer placed ${d.ordersLastHour} orders in the last hour (${pct})`;
     case 'linked_to_bad_actor':
       return `The buyer shares a device, network, wallet or card with ${d.linkedAccounts} suspended, banned or chargeback account(s) (${pct})`;
+    case 'ip_country_change':
+      return `The order came from ${d.order} but the account signed up from ${d.signup} (${pct})`;
     case 'gnn_syndicate_score':
       return `The fraud model scored this order ${pct} likely to be a syndicate`;
     default:
