@@ -86,6 +86,12 @@
   --color-held: var(--held);
   --color-released: var(--released);
   --color-disputed: var(--disputed);
+  /* Text on the money-state tints (badges, alerts) and the "in progress" blue-green for Ops. */
+  --color-held-ink: var(--held-ink);
+  --color-released-ink: var(--released-ink);
+  --color-disputed-ink: var(--disputed-ink);
+  --color-info: var(--chart-1);
+  --color-info-ink: var(--info-ink);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -99,3 +105,19 @@
   --color-on-rune: var(--on-rune);
   --color-raised: var(--raised);
 }
+
+/* Ops (Round 30): text colour for the "in progress" badge. */
+:root { --info-ink: #0b6157; }
+.dark { --info-ink: #5fd0c2; }
+
+/*
+ * styles.css is unlayered and resets button / input / select / textarea, which would beat every Tailwind utility on
+ * shadcn parts. shadcn parts carry data-slot: roll them back to the layered styles (Tailwind) so their classes apply.
+ */
+:is(button, input, select, textarea)[data-slot] {
+  all: revert-layer;
+}
+
+/* styles.css sizes h1 / h2 for the storefront; Ops titles and sheet titles keep their own size. */
+.ops-title { font-size: 1.75rem; line-height: 1.2; margin: 0; letter-spacing: -0.01em; }
+[data-slot="sheet-title"] { font-family: inherit; font-size: 1.125rem; line-height: 1.4; margin: 0; letter-spacing: normal; }

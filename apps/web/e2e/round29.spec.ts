@@ -175,10 +175,15 @@ test.describe('Ops', () => {
     await expect(page.getByTestId('payout-provider-error').first()).toContainText('IP_NOT_WHITELISTED');
 
     // Staging only: record the payout sent by hand (one asks, the other role confirms).
-    const stuck = page.getByRole('row', { name: /NorthWind Keys/ }).filter({ has: page.getByTestId('payout-provider-error') }).first();
-    await stuck.getByLabel(/Transaction ID/).fill('0xabc1234567890def');
-    await stuck.getByLabel(/Note on the manual send/).fill('Sent from the treasury wallet');
-    await stuck.getByRole('button', { name: 'Mark as sent manually' }).click();
+    const stuck = page.getByRole('row', { name: /NorthWind Keys.*Provider error/ }).first();
+    await stuck.getByRole('button', { name: 'Resolve' }).click();
+    const panel = page.getByRole('dialog', { name: /Withdrawal · NorthWind Keys/ });
+    await expect(panel.getByText(/IP_NOT_WHITELISTED/).first()).toBeVisible();
+    await expect(panel.getByText('Staging only')).toBeVisible();
+    await panel.getByLabel(/Transaction ID/).fill('0xabc1234567890def');
+    await panel.getByLabel(/Note on the manual send/).fill('Sent from the treasury wallet');
+    await panel.getByRole('button', { name: 'Mark as sent manually' }).click();
+    await expect(panel).toHaveCount(0);
     await expect(page.getByRole('status').filter({ hasText: 'A second person (Finance + Lead) must confirm' })).toBeVisible();
   });
 });

@@ -14,6 +14,14 @@ import { DisputeCase } from './DisputeCase';
 import { DISPUTE_CATEGORY } from './OrderPage';
 import { ModerationPanel } from './ModerationPanel';
 import { WarrantyPanel } from './WarrantyPanel';
+import {
+  ArrowsClockwise, ArrowsLeftRight, Book, Brain, Certificate, ChartLineUp, ClipboardText, CreditCard, CurrencyBtc, Detective, EnvelopeSimple, Exam,
+  FileText, Flag, Gavel, HandCoins, Headset, LockKey, List, ListChecks, Medal, PaperPlaneTilt, Prohibit, Pulse, Receipt, Scales, Scroll, ShieldCheck,
+  SlidersHorizontal, Ticket, Trophy, Users, Vault, type Icon,
+} from '@phosphor-icons/react';
+import { Button } from '@/components/ui/button';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { cn } from '@/lib/utils';
 
 type ListTab = 'disputes' | 'risk' | 'proofs' | 'chargebacks' | 'ledger' | 'recon' | 'audit';
 type PanelTab = 'business' | 'retention' | 'support' | 'releases' | 'moderation' | 'warranty' | 'aml' | 'treasury' | 'payouts' | 'refunds' | 'tax' | 'staff' | 'status' | 'debts' | 'currency' | 'model' | 'privacy' | 'ranks' | 'leagues' | 'rules' | 'affiliates' | 'legal' | 'listingban' | 'controls' | 'newsletter' | 'cryptopay';
@@ -55,6 +63,23 @@ const TABS: Array<{ id: Tab; label: string; perm: string }> = [
   { id: 'legal', label: 'Legal', perm: 'support.manage' },
   { id: 'listingban', label: 'Listing bans', perm: 'moderation.manage' },
 ];
+/** Round 30 (Ops redesign): the sidebar groups, in order. Every tab sits in exactly one. */
+const GROUPS: Array<{ label: string; ids: Tab[] }> = [
+  { label: 'Overview', ids: ['business', 'retention', 'newsletter'] },
+  { label: 'Orders & support', ids: ['support', 'releases', 'disputes', 'warranty', 'proofs', 'moderation', 'listingban', 'legal'] },
+  { label: 'Risk & compliance', ids: ['risk', 'model', 'aml', 'chargebacks'] },
+  { label: 'Money', ids: ['treasury', 'payouts', 'cryptopay', 'debts', 'currency', 'ledger', 'recon', 'tax'] },
+  { label: 'Sellers & growth', ids: ['affiliates', 'ranks', 'leagues', 'rules'] },
+  { label: 'Platform', ids: ['controls', 'status', 'staff', 'privacy', 'audit'] },
+];
+const ICONS: Partial<Record<Tab, Icon>> = {
+  business: ChartLineUp, retention: ArrowsClockwise, newsletter: EnvelopeSimple, support: Headset, releases: HandCoins, disputes: Scales,
+  warranty: ShieldCheck, proofs: Certificate, moderation: Flag, listingban: Prohibit, legal: Scroll, risk: Detective, model: Brain, aml: Gavel,
+  chargebacks: CreditCard, treasury: Vault, payouts: PaperPlaneTilt, cryptopay: CurrencyBtc, debts: Receipt, currency: ArrowsLeftRight, ledger: Book,
+  recon: ListChecks, tax: ClipboardText, affiliates: Ticket, ranks: Medal, leagues: Trophy, rules: Exam, controls: SlidersHorizontal, status: Pulse,
+  staff: Users, privacy: LockKey, audit: FileText,
+};
+
 const PANELS: Record<PanelTab, () => React.ReactElement> = {
   business: BusinessPanel, retention: RetentionPanel, newsletter: NewsletterExport, support: SupportPanel, moderation: ModerationPanel, warranty: WarrantyPanel, aml: AmlPanel, treasury: TreasuryPanel, tax: TaxPanel, staff: StaffPanel,
   status: IncidentsPanel, debts: DebtsPanel, currency: CurrencyPanel, model: FraudModelPanel, privacy: PrivacyPanel, legal: LegalPanel, listingban: ListingBanPanel, controls: ControlsPanel,
@@ -135,34 +160,20 @@ export function Admin() {
     }
   };
 
+  const group = GROUPS.find((g) => g.ids.includes(tab))?.label;
+  const label = TABS.find((x) => x.id === tab)?.label ?? '';
   return (
-    <div className="stack">
-      <h1 style={{ fontSize: 40 }}>Operations</h1>
-      {currentLocale() !== 'en' && <p className="small muted" style={{ margin: 0 }} lang={currentLocale()}>{t('common.englishOnly')}</p>}
-      <div className="filters" role="tablist" aria-label="Operations sections">
-        {visible.map((t) => (
-          <button
-            key={t.id}
-            id={`tab-${t.id}`}
-            role="tab"
-            aria-selected={tab === t.id}
-            tabIndex={tab === t.id ? 0 : -1}
-            onClick={() => setTab(t.id)}
-            onKeyDown={(e) => {
-              // Arrow keys move between tabs (one tab stop for the whole list).
-              const i = visible.findIndex((x) => x.id === t.id);
-              const next = e.key === 'ArrowRight' ? i + 1 : e.key === 'ArrowLeft' ? i - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? visible.length - 1 : null;
-              if (next == null) return;
-              e.preventDefault();
-              const target = visible[(next + visible.length) % visible.length]!;
-              setTab(target.id);
-              document.getElementById(`tab-${target.id}`)?.focus();
-            }}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+    <div className="ops grid gap-6 lg:grid-cols-[232px_minmax(0,1fr)]">
+      <aside className="ops-side hidden self-start overflow-y-auto border-e border-border pe-3 lg:sticky lg:top-24 lg:block lg:max-h-[calc(100vh-7rem)]" aria-label="Operations sections">
+        <OpsNav visible={visible} tab={tab} onPick={setTab} />
+      </aside>
+      <div className="stack min-w-0" style={{ gap: 20 }}>
+        <div className="flex items-center gap-3">
+          <OpsMobileNav visible={visible} tab={tab} onPick={setTab} />
+          <nav aria-label="Breadcrumb" className="text-sm text-muted-foreground">Operations{group ? ` / ${group}` : ''}</nav>
+        </div>
+        <h1 className="ops-title">{label}</h1>
+        {currentLocale() !== 'en' && <p className="small muted" style={{ margin: 0 }} lang={currentLocale()}>{t('common.englishOnly')}</p>}
       {error && <div className="alert" role="alert">{error}</div>}
       {isPanel(tab) ? (
         (() => {
@@ -300,7 +311,85 @@ export function Admin() {
           <p className="small muted" style={{ marginTop: 12 }}>Gateway clearing is negative by the amount the payment partner holds for us. Escrow is buyer money awaiting release.</p>
         </div>
       )}
+      </div>
     </div>
+  );
+}
+
+type VisibleTab = (typeof TABS)[number];
+/**
+ * Round 30: the Ops sidebar — sections grouped by job. Each group is a vertical tab list; the arrow keys (up/down, or
+ * left/right) move through every section, Home / End jump to the first and last.
+ */
+function OpsNav({ visible, tab, onPick, idPrefix = 'tab-' }: { visible: VisibleTab[]; tab: Tab; onPick: (t: Tab) => void; idPrefix?: string }) {
+  const order = GROUPS.flatMap((g) => g.ids).filter((id) => visible.some((v) => v.id === id));
+  const move = (from: Tab, key: string) => {
+    const i = order.indexOf(from);
+    const next = key === 'ArrowDown' || key === 'ArrowRight' ? i + 1 : key === 'ArrowUp' || key === 'ArrowLeft' ? i - 1 : key === 'Home' ? 0 : key === 'End' ? order.length - 1 : null;
+    if (next == null) return false;
+    const target = order[(next + order.length) % order.length]!;
+    onPick(target);
+    requestAnimationFrame(() => document.getElementById(`${idPrefix}${target}`)?.focus());
+    return true;
+  };
+  return (
+    <div className="flex flex-col gap-4">
+      {GROUPS.map((g) => {
+        const items = g.ids.map((id) => visible.find((v) => v.id === id)).filter((v): v is VisibleTab => !!v);
+        if (!items.length) return null;
+        return (
+          <div key={g.label}>
+            <div id={`${idPrefix}grp-${g.label.replace(/\W+/g, '-')}`} className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{g.label}</div>
+            <div role="tablist" aria-orientation="vertical" aria-labelledby={`${idPrefix}grp-${g.label.replace(/\W+/g, '-')}`} className="flex flex-col gap-0.5">
+              {items.map((v) => {
+                const I = ICONS[v.id];
+                const on = v.id === tab;
+                return (
+                  <button
+                    key={v.id}
+                    id={`${idPrefix}${v.id}`}
+                    data-slot="ops-tab"
+                    role="tab"
+                    aria-selected={on}
+                    tabIndex={on ? 0 : -1}
+                    onClick={() => onPick(v.id)}
+                    onKeyDown={(e) => move(v.id, e.key) && e.preventDefault()}
+                    className={cn(
+                      'flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-md px-2 text-start text-[13.5px] text-foreground outline-none hover:bg-secondary focus-visible:ring-[3px] focus-visible:ring-ring/50',
+                      on && 'bg-secondary font-semibold',
+                    )}
+                  >
+                    {I && <I className={cn('size-4', on ? 'text-foreground' : 'text-muted-foreground')} aria-hidden />}
+                    {v.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Round 30: below the desktop width the sidebar opens from a "Sections" button. */
+function OpsMobileNav({ visible, tab, onPick }: { visible: VisibleTab[]; tab: Tab; onPick: (t: Tab) => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Sheet open={open} onOpenChange={setOpen}>
+      <Button variant="outline" size="sm" className="lg:hidden" onClick={() => setOpen(true)}>
+        <List aria-hidden /> Sections
+      </Button>
+      <SheetContent side="left" className="sm:max-w-xs">
+        <SheetHeader>
+          <SheetTitle>Operations</SheetTitle>
+          <SheetDescription className="sr-only">Pick a section</SheetDescription>
+        </SheetHeader>
+        <div className="overflow-y-auto p-3">
+          {open && <OpsNav idPrefix="mtab-" visible={visible} tab={tab} onPick={(t) => (onPick(t), setOpen(false))} />}
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }
 
