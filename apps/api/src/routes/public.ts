@@ -14,7 +14,7 @@ import { userCredit } from '../domain/ledger.js';
 import { beginSetup, disable, enable, remainingRecoveryCodes } from '../domain/mfa.js';
 import { assertNotLocked, clearFailedLogins, noteFailedLogin, changePassword, requestPasswordReset, resetPassword, completeMfaLogin, confirmVerificationCode, login, register, sendVerificationCode, startKyc } from '../domain/users.js';
 import { REFRESH_TTL_DAYS, issueAccessToken, listSessions, refreshSession, revokeByRefreshToken, revokeFamily, revokeOtherSessions, revokeSessionById } from '../domain/sessions.js';
-import { enqueueEmail, getPreferences, setPreferences } from '../domain/notifications.js';
+import { enqueueEmail, getPreferences, setPreferences, validTimezone } from '../domain/notifications.js';
 import { AppError, badRequest, notFound } from '../lib/errors.js';
 import { safeEqual, sha256 } from '../lib/crypto.js';
 import { ATTR_KEY, ATTR_VALUE_MAX, CATEGORY_DEFAULTS, GAME_SETS, attributesFor, handoverFieldFor, LEAGUES } from '../domain/attributeSets.js';
@@ -23,7 +23,7 @@ import { affiliateSummary } from '../domain/affiliates.js';
 import { controls } from '../domain/controls.js';
 import { wallet } from '../domain/wallet.js';
 import { LEGAL_DOCS, acceptTerms, acceptanceStatus, currentDocument, documentHistory, documentVersion, pendingNotice, tosVersion } from '../domain/legal.js';
-import { requestCryptoWithdrawal } from '../domain/cryptoPayouts.js';
+import { requestCryptoWithdrawal, withdrawalView } from '../domain/cryptoPayouts.js';
 import { listSuggestions, suggestGame, vote } from '../domain/gameVotes.js';
 import { deleteAccount, exportData } from '../domain/privacy.js';
 import { isStaff as isStaffUser, permissionsOf } from '../domain/permissions.js';
@@ -38,8 +38,11 @@ import { LOCALES } from '../domain/locales/index.js';
 import { TICKET_CATEGORIES, createTicket, customerReply, customerResolve, getTicket, listMyTickets } from '../domain/support.js';
 import { createWatch, deleteWatch, listWatches, updateWatch } from '../domain/watches.js';
 import { confirmSubscription, getIncident, statusSummary, subscribe, unsubscribe } from '../domain/status.js';
-import { me, requestMeta } from '../server.js';
-import { REGIONS, assertNotSanctioned, isCryptoBlockedCountry } from '../domain/geo.js';
+import { me, refreshCookieDomain, requestMeta } from '../server.js';
+import { REGIONS, assertCryptoAllowedHere, assertNotSanctioned, isCryptoBlockedCountry } from '../domain/geo.js';
+import { DEPOSIT_METHODS, createDeposit, depositMethodsFor, depositOf, depositQuote, listDeposits } from '../domain/walletDeposits.js';
+import { coinsFor, paymentsFor, refreshCryptoPayment, settleStuckPayments, startCryptoPayment } from '../domain/cryptoPayments.js';
+import { WITHDRAWAL_METHODS, withdrawalMethodsFor } from '../domain/withdrawalMethods.js';
 import { setNewsOptIn } from '../domain/newsletter.js';
 
 const Credentials = z.object({ email: z.string().email().max(254), password: z.string().min(10).max(200), captchaToken: z.string().max(4096).optional() });
@@ -55,9 +58,11 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   // so page scripts can never read it. Native/mobile clients send `X-Token-Delivery: body`.
   const COOKIE = 'bz_rt';
   const secure = ctx.cfg.NODE_ENV === 'production';
+  // Round 29 (12): the refresh cookie is scoped to the apex (".bullizard.com") so support.bullizard.com shares the session.
+  const cookieDomain = refreshCookieDomain(ctx.cfg);
   const deliver = (req: FastifyRequest, reply: FastifyReply, res: { refreshToken: string } & Record<string, unknown>) => {
     reply.setCookie(COOKIE, res.refreshToken, {
-      httpOnly: true, secure, sameSite: 'strict', path: '/v1/auth', maxAge: REFRESH_TTL_DAYS * 86_400,
+      httpOnly: true, secure, sameSite: 'strict', path: '/v1/auth', maxAge: REFRESH_TTL_DAYS * 86_400, ...(cookieDomain ? { domain: cookieDomain } : {}),
     });
     if (req.headers['x-token-delivery'] === 'body') return res;
     const { refreshToken: _omit, ...rest } = res;
@@ -137,7 +142,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
       const s = await refreshSession(ctx, token, meta(req));
       return deliver(req, reply, { token: s.accessToken, refreshToken: s.refreshToken, expiresIn: s.expiresIn });
     } catch (err) {
-      if (err instanceof AppError && err.status === 401) reply.clearCookie(COOKIE, { path: '/v1/auth' });
+      if (err instanceof AppError && err.status === 401) reply.clearCookie(COOKIE, { path: '/v1/auth', ...(cookieDomain ? { domain: cookieDomain } : {}) });
       throw err;
     }
   });
@@ -146,7 +151,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     const token = (req.body as any)?.refreshToken ?? req.cookies[COOKIE];
     if (token) await revokeByRefreshToken(ctx, token);
     else if (req.user?.session_family) await revokeFamily(ctx, req.user.id, req.user.session_family, 'signed_out');
-    reply.clearCookie(COOKIE, { path: '/v1/auth' });
+    reply.clearCookie(COOKIE, { path: '/v1/auth', ...(cookieDomain ? { domain: cookieDomain } : {}) });
     return reply.status(204).send();
   });
 
@@ -159,7 +164,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.post('/auth/password/reset', strict, async (req) => {
     const body = z.object({ token: z.string().min(20).max(200), newPassword: z.string().min(10).max(200) }).parse(req.body);
-    return resetPassword(ctx, body.token, body.newPassword);
+    return resetPassword(ctx, body.token, body.newPassword, requestMeta(req));
   });
 
   // Round 29 (1): `crypto_unavailable_here` (from the connection's country) tells the web to say "This payment method
@@ -171,6 +176,13 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     await ctx.db.query('UPDATE users SET region = $2 WHERE id = $1', [me(req).id, region]);
     return { region };
   });
+  /** Round 29c: security emails show times in this timezone (Africa/Cairo when unset); the web sends the browser's. */
+  app.put('/me/timezone', async (req) => {
+    const { timezone } = z.object({ timezone: z.string().trim().min(1).max(64) }).parse(req.body);
+    if (!validTimezone(timezone)) throw badRequest('invalid_timezone', 'Unknown timezone');
+    await ctx.db.query('UPDATE users SET timezone = $2 WHERE id = $1', [me(req).id, timezone]);
+    return { timezone };
+  });
   // Emails, notifications and SMS go out in this language; the web app sets it when the user switches.
   app.put('/me/locale', async (req) => {
     const { locale } = z.object({ locale: z.enum(LOCALES) }).parse(req.body);
@@ -181,7 +193,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.post('/me/password', strict, async (req) => {
     const body = z.object({ currentPassword: z.string(), newPassword: z.string().min(10).max(200) }).parse(req.body);
-    return changePassword(ctx, me(req), body.currentPassword, body.newPassword);
+    return changePassword(ctx, me(req), body.currentPassword, body.newPassword, requestMeta(req));
   });
 
   // --- Privacy (GDPR) ------------------------------------------------------------------
@@ -202,7 +214,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
       }
       throw err;
     }
-    reply.clearCookie(COOKIE, { path: '/v1/auth' });
+    reply.clearCookie(COOKIE, { path: '/v1/auth', ...(cookieDomain ? { domain: cookieDomain } : {}) });
     return res;
   });
 
@@ -438,7 +450,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   /** Withdraw credit (kept underpayments, promo credit) to the confirmed payout address, under the usual fee. */
   app.post('/me/credit/withdraw', async (req, reply) => {
     const { amountCents } = z.object({ amountCents: z.number().int().positive() }).parse(req.body);
-    return reply.status(201).send(await requestCryptoWithdrawal(ctx, me(req).id, amountCents, ctx.cfg.SETTLEMENT_CURRENCY, { source: 'credit' }));
+    return reply.status(201).send(await requestCryptoWithdrawal(ctx, me(req).id, amountCents, ctx.cfg.SETTLEMENT_CURRENCY, { source: 'credit', meta: requestMeta(req) }));
   });
   /** One wallet for buyers and sellers: balances per currency and the money events behind them. */
   app.get('/me/wallet', async (req) => {
@@ -447,10 +459,59 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   });
   /** Withdraw the buyer balance (credit) to the confirmed payout address: same rules as seller withdrawals (6%, min $1.50). */
   app.post('/me/withdrawals', async (req, reply) => {
-    const { amountCents } = z.object({ amountCents: z.number().int().positive() }).parse(req.body);
-    return reply.status(201).send(await requestCryptoWithdrawal(ctx, me(req).id, amountCents, ctx.cfg.SETTLEMENT_CURRENCY, { source: 'credit' }));
+    // Round 29: `{ amountCents, method?, details? }` like the seller's route; the destination is always the confirmed payout method.
+    const body = z.object({
+      amountCents: z.number().int().positive(),
+      method: z.enum(WITHDRAWAL_METHODS).optional(),
+      details: z.object({ network: z.string().max(20).optional(), address: z.string().max(128).optional(), phone: z.string().max(40).optional(), ipa: z.string().max(120).optional() }).optional(),
+    }).parse(req.body);
+    return reply.status(201).send(await requestCryptoWithdrawal(ctx, me(req).id, body.amountCents, ctx.cfg.SETTLEMENT_CURRENCY, { source: 'credit', method: body.method, details: body.details, meta: requestMeta(req) }));
   });
-  app.get('/me/withdrawals', async (req) => many(ctx.db, 'SELECT * FROM withdrawals WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100', [me(req).id]));
+  app.get('/me/withdrawals', async (req) => (await many(ctx.db, 'SELECT * FROM withdrawals WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100', [me(req).id])).map(withdrawalView));
+  // --- Round 29b: add funds to the wallet (crypto now; Egyptian methods listed as coming soon) ----------
+  /** The ways to add funds here, with fee, minimum and maximum; crypto hidden where the connection is from Egypt. */
+  app.get('/me/wallet/deposit-methods', async (req) => ({ methods: depositMethodsFor(ctx, requestMeta(req).ipCountry) }));
+  app.get('/me/wallet/deposit-quote', async (req) => {
+    const q = z.object({ method: z.enum(DEPOSIT_METHODS), amountCents: z.coerce.number().int().positive() }).parse(req.query);
+    return depositQuote(ctx, q.method, q.amountCents);
+  });
+  app.post('/me/wallet/deposits', async (req, reply) => {
+    const body = z.object({ method: z.enum(DEPOSIT_METHODS), amountCents: z.number().int().positive() }).parse(req.body);
+    const m = requestMeta(req);
+    assertNotSanctioned(ctx, m.ipCountry, 'buy');
+    return reply.status(201).send(await createDeposit(ctx, me(req).id, { method: body.method, amountCents: body.amountCents, ipCountry: m.ipCountry ?? null }));
+  });
+  app.get('/me/wallet/deposits', async (req) => listDeposits(ctx.db, me(req).id));
+  app.get('/me/wallet/deposits/:id', async (req) => depositOf(ctx.db, me(req).id, Id.parse(req.params).id));
+  const Id = z.object({ id: z.string().uuid() });
+  const depositRef = (id: string) => ({ depositId: id });
+  app.get('/me/wallet/deposits/:id/crypto/coins', async (req) => {
+    assertCryptoAllowedHere(ctx, requestMeta(req).ipCountry);
+    return coinsFor(ctx, depositRef(Id.parse(req.params).id), me(req).id);
+  });
+  app.post('/me/wallet/deposits/:id/crypto/pay', async (req, reply) => {
+    const { coin } = z.object({ coin: z.string().min(2).max(20).toLowerCase() }).parse(req.body);
+    assertCryptoAllowedHere(ctx, requestMeta(req).ipCountry);
+    assertNotSanctioned(ctx, requestMeta(req).ipCountry, 'buy');
+    return reply.status(201).send(await startCryptoPayment(ctx, depositRef(Id.parse(req.params).id), me(req).id, coin, 'USD'));
+  });
+  app.get('/me/wallet/deposits/:id/crypto/payments', async (req) => {
+    const { id } = Id.parse(req.params);
+    await depositOf(ctx.db, me(req).id, id);
+    await settleStuckPayments(ctx, depositRef(id));
+    return paymentsFor(ctx.db, depositRef(id));
+  });
+  app.post('/me/wallet/deposits/:id/crypto/payments/:pid/refresh', async (req) => {
+    const { id, pid } = z.object({ id: z.string().uuid(), pid: z.string().max(40) }).parse(req.params);
+    return refreshCryptoPayment(ctx, depositRef(id), me(req).id, pid);
+  });
+
+  /** Round 29 (1/2): the withdrawal methods available in a country — the same answer as /seller/withdrawal-methods, for the wallet page. */
+  app.get('/withdrawal-methods', async (req) => {
+    const { country } = z.object({ country: z.string().trim().length(2).optional() }).parse(req.query);
+    if (country) assertNotSanctioned(ctx, country, 'withdraw');
+    return withdrawalMethodsFor(ctx, country);
+  });
   app.get('/me/credit', async (req) => {
     const user = me(req);
     const cur = ctx.cfg.SETTLEMENT_CURRENCY;

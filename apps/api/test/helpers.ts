@@ -17,11 +17,18 @@ export interface Harness {
 
 const silent = { info() {}, warn() {}, error: (o: unknown, m?: string) => console.error(m, o) };
 
+/**
+ * The pre-CFO withdrawal fee model (6 %, at least $1.50, no minimum) and the Round 25–28 crypto tolerances, so the older
+ * suites keep their numbers. round29.test.ts runs on the CFO defaults (5 Nov): 3.99 % + $1, minimums, 0 tolerance, holds by rank.
+ */
+const LEGACY_FEE = '{"pctBps":600,"fixedCents":0,"minFeeCents":150,"minCents":1,"maxCents":100000000000,"currency":"USD"}';
+export const LEGACY_WITHDRAWAL_FEES = `{"usdt_bep20":${LEGACY_FEE},"usdt_trc20":${LEGACY_FEE},"wallet":${LEGACY_FEE},"instapay":${LEGACY_FEE}}`;
+
 export async function setup(overrides: Record<string, string> = {}, ctxOverrides: Partial<Ctx> = {}): Promise<Harness> {
   // Tests simulate clients on different IPs through X-Forwarded-For, as if behind a trusted proxy.
   // VIDEO_METADATA_STRIP off: the streaming tests use synthetic MP4 bytes; round23d.test.ts turns ffmpeg on.
   // Round 29 (3): the new-account velocity limits are off by default in tests (every test account is new); round29.test.ts turns them on.
-  const cfg = loadConfig({ TRUST_PROXY: 'true', RATE_LIMIT_PER_MINUTE: '100000', AUTH_RATE_LIMIT_PER_MINUTE: '100000', VIDEO_METADATA_STRIP: 'off', NEW_ACCOUNT_MAX_PAID_ORDERS_PER_DAY: '1000000', NEW_ACCOUNT_MAX_PAID_USD_PER_DAY: '1000000000', ...overrides } as any);
+  const cfg = loadConfig({ TRUST_PROXY: 'true', RATE_LIMIT_PER_MINUTE: '100000', AUTH_RATE_LIMIT_PER_MINUTE: '100000', VIDEO_METADATA_STRIP: 'off', NEW_ACCOUNT_MAX_PAID_ORDERS_PER_DAY: '1000000', NEW_ACCOUNT_MAX_PAID_USD_PER_DAY: '1000000000', CRYPTO_UNDERPAY_TOLERANCE_BPS: '50', OVERPAY_TO_BALANCE_ABOVE_CENTS: '0', PAYOUT_HOLD_DAYS_BY_RANK: '{}', NEW_SELLER_MAX_WITHDRAWAL_DAY_CENTS: '100000000', WITHDRAWAL_FEES_JSON: LEGACY_WITHDRAWAL_FEES, ...overrides } as any);
   const db = createPool(cfg.DATABASE_URL);
   await db.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
   await migrate(db);

@@ -43,7 +43,7 @@ import { getInvoice, invoicePdf, issueMonthlyInvoices } from '../domain/invoices
 import { decideAdjustment, listAdjustments, requestAdjustment, userLedger } from '../domain/adjustments.js';
 import { decideTreasuryWithdrawal, listTreasuryWithdrawals, requestTreasuryWithdrawal, treasuryBalance } from '../domain/treasury.js';
 import { listCryptoRefunds, markRefundSent, listCryptoPayments, recheckCryptoPayment } from '../domain/cryptoPayments.js';
-import { recheckUnknownPayout, decideWithdrawal, listPendingWithdrawals, manualPayoutDestination, markPayoutSentManually } from '../domain/cryptoPayouts.js';
+import { recheckUnknownPayout, decideWithdrawal, listPendingWithdrawals, manualPayoutDestination, manualSendAllowed, markPayoutSentManually, withdrawalView } from '../domain/cryptoPayouts.js';
 import { commissionSettings, listRanks, updateRanks } from '../domain/commission.js';
 import { referralSettings, updateReferralSettings } from '../domain/referrals.js';
 import { LEGAL_DOCS, publishDocument } from '../domain/legal.js';
@@ -538,7 +538,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const body = z
       .object({
         ranks: z.array(z.object({ position: z.number().int().min(1).max(5), name: z.string().trim().min(2).max(30), minMonthlySalesCents: z.number().int().min(0), rateBps: z.number().int().min(0).max(5000), perks: z.array(z.string().max(120)).max(8).optional() })).length(5),
-        settings: z.object({ promoRateBps: z.number().int().min(0).max(5000).optional(), promoDays: z.number().int().min(0).max(365).optional() }).optional(),
+        settings: z.object({ promoRateBps: z.number().int().min(0).max(5000).optional(), promoDays: z.number().int().min(0).max(365).optional(), promoMaxSalesCents: z.number().int().min(0).optional() }).optional(),
       })
       .parse(req.body);
     const r = await updateRanks(ctx, body.ranks, body.settings);
@@ -567,7 +567,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/admin/withdrawals', async (req) => {
     if (!hasPermission(me(req), 'withdrawals.second_approve')) requirePermission(req, 'treasury.request');
     else requirePermission(req, 'withdrawals.second_approve');
-    return listPendingWithdrawals(ctx.db);
+    return listPendingWithdrawals(ctx.db, ctx);
   });
   app.post('/admin/withdrawals/:id/decide', async (req) => {
     const staff = withdrawalStaff(req);
@@ -576,10 +576,10 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     try {
       const w = await decideWithdrawal(ctx, id, staff, body.approve, body.note);
       await audit(ctx.db, req, body.approve ? (w.status === 'pending_approval' ? 'withdrawal.first_approve' : 'withdrawal.approve') : 'withdrawal.reject', { type: 'withdrawal', id }, body);
-      return w;
+      return { ...withdrawalView(w), manual_send_allowed: manualSendAllowed(ctx, w) };
     } catch (err) {
       // Round 22 (12): the approval stands even when the provider call fails afterwards, so it is audited either way.
-      if (err instanceof AppError && ['payout_failed', 'payout_unknown'].includes(err.code)) {
+      if (err instanceof AppError && ['payout_provider_error', 'payout_failed', 'payout_unknown'].includes(err.code)) {
         await audit(ctx.db, req, 'withdrawal.approve', { type: 'withdrawal', id }, { ...body, payout: err.code, reason: (err.details as any)?.reason ?? null });
       }
       throw err;
@@ -592,7 +592,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const body = z.object({ hash: z.string().trim().min(4).max(120).optional(), note: z.string().trim().min(3).max(500) }).parse(req.body);
     const w = await markPayoutSentManually(ctx, id, staff, body);
     await audit(ctx.db, req, w.status === 'paid' ? 'withdrawal.manual_sent' : 'withdrawal.manual_send_requested', { type: 'withdrawal', id }, { ...body, status: w.status });
-    return w;
+    return { ...withdrawalView(w), manual_send_allowed: manualSendAllowed(ctx, w) };
   });
   /** Round 29 (2): the phone / IPA a manual (wallet / InstaPay) payout goes to — Finance only, audited, never in a list. */
   app.get('/admin/withdrawals/:id/destination', async (req) => {

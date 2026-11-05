@@ -1,7 +1,7 @@
 import { arDuration, type LocalePack } from './types.js';
 
 const ar: LocalePack = {
-  layout: { greeting: "أهلًا {name}،", greetingNoName: "أهلًا،", signoff: "فريق Bullizard", why: "تصلك هذه الرسالة لأن لديك حسابًا في Bullizard.", safety: "لن نطلب منك كلمة المرور أو الرموز عبر البريد أبدًا.", manage: "إعدادات البريد", legal: "Bullizard · 18+ only · للبالغين فقط · غير تابع لأي ناشر ألعاب", button: "افتح Bullizard" },
+  layout: { greeting: "أهلًا {name}،", greetingNoName: "أهلًا،", signoff: "فريق Bullizard", why: "تصلك هذه الرسالة لأن لديك حسابًا في Bullizard.", safety: "لن نطلب منك كلمة المرور أو الرموز عبر البريد أبدًا.", manage: "إعدادات البريد", legal: "Bullizard · غير تابع لأي ناشر ألعاب", button: "افتح Bullizard" },
   verifySubject: (code) => `رمز Bullizard الخاص بك: ${code}`,
   verifyCode: (code, minutes) => `رمزك هو ${code}، وهو صالح لمدة ${arDuration(minutes)}. إن لم تطلبه فتجاهل هذه الرسالة.`,
   duration: (minutes) => arDuration(minutes),
@@ -41,7 +41,15 @@ const ar: LocalePack = {
     },
     withdrawal_requested: {
       subject: (d, h) => `استلمنا طلب سحب ${h.money(d.amount_cents, d.currency)}`,
-      body: (d, link, h) => `سنرسل ${h.money(d.net_cents, d.currency)} إلى عنوانك على ${d.coin} بعد خصم رسوم ${h.money(d.fee_cents, d.currency)} وبعد الموافقة، وعادةً يستغرق ذلك حتى 3 أيام عمل. لم تطلب هذا؟ غيّر كلمة المرور الآن.\n\nعرض المحفظة: ${link('/sell/money')}`,
+      body: (d, link, h) => `سنرسل ${h.money(d.net_cents, d.currency)} إلى عنوانك على ${d.coin} بعد خصم رسوم ${h.money(d.fee_cents, d.currency)} وبعد الموافقة، وعادةً يستغرق ذلك حتى 3 أيام عمل.\n\n${h.security(d)}\n\nلم أكن أنا — أمّن حسابي: ${link('/account/secure')}`,
+    },
+    payout_address_changed: {
+      subject: () => 'تم تغيير عنوان السحب الخاص بك',
+      body: (d, link, h) => `أصبحت عمليات السحب تذهب إلى عنوان ${d.coin} هذا: ${d.address}.\n\n${h.security(d)}\n\nلم أكن أنا — أمّن حسابي: ${link('/account/secure')}`,
+    },
+    wallet_deposit_credited: {
+      subject: (d, h) => `أُضيف ${h.money(d.amount_cents, d.currency)} إلى محفظتك`,
+      body: (d, link, h) => `وصل تمويلك: ${h.money(d.amount_cents, d.currency)} الآن في محفظتك على Bullizard${d.overpaid_cents ? ` (بالإضافة إلى ${h.money(d.overpaid_cents, d.currency)} أرسلتها زيادة)` : ''}. رسوم المعالجة ${h.money(d.processing_fee_cents ?? 0, d.currency)} لا تُسترد.\n\nافتح المحفظة: ${link('/account/wallet')}`,
     },
     withdrawal_paid: {
       subject: (d, h) => `أُرسل ${h.money(d.net_cents ?? d.amount_cents, d.currency)} على الشبكة`,
@@ -114,7 +122,7 @@ const ar: LocalePack = {
     },
     new_signin: {
       subject: () => 'تسجيل دخول جديد إلى حسابك في Bullizard',
-      body: (d, link, h) => `سُجّل الدخول إلى حسابك من جهاز جديد (${d.userAgent ?? 'متصفح غير معروف'}، IP ${d.ip ?? 'غير معروف'}) في ${h.when(d.at)}.\n\nلست أنت؟ غيّر كلمة المرور وسجّل الخروج من الأجهزة الأخرى: ${link('/account')}`,
+      body: (d, link, h) => `سُجّل الدخول إلى حسابك للتو من جهاز جديد.\n\n${h.security(d)}\n\nإن كنت أنت فلا شيء عليك فعله.\n\nلم أكن أنا — أمّن حسابي: ${link('/account/secure')}`,
     },
     password_reset: {
       subject: () => 'إعادة تعيين كلمة مرور Bullizard',
@@ -128,7 +136,7 @@ const ar: LocalePack = {
     },
     password_changed: {
       subject: () => 'تم تغيير كلمة مرورك',
-      body: (_d, link) => `تم تغيير كلمة مرورك وتسجيل الخروج من أجهزتك الأخرى. لست أنت؟ أعد تعيين كلمة المرور فورًا: ${link('/account')}`,
+      body: (d, link, h) => `تم تغيير كلمة مرورك وتسجيل الخروج من أجهزتك الأخرى.\n\n${h.security(d)}\n\nلم أكن أنا — أمّن حسابي: ${link('/account/secure')}`,
     },
     mfa_changed: {
       subject: (d) => (d.enabled ? 'تم تفعيل المصادقة الثنائية' : 'تم إيقاف المصادقة الثنائية'),

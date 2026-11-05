@@ -216,7 +216,7 @@ describe('7. minor money items', () => {
     const cfo = await makeUser(h, { role: 'finance' });
     const w = (await seller.api.post('/v1/seller/withdrawals', { amountCents: 14_00 })).body;
     fake.payoutMode = 'reject';
-    expect((await cfo.api.post(`/v1/admin/withdrawals/${w.id}/decide`, { approve: true })).body.error.code).toBe('payout_failed');
+    expect((await cfo.api.post(`/v1/admin/withdrawals/${w.id}/decide`, { approve: true })).body.error.code).toBe('payout_provider_error');
     expect((await row(w.id)).status).toBe('failed');
     await ipn({ id: 'late-1', batch_withdrawal_id: 'batch_late-1', unique_external_id: w.id, status: 'FINISHED', error: null, currency: 'usdttrc20', amount: '12.5', address: 'TRound22bSeller123456789a', hash: '0xsent-after-refund' });
     expect(await row(w.id)).toMatchObject({ status: 'failed', paid_after_reversal_hash: '0xsent-after-refund' });

@@ -1,3 +1,5 @@
+import { securityEmailData, type SecurityMeta } from './sessions.js';
+import { topupWithdrawReview } from './walletDeposits.js';
 import type { WithdrawalReason } from './locales/index.js';
 import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
@@ -15,10 +17,10 @@ import { availableCredit } from './referrals.js';
 import { enqueueEmail, enqueueMailboxEmail } from './notifications.js';
 import { withScope } from './events.js';
 import { checkSecondFactor } from './mfa.js';
-import { withdrawable } from './payoutholds.js';
+import { holdPolicy, withdrawable } from './payoutholds.js';
 import { PUBLIC_USER_COLUMNS, type User } from './users.js';
 import { ensureScreenedForPayout } from './aml.js';
-import { MANUAL_METHODS, WITHDRAWAL_METHODS, cleanIdentifier, isWithdrawalMethod, methodAvailableIn, withdrawalFeeFor, withdrawalFeeTable } from './withdrawalMethods.js';
+import { MANUAL_METHODS, WITHDRAWAL_METHODS, cleanIdentifier, isWithdrawalMethod, methodAvailableIn, withdrawalFeeQuote } from './withdrawalMethods.js';
 import { assertNotSanctioned, cleanWithdrawalCountry } from './geo.js';
 import { coinName } from './cryptoPayments.js';
 import { rulesSettings } from './onboarding.js';
@@ -121,7 +123,7 @@ const codeHash = (ctx: Ctx, userId: string, code: string) => hmacSha256(ctx.cfg.
 const identifierAad = (userId: string) => `payout_identifier:${userId}`;
 
 /** Step 2: the link from the email, with the 2FA code when the account has one. Takes effect at once. */
-export async function confirmPayoutAddress(ctx: Ctx, user: User, input: { token: string; code?: string }) {
+export async function confirmPayoutAddress(ctx: Ctx, user: User, input: { token: string; code?: string }, meta?: SecurityMeta) {
   const row = await maybeOne<{ id: string; address: string | null; currency: string | null; code_hash: string | null; code_attempts: number; code_via: string | null; method: string; identifier_ciphertext: string | null; identifier_hint: string | null; country: string | null }>(
     ctx.db, `SELECT id, address, currency, code_hash, code_attempts, code_via, method, identifier_ciphertext, identifier_hint, country FROM payout_address_changes WHERE user_id = $1 AND token_hash = $2 AND confirmed_at IS NULL AND expires_at > now()`, [user.id, tokenHash(ctx, input.token)],
   );
@@ -145,7 +147,7 @@ export async function confirmPayoutAddress(ctx: Ctx, user: User, input: { token:
     );
     if (row.address) await recordSignals(s.tx, user.id, { wallet: row.address.toLowerCase() }); // a payout wallet shared between accounts links them
     else if (row.identifier_ciphertext) await recordSignals(s.tx, user.id, { wallet: `${row.method}:${hmacSha256(ctx.cfg.FINGERPRINT_KEY, ctx.keyring.decrypt(row.identifier_ciphertext, identifierAad(user.id))).slice(0, 32)}` }); // a shared phone / IPA links accounts too (hashed)
-    await enqueueEmail(s.tx, user.id, 'payout_address_changed', { address: row.address ?? row.identifier_hint ?? '', coin: row.currency ? coinName(row.currency) : row.method === 'wallet' ? 'Mobile wallet' : 'InstaPay' });
+    await enqueueEmail(s.tx, user.id, 'payout_address_changed', { address: row.address ?? row.identifier_hint ?? '', coin: row.currency ? coinName(row.currency) : row.method === 'wallet' ? 'Mobile wallet' : 'InstaPay', ...securityEmailData(meta) });
     s.notifyUser(user.id, 'payout_address.changed', {});
   });
   return payoutAddressOf(ctx.db, user.id);
@@ -157,7 +159,15 @@ export async function removePayoutAddress(ctx: Ctx, userId: string) {
 }
 
 /** A withdrawal request: fee computed, gross moved out of the balance, waits for the CFO. */
-export async function requestCryptoWithdrawal(ctx: Ctx, userId: string, amountCents: number, currency = ctx.cfg.SETTLEMENT_CURRENCY, opts: { source?: 'balance' | 'credit' } = {}) {
+/** Round 29: the shape the web sends with a withdrawal — the method it shows and the details it displayed (checked against the confirmed one). */
+export interface WithdrawalRequestInput {
+  source?: 'balance' | 'credit';
+  method?: string;
+  details?: { network?: string; address?: string; phone?: string; ipa?: string };
+  /** Round 29c: where the request came from, for the security email. */
+  meta?: SecurityMeta;
+}
+export async function requestCryptoWithdrawal(ctx: Ctx, userId: string, amountCents: number, currency = ctx.cfg.SETTLEMENT_CURRENCY, opts: WithdrawalRequestInput = {}) {
   const source = opts.source ?? 'balance';
   assertUsdWithdrawal(currency);
   // Round 25: the request only books the money for the CFO's approval; sending it (decideWithdrawal) needs NOWPayments.
@@ -168,11 +178,22 @@ export async function requestCryptoWithdrawal(ctx: Ctx, userId: string, amountCe
     );
     assertNotSanctioned(ctx, user.payout_country, 'withdraw'); // Round 29 (1): blocked by the withdrawal country
     const method = isWithdrawalMethod(user.payout_method) ? user.payout_method : 'usdt';
+    // Round 29: the web names the method (and shows the details) it is withdrawing through; it must be the confirmed one —
+    // the destination always comes from the confirmed payout method, never from the request body.
+    if (opts.method && opts.method !== method) throw badRequest('method_not_confirmed', 'Confirm that withdrawal method first (Wallet → Withdrawal method)', { confirmed: method });
+    if (opts.details?.address && user.payout_address && opts.details.address.trim() !== user.payout_address) throw badRequest('method_not_confirmed', 'That address is not your confirmed payout address', { confirmed: method });
+    if (opts.details?.network && user.payout_address_currency && opts.details.network.toLowerCase() !== user.payout_address_currency) throw badRequest('method_not_confirmed', 'That network is not the one on your confirmed payout address', { confirmed: method });
     if (user.withdrawals_frozen || user.status !== 'active') throw new AppError(423, 'withdrawals_frozen', 'Withdrawals are frozen pending a security review');
     const { aml_hold } = await one<{ aml_hold: boolean }>(s.tx, 'SELECT aml_hold FROM users WHERE id = $1', [userId]);
     if (aml_hold) throw new AppError(423, 'withdrawals_frozen', 'Withdrawals are paused while we complete a routine review');
     await assertNotPaused(s.tx, 'withdrawals'); // kill switch (Ops → Controls)
     await assertWithdrawalWithinLimits(s.tx, userId, amountCents); // per-user daily cap (beta)
+    // CFO (5 Nov): a seller in their first 30 days withdraws at most NEW_SELLER_MAX_WITHDRAWAL_DAY_CENTS ($1,000) a day.
+    if (source === 'balance' && (!user.seller_since || Date.now() - new Date(user.seller_since).getTime() < 30 * 86_400_000)) {
+      const day = Number((await one<{ s: string }>(s.tx, `SELECT COALESCE(SUM(amount_cents), 0)::bigint AS s FROM withdrawals WHERE user_id = $1 AND status NOT IN ('rejected', 'failed') AND created_at > now() - interval '24 hours'`, [userId])).s);
+      const cap = ctx.cfg.NEW_SELLER_MAX_WITHDRAWAL_DAY_CENTS;
+      if (day + amountCents > cap) throw badRequest('withdrawal_limit', `New sellers can withdraw up to ${(cap / 100).toFixed(2)} USD a day during their first 30 days; ${(Math.max(0, cap - day) / 100).toFixed(2)} USD is still available today`, { maxDayCents: cap, usedCents: day, newSeller: true });
+    }
     // Round 29 (2): a manual method (wallet / InstaPay) needs its confirmed phone / IPA; USDT needs the address.
     if (MANUAL_METHODS.has(method) ? !user.payout_identifier_ciphertext : !user.payout_address || !user.payout_address_currency) throw badRequest('no_payout_address', 'Add and confirm a withdrawal method first');
     // Round 22 (10): only the launch payout coins; an older address in another coin must be replaced with a USDT one.
@@ -206,15 +227,20 @@ export async function requestCryptoWithdrawal(ctx: Ctx, userId: string, amountCe
         );
       }
     }
-    const fee = withdrawalFeeFor(ctx, method, amountCents);
-    const net = amountCents - fee;
-    if (net <= 0) throw badRequest('amount_too_small', `The fee (${(withdrawalFeeTable(ctx)[method].minCents / 100).toFixed(2)} ${currency} minimum) would take the whole amount`);
+    const policy = await holdPolicy(ctx, s.tx, userId);
+    // CFO (5 Nov): the method's fee rule — below_minimum / above_maximum come from here; EGP methods are quoted at the rate table.
+    const quote = await withdrawalFeeQuote(ctx, s.tx, method, user.payout_address_currency, amountCents);
+    const fee = quote.feeCents;
+    const net = quote.netCents;
+    if (net <= 0) throw badRequest('amount_too_small', 'The fee would take the whole amount');
     const manual = MANUAL_METHODS.has(method);
     const w = await one(
       s.tx,
-      `INSERT INTO withdrawals (user_id, amount_cents, currency, status, fee_cents, net_cents, destination_address, destination_currency, source, method, destination_ciphertext, destination_hint, country)
-       VALUES ($1, $2, $3, 'pending_approval', $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
-      [userId, amountCents, currency, fee, net, manual ? null : user.payout_address, manual ? null : user.payout_address_currency, source, method, manual ? user.payout_identifier_ciphertext : null, manual ? user.payout_identifier_hint : null, user.payout_country],
+      `INSERT INTO withdrawals (user_id, amount_cents, currency, status, fee_cents, net_cents, destination_address, destination_currency, source, method, destination_ciphertext, destination_hint, country,
+                                payout_currency, payout_amount_cents, payout_rate, fee_key)
+       VALUES ($1, $2, $3, 'pending_approval', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING *`,
+      [userId, amountCents, currency, fee, net, manual ? null : user.payout_address, manual ? null : user.payout_address_currency, source, method, manual ? user.payout_identifier_ciphertext : null, manual ? user.payout_identifier_hint : null, user.payout_country,
+       quote.payoutCurrency, quote.payoutAmountCents, quote.rate, quote.key],
     );
     await post(
       s.tx,
@@ -224,28 +250,60 @@ export async function requestCryptoWithdrawal(ctx: Ctx, userId: string, amountCe
       ],
       `withdrawal:${w.id}`,
     );
-    await enqueueEmail(s.tx, userId, 'withdrawal_requested', { amount_cents: amountCents, fee_cents: fee, net_cents: net, currency, coin: manual ? (method === 'wallet' ? 'Mobile wallet' : 'InstaPay') : coinName(user.payout_address_currency!) });
-    return w;
+    await enqueueEmail(s.tx, userId, 'withdrawal_requested', { amount_cents: amountCents, fee_cents: fee, net_cents: net, currency, coin: manual ? (method === 'wallet' ? 'Mobile wallet' : 'InstaPay') : coinName(user.payout_address_currency!), ...securityEmailData(opts.meta) });
+    // Round 29b (CFO 7): a repeated top-up → withdraw pattern waits for staff (Ops → Fraud review) with the reason in words.
+    const reviewReasons = await topupWithdrawReview(ctx, s.tx, userId);
+    if (reviewReasons.length) {
+      await s.tx.query(`UPDATE withdrawals SET review_reason = 'topup_withdraw_pattern', review_reasons_text = $2 WHERE id = $1`, [w.id, reviewReasons]);
+      await s.tx.query(`INSERT INTO risk_flags (user_id, withdrawal_id, score, reasons) VALUES ($1, $2, 0.5, $3)`, [userId, w.id, JSON.stringify({ kind: 'topup_withdraw_pattern', reasons: reviewReasons })]);
+      w.review_reason = 'topup_withdraw_pattern';
+      w.review_reasons_text = reviewReasons;
+    }
+    return { w, instant: !manual && policy.instant && !reviewReasons.length };
+  }).then(async ({ w, instant }) => {
+    // CFO (5 Nov): Dragon = instant payout — approved by the system and sent at once; four-eyes above $500 still goes to staff.
+    if (instant && ctx.payments instanceof NowPaymentsProvider) {
+      try {
+        const decided = await decideWithdrawal(ctx, w.id, { id: userId, role: 'system' }, true, undefined, { system: true });
+        return withdrawalView({ ...w, ...decided, instant: decided.status !== 'pending_approval' });
+      } catch (err) {
+        ctx.log.warn({ err: (err as Error).message, withdrawalId: w.id }, 'dragon instant payout could not be sent; left for staff');
+        return withdrawalView({ ...(await one<any>(ctx.db, 'SELECT * FROM withdrawals WHERE id = $1', [w.id])), instant: false });
+      }
+    }
+    return withdrawalView(w);
   });
 }
 
-export async function listPendingWithdrawals(q: Queryable) {
-  return many(
-    q,
-    `SELECT w.*, u.email, u.display_name, u.kyc_tier, u.trust_level FROM withdrawals w JOIN users u ON u.id = w.user_id
-      WHERE w.status IN ('pending_approval', 'processing', 'unknown') ORDER BY w.created_at`,
-  );
+/** Round 29: a withdrawal as the web shows it — `method` and masked `details`, never the phone / IPA itself. */
+export function withdrawalView<T extends Record<string, any>>(w: T) {
+  const details = w.method === 'usdt' || !w.method ? { network: w.destination_currency ?? null, address: w.destination_address ?? null } : w.method === 'wallet' ? { phone: w.destination_hint ?? null } : { ipa: w.destination_hint ?? null };
+  const { destination_ciphertext: _c, ...rest } = w;
+  return { ...rest, method: w.method ?? 'usdt', details };
 }
 
+export async function listPendingWithdrawals(q: Queryable, ctx?: Ctx) {
+  const rows = await many<any>(
+    q,
+    `SELECT w.*, u.email, u.display_name, u.kyc_tier, u.trust_level, u.seller_rank FROM withdrawals w JOIN users u ON u.id = w.user_id
+      WHERE w.status IN ('pending_approval', 'processing', 'unknown') OR (w.status = 'failed' AND w.updated_at > now() - interval '7 days') ORDER BY w.created_at`,
+  );
+  // Round 29 (5): `manual_send_allowed` — Ops shows the "Mark as sent" button only where the server will accept it.
+  return rows.map((w) => ({ ...withdrawalView(w), manual_send_allowed: manualSendAllowed(ctx, w) }));
+}
+export const manualSendAllowed = (ctx: Ctx | undefined, w: { status: string; method?: string }) =>
+  ['processing', 'unknown'].includes(w.status) && (MANUAL_METHODS.has(w.method ?? 'usdt') || (ctx?.cfg.APP_ENV ?? 'development') !== 'production');
+
 /** CFO decision. Approve: fee to treasury, net sent through NOWPayments. Reject: everything back to the seller. */
-export async function decideWithdrawal(ctx: Ctx, id: string, staff: { id: string; role: string; staff_roles?: string[] | null }, approve: boolean, note?: string) {
+export async function decideWithdrawal(ctx: Ctx, id: string, staff: { id: string; role: string; staff_roles?: string[] | null }, approve: boolean, note?: string, opts: { system?: boolean } = {}) {
   if (!(ctx.payments instanceof NowPaymentsProvider)) throw new AppError(503, 'payouts_unavailable', 'Crypto payouts are not configured');
   const np = ctx.payments;
-  const staffId = staff.id;
+  // CFO (5 Nov): a Dragon's payout is instant — approved by the system below the four-eyes thresholds (decided_by stays null).
+  const staffId = opts.system ? null : staff.id;
   const w = await withScope(ctx, async (s) => {
     const w = await maybeOne<any>(s.tx, 'SELECT * FROM withdrawals WHERE id = $1 FOR UPDATE', [id]);
     if (!w) throw notFound('Withdrawal');
-    if (w.user_id === staffId) throw forbidden('own_withdrawal', 'You cannot decide your own withdrawal');
+    if (staffId && w.user_id === staffId) throw forbidden('own_withdrawal', 'You cannot decide your own withdrawal');
     if (w.status !== 'pending_approval') throw conflict('invalid_state', `This withdrawal is ${w.status}`);
     // Kill switch (Round 22): while withdrawals are paused, staff can't approve or send either; rejecting stays possible.
     if (approve) await assertNotPaused(s.tx, 'withdrawals');
@@ -253,8 +311,8 @@ export async function decideWithdrawal(ctx: Ctx, id: string, staff: { id: string
     const fee = Number(w.fee_cents);
     const net = Number(w.net_cents);
     const c = await controls(s.tx);
-    const finance = hasPermission(staff, 'treasury.approve');
-    const lead = hasPermission(staff, 'withdrawals.second_approve');
+    const finance = opts.system ? true : hasPermission(staff, 'treasury.approve');
+    const lead = opts.system ? false : hasPermission(staff, 'withdrawals.second_approve');
     // CFO B9 + Round 22: Finance always gives the first approval. Above the threshold, or a user above the daily total, the
     // Support Lead (or an admin) adds the second signature, never the same person twice. The Lead never approves alone.
     const userDay = Number((await one<{ s: string }>(s.tx, `SELECT COALESCE(SUM(amount_cents), 0)::bigint AS s FROM withdrawals WHERE user_id = $1 AND status NOT IN ('rejected', 'failed') AND created_at > now() - interval '24 hours'`, [w.user_id])).s);
@@ -269,6 +327,7 @@ export async function decideWithdrawal(ctx: Ctx, id: string, staff: { id: string
       note = 'unsupported_coin';
     }
     if (approve) {
+      if (opts.system && needsFourEyes) return { ...w, status: 'pending_approval', instant_skipped: 'four_eyes' }; // staff decide it (four-eyes above $500 / $1,000 day)
       if (needsFourEyes) {
         if (!w.first_approved_by) {
           await s.tx.query(`UPDATE withdrawals SET first_approved_by = $2, first_approved_at = now(), four_eyes_required = true, decision_note = COALESCE($3, decision_note), updated_at = now() WHERE id = $1`, [id, staffId, note ?? null]);
@@ -302,7 +361,7 @@ export async function decideWithdrawal(ctx: Ctx, id: string, staff: { id: string
       await enqueueEmail(s.tx, w.user_id, 'withdrawal_failed', { amount_cents: amount, currency: w.currency, reason: unsupported ? 'unsupported_coin' : 'not_approved' }); // Round 23f: a code (§9.6)
       return { ...w, status: 'rejected', decision_note: note ?? null, ...(unsupported ? { refused: 'unsupported_coin' } : {}) };
     }
-    await s.tx.query(`UPDATE withdrawals SET status = 'processing', decided_by = $2, decided_at = now(), decision_note = $3, updated_at = now() WHERE id = $1`, [id, staffId, note ?? null]);
+    await s.tx.query(`UPDATE withdrawals SET status = 'processing', decided_by = $2, decided_at = now(), decision_note = $3, updated_at = now() WHERE id = $1`, [id, staffId, note ?? (opts.system ? 'dragon_instant' : null)]);
     await post(
       s.tx,
       [
@@ -338,6 +397,26 @@ export async function manualPayoutDestination(ctx: Ctx, staff: User, withdrawalI
  * ids are stored before the 2FA verify step; a failed verify leaves a real (unverified) batch at the provider, so the
  * withdrawal goes `unknown` with `verify_pending` and the job retries the verification. Money never goes back on a guess.
  */
+/** Round 29 (5): the provider's own answer, kept on the row and sent to the web as `provider_error` (status + message, no secrets). */
+export interface ProviderError {
+  status: number;
+  message: string;
+  step: 'auth' | 'config' | 'call' | 'verify';
+  at: string;
+}
+const providerErrorOf = (err: unknown, fallbackStep: ProviderError['step']): ProviderError => {
+  const e = err as NowPaymentsError;
+  return {
+    status: e instanceof NowPaymentsError ? e.status : 0,
+    message: (e instanceof NowPaymentsError ? e.staffMessage : (err as Error).message).slice(0, 500),
+    step: e instanceof NowPaymentsError ? (e.step as ProviderError['step']) : fallbackStep,
+    at: new Date().toISOString(),
+  };
+};
+async function keepProviderError(ctx: Ctx, id: string, pe: ProviderError) {
+  await ctx.db.query('UPDATE withdrawals SET provider_error = $2, updated_at = now() WHERE id = $1', [id, JSON.stringify(pe)]);
+}
+
 async function sendPayout(ctx: Ctx, np: NowPaymentsProvider, w0: any) {
   const id = w0.id as string;
   if (MANUAL_METHODS.has(w0.method)) return w0; // Round 29 (2): sent by Finance by hand, never by the provider
@@ -365,16 +444,18 @@ async function sendPayout(ctx: Ctx, np: NowPaymentsProvider, w0: any) {
     await np.ensurePayoutAuth();
   } catch (err) {
     const e = err as NowPaymentsError;
-    const reason = (e instanceof NowPaymentsError ? e.staffMessage : (err as Error).message).slice(0, 500);
+    const pe = providerErrorOf(err, 'auth');
+    const reason = pe.message;
+    await keepProviderError(ctx, id, pe);
     const configProblem = e instanceof NowPaymentsError && (e.step === 'config' || (e.step === 'auth' && e.rejected));
     if (configProblem) {
       await failWithdrawal(ctx, id, reason, 'provider_auth');
       ctx.log.error({ withdrawalId: id, status: e.status, step: e.step, providerMessage: e.providerMessage }, 'payout login failed; withdrawal reversed');
-      throw new AppError(502, 'payout_auth_failed', reason, { reason, provider_status: e.status, provider_message: e.providerMessage, step: e.step });
+      throw new AppError(502, 'payout_provider_error', reason, { reason, provider_error: pe, provider_status: pe.status, provider_message: e.providerMessage, step: pe.step, reversed: true });
     }
     await ctx.db.query(`UPDATE withdrawals SET status = 'unknown', failure_reason = $2, updated_at = now() WHERE id = $1 AND status = 'processing'`, [id, reason]);
     ctx.log.error({ err, withdrawalId: id }, 'payout login got no answer; will recheck with the provider');
-    throw new AppError(502, 'payout_unknown', `NOWPayments did not answer the payout login: ${reason}`, { reason, provider_status: e?.status ?? 0 });
+    throw new AppError(502, 'payout_unknown', `NOWPayments did not answer the payout login: ${reason}`, { reason, provider_error: pe, provider_status: pe.status, step: pe.step, reversed: false });
   }
   let batch: { batchId: string; payout: { id: string | number } };
   try {
@@ -387,27 +468,31 @@ async function sendPayout(ctx: Ctx, np: NowPaymentsProvider, w0: any) {
     });
   } catch (err) {
     const e = err as NowPaymentsError;
-    const reason = (e instanceof NowPaymentsError ? e.staffMessage : (err as Error).message).slice(0, 500);
-    const provider = e instanceof NowPaymentsError ? { provider_status: e.status, provider_message: e.providerMessage } : { provider_status: 0, provider_message: null };
+    const pe = providerErrorOf(err, 'call');
+    const reason = pe.message;
+    await keepProviderError(ctx, id, pe);
+    const provider = { provider_error: pe, provider_status: pe.status, provider_message: e instanceof NowPaymentsError ? e.providerMessage : null, step: pe.step };
     ctx.log.error({ withdrawalId: id, ...provider, err: (err as Error).message }, 'payout call failed');
     if (err instanceof NowPaymentsError && err.rejected) {
       await failWithdrawal(ctx, id, reason);
-      throw new AppError(502, 'payout_failed', `NOWPayments rejected this payout (${e.status}): ${e.providerMessage ?? 'no message'}; the amount is back in the seller’s balance`, { reason, ...provider });
+      throw new AppError(502, 'payout_provider_error', `NOWPayments rejected this payout (${e.status}): ${e.providerMessage ?? 'no message'}; the amount is back in the seller’s balance`, { reason, ...provider, reversed: true });
     }
     await ctx.db.query(`UPDATE withdrawals SET status = 'unknown', failure_reason = $2, updated_at = now() WHERE id = $1 AND status = 'processing'`, [id, reason]);
-    throw new AppError(502, 'payout_unknown', `NOWPayments did not answer (${reason}); the payout is being checked with the provider before anything is reversed`, { reason, ...provider });
+    throw new AppError(502, 'payout_unknown', `NOWPayments did not answer (${reason}); the payout is being checked with the provider before anything is reversed`, { reason, ...provider, reversed: false });
   }
   await ctx.db.query(`UPDATE withdrawals SET provider_ref = $2, payout_id = $3, updated_at = now() WHERE id = $1`, [id, batch.batchId, String(batch.payout.id)]);
   try {
     await np.verifyPayout(batch.batchId);
   } catch (err) {
-    const reason = `verify failed: ${(err as Error).message}`.slice(0, 200);
+    const pe = providerErrorOf(err, 'verify');
+    const reason = `verify failed: ${pe.message}`.slice(0, 200);
+    await keepProviderError(ctx, id, { ...pe, step: 'verify' });
     await ctx.db.query(`UPDATE withdrawals SET status = 'unknown', verify_pending = true, failure_reason = $2, updated_at = now() WHERE id = $1 AND status = 'processing'`, [id, reason]);
     ctx.log.error({ err, withdrawalId: id, batchId: batch.batchId }, 'payout batch created but not verified; will retry the verification');
-    throw new AppError(502, 'payout_unknown', 'The payout was created but its verification failed; it is retried before anything is reversed', { reason });
+    throw new AppError(502, 'payout_unknown', 'The payout was created but its verification failed; it is retried before anything is reversed', { reason, provider_error: { ...pe, step: 'verify' }, reversed: false });
   }
   return withTx(ctx.db, async (tx) =>
-    one(tx, `UPDATE withdrawals SET status = 'processing', verify_pending = false, failure_reason = NULL, updated_at = now() WHERE id = $1 AND status IN ('processing', 'unknown') RETURNING *`, [id]),
+    one(tx, `UPDATE withdrawals SET status = 'processing', verify_pending = false, failure_reason = NULL, provider_error = NULL, updated_at = now() WHERE id = $1 AND status IN ('processing', 'unknown') RETURNING *`, [id]),
   );
 }
 

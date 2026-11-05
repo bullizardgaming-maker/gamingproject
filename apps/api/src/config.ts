@@ -15,6 +15,8 @@ const Env = z.object({
   // Round 29 (12): more browser origins allowed to call the API with cookies (comma list). support.<apex> of
   // PUBLIC_WEB_URL is always allowed (the help centre + tickets live on support.bullizard.com).
   EXTRA_WEB_ORIGINS: z.string().optional(),
+  // Round 29 (12): Domain of the refresh cookie (default: the apex of PUBLIC_WEB_URL, e.g. .bullizard.com).
+  COOKIE_DOMAIN: z.string().optional(),
   PUBLIC_API_URL: z.string().optional(), // defaults to http://localhost:PORT
   // Requests per minute per client IP (general limit; auth endpoints are stricter).
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(300),
@@ -94,13 +96,28 @@ const Env = z.object({
   DELIVERY_PROOF_REQUIRED: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
   /** Network-fee estimates shown at checkout (USD per coin code, buyer pays on top); JSON, e.g. {"usdttrc20":1,"eth":4}. */
   /** Underpayments within this share of the price are accepted as paid in full (network dust, rounding). */
-  CRYPTO_UNDERPAY_TOLERANCE_BPS: z.coerce.number().int().min(0).max(500).default(50),
+  // CFO (5 Nov): underpayment by the buyer has no tolerance; an overpayment goes to the balance only above OVERPAY_TO_BALANCE_ABOVE_CENTS.
+  CRYPTO_UNDERPAY_TOLERANCE_BPS: z.coerce.number().int().min(0).max(500).default(0),
+  OVERPAY_TO_BALANCE_ABOVE_CENTS: z.coerce.number().int().min(0).default(300),
   // Round 29 (3): a finished deposit whose settled USDT is more than this share below what was due (after the expected
   // fee) is held for review; everything else funds the order instantly.
-  CRYPTO_SETTLED_SHORT_BPS: z.coerce.number().int().min(0).max(5_000).default(300),
+  CRYPTO_SETTLED_SHORT_BPS: z.coerce.number().int().min(0).max(5_000).default(200), // CFO: 2 %
+  CRYPTO_SETTLED_SHORT_MAX_CENTS: z.coerce.number().int().min(0).default(1_000), // … or more than $10, whichever is smaller
   // Round 29 (3): per-account velocity for accounts younger than 7 days (paid orders per 24 h and USD per 24 h).
   NEW_ACCOUNT_MAX_PAID_ORDERS_PER_DAY: z.coerce.number().int().min(1).default(5),
   NEW_ACCOUNT_MAX_PAID_USD_PER_DAY: z.coerce.number().int().min(1).default(500),
+  // CFO: new sellers (first 30 days) withdraw at most this per day.
+  NEW_SELLER_MAX_WITHDRAWAL_DAY_CENTS: z.coerce.number().int().min(0).default(100_000),
+  // CFO: payout hold after release, by rank (days); Dragon is instant. Staff overrides and the watch list still apply.
+  PAYOUT_HOLD_DAYS_BY_RANK: z.string().default('{"hatchling":3,"scale":2,"fang":1,"basilisk":1,"dragon":0}'),
+  // CFO: a creator's share runs for this long per referred buyer.
+  CREATOR_SHARE_MONTHS: z.coerce.number().int().min(1).default(12),
+  // Round 29b (CFO): wallet deposits per method — fee, minimum and maximum (minor units of the method's currency).
+  DEPOSIT_METHODS_JSON: z.string().optional(),
+  // Round 29b (CFO): top-up → withdraw review — cycles in 30 days with under this share spent, or a cycle above this amount.
+  TOPUP_REVIEW_CYCLES: z.coerce.number().int().min(1).default(3),
+  TOPUP_REVIEW_SPENT_PCT: z.coerce.number().int().min(0).max(100).default(20),
+  TOPUP_REVIEW_CYCLE_MAX_CENTS: z.coerce.number().int().min(0).default(100_000),
   KYC_PROVIDER: z.enum(['mock', 'sumsub']).default('mock'),
   SUMSUB_APP_TOKEN: z.string().optional(),
   SUMSUB_SECRET_KEY: z.string().optional(),

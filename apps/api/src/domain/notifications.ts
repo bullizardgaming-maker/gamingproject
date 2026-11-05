@@ -2,6 +2,7 @@ import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { many, maybeOne, withTx } from '../db.js';
 import { badRequest } from '../lib/errors.js';
+import { REGION_LABELS, type Region } from './geo.js';
 import { PACKS, helpers, isLocale, withdrawalReason, type EmailLayout, type Locale, type WithdrawalReason } from './locales/index.js';
 
 /**
@@ -42,6 +43,30 @@ const money = (cents: number, currency = 'USD') => {
   return markAmounts ? `${LTR_OPEN}${s}${LTR_CLOSE}` : s;
 };
 const when = (iso: string) => new Date(unmark(iso)).toUTCString().replace(' GMT', ' UTC');
+/** Round 29c: "Thu 5 Nov 2026, 6:57 AM" in the reader's timezone (Cairo when unknown). */
+export const DEFAULT_TIMEZONE = 'Africa/Cairo';
+export function validTimezone(tz: unknown): string | null {
+  if (typeof tz !== 'string' || !tz || tz.length > 64) return null;
+  try {
+    new Intl.DateTimeFormat('en-GB', { timeZone: tz });
+    return tz;
+  } catch {
+    return null;
+  }
+}
+export function whenLocal(iso: string, tz?: string | null, locale = 'en'): string {
+  const d = new Date(unmark(iso));
+  if (Number.isNaN(d.getTime())) return String(unmark(iso));
+  const zone = validTimezone(tz) ?? DEFAULT_TIMEZONE;
+  if (locale === 'ar') {
+    const parts = new Intl.DateTimeFormat('ar-EG-u-nu-latn', { timeZone: zone, weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }).format(d);
+    return parts;
+  }
+  const f = new Intl.DateTimeFormat('en-GB', { timeZone: zone, weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }).formatToParts(d);
+  const get = (t: string) => f.find((x) => x.type === t)?.value ?? '';
+  return `${get('weekday')} ${get('day')} ${get('month')} ${get('year')}, ${get('hour')}:${get('minute')} ${get('dayPeriod').toUpperCase()}`;
+}
+const SECURE_PATH = '/account/secure';
 const enDuration = (minutes: number) => (minutes >= 60 ? `${Math.round(minutes / 60)} hour${Math.round(minutes / 60) === 1 ? '' : 's'}` : `${minutes} minute${minutes === 1 ? '' : 's'}`);
 const EN_WITHDRAWAL_REASONS: Record<WithdrawalReason, string> = {
   unsupported_coin: 'Payouts go out in USDT only. Add a USDT (TRC-20 or BEP-20) address and try again.',
@@ -49,6 +74,20 @@ const EN_WITHDRAWAL_REASONS: Record<WithdrawalReason, string> = {
   provider_failed: 'The payment network refused it. Check your address and try again.',
   provider_auth: "Payouts are paused on our side for a moment. Your balance is back; we'll send it as soon as it's fixed — nothing to do.",
 };
+/**
+ * Round 29c: the readable "where and when" block of a security email — device ("Chrome on Android", never the raw
+ * user agent), region (never a country name), the IP on its own small line, the time in the reader's timezone.
+ */
+export function securityLines(d: Data, locale = 'en'): string {
+  const ar = locale === 'ar';
+  const lines: string[] = [];
+  if (d.device) lines.push(ar ? `الجهاز: ${d.device}` : `Device: ${d.device}`);
+  if (d.region) lines.push(ar ? `المنطقة: ${AR_REGIONS[String(unmark(d.region))] ?? REGION_LABELS[String(unmark(d.region)) as Region] ?? d.region}` : `Region: ${REGION_LABELS[String(unmark(d.region)) as Region] ?? d.region}`);
+  if (d.at) lines.push(ar ? `الوقت: ${whenLocal(d.at, d.tz, 'ar')}` : `Time: ${whenLocal(d.at, d.tz)}`);
+  if (d.ip) lines.push(`IP: ${d.ip}`);
+  return lines.join('\n');
+}
+const AR_REGIONS: Record<string, string> = { asia: 'آسيا', middle_east: 'الشرق الأوسط', america: 'الأمريكتان', europe: 'أوروبا', global: 'عالمي' };
 /** Round 23f (§9.7): the layout strings in English. */
 export const EN_LAYOUT: EmailLayout = {
   greeting: 'Hey {name},',
@@ -57,7 +96,7 @@ export const EN_LAYOUT: EmailLayout = {
   why: "You're getting this because you have a Bullizard account.",
   safety: 'We never ask for your password or codes by email.',
   manage: 'Email settings',
-  legal: 'Bullizard · 18+ only · Not affiliated with any game publisher',
+  legal: 'Bullizard · Not affiliated with any game publisher',
   button: 'Open Bullizard',
 };
 
@@ -173,18 +212,25 @@ export const TEMPLATES = {
   payout_address_changed: {
     category: 'security',
     subject: () => 'Your payout address was changed',
-    body: (d, link) => `Withdrawals now go to this ${d.coin} address: ${d.address}. Not you? Secure your account now: ${link('/account')}`,
+    body: (d, link) => `Withdrawals now go to this ${d.coin} address: ${d.address}.\n\n${securityLines(d)}\n\nThis wasn't me — secure my account: ${link(SECURE_PATH)}`,
   },
   withdrawal_requested: {
-    category: 'selling',
+    category: 'security',
     subject: (d) => `Withdrawal of ${money(d.amount_cents, d.currency)} received`,
     body: (d, link) =>
-      `We'll send ${money(d.net_cents, d.currency)} to your ${d.coin} address after the ${money(d.fee_cents, d.currency)} fee, once it's approved. That usually takes up to 3 working days. Didn't ask for this? Change your password now.\n\nView wallet: ${link('/sell/money')}`,
+      `We'll send ${money(d.net_cents, d.currency)} to your ${d.coin} address after the ${money(d.fee_cents, d.currency)} fee, once it's approved. That usually takes up to 3 working days.\n\n${securityLines(d)}\n\nThis wasn't me — secure my account: ${link(SECURE_PATH)}`,
   },
   withdrawal_paid: {
     category: 'selling',
     subject: (d) => `Sent. ${money(d.net_cents ?? d.amount_cents, d.currency)} is on the chain`,
     body: (d, link) => `${money(d.net_cents ?? d.amount_cents, d.currency)} is on its way to ${d.address ?? 'your payout address'}. Transaction: ${d.tx ?? d.provider_ref ?? 'pending'}. Depending on the network, it can take a few minutes to show in your wallet.\n\nView wallet: ${link('/sell/money')}`,
+  },
+  wallet_deposit_credited: {
+    category: 'orders',
+    subject: (d) => `${money(d.amount_cents, d.currency)} added to your wallet`,
+    body: (d, link) =>
+      `Your top-up arrived: ${money(d.amount_cents, d.currency)} is in your Bullizard wallet${d.overpaid_cents ? ` (plus ${money(d.overpaid_cents, d.currency)} you sent on top)` : ''}. ` +
+      `The ${money(d.processing_fee_cents ?? 0, d.currency)} processing fee is not refunded.\n\nOpen wallet: ${link('/account/wallet')}`,
   },
   dispute_opened: {
     category: 'disputes',
@@ -249,7 +295,7 @@ export const TEMPLATES = {
   new_signin: {
     category: 'security',
     subject: () => 'New sign-in to your Bullizard account',
-    body: (d, link) => `Your account was signed in from a new device (${d.userAgent ?? 'unknown browser'}, IP ${d.ip ?? 'unknown'}) at ${when(d.at)}.\n\nNot you? Change your password and sign out other devices: ${link('/account')}`,
+    body: (d, link) => `Your account was just signed in from a new device.\n\n${securityLines(d)}\n\nIf this was you, there's nothing to do.\n\nThis wasn't me — secure my account: ${link(SECURE_PATH)}`,
   },
   password_reset: {
     category: 'security',
@@ -294,7 +340,7 @@ export const TEMPLATES = {
   password_changed: {
     category: 'security',
     subject: () => 'Your password was changed',
-    body: (_d, link) => `Your password was changed and your other devices were signed out. Not you? Reset your password immediately: ${link('/account')}`,
+    body: (d, link) => `Your password was changed and your other devices were signed out.\n\n${securityLines(d)}\n\nThis wasn't me — secure my account: ${link(SECURE_PATH)}`,
   },
   mfa_changed: {
     category: 'security',
@@ -472,6 +518,7 @@ export function templateFor(name: TemplateName, locale: Locale = 'en'): Template
     when: (iso: string) => plain.when(unmark(iso)),
     duration: (minutes: number) => pack.duration(Number(unmark(minutes))),
     reason: (code: unknown) => pack.withdrawalReasons[withdrawalReason(unmark(code))],
+    security: (d: Data) => securityLines(d, locale),
   };
   return { ...base, subject: (d) => t.subject(d, h), body: (d, link) => t.body(d, link, h) };
 }
@@ -676,8 +723,10 @@ export function emailLayoutHtml(p: EmailParts) {
   );
 }
 
-export function render(ctx: Ctx, name: TemplateName, data: Data, locale: Locale = 'en', opts: { name?: string | null } = {}) {
+export function render(ctx: Ctx, name: TemplateName, rawData: Data, locale: Locale = 'en', opts: { name?: string | null; timezone?: string | null } = {}) {
   const t = templateFor(name, locale);
+  // Round 29c: times in security emails are shown in the reader's timezone (Cairo when unknown).
+  const data: Data = { ...rawData, tz: validTimezone(opts.timezone) ?? validTimezone(rawData.tz) ?? DEFAULT_TIMEZONE };
   const link = (path: string) => `${ctx.cfg.PUBLIC_WEB_URL}${unmark(path)}`;
   const subject = t.subject(data);
   const base = { locale, title: subject, greeting: greetingFor(locale, opts.name), security: t.category === 'security', manageUrl: link('/account') };
@@ -716,7 +765,8 @@ export async function dispatchEmails(ctx: Ctx, limit = 50): Promise<number> {
           COALESCE(n.to_email, (SELECT u.email FROM users u WHERE u.id = n.user_id)) AS email,
           (SELECT u.email_preferences FROM users u WHERE u.id = n.user_id) AS email_preferences,
           (SELECT u.locale FROM users u WHERE u.id = n.user_id) AS locale,
-          (SELECT u.display_name FROM users u WHERE u.id = n.user_id) AS display_name`,
+          (SELECT u.display_name FROM users u WHERE u.id = n.user_id) AS display_name,
+          (SELECT u.timezone FROM users u WHERE u.id = n.user_id) AS timezone`,
       [limit],
     ),
   );
@@ -731,7 +781,7 @@ export async function dispatchEmails(ctx: Ctx, limit = 50): Promise<number> {
       continue;
     }
     try {
-      const msg = render(ctx, n.template as TemplateName, n.data, isLocale(n.locale) ? n.locale : 'en', { name: n.display_name });
+      const msg = render(ctx, n.template as TemplateName, n.data, isLocale(n.locale) ? n.locale : 'en', { name: n.display_name, timezone: n.timezone });
       // The notification id is the idempotency key: a retry after a timeout is the same message, sent once.
       await ctx.messenger.send({ channel: 'email', to: n.email, subject: msg.subject, body: msg.text, html: msg.html, idempotencyKey: `notification-${n.id}` });
       await ctx.db.query(`UPDATE notifications SET status = 'sent', sent_at = now(), last_error = NULL WHERE id = $1`, [n.id]);

@@ -153,7 +153,7 @@ describe('Round 27 — CEO staging test fixes', () => {
     expect(profile.reviews[0].buyer_name).toMatch(/^.\.$/);
   });
 
-  it('5. every email signs off "Bullizard Team" (AR «فريق Bullizard») and its footer says 18+ only, in every language', () => {
+  it('5. every email signs off "Bullizard Team" (AR «فريق Bullizard»); Round 29c: no "18+ only" in any footer, in every language', () => {
     const locales = ['en', ...Object.keys(PACKS)] as const;
     for (const locale of locales) {
       const names = Object.keys(PACKS[locale === 'en' ? 'es' : (locale as keyof typeof PACKS)].templates) as TemplateName[];
@@ -161,14 +161,14 @@ describe('Round 27 — CEO staging test fixes', () => {
       for (const name of names) {
         const r = render(h.ctx, name, TEMPLATE_DATA, locale as any);
         expect(r.text, `${locale}:${name}`).toContain(`\n\n${signoff}\n\n`);
-        expect(r.text, `${locale}:${name}`).toContain('18+ only');
+        expect(r.text, `${locale}:${name}`).not.toContain('18+');
         expect(r.html, `${locale}:${name}`).toContain(signoff);
-        expect(r.html, `${locale}:${name}`).toContain('18+ only');
+        expect(r.html, `${locale}:${name}`).not.toContain('18+');
         expect(r.text).not.toMatch(/The Bullizard team|Bullizard-Team|equipo de Bullizard|équipe Bullizard|Equipe Bullizard/);
       }
       const code = renderCodeEmail(h.ctx, '123456', 10, locale as any);
       expect(code.text).toContain(signoff);
-      expect(code.text).toContain('18+ only');
+      expect(code.text).not.toContain('18+');
     }
   });
 });

@@ -1,3 +1,4 @@
+import { regionForCountry } from './geo.js';
 import { randomUUID } from 'node:crypto';
 import { SignJWT } from 'jose';
 import type { Ctx } from '../context.js';
@@ -134,6 +135,19 @@ export function describeUserAgent(ua: string | null | undefined): string {
     /iPhone|iPad/.test(ua) ? 'iOS' : /Android/.test(ua) ? 'Android' : /Windows/.test(ua) ? 'Windows' : /Mac OS X/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : null;
   if (browser && os) return `${browser} on ${os}`;
   return browser ?? os ?? ua.slice(0, 40);
+}
+
+/**
+ * Round 29c: what a security email says about where it happened — the device as "Chrome on Android" (never the raw
+ * user agent), the region of the connection (never a country name), the IP on its own line and the time.
+ */
+export interface SecurityMeta {
+  ip?: string;
+  ipCountry?: string;
+  userAgent?: string;
+}
+export function securityEmailData(meta: SecurityMeta | undefined, at = new Date()) {
+  return { device: describeUserAgent(meta?.userAgent), region: regionForCountry(meta?.ipCountry), ip: meta?.ip ?? null, at: at.toISOString() };
 }
 
 /** One entry per signed-in device (the newest row of each live family). */

@@ -17,6 +17,17 @@ export type Region = (typeof REGIONS)[number];
 export const REGION_LABELS: Record<Region, string> = { asia: 'Asia', middle_east: 'Middle East', america: 'America', europe: 'Europe', global: 'Global' };
 export const isRegion = (v: unknown): v is Region => (REGIONS as readonly unknown[]).includes(v);
 
+const COUNTRY_REGIONS: Record<Exclude<Region, 'global'>, string> = {
+  middle_east: 'EG SA AE QA KW BH OM JO LB SY IQ IR IL PS YE TR LY TN DZ MA SD',
+  europe: 'GB IE FR DE ES PT IT NL BE LU CH AT DK SE NO FI IS PL CZ SK HU RO BG GR HR SI RS BA ME MK AL XK EE LV LT UA MD BY RU CY MT AD MC SM VA LI GI FO GL',
+  america: 'US CA MX BR AR CL CO PE VE EC BO PY UY GT HN SV NI CR PA CU DO HT JM TT BS BB PR BZ GY SR',
+  asia: 'CN JP KR TW HK MO IN PK BD LK NP BT MV ID MY SG TH VN PH MM KH LA BN MN KZ UZ KG TJ TM AF AZ GE AM AU NZ',
+};
+const REGION_BY_COUNTRY = new Map<string, Region>();
+for (const [region, codes] of Object.entries(COUNTRY_REGIONS)) for (const c of codes.split(' ')) REGION_BY_COUNTRY.set(c, region as Region);
+/** Round 29c: the region of a connection country — shown in security emails instead of the country name. */
+export const regionForCountry = (country: string | null | undefined): Region => REGION_BY_COUNTRY.get(normCountry(country) ?? '') ?? 'global';
+
 const ISO2 = /^[A-Z]{2}$/;
 export const normCountry = (c: string | null | undefined) => {
   const v = c ? c.trim().toUpperCase() : null;

@@ -30,12 +30,12 @@ export async function listRanks(q: Queryable): Promise<SellerRank[]> {
 }
 
 export async function commissionSettings(q: Queryable) {
-  const r = await one<{ promo_rate_bps: number; promo_days: number }>(q, 'SELECT promo_rate_bps, promo_days FROM commission_settings');
-  return { promoRateBps: Number(r.promo_rate_bps), promoDays: Number(r.promo_days) };
+  const r = await one<{ promo_rate_bps: number; promo_days: number; promo_max_sales_cents: string }>(q, 'SELECT promo_rate_bps, promo_days, promo_max_sales_cents FROM commission_settings');
+  return { promoRateBps: Number(r.promo_rate_bps), promoDays: Number(r.promo_days), promoMaxSalesCents: Number(r.promo_max_sales_cents) };
 }
 
 /** Staff set the rank table (names fixed to five positions; thresholds must rise with position). */
-export async function updateRanks(ctx: Ctx, ranks: Array<{ position: number; name: string; minMonthlySalesCents: number; rateBps: number; perks?: string[] }>, settings?: { promoRateBps?: number; promoDays?: number }) {
+export async function updateRanks(ctx: Ctx, ranks: Array<{ position: number; name: string; minMonthlySalesCents: number; rateBps: number; perks?: string[] }>, settings?: { promoRateBps?: number; promoDays?: number; promoMaxSalesCents?: number }) {
   const sorted = [...ranks].sort((a, b) => a.position - b.position);
   if (sorted.length !== 5 || sorted.some((r, i) => r.position !== i + 1)) throw badRequest('invalid_ranks', 'Send all five ranks, positions 1 to 5');
   if (sorted[0]!.minMonthlySalesCents !== 0) throw badRequest('invalid_ranks', 'The first rank starts at 0');
@@ -49,7 +49,7 @@ export async function updateRanks(ctx: Ctx, ranks: Array<{ position: number; nam
       await ctx.db.query('UPDATE seller_ranks SET name = $2, min_monthly_sales_cents = $3, rate_bps = $4, perks = $5, updated_at = now() WHERE position = $1', [r.position, r.name.trim(), r.minMonthlySalesCents, r.rateBps, r.perks ?? []]);
     }
     if (settings) {
-      await ctx.db.query('UPDATE commission_settings SET promo_rate_bps = COALESCE($1, promo_rate_bps), promo_days = COALESCE($2, promo_days), updated_at = now()', [settings.promoRateBps ?? null, settings.promoDays ?? null]);
+      await ctx.db.query('UPDATE commission_settings SET promo_rate_bps = COALESCE($1, promo_rate_bps), promo_days = COALESCE($2, promo_days), promo_max_sales_cents = COALESCE($3, promo_max_sales_cents), updated_at = now()', [settings.promoRateBps ?? null, settings.promoDays ?? null, settings.promoMaxSalesCents ?? null]);
     }
     await ctx.db.query('COMMIT');
   } catch (err) {
@@ -94,6 +94,12 @@ export async function monthlySalesCents(q: Queryable, sellerId: string): Promise
   return Number(row.total);
 }
 
+/** CFO (5 Nov): promo sales so far — seller net of orders paid since the first listing (cancelled ones excluded). */
+export async function promoSalesCents(q: Queryable, sellerId: string, sellerSince: string): Promise<number> {
+  const r = await one<{ total: string }>(q, `SELECT COALESCE(SUM(seller_net_cents), 0)::bigint AS total FROM orders WHERE seller_id = $1 AND paid_at IS NOT NULL AND paid_at >= $2 AND status NOT IN ('cancelled', 'refunded')`, [sellerId, sellerSince]);
+  return Number(r.total);
+}
+
 /** The seller's rank, rate (promo-aware) and progress to the next rank. */
 export async function sellerTier(q: Queryable, sellerId: string) {
   const [ranks, settings, volume, u] = await Promise.all([
@@ -105,13 +111,16 @@ export async function sellerTier(q: Queryable, sellerId: string) {
   const rank = rankForVolume(ranks, volume);
   const next = nextRank(ranks, rank);
   const promoEndsAt = u.seller_since ? new Date(new Date(u.seller_since).getTime() + settings.promoDays * 86_400_000) : null;
-  const promo = !!promoEndsAt && promoEndsAt > new Date();
+  // CFO (5 Nov): the promo covers at most PROMO_MAX_SALES_CENTS of the seller's sales (seller net, paid orders since the first listing).
+  const promoSales = u.seller_since ? await promoSalesCents(q, sellerId, u.seller_since) : 0;
+  const promoCap = settings.promoMaxSalesCents;
+  const promo = !!promoEndsAt && promoEndsAt > new Date() && promoSales < promoCap;
   const rateBps = promo ? Math.min(settings.promoRateBps, rank.rateBps) : rank.rateBps;
   return {
     tier: asTier(rank),
     rank,
     rateBps,
-    promo: promo ? { rateBps: settings.promoRateBps, endsAt: promoEndsAt!.toISOString() } : null,
+    promo: promo ? { rateBps: settings.promoRateBps, endsAt: promoEndsAt!.toISOString(), salesCents: promoSales, capCents: promoCap, remainingCents: Math.max(0, promoCap - promoSales) } : null,
     monthlySalesCents: volume,
     next: next ? { tier: asTier(next), rank: next, remainingCents: next.minMonthlySalesCents - volume } : null,
   };

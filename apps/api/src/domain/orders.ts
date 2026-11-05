@@ -378,6 +378,7 @@ export function usdCents(settlementCurrency: string, cents: number) {
  * orders and NEW_ACCOUNT_MAX_PAID_USD_PER_DAY in 24 h (config). A clear, automatic boundary; nothing manual.
  */
 async function assertNewAccountVelocity(ctx: Ctx, buyer: { id: string; created_at?: string }) {
+  // (The $100-per-order and 3-open-orders limits of the first week are Ops controls: assertOrderWithinLimits.)
   const u = await one<{ age_hours: number; n: number; usd_cents: string }>(
     ctx.db,
     `SELECT EXTRACT(EPOCH FROM (now() - u.created_at)) / 3600 AS age_hours,

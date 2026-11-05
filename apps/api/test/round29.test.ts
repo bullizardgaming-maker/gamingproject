@@ -27,9 +27,10 @@ beforeAll(async () => {
   };
   const payments = new NowPaymentsProvider({ apiKey: 'k', ipnSecret: IPN_SECRET, apiUrl: 'https://np.test', email: 'e', password: 'p', twoFactorSecret: 'JBSWY3DPEHPK3PXP', fetch: fetch as any, timeoutMs: 2_000 });
   h = await setup({
-    PAYMENT_PROVIDER: 'nowpayments', NOWPAYMENTS_API_KEY: 'k', NOWPAYMENTS_IPN_SECRET: IPN_SECRET, NOWPAYMENTS_FEE_BPS: 0, GEO_COUNTRY_HEADER: 'cf-ipcountry',
-    WITHDRAWAL_FEES_JSON: '{"wallet":{"bps":300,"minCents":100},"instapay":{"bps":200,"minCents":100}}',
-    NEW_ACCOUNT_MAX_PAID_ORDERS_PER_DAY: '2', NEW_ACCOUNT_MAX_PAID_USD_PER_DAY: '50',
+    PAYMENT_PROVIDER: 'nowpayments', NOWPAYMENTS_API_KEY: 'k', NOWPAYMENTS_IPN_SECRET: IPN_SECRET, NOWPAYMENTS_FEE_BPS: 50, GEO_COUNTRY_HEADER: 'cf-ipcountry',
+    // CFO defaults (5 Nov): 3.99 % + $1 (min $5 / $10), wallet 6 % + EGP 10, InstaPay 6 % + EGP 5; EGP at 48.5 (static test rate) less the 1 % margin.
+    WITHDRAWAL_FEES_JSON: '', CRYPTO_UNDERPAY_TOLERANCE_BPS: '0', OVERPAY_TO_BALANCE_ABOVE_CENTS: '300', PAYOUT_HOLD_DAYS_BY_RANK: '{"hatchling":3,"scale":2,"fang":1,"basilisk":1,"dragon":0}', FX_SPREAD_BPS: '100',
+    NEW_ACCOUNT_MAX_PAID_ORDERS_PER_DAY: '2', NEW_ACCOUNT_MAX_PAID_USD_PER_DAY: '50', FX_STATIC_RATES: '{"EUR":0.92,"EGP":48.5}',
   }, { payments });
   const orig = h.messenger.send.bind(h.messenger);
   h.messenger.send = async (m: any) => {
@@ -63,9 +64,15 @@ async function buyCrypto(buyer: { api: any }, offerId: string) {
 const reg = (over: Record<string, unknown> = {}, headers: Record<string, string> = {}) =>
   client(h.app, undefined, headers).post('/v1/auth/register', { email: `r29_${Date.now()}_${Math.random().toString(36).slice(2, 8)}@example.com`, password: 'correct horse battery', displayName: 'Country Tester', acceptTerms: true, ...over });
 
+/** A buyer past the first-week velocity limits. */
+async function agedBuyer() {
+  const buyer = await makeUser(h, { tier: 1 });
+  await h.ctx.db.query(`UPDATE users SET created_at = now() - interval '8 days' WHERE id = $1`, [buyer.id]);
+  return buyer;
+}
 async function sellerWithBalance(cents = 50_00) {
   const seller = await makeUser(h, { tier: 2 });
-  const buyer = await makeUser(h, { tier: 1 });
+  const buyer = await agedBuyer();
   const offer = await makeOffer(seller, { deliveryMode: 'manual', stock: 5, categorySlug: 'currency', title: 'Gold', priceCents: cents });
   const order = await buyCrypto(buyer, offer.id);
   await seller.api.post(`/v1/orders/${order.id}/deliver`, { payload: 'sent' });
@@ -84,7 +91,9 @@ describe('Round 29 — CEO decisions and test findings', () => {
     const res = await cfo.api.post(`/v1/admin/withdrawals/${w.body.id}/decide`, { approve: true, note: 'ok' });
     authMode = 'ok';
     expect(res.status).toBe(502);
-    expect(res.body.error.code).toBe('payout_auth_failed');
+    expect(res.body.error.code).toBe('payout_provider_error');
+    expect(res.body.error.details.provider_error).toMatchObject({ status: 403, step: 'auth' });
+    expect(res.body.error.details.reversed).toBe(true);
     expect(res.body.error.message).toMatch(/403.*not whitelisted.*whitelisted for payouts/s);
     expect(res.body.error.details).toMatchObject({ provider_status: 403, provider_message: 'Your IP is not whitelisted', step: 'auth' });
     expect(res.body.error.message).not.toMatch(/\bp\b|jwt-test|JBSWY/); // no secret values, ever (the variable names are the fix)
@@ -277,6 +286,7 @@ describe('Round 29 — CEO decisions and test findings', () => {
     const seller = await makeUser(h, { tier: 2 });
     const cheap = await makeOffer(seller, { deliveryMode: 'manual', stock: 20, categorySlug: 'currency', title: 'Gold', priceCents: 10_00 });
     const dear = await makeOffer(seller, { deliveryMode: 'manual', stock: 20, categorySlug: 'currency', title: 'Gold', priceCents: 60_00 });
+    const huge = await makeOffer(seller, { deliveryMode: 'manual', stock: 20, categorySlug: 'currency', title: 'Gold', priceCents: 120_00 });
     const buyer = await makeUser(h, { tier: 1 });
     await buyCrypto(buyer, cheap.id);
     await buyCrypto(buyer, cheap.id);
@@ -286,6 +296,19 @@ describe('Round 29 — CEO decisions and test findings', () => {
     const rich = await makeUser(h, { tier: 1 });
     await buyCrypto(rich, dear.id); // $60 paid in a day > $50
     expect((await rich.api.post('/v1/orders', { offerId: cheap.id, quantity: 1, ...delivery })).body.error).toMatchObject({ code: 'velocity_limit', details: { limit: 'usd', max: 50 } });
+    // CFO: $100 per order and 3 open orders in the first week are the Ops controls (new_account_max_order_cents / new_account_max_open_orders).
+    const fresh = await makeUser(h, { tier: 1 });
+    await h.ctx.db.query('UPDATE platform_controls SET new_account_days = 7'); // the test harness turns the first-week controls off; on here
+    const { forgetControlsCache } = await import('../src/domain/controls.js');
+    forgetControlsCache();
+    try {
+      expect((await fresh.api.post('/v1/orders', { offerId: huge.id, quantity: 1, ...delivery })).body.error).toMatchObject({ code: 'new_account_limit', details: { maxCents: 10_000 } });
+      for (let i = 0; i < 3; i++) expect((await fresh.api.post('/v1/orders', { offerId: cheap.id, quantity: 1, ...delivery })).status).toBe(201);
+      expect((await fresh.api.post('/v1/orders', { offerId: cheap.id, quantity: 1, ...delivery })).body.error).toMatchObject({ code: 'new_account_limit', details: { maxOpen: 3 } });
+    } finally {
+      await h.ctx.db.query('UPDATE platform_controls SET new_account_days = 0');
+      forgetControlsCache();
+    }
     // An account older than a week is not limited.
     await h.ctx.db.query(`UPDATE users SET created_at = now() - interval '8 days' WHERE id = $1`, [buyer.id]);
     expect((await buyer.api.post('/v1/orders', { offerId: cheap.id, quantity: 1, ...delivery })).status).toBe(201);
@@ -298,11 +321,16 @@ describe('Round 29 — CEO decisions and test findings', () => {
     expect(grossUp(100_00, 799)).toBe(108_69); // 100 / (1 − 0.0799) rounded up
     const seller = await makeUser(h, { tier: 2 });
     await h.ctx.db.query(`UPDATE users SET seller_since = now() - interval '100 days' WHERE id = $1`, [seller.id]); // promo over
-    const buyer = await makeUser(h, { tier: 1 });
+    const buyer = await agedBuyer();
     const big = await makeOffer(seller, { deliveryMode: 'manual', stock: 5, categorySlug: 'currency', title: 'Gold', priceCents: 16_000_00 });
     const order = await buyCrypto(buyer, big.id);
-    await seller.api.post(`/v1/orders/${order.id}/deliver`, { payload: 'sent' });
-    await buyer.api.post(`/v1/orders/${order.id}/confirm`, {});
+    const delivered = await seller.api.post(`/v1/orders/${order.id}/deliver`, { payload: 'sent' });
+    if (delivered.status !== 200) throw new Error(`deliver: ${JSON.stringify(delivered.body)} ${JSON.stringify((await h.ctx.db.query('SELECT status, escrow_frozen, risk_score FROM orders WHERE id = $1', [order.id])).rows[0])}`);
+    // Orders above $200 are released by the Support Lead (permanent rule).
+    const lead = await makeUser(h, { role: 'lead' });
+    await h.ctx.db.query(`UPDATE orders SET delivered_at = now() - interval '2 days' WHERE id = $1`, [order.id]); // past the 24 h staff-release wait
+    const released = await lead.api.post(`/v1/admin/orders/${order.id}/release`, { note: 'Delivery verified' });
+    if (released.status !== 200) throw new Error(`release failed: ${JSON.stringify(released.body)} order=${JSON.stringify((await h.ctx.db.query('SELECT status, rail, escrow_frozen, delivered_at FROM orders WHERE id = $1', [order.id])).rows[0])}`);
     const t = await refreshSellerRate(h.ctx.db, seller.id);
     expect(t.rank.name).toBe('Dragon');
     expect(t.rateBps).toBe(799);
@@ -313,14 +341,21 @@ describe('Round 29 — CEO decisions and test findings', () => {
   });
 
   it('2. withdrawal methods ask for what they need: a wallet phone (encrypted, masked), confirmed by the emailed code, its own fee, sent by Finance by hand', async () => {
-    expect(withdrawalFeeTable(h.ctx)).toEqual({ usdt: { bps: 600, minCents: 150 }, wallet: { bps: 300, minCents: 100 }, instapay: { bps: 200, minCents: 100 } });
+    // CFO table (5 Nov): USDT 3.99 % + $1 (BEP-20 min $5, TRC-20 min $10, max $5,000); wallet 6 % + EGP 10; InstaPay 6 % + EGP 5.
+    expect(withdrawalFeeTable(h.ctx)).toEqual({
+      usdt_bep20: { pctBps: 399, fixedCents: 100, minCents: 500, maxCents: 500_000, currency: 'USD' },
+      usdt_trc20: { pctBps: 399, fixedCents: 100, minCents: 1_000, maxCents: 500_000, currency: 'USD' },
+      wallet: { pctBps: 600, fixedCents: 1_000, minCents: 10_000, maxCents: 3_000_000, currency: 'EGP' },
+      instapay: { pctBps: 600, fixedCents: 500, minCents: 10_000, maxCents: 5_000_000, currency: 'EGP' },
+    });
     expect(cleanIdentifier('wallet', '0101 234 5678')).toEqual({ value: '01012345678', hint: '•••• 5678' });
     expect(cleanIdentifier('instapay', 'Eslam.Jetli@CIB')).toEqual({ value: 'eslam.jetli@cib', hint: 'E•••@cib' });
     expect(() => cleanIdentifier('wallet', 'abc')).toThrow();
     const { seller } = await sellerWithBalance(50_00);
     const methods = (await seller.api.get('/v1/seller/withdrawal-methods?country=EG')).body.methods;
     expect(methods.map((m: any) => m.id)).toEqual(['usdt', 'wallet', 'instapay']);
-    expect(methods[1]).toMatchObject({ fields: ['phone'], fee: { bps: 300, minCents: 100 }, sent_by: 'finance' });
+    expect(methods[1]).toMatchObject({ fields: ['phone'], fee: { pct_bps: 600, fixed_cents: 1_000, min_cents: 10_000, currency: 'EGP' }, sent_by: 'finance' });
+    expect(methods[0].networks.map((n: any) => [n.coin, n.fee.min_cents])).toEqual([['usdtbsc', 500], ['usdttrc20', 1_000]]);
     expect((await seller.api.post('/v1/seller/payout-address', { country: 'EG', method: 'wallet' })).body.error.code).toBe('invalid_phone');
     const req = await seller.api.post('/v1/seller/payout-address', { country: 'EG', method: 'wallet', identifier: '+20 101 234 5678' });
     expect(req.status, JSON.stringify(req.body)).toBe(200);
@@ -339,10 +374,18 @@ describe('Round 29 — CEO decisions and test findings', () => {
     expect(u.payout_identifier_ciphertext).not.toMatch(/2010123/);
     expect(u.payout_address).toBeNull();
     // The fee of the chosen method; the request carries the method and a masked destination, never the number.
-    expect((await seller.api.get('/v1/seller/withdrawals/quote?amountCents=2000')).body).toMatchObject({ method: 'wallet', feeCents: 100, netCents: 1900, feeBps: 300 });
-    const w = await seller.api.post('/v1/seller/withdrawals', { amountCents: 20_00 });
+    // CFO: 6 % + EGP 10, min EGP 100, paid in EGP at 48.5 less the 1 % margin (48.015 EGP per USD).
+    const rate = 48.5 * 0.99;
+    const fixedUsd = Math.ceil(1_000 / rate); // EGP 10 in USD cents
+    const quote = (await seller.api.get('/v1/seller/withdrawals/quote?amountCents=2000')).body;
+    expect(quote).toMatchObject({ method: 'wallet', feeCents: 120 + fixedUsd, netCents: 2000 - 120 - fixedUsd, feeBps: 600, feeFixedCents: 1_000, payoutCurrency: 'EGP', feeMinCents: Math.ceil(10_000 / rate) });
+    expect(quote.payoutAmountCents).toBe(Math.floor((2000 - 120 - fixedUsd) * rate));
+    expect((await seller.api.post('/v1/seller/withdrawals', { amountCents: 150 })).body.error).toMatchObject({ code: 'below_minimum', details: { currency: 'EGP', minMethodCents: 10_000 } });
+    expect((await seller.api.post('/v1/seller/withdrawals', { amountCents: 2000, method: 'usdt' })).body.error.code).toBe('method_not_confirmed');
+    const w = await seller.api.post('/v1/seller/withdrawals', { amountCents: 20_00, method: 'wallet', details: { phone: '•••• 5678' } });
     expect(w.status, JSON.stringify(w.body)).toBe(201);
-    expect(w.body).toMatchObject({ method: 'wallet', country: 'EG', fee_cents: 100, net_cents: 1900, destination_hint: '•••• 5678', destination_address: null });
+    expect(w.body).toMatchObject({ method: 'wallet', country: 'EG', fee_cents: 120 + fixedUsd, net_cents: 2000 - 120 - fixedUsd, payout_currency: 'EGP', details: { phone: '•••• 5678' }, destination_hint: '•••• 5678', destination_address: null });
+    expect(Number(w.body.payout_amount_cents)).toBe(quote.payoutAmountCents);
     expect(JSON.stringify(w.body)).not.toMatch(/2010123/);
     // Finance approves: nothing goes to NOWPayments; Finance reads the number (audited) and marks it paid with the Lead.
     const cfo = await makeUser(h, { tier: 2, role: 'finance' });
@@ -395,6 +438,93 @@ describe('Round 29 — CEO decisions and test findings', () => {
     expect(paymentState({ ...row, credited_cents: '500' }, 'refunded')).toBe('credited_to_balance');
     expect(paymentState({ ...row, applied_at: new Date().toISOString() }, 'refunded')).toBe('paid');
     expect(paymentState(row, 'paid')).toBe('paid');
+  });
+
+  it('29b. add funds: crypto only for now (hidden where the connection is Egypt), 0 % + the processing fee on top, credited to the wallet on the IPN, the fee never refunded', async () => {
+    const buyer = await agedBuyer();
+    const here = (await buyer.api.get('/v1/me/wallet/deposit-methods')).body.methods;
+    expect(here.map((m: any) => [m.id, m.enabled])).toEqual([['crypto', true], ['card_egypt', false], ['wallet', false], ['instapay', false]]);
+    expect(here[0]).toMatchObject({ fee: { pct_bps: 0, fixed_cents: 0 }, min_cents: 500, max_cents: 200_000, currency: 'USD' });
+    const egypt = (await client(h.app, buyer.token, { 'cf-ipcountry': 'EG' }).get('/v1/me/wallet/deposit-methods')).body.methods;
+    expect(egypt.find((m: any) => m.id === 'crypto')).toBeUndefined();
+    expect((await buyer.api.get('/v1/me/wallet/deposit-quote?method=crypto&amountCents=100')).body.error.code).toBe('below_minimum');
+    expect((await buyer.api.post('/v1/me/wallet/deposits', { method: 'wallet', amountCents: 1_000 })).body.error.code).toBe('method_coming_soon');
+    const dep = (await buyer.api.post('/v1/me/wallet/deposits', { method: 'crypto', amountCents: 20_00 })).body;
+    expect(dep).toMatchObject({ status: 'awaiting_payment', amount_cents: 20_00, fee_cents: 0, total_cents: 20_00, currency: 'USD' });
+    const pay = await buyer.api.post(`/v1/me/wallet/deposits/${dep.id}/crypto/pay`, { coin: 'usdttrc20' });
+    expect(pay.status).toBe(201);
+    expect(Number(pay.body.price_usd)).toBeCloseTo(20.1, 2); // + 0.5 % processing fee
+    const p = fake.payments.get(pay.body.payment_id)!;
+    Object.assign(p, finished(p));
+    await ipn(finished(p));
+    const after = (await buyer.api.get(`/v1/me/wallet/deposits/${dep.id}`)).body;
+    expect(after.status).toBe('credited');
+    const w = (await buyer.api.get('/v1/me/wallet')).body;
+    expect(w.breakdown.USD.credit_cents).toBe(20_00);
+    const mail = await h.ctx.db.query(`SELECT template, data FROM notifications WHERE user_id = $1 AND template = 'wallet_deposit_credited'`, [buyer.id]);
+    expect(mail.rows[0].data).toMatchObject({ amount_cents: 20_00, processing_fee_cents: 10 });
+    // the Egyptian connection cannot start the crypto payment either
+    const dep2 = (await buyer.api.post('/v1/me/wallet/deposits', { method: 'crypto', amountCents: 10_00 })).body;
+    expect((await client(h.app, buyer.token, { 'cf-ipcountry': 'EG' }).post(`/v1/me/wallet/deposits/${dep2.id}/crypto/pay`, { coin: 'usdttrc20' })).body.error.code).toBe('method_unavailable_here');
+  });
+
+  it('29b. top-up → withdraw without spending: allowed once, held for staff with the reason in words when repeated (3 in 30 days, under 20 % spent)', async () => {
+    const buyer = await agedBuyer();
+    await h.ctx.db.query(`UPDATE users SET payout_address = 'TBuyerAddr1234567890xyz', payout_address_currency = 'usdttrc20', payout_country = 'US', payout_hold_days = 0 WHERE id = $1`, [buyer.id]);
+    const topUp = async (cents: number) => {
+      const dep = (await buyer.api.post('/v1/me/wallet/deposits', { method: 'crypto', amountCents: cents })).body;
+      const pay = await buyer.api.post(`/v1/me/wallet/deposits/${dep.id}/crypto/pay`, { coin: 'usdttrc20' });
+      const p = fake.payments.get(pay.body.payment_id)!;
+      Object.assign(p, finished(p));
+      await ipn(finished(p));
+    };
+    await topUp(20_00);
+    const first = await buyer.api.post('/v1/me/withdrawals', { amountCents: 15_00, method: 'usdt', details: { network: 'usdttrc20', address: 'TBuyerAddr1234567890xyz' } });
+    expect(first.status).toBe(201);
+    expect(first.body.review_reason).toBeNull();
+    await topUp(20_00);
+    await topUp(20_00);
+    const third = await buyer.api.post('/v1/me/withdrawals', { amountCents: 15_00 });
+    expect(third.status).toBe(201);
+    expect(third.body).toMatchObject({ status: 'pending_approval', review_reason: 'topup_withdraw_pattern' });
+    expect(third.body.review_reasons_text[0]).toMatch(/3 top-ups in 30 days/);
+    const flag = await h.ctx.db.query('SELECT reasons FROM risk_flags WHERE withdrawal_id = $1', [third.body.id]);
+    expect(flag.rows[0].reasons.kind).toBe('topup_withdraw_pattern');
+    const lead = await makeUser(h, { role: 'lead' });
+    const pending = (await lead.api.get('/v1/admin/withdrawals')).body.find((x: any) => x.id === third.body.id);
+    expect(pending.review_reasons_text).toHaveLength(1);
+  });
+
+  it('29c. security emails are readable: "Chrome on Android", the region (never a country), the IP on its own line, the time in the user’s timezone, one "This wasn’t me" button; no "18+ only" footer', async () => {
+    const ua = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36';
+    const us = await reg({}, { 'cf-ipcountry': 'SA' });
+    expect(us.status).toBe(201);
+    const api = client(h.app, us.body.token);
+    expect((await api.put('/v1/me/timezone', { timezone: 'Mars/Olympus' })).body.error.code).toBe('invalid_timezone');
+    expect((await api.put('/v1/me/timezone', { timezone: 'Asia/Riyadh' })).body).toEqual({ timezone: 'Asia/Riyadh' });
+    // a second device signs in
+    await h.app.inject({ method: 'POST', url: '/v1/auth/login', payload: { email: us.body.user.email, password: 'correct horse battery' }, headers: { 'x-token-delivery': 'body', 'cf-ipcountry': 'SA', 'user-agent': ua, 'x-forwarded-for': '203.0.113.9', 'x-device-fingerprint': 'phone-2' } });
+    for (let i = 0; i < 6; i++) await dispatchEmails(h.ctx);
+    const mail = sent.filter((m) => m.to === us.body.user.email && m.subject === 'New sign-in to your Bullizard account').at(-1)!;
+    expect(mail).toBeTruthy();
+    expect(mail.body).toContain('Device: Chrome on Android');
+    expect(mail.body).toContain('Region: Middle East');
+    expect(mail.body).not.toMatch(/Saudi|Mozilla|AppleWebKit/);
+    expect(mail.body).toMatch(/\nIP: 203\.0\.113\.9/);
+    expect(mail.body).toMatch(/Time: (Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d{1,2} \w{3} \d{4}, \d{1,2}:\d{2} (AM|PM)/);
+    expect(mail.body).not.toMatch(/UTC/);
+    expect(mail.body).toContain('This wasn’t me — secure my account'.replace('’', "'"));
+    expect(mail.body).toContain('/account/secure');
+    expect(mail.body).not.toContain('18+');
+    // Arabic, same shape
+    await api.put('/v1/me/locale', { locale: 'ar' });
+    await h.app.inject({ method: 'POST', url: '/v1/auth/login', payload: { email: us.body.user.email, password: 'correct horse battery' }, headers: { 'x-token-delivery': 'body', 'cf-ipcountry': 'SA', 'user-agent': ua, 'x-device-fingerprint': 'phone-3' } });
+    for (let i = 0; i < 6; i++) await dispatchEmails(h.ctx);
+    const ar = sent.filter((m) => m.to === us.body.user.email && /Bullizard/.test(m.subject ?? '') && /تسجيل دخول/.test(m.subject ?? '')).at(-1)!;
+    expect(ar.body).toContain('الجهاز: Chrome on Android');
+    expect(ar.body).toContain('المنطقة: الشرق الأوسط');
+    expect(ar.body).toContain('/account/secure');
+    expect(ar.body).not.toContain('18+');
   });
 
   it('12. support.bullizard.com may call the API with cookies', () => {

@@ -66,13 +66,21 @@ export async function isAffiliateCode(q: Queryable, code: string) {
 /** Called when an order completes: pays the creator's share of the commission. */
 export async function maybePayAffiliate(ctx: Ctx, s: TxScope, order: { id: string; buyer_id: string; seller_id?: string; commission_cents: number; currency: string }) {
   // One code per user: a buyer who came with a friend's invite code earns for that friend, never for a creator too.
-  const a = await maybeOne<{ id: string; user_id: string; rate_bps: number }>(
+  const a = await maybeOne<{ id: string; user_id: string; rate_bps: number; attributed_at: string; prior_orders: number }>(
     s.tx,
-    `SELECT a.id, a.user_id, a.rate_bps FROM affiliate_attributions t JOIN affiliates a ON a.id = t.affiliate_id JOIN users u ON u.id = t.user_id
+    `SELECT a.id, a.user_id, a.rate_bps, t.created_at AS attributed_at,
+            (SELECT count(*)::int FROM orders o WHERE o.buyer_id = t.user_id AND o.id <> $2 AND o.status = 'completed') AS prior_orders
+       FROM affiliate_attributions t JOIN affiliates a ON a.id = t.affiliate_id JOIN users u ON u.id = t.user_id
       WHERE t.user_id = $1 AND a.status = 'active' AND u.referred_by IS NULL`,
-    [order.buyer_id],
+    [order.buyer_id, order.id],
   );
   if (!a) return null;
+  // CFO (5 Nov): the creator's share runs from the buyer's 2nd order, for CREATOR_SHARE_MONTHS (12) after the code was entered.
+  const months = ctx.cfg.CREATOR_SHARE_MONTHS;
+  const until = new Date(a.attributed_at);
+  until.setMonth(until.getMonth() + months);
+  if (Date.now() > until.getTime()) return null;
+  if (a.prior_orders < 1) return null;
   if (order.seller_id && order.seller_id === a.user_id) return null; // the creator never earns on their own sales
   // Round 22 (13): the same linked-account check as invite codes — a creator sharing a device, card, IP subnet or paying
   // wallet with the buyer earns nothing on that buyer's orders.

@@ -12,6 +12,7 @@ import { accountId, post } from './ledger.js';
 import { enqueueEmail } from './notifications.js';
 import { recordSignals } from './fraud.js';
 import { matchWallet, openCase } from './aml.js';
+import { creditDeposit } from './walletDeposits.js';
 import { withScope, type TxScope } from './events.js';
 import { appendMessage } from './chat.js';
 
@@ -76,9 +77,9 @@ const usd = (cents: number) => Math.round(cents) / 100;
 const toCents = (amount: number) => Math.round(amount * 100);
 
 /** What is being paid: one order, or a cart checkout that covers several orders with one payment. */
-export type PayableRef = { orderId: string } | { checkoutId: string };
+export type PayableRef = { orderId: string } | { checkoutId: string } | { depositId: string };
 interface Payable {
-  kind: 'order' | 'checkout';
+  kind: 'order' | 'checkout' | 'deposit';
   id: string;
   buyer_id: string;
   status: string;
@@ -101,7 +102,11 @@ interface Payable {
 
 async function payable(q: Queryable, ref: PayableRef, buyerId: string, forPaying = true): Promise<Payable> {
   let p: Payable | null;
-  if ('orderId' in ref) {
+  if ('depositId' in ref) {
+    // Round 29b: a wallet deposit — the amount lands in the wallet; the method fee (0 for crypto) and the processing fee ride on top.
+    const d = await maybeOne<any>(q, 'SELECT * FROM wallet_deposits WHERE id = $1', [ref.depositId]);
+    p = d && { kind: 'deposit', id: d.id, buyer_id: d.user_id, status: d.status, payment_provider: d.payment_provider, payment_ref: d.payment_ref, charged_cents: Number(d.total_cents), currency: d.currency, presentment_amount_cents: Number(d.total_cents), presentment_currency: d.currency, fx_rate: 1, fx_locked_at: null, checkout_id: null, processing_fee_cents: null, title: `Bullizard wallet top-up ${(Number(d.amount_cents) / 100).toFixed(2)} ${d.currency}` };
+  } else if ('orderId' in ref) {
     const o = await maybeOne<any>(q, 'SELECT o.*, f.title FROM orders o JOIN offers f ON f.id = o.offer_id WHERE o.id = $1', [ref.orderId]);
     p = o && { kind: 'order', id: o.id, buyer_id: o.buyer_id, status: o.status, payment_provider: o.payment_provider, payment_ref: o.payment_ref, charged_cents: Number(o.charged_cents), currency: o.currency, presentment_amount_cents: Number(o.presentment_amount_cents), presentment_currency: o.presentment_currency, fx_rate: Number(o.fx_rate ?? 1), fx_locked_at: o.fx_locked_at ?? null, checkout_id: o.checkout_id ?? null, processing_fee_cents: o.processing_fee_cents != null && Number(o.processing_fee_cents) > 0 ? Number(o.processing_fee_cents) : null, title: `${o.title} x${o.quantity}` };
   } else {
@@ -119,7 +124,7 @@ async function payable(q: Queryable, ref: PayableRef, buyerId: string, forPaying
     const status = c && c.status === 'awaiting_payment' && c.n > 0 && c.open_n === 0 ? 'cancelled' : c?.status;
     p = c && { kind: 'checkout', id: c.id, buyer_id: c.buyer_id, status, payment_provider: c.payment_provider, payment_ref: c.payment_ref, charged_cents: Number(c.charged_cents ?? 0), currency: c.currency ?? 'USD', presentment_amount_cents: Number(c.presentment_amount_cents ?? 0), presentment_currency: c.presentment_currency ?? 'USD', fx_rate: Number(c.fx_rate ?? 1), fx_locked_at: c.fx_locked_at ?? null, checkout_id: null, processing_fee_cents: c.processing_fee_cents != null && Number(c.processing_fee_cents) > 0 ? Number(c.processing_fee_cents) : null, title: `Bullizard order: ${c.n} item${c.n === 1 ? '' : 's'}` };
   }
-  if (!p || p.buyer_id !== buyerId) throw notFound('orderId' in ref ? 'Order' : 'Checkout');
+  if (!p || p.buyer_id !== buyerId) throw notFound('orderId' in ref ? 'Order' : 'depositId' in ref ? 'Deposit' : 'Checkout');
   if (forPaying) {
     if (p.status !== 'awaiting_payment') throw conflict('invalid_state', `This ${p.kind} is ${p.status}`);
     if (p.payment_provider !== 'nowpayments') throw conflict('not_crypto', `This ${p.kind} is not paid with crypto`);
@@ -137,7 +142,7 @@ function refuseCartOrder(p: Payable) {
   }
 }
 
-const whereRef = (p: { kind: string; id: string }) => (p.kind === 'order' ? 'order_id = $1' : 'checkout_id = $1');
+const whereRef = (p: { kind: string; id: string }) => (p.kind === 'order' ? 'order_id = $1' : p.kind === 'deposit' ? 'deposit_id = $1' : 'checkout_id = $1');
 
 /** Paid so far across this order's payments, in USD cents (what NOWPayments valued the deposits at). */
 async function paidSoFarCents(q: Queryable, p: { kind: string; id: string }) {
@@ -236,9 +241,12 @@ export function paymentState(r: { status: string; applied_at: string | null; cre
   }
 }
 
+const refKind = (ref: PayableRef) => ('orderId' in ref ? { kind: 'order', id: ref.orderId } : 'depositId' in ref ? { kind: 'deposit', id: ref.depositId } : { kind: 'checkout', id: ref.checkoutId });
+const statusSql = (kind: string) => (kind === 'order' ? 'SELECT status FROM orders WHERE id = $1' : kind === 'deposit' ? 'SELECT status FROM wallet_deposits WHERE id = $1' : 'SELECT status FROM checkouts WHERE id = $1');
+
 export async function paymentsFor(q: Queryable, ref: PayableRef) {
-  const p = 'orderId' in ref ? { kind: 'order', id: ref.orderId } : { kind: 'checkout', id: ref.checkoutId };
-  const status = await maybeOne<{ status: string }>(q, p.kind === 'order' ? 'SELECT status FROM orders WHERE id = $1' : 'SELECT status FROM checkouts WHERE id = $1', [p.id]);
+  const p = refKind(ref);
+  const status = await maybeOne<{ status: string }>(q, statusSql(p.kind), [p.id]);
   const orderStatus = status?.status ?? 'awaiting_payment';
   const rows = await many<CryptoPaymentView & { applied_at: string | null; credited_cents: string | null; review_reason: string | null; outcome_amount: string | null }>(
     q, `SELECT ${VIEW}, ${STATE_COLS} FROM crypto_payments WHERE ${whereRef(p)} ORDER BY created_at`, [p.id],
@@ -317,7 +325,7 @@ export async function startCryptoPayment(ctx: Ctx, ref: PayableRef, buyerId: str
   // Round 28 (2): the invoice carries the processing fee on top of the order; the fee is fixed with the first invoice.
   const fee = o.processing_fee_cents ?? processingFeeFor(ctx, o.charged_cents);
   if (o.processing_fee_cents == null && fee > 0) {
-    await ctx.db.query(o.kind === 'order' ? 'UPDATE orders SET processing_fee_cents = $2 WHERE id = $1 AND processing_fee_cents = 0' : 'UPDATE checkouts SET processing_fee_cents = $2 WHERE id = $1 AND processing_fee_cents = 0', [o.id, fee]);
+    if (o.kind !== 'deposit') await ctx.db.query(o.kind === 'order' ? 'UPDATE orders SET processing_fee_cents = $2 WHERE id = $1 AND processing_fee_cents = 0' : 'UPDATE checkouts SET processing_fee_cents = $2 WHERE id = $1 AND processing_fee_cents = 0', [o.id, fee]);
     o.processing_fee_cents = fee;
   }
   const owed = o.charged_cents + fee - (await paidSoFarCents(ctx.db, o));
@@ -355,12 +363,12 @@ export async function startCryptoPayment(ctx: Ctx, ref: PayableRef, buyerId: str
   const row = await withTx(ctx.db, async (tx) => {
     const r = await one<CryptoPaymentView>(
       tx,
-      `INSERT INTO crypto_payments (order_id, checkout_id, payment_id, purchase_id, pay_currency, pay_address, pay_extra_id, pay_amount, price_usd, status, expires_at, raw, price_currency, price_amount, fx_rate)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING ${VIEW}`,
+      `INSERT INTO crypto_payments (order_id, checkout_id, payment_id, purchase_id, pay_currency, pay_address, pay_extra_id, pay_amount, price_usd, status, expires_at, raw, price_currency, price_amount, fx_rate, deposit_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING ${VIEW}`,
       [
         o.kind === 'order' ? o.id : null, o.kind === 'checkout' ? o.id : null, String(p.payment_id), p.purchase_id != null ? String(p.purchase_id) : null, p.pay_currency.toLowerCase(), p.pay_address,
         p.payin_extra_id ?? null, p.pay_amount, usd(owed), p.payment_status ?? 'waiting', p.expiration_estimate_date ?? null, JSON.stringify(p),
-        price.currency, price.amountCents / 100, price.rate,
+        price.currency, price.amountCents / 100, price.rate, o.kind === 'deposit' ? o.id : null,
       ],
     );
     if (o.kind === 'order') await tx.query(`UPDATE orders SET payment_expires_at = GREATEST(payment_expires_at, now() + interval '60 minutes') WHERE id = $1`, [o.id]);
@@ -407,13 +415,13 @@ const PAID_STATUSES = new Set(['finished', 'confirmed', 'sending', 'partially_pa
 
 /** IPN (or a poll): store the payment's state and fund the order once enough has arrived. */
 export async function applyCryptoPayment(ctx: Ctx, ev: Extract<PaymentEvent, { type: 'crypto.payment' }>) {
-  const row0 = await maybeOne<{ id: string; order_id: string | null; checkout_id: string | null }>(ctx.db, 'SELECT id, order_id, checkout_id FROM crypto_payments WHERE payment_id = $1', [ev.paymentId]);
+  const row0 = await maybeOne<{ id: string; order_id: string | null; checkout_id: string | null; deposit_id: string | null }>(ctx.db, 'SELECT id, order_id, checkout_id, deposit_id FROM crypto_payments WHERE payment_id = $1', [ev.paymentId]);
   if (!row0) {
     ctx.log.warn({ paymentId: ev.paymentId, orderId: ev.orderId }, 'IPN for an unknown crypto payment');
     return null;
   }
-  const ref: PayableRef = row0.order_id ? { orderId: row0.order_id } : { checkoutId: row0.checkout_id! };
-  const buyerId = (await one<{ buyer_id: string }>(ctx.db, row0.order_id ? 'SELECT buyer_id FROM orders WHERE id = $1' : 'SELECT buyer_id FROM checkouts WHERE id = $1', [row0.order_id ?? row0.checkout_id])).buyer_id;
+  const ref: PayableRef = row0.order_id ? { orderId: row0.order_id } : row0.deposit_id ? { depositId: row0.deposit_id } : { checkoutId: row0.checkout_id! };
+  const buyerId = (await one<{ buyer_id: string }>(ctx.db, row0.order_id ? 'SELECT buyer_id FROM orders WHERE id = $1' : row0.deposit_id ? 'SELECT user_id AS buyer_id FROM wallet_deposits WHERE id = $1' : 'SELECT buyer_id FROM checkouts WHERE id = $1', [row0.order_id ?? row0.deposit_id ?? row0.checkout_id])).buyer_id;
   // The paying wallet, when the provider reports it: a shared wallet links accounts (self-referral check, fraud clusters).
   const raw = (ev.raw ?? {}) as Record<string, unknown>;
   const payer = [raw.payer_address, raw.from_address, raw.payin_address_from].find((v) => typeof v === 'string' && v.length >= 10) as string | undefined;
@@ -459,6 +467,7 @@ export async function applyCryptoPayment(ctx: Ctx, ev: Extract<PaymentEvent, { t
   // can never both act on the same money.
   return withScope(ctx, async (s) => {
     if (row0.order_id) await lockOrder(s.tx, row0.order_id);
+    else if (row0.deposit_id) await s.tx.query('SELECT id FROM wallet_deposits WHERE id = $1 FOR UPDATE', [row0.deposit_id]);
     else await s.tx.query('SELECT id FROM orders WHERE checkout_id = $1 ORDER BY id FOR UPDATE', [row0.checkout_id]);
     const row = await one<{ id: string; status: string; applied_at: string | null }>(s.tx, 'SELECT id, status, applied_at FROM crypto_payments WHERE id = $1 FOR UPDATE', [row0.id]);
     // A row already credited to the buyer's balance keeps that status; the deposit figures still update.
@@ -503,7 +512,9 @@ export async function applyCryptoPayment(ctx: Ctx, ev: Extract<PaymentEvent, { t
     // Round 29 (3b): what reached the wallet is far below what was due (beyond the expected fee): held, not funded.
     {
       const feeGuess = Math.round((due * ctx.cfg.NOWPAYMENTS_FEE_BPS) / 10_000);
-      const floor = due - feeGuess - Math.floor((due * ctx.cfg.CRYPTO_SETTLED_SHORT_BPS) / 10_000);
+      // CFO (5 Nov): more than 2 % short, or more than $10 — whichever comes first.
+      const allowance = Math.min(Math.floor((due * ctx.cfg.CRYPTO_SETTLED_SHORT_BPS) / 10_000), ctx.cfg.CRYPTO_SETTLED_SHORT_MAX_CENTS);
+      const floor = due - feeGuess - allowance;
       if (settled < floor) {
         const reason = `settled_short: ${(settled / 100).toFixed(2)} reached the wallet for ${(due / 100).toFixed(2)} due`;
         await s.tx.query(`UPDATE crypto_payments SET review_reason = $2, review_flagged_at = COALESCE(review_flagged_at, now()), updated_at = now() WHERE id = $1`, [row.id, reason]);
@@ -525,7 +536,8 @@ export async function applyCryptoPayment(ctx: Ctx, ev: Extract<PaymentEvent, { t
     const fxGapBps = target.charged_cents > 0 ? Math.round((fxGap * 10_000) / target.charged_cents) : 0;
     if (eur) await s.tx.query('UPDATE crypto_payments SET fx_gap_cents = $2, fx_gap_bps = $3 WHERE id = $1', [row.id, fxGap, fxGapBps]);
     if (eur && Math.abs(fxGapBps) > ctx.cfg.FX_ALERT_BPS) ctx.log.error({ paymentId: ev.paymentId, fxGapCents: fxGap, fxGapBps }, 'crypto EUR invoice: FX gap above FX_ALERT_BPS');
-    const overpaid = paid - due > tolerance ? paid - due : 0;
+    // CFO (5 Nov): an overpayment is the buyer's balance when it is above OVERPAY_TO_BALANCE_ABOVE_CENTS ($3); smaller ones are kept.
+    const overpaid = paid - due > Math.max(tolerance, ctx.cfg.OVERPAY_TO_BALANCE_ABOVE_CENTS) ? paid - due : 0;
     // Round 28 (2): the processing fee the buyer paid on top (what arrived above the order, up to the fee) covers psp_fee.
     const processingFee = Math.max(0, Math.min(due - target.charged_cents, paid - overpaid - target.charged_cents));
     const captured: Extract<PaymentEvent, { type: 'payment.captured' }> = {
@@ -537,6 +549,12 @@ export async function applyCryptoPayment(ctx: Ctx, ev: Extract<PaymentEvent, { t
       details: { settledAmountCents: paid, feeCents: fee, processingFeeCents: processingFee, fxGapCents: fxGap, overpaidCents: overpaid, raw: { payments: await paymentsFor(s.tx, ref) } },
     };
     for (const f of funding) await s.tx.query('UPDATE crypto_payments SET applied_at = now(), applied_cents = $2 WHERE id = $1', [f.id, settledOf(f)]);
+    if (target.kind === 'deposit') {
+      // Round 29b: a wallet top-up — the amount lands in the wallet; the processing fee covers NOWPayments' charge.
+      const d = await one<{ id: string; user_id: string; currency: string; amount_cents: number; fee_cents: number }>(s.tx, 'SELECT id, user_id, currency, amount_cents, fee_cents FROM wallet_deposits WHERE id = $1', [target.id]);
+      await creditDeposit(s, d, { settledCents: paid, feeCents: fee, processingFeeCents: processingFee, overpaidCents: overpaid });
+      return payable(s.tx, ref, buyerId, false);
+    }
     if (target.kind === 'checkout' && (await checkoutByRef(s.tx, target.payment_ref!))) return handleCheckoutCapturedIn(ctx, s, captured);
     return handlePaymentCapturedIn(ctx, s, captured);
   });
@@ -812,8 +830,8 @@ export async function listCryptoPayments(q: Queryable, filter: { status?: string
 export const STUCK_AFTER_MS = 60_000;
 export async function settleStuckPayments(ctx: Ctx, ref: PayableRef): Promise<number> {
   if (!(ctx.payments instanceof NowPaymentsProvider)) return 0;
-  const p = 'orderId' in ref ? { kind: 'order', id: ref.orderId } : { kind: 'checkout', id: ref.checkoutId };
-  const status = await maybeOne<{ status: string }>(ctx.db, p.kind === 'order' ? 'SELECT status FROM orders WHERE id = $1' : 'SELECT status FROM checkouts WHERE id = $1', [p.id]);
+  const p = refKind(ref);
+  const status = await maybeOne<{ status: string }>(ctx.db, statusSql(p.kind), [p.id]);
   if (!status || status.status !== 'awaiting_payment') return 0;
   const stuck = await many<{ payment_id: string }>(
     ctx.db,

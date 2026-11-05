@@ -18,15 +18,27 @@ import { accountId, sellerAvailable } from './ledger.js';
  */
 export type HoldLevel = 'new' | 'established' | 'trusted' | 'watch' | 'custom';
 
+/** PAYOUT_HOLD_DAYS_BY_RANK parsed: lower-case rank name → days. */
+export function rankHoldDays(raw: string): Record<string, number> {
+  try {
+    const o = JSON.parse(raw) as Record<string, unknown>;
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(o)) if (Number.isInteger(Number(v)) && Number(v) >= 0) out[k.toLowerCase()] = Number(v);
+    return out;
+  } catch {
+    throw new Error('PAYOUT_HOLD_DAYS_BY_RANK is not valid JSON');
+  }
+}
+
 export async function holdPolicy(ctx: Ctx, q: Queryable, sellerId: string) {
-  const s = await one<{ completed: number; charged_back: number; recent_cb: number; age_days: number; override: number | null }>(
+  const s = await one<{ completed: number; charged_back: number; recent_cb: number; age_days: number; override: number | null; seller_rank: string | null }>(
     q,
     `SELECT count(*) FILTER (WHERE o.status = 'completed')::int AS completed,
             count(*) FILTER (WHERE o.status = 'charged_back')::int AS charged_back,
             (SELECT count(*)::int FROM chargebacks c JOIN orders co ON co.id = c.order_id
               WHERE co.seller_id = u.id AND c.received_at > now() - interval '90 days') AS recent_cb,
             extract(day FROM now() - u.created_at)::int AS age_days,
-            u.payout_hold_days AS override
+            u.payout_hold_days AS override, u.seller_rank
        FROM users u LEFT JOIN orders o ON o.seller_id = u.id
       WHERE u.id = $1 GROUP BY u.id`,
     [sellerId],
@@ -36,12 +48,17 @@ export async function holdPolicy(ctx: Ctx, q: Queryable, sellerId: string) {
   const rate = sales ? s.charged_back / sales : 0;
   let level: HoldLevel;
   let days: number;
+  // CFO (5 Nov): the hold is the rank's perk — Hatchling 3 d, Scale 2 d, Fang / Basilisk 1 d, Dragon instant (PAYOUT_HOLD_DAYS_BY_RANK).
+  // A staff override and the watch list (a recent chargeback) still win.
+  const byRank = rankHoldDays(c.PAYOUT_HOLD_DAYS_BY_RANK);
+  const rankKey = (s.seller_rank ?? '').toLowerCase();
   if (s.override != null) [level, days] = ['custom', s.override];
   else if (s.recent_cb > 0 && rate >= 0.01) [level, days] = ['watch', c.PAYOUT_HOLD_DAYS_WATCH];
+  else if (rankKey in byRank) [level, days] = [rankKey === 'dragon' ? 'trusted' : s.completed >= 10 && s.age_days >= 30 ? 'established' : 'new', byRank[rankKey]!];
   else if (s.completed >= 100 && s.age_days >= 180 && rate < 0.005) [level, days] = ['trusted', c.PAYOUT_HOLD_DAYS_TRUSTED];
   else if (s.completed >= 10 && s.age_days >= 30 && rate < 0.01) [level, days] = ['established', c.PAYOUT_HOLD_DAYS_ESTABLISHED];
   else [level, days] = ['new', c.PAYOUT_HOLD_DAYS_NEW];
-  return { level, holdDays: days, completedSales: s.completed, chargebackRate: Math.round(rate * 10_000) / 100, accountAgeDays: s.age_days };
+  return { level, holdDays: days, rank: s.seller_rank, instant: rankKey === 'dragon' && s.override == null && !(s.recent_cb > 0 && rate >= 0.01), completedSales: s.completed, chargebackRate: Math.round(rate * 10_000) / 100, accountAgeDays: s.age_days };
 }
 
 /** Balance split into what can be withdrawn now and what is still on hold, with release dates. */

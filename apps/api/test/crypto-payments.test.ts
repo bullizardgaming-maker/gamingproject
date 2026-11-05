@@ -401,7 +401,7 @@ describe('crypto checkout (NOWPayments)', () => {
     // 3. A definite rejection (400) reverses at once.
     const w3 = (await seller.api.post('/v1/seller/withdrawals', { amountCents: 1000 })).body;
     fake.payoutMode = 'reject';
-    expect((await cfo.api.post(`/v1/admin/withdrawals/${w3.id}/decide`, { approve: true })).body.error.code).toBe('payout_failed');
+    expect((await cfo.api.post(`/v1/admin/withdrawals/${w3.id}/decide`, { approve: true })).body.error.code).toBe('payout_provider_error') // Round 29 (5);
     expect((await seller.api.get('/v1/seller/withdrawals')).body.find((x: any) => x.id === w3.id).status).toBe('failed');
     expect(await available()).toBe(before - 2000);
   });

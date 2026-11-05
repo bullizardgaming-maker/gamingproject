@@ -21,7 +21,7 @@ import { ensureScreenedForPayout, screenUser } from './aml.js';
 import { recordAcceptance, tosVersion } from './legal.js';
 import { referrerForCode } from './referrals.js';
 import { renderCodeEmail, enqueueEmail } from './notifications.js';
-import { activeSession, createSession, revokeOtherSessions, type IssuedSession } from './sessions.js';
+import { activeSession, createSession, revokeOtherSessions, type IssuedSession, securityEmailData, type SecurityMeta } from './sessions.js';
 
 export interface User {
   id: string;
@@ -193,7 +193,7 @@ export async function register(ctx: Ctx, input: { email: string; password: strin
 async function noteSignIn(ctx: Ctx, userId: string, meta: AuthMeta) {
   if (meta.device) {
     const known = await maybeOne(ctx.db, `SELECT 1 FROM risk_signals WHERE user_id = $1 AND kind = 'device' AND value = $2`, [userId, meta.device]);
-    if (!known) await enqueueEmail(ctx.db, userId, 'new_signin', { userAgent: meta.userAgent, ip: meta.ip, at: new Date().toISOString() });
+    if (!known) await enqueueEmail(ctx.db, userId, 'new_signin', securityEmailData(meta));
   }
   await recordSignals(ctx.db, userId, { device: meta.device, ip_subnet: subnetOf(meta.ip) });
 }
@@ -298,7 +298,7 @@ export async function requestPasswordReset(ctx: Ctx, email: string, ip?: string)
 }
 
 /** Sets the new password, burns every outstanding reset link and signs out all devices. 2FA stays on. */
-export async function resetPassword(ctx: Ctx, token: string, newPassword: string) {
+export async function resetPassword(ctx: Ctx, token: string, newPassword: string, meta?: SecurityMeta) {
   const hash = await hashPassword(newPassword);
   return withScope(ctx, async (s) => {
     const row = await maybeOne(
@@ -311,13 +311,13 @@ export async function resetPassword(ctx: Ctx, token: string, newPassword: string
     await s.tx.query('UPDATE users SET password_hash = $2, failed_logins = 0, login_lock_count = 0, login_locked_until = NULL WHERE id = $1', [row.user_id, hash]);
     await s.tx.query('DELETE FROM mfa_challenges WHERE user_id = $1', [row.user_id]); // Round 23d: a half-done sign-in dies with the old password
     await revokeOtherSessions(s.tx, row.user_id, null, 'password_reset');
-    await enqueueEmail(s.tx, row.user_id, 'password_changed', {});
+    await enqueueEmail(s.tx, row.user_id, 'password_changed', securityEmailData(meta));
     return { reset: true };
   });
 }
 
 /** Change password: signs out every other device and emails the user. */
-export async function changePassword(ctx: Ctx, user: User, current: string, next: string) {
+export async function changePassword(ctx: Ctx, user: User, current: string, next: string, meta?: SecurityMeta) {
   const row = await one<{ password_hash: string }>(ctx.db, 'SELECT password_hash FROM users WHERE id = $1', [user.id]);
   // 403, not 401: a 401 would make the web client refresh and retry (Round 23e/23f).
   if (!(await verifyPassword(current, row.password_hash))) throw new AppError(403, 'wrong_current_password', "Your current password isn't right.");
@@ -326,7 +326,7 @@ export async function changePassword(ctx: Ctx, user: User, current: string, next
   return withScope(ctx, async (s) => {
     await s.tx.query('UPDATE users SET password_hash = $2 WHERE id = $1', [user.id, hash]);
     const signedOut = await revokeOtherSessions(s.tx, user.id, user.session_family ?? null, 'password_changed');
-    await enqueueEmail(s.tx, user.id, 'password_changed', {});
+    await enqueueEmail(s.tx, user.id, 'password_changed', securityEmailData(meta));
     return { signedOutDevices: signedOut };
   });
 }

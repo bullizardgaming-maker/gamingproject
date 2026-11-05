@@ -32,13 +32,17 @@ describe('creator affiliate codes', () => {
 
     const seller = await makeUser(h, { tier: 2 });
     const offer = await makeOffer(seller, { priceCents: 100_00 });
-    await seller.api.post(`/v1/offers/${offer.id}/inventory`, { format: 'txt', content: 'K-1\nK-2' });
+    await seller.api.post(`/v1/offers/${offer.id}/inventory`, { format: 'txt', content: 'K-1\nK-2\nK-3' });
+    // CFO (5 Nov): the creator earns from the buyer's 2nd order on — the first order pays nothing.
+    const first = await buyAndPay(h, fan, offer.id);
+    await fan.api.post(`/v1/orders/${first.id}/confirm`);
+    expect(await sellerAvailable(h.ctx.db, creator.id)).toBe(0);
     const order = await buyAndPay(h, fan, offer.id);
     await fan.api.post(`/v1/orders/${order.id}/confirm`);
     // 100.00 grossed up by 5% = 5.27 commission; the creator's 20% share is 1.05, paid from the treasury.
     expect(await sellerAvailable(h.ctx.db, creator.id)).toBe(105);
     const mine = (await creator.api.get('/v1/me/affiliate')).body;
-    expect(mine).toMatchObject({ code: 'STREAMER-X', buyers: 1, orders: 1, earned_cents: 105 });
+    expect(mine).toMatchObject({ code: 'STREAMER-X', buyers: 1, orders: 1, earned_cents: 105 }); // orders = earning orders
     expect(mine.recent[0]).toMatchObject({ order_id: order.id, commission_cents: 527, earned_cents: 105 });
     expect((await finance.api.get('/v1/admin/affiliates')).body.find((a: any) => a.code === 'STREAMER-X')).toMatchObject({ buyers: 1, earned_cents: 105 });
 

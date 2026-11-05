@@ -32,7 +32,7 @@ describe('commission gross-up and seller ranks', () => {
   it('shows the public rank table, and the dashboard reports rank, rate and promo', async () => {
     const ranks = (await client(h.app).get('/v1/ranks')).body;
     expect(ranks.ranks.map((r: any) => r.name)).toEqual(['Hatchling', 'Scale', 'Fang', 'Basilisk', 'Dragon']);
-    expect(ranks.settings).toEqual({ promoRateBps: 500, promoDays: 60 });
+    expect(ranks.settings).toEqual({ promoRateBps: 500, promoDays: 60, promoMaxSalesCents: 150_000 }); // CFO (5 Nov): promo capped at $1,500
     const seller = await makeUser(h, { tier: 2 });
     await makeOffer(seller);
     const dash = (await seller.api.get('/v1/seller/dashboard')).body;

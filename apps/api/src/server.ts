@@ -38,6 +38,8 @@ export interface RequestMeta {
   ip: string;
   ipCountry?: string;
   device?: string;
+  /** Round 29c: shown in security emails as "Chrome on Android", never raw. */
+  userAgent?: string;
 }
 
 let geoHeader: string | undefined;
@@ -50,6 +52,7 @@ export function requestMeta(req: FastifyRequest): RequestMeta {
     ip: req.ip,
     ipCountry: typeof country === 'string' ? country.toUpperCase() : undefined,
     device: typeof device === 'string' ? device.slice(0, 128) : undefined,
+    userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 300) : undefined,
   };
 }
 
@@ -133,6 +136,23 @@ export function allowedWebOrigins(cfg: { PUBLIC_WEB_URL: string; EXTRA_WEB_ORIGI
   }
   for (const o of (cfg.EXTRA_WEB_ORIGINS ?? '').split(',').map((v) => v.trim()).filter(Boolean)) out.add(o.replace(/\/$/, ''));
   return [...out];
+}
+
+/**
+ * Round 29 (12): the apex the refresh cookie is set on (".bullizard.com"), so the web app and support.bullizard.com share
+ * it. COOKIE_DOMAIN overrides; localhost and bare hosts get no Domain attribute.
+ */
+export function refreshCookieDomain(cfg: { PUBLIC_WEB_URL: string; COOKIE_DOMAIN?: string }): string | undefined {
+  if (cfg.COOKIE_DOMAIN) return cfg.COOKIE_DOMAIN;
+  try {
+    const u = new URL(cfg.PUBLIC_WEB_URL);
+    if (u.protocol !== 'https:') return undefined;
+    const parts = u.hostname.split('.');
+    if (parts.length < 2 || /^\d+$/.test(parts[parts.length - 1]!)) return undefined;
+    return `.${parts.slice(-2).join('.')}`;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Health checks Render (and uptime monitors) call directly on the origin, without Cloudflare's header. */

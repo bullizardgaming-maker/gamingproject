@@ -13,6 +13,8 @@ export interface Helpers {
   duration(minutes: number): string;
   /** Round 23f: the reader's wording for a withdrawal reason code. */
   reason(code: unknown): string;
+  /** Round 29c: the device / region / time / IP block of a security email, in the reader's language. */
+  security(d: Data): string;
 }
 export interface LocalizedTemplate {
   subject(d: Data, h: Helpers): string;

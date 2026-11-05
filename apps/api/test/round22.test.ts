@@ -303,11 +303,11 @@ describe('12. audit when the payout call fails', () => {
     const finance = await makeUser(h, { role: 'finance' });
     const w = (await seller.api.post('/v1/seller/withdrawals', { amountCents: 12_00 })).body;
     fake.payoutMode = 'reject';
-    expect((await finance.api.post(`/v1/admin/withdrawals/${w.id}/decide`, { approve: true })).body.error.code).toBe('payout_failed');
+    expect((await finance.api.post(`/v1/admin/withdrawals/${w.id}/decide`, { approve: true })).body.error.code).toBe('payout_provider_error');
     const rows = (await h.ctx.db.query(`SELECT action, details FROM admin_audit_log WHERE target_id = $1`, [w.id])).rows;
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ action: 'withdrawal.approve' });
-    expect(rows[0].details.payout).toBe('payout_failed');
+    expect(rows[0].details.payout).toBe('payout_provider_error');
   });
 });
 

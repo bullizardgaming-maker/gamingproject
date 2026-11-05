@@ -16,8 +16,8 @@ import { exportListings, importListings } from '../domain/bulkListings.js';
 import { listLinked, startLink, unlink } from '../domain/linkedAccounts.js';
 import { DELIVERY_TIME_KEYS, MAX_VOLUME_DISCOUNTS, MAX_VOLUME_PERCENT, parseUnitPrice } from '../domain/unitPrice.js';
 import { ACCENTS, MAX_INTRO, MAX_PINNED, deleteBanner, storefront, updateStorefront, uploadBanner } from '../domain/storefront.js';
-import { confirmPayoutAddress, payoutAddressOf, removePayoutAddress, requestCryptoWithdrawal, requestPayoutAddress } from '../domain/cryptoPayouts.js';
-import { WITHDRAWAL_METHODS, isWithdrawalMethod, withdrawalFeeFor, withdrawalFeeTable, withdrawalMethodsFor } from '../domain/withdrawalMethods.js';
+import { confirmPayoutAddress, payoutAddressOf, removePayoutAddress, requestCryptoWithdrawal, requestPayoutAddress, withdrawalView } from '../domain/cryptoPayouts.js';
+import { WITHDRAWAL_METHODS, isWithdrawalMethod, withdrawalFeeQuote, withdrawalMethodsFor } from '../domain/withdrawalMethods.js';
 import { NowPaymentsProvider } from '../providers/payments/nowpayments.js';
 import { withdrawable } from '../domain/payoutholds.js';
 import { EXPORT_KINDS, buildExport, exportRange, toCsv, type ExportKind } from '../domain/exports.js';
@@ -307,12 +307,19 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   // --- Payouts ------------------------------------------------------------------
+  /** Round 29: `{ amountCents, method?, details? }` — method ∈ usdt | wallet | instapay; details are what the form showed. */
+  const WithdrawalBody = z.object({
+    amountCents: z.number().int().positive(),
+    currency: z.string().length(3).toUpperCase().optional(),
+    method: z.enum(WITHDRAWAL_METHODS).optional(),
+    details: z.object({ network: z.string().max(20).optional(), address: z.string().max(128).optional(), phone: z.string().max(40).optional(), ipa: z.string().max(120).optional() }).optional(),
+  });
   app.post('/seller/withdrawals', async (req, reply) => {
     const user = me(req);
-    const body = z.object({ amountCents: z.number().int().positive(), currency: z.string().length(3).toUpperCase().optional() }).parse(req.body);
+    const body = WithdrawalBody.parse(req.body);
     const currency = body.currency ?? 'USD'; // Round 22b: withdrawals are USD only (anything else: 400 unsupported_currency)
-    // Round 25: USDT only (TRC-20 / BEP-20), 6% fee with a $1.50 minimum; no card-era transfer path.
-    return reply.status(201).send(await requestCryptoWithdrawal(ctx, user.id, body.amountCents, currency));
+    // Round 29: the method and details the web shows are checked against the confirmed payout method (CFO fee rules apply).
+    return reply.status(201).send(await requestCryptoWithdrawal(ctx, user.id, body.amountCents, currency, { method: body.method, details: body.details, meta: requestMeta(req) }));
   });
   /** Sell-form preview: buyer price at the seller's rate and what is left after the withdrawal fee. */
   // ---- Onboarding: the rules test before the first listing; the ID deadline on the dashboard ----
@@ -335,12 +342,17 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     const amountCents = typeof raw === 'string' && /^\d{1,12}$/.test(raw.trim()) ? Number(raw.trim()) : NaN;
     if (!(amountCents > 0)) throw badRequest('amount_required', 'Enter an amount to see the fee');
     // Round 29 (2): the fee of the user's confirmed method (or the one asked for with ?method=).
-    const q = (req.query as Record<string, unknown> | undefined)?.method;
-    const saved = (await ctx.db.query('SELECT payout_method FROM users WHERE id = $1', [me(req).id])).rows[0]?.payout_method;
-    const method = isWithdrawalMethod(q) ? q : isWithdrawalMethod(saved) ? saved : 'usdt';
-    const rule = withdrawalFeeTable(ctx)[method];
-    const fee = withdrawalFeeFor(ctx, method, amountCents);
-    return { amountCents, feeCents: fee, netCents: amountCents - fee, method, feeBps: rule.bps, feeMinCents: rule.minCents };
+    const qs = req.query as Record<string, unknown> | undefined;
+    const saved = (await ctx.db.query('SELECT payout_method, payout_address_currency FROM users WHERE id = $1', [me(req).id])).rows[0];
+    const method = isWithdrawalMethod(qs?.method) ? qs!.method : isWithdrawalMethod(saved?.payout_method) ? saved.payout_method : 'usdt';
+    const network = typeof qs?.network === 'string' ? qs.network : saved?.payout_address_currency;
+    // CFO (5 Nov): the method's own rule; below_minimum / above_maximum carry the limits.
+    const quote = await withdrawalFeeQuote(ctx, ctx.db, method, network, amountCents);
+    return {
+      amountCents, feeCents: quote.feeCents, netCents: quote.netCents, method, network: method === 'usdt' ? (network ?? 'usdtbsc') : null, fee_key: quote.key,
+      feeBps: quote.rule.pctBps, feeFixedCents: quote.rule.fixedCents, feeMinCents: quote.minUsdCents, feeMaxCents: quote.maxUsdCents,
+      payoutCurrency: quote.payoutCurrency, payoutAmountCents: quote.payoutAmountCents, rate: quote.rate,
+    };
   });
 
   // --- Crypto payout address: confirmed by email link (+ 2FA when on) ------------------------
@@ -365,7 +377,7 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
   });
   app.post('/seller/payout-address/confirm', async (req) => {
     const body = z.object({ token: z.string().min(10).max(200), code: z.string().trim().min(6).max(12).optional() }).parse(req.body);
-    return confirmPayoutAddress(ctx, me(req), body);
+    return confirmPayoutAddress(ctx, me(req), body, requestMeta(req));
   });
   app.delete('/seller/payout-address', async (req) => removePayoutAddress(ctx, me(req).id));
 
@@ -485,7 +497,7 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     const user = me(req);
     return reply.status(201).send(await startDebtPayment(ctx, user, id, amountCents));
   });
-  app.get('/seller/withdrawals', async (req) => many(ctx.db, 'SELECT * FROM withdrawals WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100', [me(req).id]));
+  app.get('/seller/withdrawals', async (req) => (await many(ctx.db, 'SELECT * FROM withdrawals WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100', [me(req).id])).map(withdrawalView));
 
   /** Link a self-custody wallet (for crypto escrow payouts), proven by a personal_sign signature. */
   app.post('/me/wallet', async (req) => {
