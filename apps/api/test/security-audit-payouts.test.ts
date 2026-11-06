@@ -23,9 +23,11 @@ beforeAll(async () => {
     CRYPTO_UNDERPAY_TOLERANCE_BPS: '0', OVERPAY_TO_BALANCE_ABOVE_CENTS: '0',
   }, { payments });
   defaultHeaders['x-origin-auth'] = ORIGIN_SECRET;
+  defaultHeaders['cf-ipcountry'] = 'US'; // Cloudflare always names a country; a missing one counts as unknown (XX)
 });
 afterAll(async () => {
   delete defaultHeaders['x-origin-auth'];
+  delete defaultHeaders['cf-ipcountry'];
   await h.close();
 });
 
@@ -158,5 +160,36 @@ describe('security audit — payouts', () => {
     expect((await seller.api.post(`/v1/offers/${offer.id}/inventory`, { format: 'txt', content: 'CODE-1' }, ir)).status).toBe(451);
     expect((await seller.api.post(`/v1/requests/${r.body.id}/proposals`, { priceCents: 20_00, deliveryHours: 4 }, ir)).status).toBe(451);
     expect(Number((await h.ctx.db.query('SELECT count(*)::int AS n FROM offers WHERE seller_id = $1', [seller.id])).rows[0].n)).toBe(before);
+  });
+
+  it('Tor (T1) is treated like a sanctioned country; an unknown country (XX, or no header through Cloudflare) cannot withdraw', async () => {
+    const { client } = await import('./helpers.js');
+    const reg = (country: string) => client(h.app, undefined, { 'cf-ipcountry': country }).post('/v1/auth/register', { email: `t1_${Date.now()}_${Math.random().toString(36).slice(2, 6)}@example.com`, password: 'correct horse battery', displayName: 'Tor Tester', acceptTerms: true });
+    expect((await reg('T1')).status).toBe(451);
+    expect((await reg('XX')).status).toBe(201); // signing up and browsing stay open
+    const buyer = await agedUser();
+    await topUp(buyer, 20_00);
+    expect((await buyer.api.post('/v1/me/withdrawals', { amountCents: 10_00 }, { 'cf-ipcountry': 'XX' })).status).toBe(451);
+    const noHeader = await h.app.inject({ method: 'POST', url: '/v1/me/withdrawals', headers: { authorization: `Bearer ${(buyer as any).token}`, 'x-origin-auth': ORIGIN_SECRET, 'content-type': 'application/json' }, payload: JSON.stringify({ amountCents: 10_00 }) });
+    expect(noHeader.statusCode).toBe(451);
+    const methods = (await buyer.api.get('/v1/payment-methods', { 'cf-ipcountry': 'T1' })).body;
+    expect(JSON.stringify(methods)).not.toMatch(/"crypto"/);
+  });
+
+  it('pause orders also stops new crypto payment addresses for existing orders', async () => {
+    const seller = await makeUser(h, { tier: 2 });
+    const buyer = await agedUser();
+    const offer = await makeOffer(seller, { deliveryMode: 'manual', stock: 5, categorySlug: 'currency', title: 'Gold', priceCents: 30_00 });
+    const order = (await buyer.api.post('/v1/orders', { offerId: offer.id, quantity: 1, acceptTos: true, deliveryMethod: 'f2f', deliveryInfo: { character: 'Buyer1' } })).body.order;
+    await h.ctx.db.query('UPDATE platform_controls SET pause_orders = true');
+    forgetControlsCache();
+    try {
+      const pay = await buyer.api.post(`/v1/orders/${order.id}/crypto/pay`, { coin: 'usdttrc20' });
+      expect(pay.status).toBe(503);
+      expect(pay.body.error.code).toBe('orders_paused');
+    } finally {
+      await h.ctx.db.query('UPDATE platform_controls SET pause_orders = false');
+      forgetControlsCache();
+    }
   });
 });

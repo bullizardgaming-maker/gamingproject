@@ -14,7 +14,7 @@ import { EFFECTIVE_MIN_QTY_SQL, createOffer, getOffer, requireSeller, submitOwne
 import { createSellerCode, endSale, listSellerCodes, setSale, setSellerCodeActive } from '../domain/discounts.js';
 import { trustSummary } from '../domain/trust.js';
 import { exportListings, importListings } from '../domain/bulkListings.js';
-import { listLinked, startLink, unlink } from '../domain/linkedAccounts.js';
+import { listLinked, sendLinkStart, startLink, unlink } from '../domain/linkedAccounts.js';
 import { DELIVERY_TIME_KEYS, MAX_VOLUME_DISCOUNTS, MAX_VOLUME_PERCENT, parseUnitPrice } from '../domain/unitPrice.js';
 import { ACCENTS, MAX_INTRO, MAX_PINNED, deleteBanner, storefront, updateStorefront, uploadBanner } from '../domain/storefront.js';
 import { confirmPayoutAddress, payoutAddressOf, removePayoutAddress, requestCryptoWithdrawal, requestPayoutAddress, sellerWithdrawalView } from '../domain/cryptoPayouts.js';
@@ -161,12 +161,12 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // --- Linked game accounts (Steam / Riot sign-in) ------------------------------------------
   app.get('/seller/linked-accounts', async (req) => listLinked(ctx.db, me(req).id));
-  app.post('/seller/linked-accounts/:provider/start', async (req) => {
+  app.post('/seller/linked-accounts/:provider/start', async (req, reply) => {
     const user = me(req);
     requireSeller(user);
     const { provider } = z.object({ provider: z.enum(['steam', 'riot']) }).parse(req.params);
     const body = z.object({ mockAccount: z.string().max(80).optional() }).parse(req.body ?? {});
-    return startLink(ctx, user.id, provider, body);
+    return sendLinkStart(ctx, reply, await startLink(ctx, user.id, provider, body));
   });
   app.delete('/seller/linked-accounts/:id', async (req) => {
     await unlink(ctx, me(req).id, Id.parse(req.params).id);

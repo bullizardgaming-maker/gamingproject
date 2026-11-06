@@ -24,7 +24,9 @@ describe('seller onboarding', () => {
     const wrong = Object.fromEntries(test.questions.map((q: any) => [q.id, 0]));
     const failed = (await u.api.post('/v1/seller/rules-test', { answers: wrong })).body;
     expect(failed.passed).toBe(false);
-    expect(failed.results.filter((r: any) => !r.correct).every((r: any) => typeof r.explanation === 'string' && r.explanation.length > 10)).toBe(true);
+    // Security audit: every explanation comes back, but never which answers were wrong.
+    expect(failed.results).toHaveLength(13);
+    expect(failed.results.every((r: any) => typeof r.explanation === 'string' && r.explanation.length > 10 && !('correct' in r))).toBe(true);
     expect((await u.api.post('/v1/offers', listing)).body.error.code).toBe('rules_test_required');
 
     // Staff see the answers, and can edit the test (an unlisted question retires).

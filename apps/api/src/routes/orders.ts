@@ -16,7 +16,7 @@ import { buildEscrowTerms } from '../domain/web3.js';
 import { DISPUTE_CATEGORIES, addStatement } from '../domain/disputes.js';
 import { CLAIM_REASONS, buyerRespond, openClaim, sellerRespond } from '../domain/warranty.js';
 import { postProgress } from '../domain/progress.js';
-import { startHandover } from '../domain/linkedAccounts.js';
+import { sendLinkStart, startHandover } from '../domain/linkedAccounts.js';
 import { createTicket } from '../domain/support.js';
 import { coinsFor, paymentsFor, quoteFx, refreshCryptoPayment, setRefundAddress, settleStuckPayments, startCryptoPayment } from '../domain/cryptoPayments.js';
 import { BUYER_TAGS, buyerReputation, rateBuyer } from '../domain/buyerReputation.js';
@@ -197,9 +197,9 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   /** Handover check: the buyer signs in to the account they bought; the callback ticks the checklist. */
-  app.post('/orders/:id/handover/start', async (req) => {
+  app.post('/orders/:id/handover/start', async (req, reply) => {
     const body = z.object({ mockAccount: z.string().max(80).optional() }).parse(req.body ?? {});
-    return startHandover(ctx, Id.parse(req.params).id, me(req).id, body);
+    return sendLinkStart(ctx, reply, await startHandover(ctx, Id.parse(req.params).id, me(req).id, body));
   });
 
   app.post('/orders/:id/cancel', async (req) => cancelOrder(ctx, Id.parse(req.params).id, me(req).id, 'buyer_cancelled'));
@@ -381,8 +381,14 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.get('/chat/rooms/:id/verify', async (req) => {
     const { id } = Id.parse(req.params);
-    await roomForParticipant(ctx.db, id, me(req));
-    return verifyChain(ctx.db, id, ctx.keyring);
+    const room = await roomForParticipant(ctx.db, id, me(req));
+    const res = await verifyChain(ctx.db, id, ctx.keyring);
+    // Security audit (Nov 2026): the parties see how many messages they can read, not the total — the difference would
+    // reveal that (and how often) the other side tried to share outside contacts. Staff see the full count.
+    if (room.buyer_id === me(req).id || room.seller_id === me(req).id) {
+      res.messages = (await one<{ n: number }>(ctx.db, 'SELECT count(*)::int AS n FROM chat_messages WHERE room_id = $1 AND NOT hidden', [id])).n;
+    }
+    return res;
   });
 
   app.get('/chat/rooms/:id', async (req) => {

@@ -1,3 +1,4 @@
+import { reverseOrderRewards } from './rewardReversal.js';
 import type { Ctx } from '../context.js';
 import { many, maybeOne, one } from '../db.js';
 import { AppError, badRequest, conflict } from '../lib/errors.js';
@@ -107,6 +108,7 @@ export async function refundAfterRelease(
       order.id,
     );
 
+    await reverseOrderRewards(s.tx, order, Number(done.s) + amount); // security audit: rewards paid from this commission come back too
     const credited = await issueCreditNote(ctx, s.tx, order, refund, input.reason);
     const full = amount === remaining;
     if (full) await transition(s.tx, order, 'refunded', staffId, 'refunded_after_release');

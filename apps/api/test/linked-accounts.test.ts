@@ -8,13 +8,17 @@ beforeAll(async () => {
 });
 afterAll(async () => h.close());
 
+/** Security audit: the browser that started the link carries the binding cookie back to the callback. */
+const linkCookie = (headers: Record<string, unknown>) => String([headers['set-cookie']].flat().find((c) => String(c).startsWith('bz_link=')) ?? '').split(';')[0]!;
+
 /** Start a link and follow the (mock) platform's redirect back to our callback. */
 async function link(user: { api: any }, provider: 'steam' | 'riot', mockAccount: string) {
   const start = await user.api.post(`/v1/seller/linked-accounts/${provider}/start`, { mockAccount });
   expect(start.status, JSON.stringify(start.body)).toBe(200);
   const u = new URL(start.body.url);
-  const res = await h.app.inject({ method: 'GET', url: `${u.pathname}${u.search}` });
-  return { status: res.statusCode, location: String(res.headers.location ?? ''), callback: `${u.pathname}${u.search}` };
+  const cookie = linkCookie(start.headers);
+  const res = await h.app.inject({ method: 'GET', url: `${u.pathname}${u.search}`, headers: { cookie } });
+  return { status: res.statusCode, location: String(res.headers.location ?? ''), callback: `${u.pathname}${u.search}`, cookie };
 }
 
 describe('linked game accounts', () => {
@@ -24,7 +28,7 @@ describe('linked game accounts', () => {
     expect(done.status).toBe(302);
     expect(done.location).toMatch(/\/sell\?linked=steam$/);
     // The state is single-use.
-    const again = await h.app.inject({ method: 'GET', url: done.callback });
+    const again = await h.app.inject({ method: 'GET', url: done.callback, headers: { cookie: done.cookie } });
     expect(String(again.headers.location)).toMatch(/link_error=link_expired/);
 
     const [acct] = (await seller.api.get('/v1/seller/linked-accounts')).body;
@@ -108,7 +112,7 @@ describe('handover check', () => {
       const start = await buyer.api.post(`/v1/orders/${order.id}/handover/start`, { mockAccount });
       expect(start.status, JSON.stringify(start.body)).toBe(200);
       const u = new URL(start.body.url);
-      const res = await h.app.inject({ method: 'GET', url: `${u.pathname}${u.search}` });
+      const res = await h.app.inject({ method: 'GET', url: `${u.pathname}${u.search}`, headers: { cookie: linkCookie(start.headers) } });
       return String(res.headers.location ?? '');
     };
     expect(await follow('76561198000000778')).toMatch(new RegExp(`/orders/${order.id}\\?handover=wrong_account$`));
@@ -156,6 +160,7 @@ describe('Steam OpenID verification (live provider)', () => {
     'openid.return_to': `${cb}?state=s`,
     'openid.claimed_id': 'https://steamcommunity.com/openid/id/76561197960435530',
     'openid.sig': 'sig',
+    'openid.signed': 'signed,op_endpoint,claimed_id,identity,return_to,response_nonce,assoc_handle',
     ...over,
   });
   const fakeFetch = (valid: boolean, summary?: object) =>

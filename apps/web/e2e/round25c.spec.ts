@@ -6,6 +6,7 @@ test.describe('sign-in code and "You\'re in" (Round 25c)', () => {
     // Turn on two-factor login for the demo buyer (any 6 digits work in the demo).
     await signIn(page, 'Buyer');
     await page.goto('/account');
+    await page.getByPlaceholder('Current password').fill('demo-password-123');
     await page.getByRole('button', { name: 'Set up two-factor login' }).click();
     await page.getByPlaceholder('6-digit code').fill('123456');
     await page.getByRole('button', { name: 'Turn on' }).click();

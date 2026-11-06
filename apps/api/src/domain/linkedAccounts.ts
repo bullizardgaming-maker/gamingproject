@@ -1,3 +1,4 @@
+import { hmacSha256, safeEqual } from '../lib/crypto.js';
 import { randomBytes } from 'node:crypto';
 import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
@@ -33,12 +34,25 @@ export async function listLinked(q: Queryable, userId: string) {
   return many(q, `SELECT ${COLS} FROM linked_accounts WHERE user_id = $1 AND unlinked_at IS NULL ORDER BY linked_at DESC`, [userId]);
 }
 
+/**
+ * Security audit (Nov 2026): the sign-in is bound to the browser that started it. The start call sets LINK_COOKIE (httpOnly,
+ * SameSite=Lax, on the API host) to an HMAC of the state; the callback needs it. Without it, someone could start a link and
+ * send the platform's sign-in page to a victim, whose game account would then be linked to the attacker's Bullizard account.
+ */
+export const LINK_COOKIE = 'bz_link';
+export const linkBinding = (ctx: Ctx, nonce: string) => hmacSha256(ctx.cfg.FINGERPRINT_KEY, `link_state:${nonce}`);
+/** Sets the binding cookie for a started link and returns what the client gets (the platform URL only). */
+export function sendLinkStart(ctx: Ctx, reply: { setCookie: (name: string, value: string, opts: Record<string, unknown>) => unknown }, started: { url: string; binding: string }) {
+  reply.setCookie(LINK_COOKIE, started.binding, { httpOnly: true, secure: ctx.cfg.NODE_ENV === 'production', sameSite: 'lax', path: '/v1/linked-accounts', maxAge: STATE_MINUTES * 60 });
+  return { url: started.url };
+}
+
 export async function startLink(ctx: Ctx, userId: string, p: Platform, opts: { mockAccount?: string; orderId?: string } = {}) {
   if (!ctx.platformAccounts.enabled(p)) throw badRequest('platform_unavailable', `Linking ${p === 'steam' ? 'Steam' : 'Riot'} accounts isn’t available yet`);
   const nonce = randomBytes(24).toString('hex');
   await ctx.db.query(`DELETE FROM link_states WHERE expires_at < now()`);
   await ctx.db.query(`INSERT INTO link_states (nonce, user_id, provider, order_id, expires_at) VALUES ($1, $2, $3, $4, now() + make_interval(mins => $5))`, [nonce, userId, p, opts.orderId ?? null, STATE_MINUTES]);
-  return { url: ctx.platformAccounts.authorizeUrl(p, nonce, callbackUrl(ctx, p), ctx.platformAccounts.name === 'mock' ? { mockAccount: opts.mockAccount } : {}) };
+  return { url: ctx.platformAccounts.authorizeUrl(p, nonce, callbackUrl(ctx, p), ctx.platformAccounts.name === 'mock' ? { mockAccount: opts.mockAccount } : {}), binding: linkBinding(ctx, nonce) };
 }
 
 /**
@@ -59,7 +73,8 @@ export async function startHandover(ctx: Ctx, orderId: string, buyerId: string, 
 }
 
 /** The browser's return trip from the platform. The state is single-use and names the user. */
-export async function completeLink(ctx: Ctx, p: Platform, query: Record<string, string>) {
+export async function completeLink(ctx: Ctx, p: Platform, query: Record<string, string>, binding?: string) {
+  if (!binding || !safeEqual(binding, linkBinding(ctx, query.state ?? ''))) throw badRequest('link_not_started_here', 'Finish the sign-in in the same browser you started it from');
   const st = await maybeOne<{ user_id: string; order_id: string | null }>(ctx.db, `DELETE FROM link_states WHERE nonce = $1 AND provider = $2 AND expires_at > now() RETURNING user_id, order_id`, [query.state ?? '', p]);
   if (!st) throw badRequest('link_expired', 'This sign-in link has expired; start again from your seller hub');
   let who;

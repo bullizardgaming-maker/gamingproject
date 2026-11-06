@@ -1,3 +1,4 @@
+import { assertNotPaused } from './controls.js';
 import type { Ctx } from '../context.js';
 import type { Queryable, Tx } from '../db.js';
 import { many, maybeOne, one, withTx } from '../db.js';
@@ -313,6 +314,9 @@ async function lockPayable(tx: Queryable, p: { kind: string; id: string }) {
  */
 export async function startCryptoPayment(ctx: Ctx, ref: PayableRef, buyerId: string, coin: string, priceCurrency = 'USD') {
   const np = provider(ctx);
+  // Security audit (Nov 2026): while "pause orders" is on, no new payment address is handed out (money already sent to an
+  // existing address is still credited when it arrives).
+  await assertNotPaused(ctx.db, 'orders');
   if (!cryptoPriceCurrencies(ctx).includes(priceCurrency)) throw badRequest('unsupported_currency', `Crypto payments are priced in ${cryptoPriceCurrencies(ctx).join(' or ')}`);
   const o = await payable(ctx.db, ref, buyerId);
   refuseCartOrder(o);

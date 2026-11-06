@@ -242,8 +242,11 @@ export async function login(ctx: Ctx, input: { email: string; password: string }
   const row = await maybeOne<User & { password_hash: string }>(ctx.db, `SELECT ${PUBLIC_USER_COLUMNS}, password_hash FROM users WHERE email = $1 AND deleted_at IS NULL`, [input.email]);
   // Always run a hash comparison so response time does not reveal whether the email exists.
   const ok = await verifyPassword(input.password, row?.password_hash ?? 'scrypt$32768$AAAAAAAAAAAAAAAAAAAAAA==$AAAA');
-  if (row) await assertNotLocked(ctx, row.id);
-  if (row && !ok) await noteFailedLogin(ctx, row.id);
+  // Security audit (Nov 2026): a lock is only revealed to someone who knows the password (the owner, who is told to reset);
+  // a wrong guess on a locked account gets the same 401 as an unknown email, so the lock can't be used to probe which
+  // emails have accounts. Wrong guesses during a lock don't extend it.
+  if (row && ok) await assertNotLocked(ctx, row.id);
+  if (row && !ok && !(await maybeOne(ctx.db, 'SELECT 1 FROM users WHERE id = $1 AND login_locked_until > now()', [row.id]))) await noteFailedLogin(ctx, row.id);
   if (!row || !ok) throw new AppError(401, 'invalid_credentials', 'Wrong email or password.'); // one message: never says which accounts exist
   const { password_hash: _, ...user } = row;
   assertMaySignIn(user);
@@ -450,6 +453,15 @@ export async function applyKycResult(ctx: Ctx, result: { externalId: string; sta
       s.notifyUser(v.user_id, 'kyc.approved', {});
       s.defer(async () => void (await screenUser(ctx, v.user_id)));
     } else if (result.status === 'rejected') {
+      // Security audit (Nov 2026): a verification the provider rejects after approving it (re-review, fraud) takes the ID
+      // level back unless another verification is still approved; withdrawals freeze and Fraud review gets a flag.
+      const stillApproved = await maybeOne(s.tx, `SELECT 1 FROM kyc_verifications WHERE user_id = $1 AND id <> $2 AND status = 'approved'`, [v.user_id, v.id]);
+      if (v.status === 'approved' && !stillApproved) {
+        await s.tx.query('UPDATE users SET kyc_tier = LEAST(kyc_tier, 1), withdrawals_frozen = true WHERE id = $1', [v.user_id]);
+        await s.tx.query(`INSERT INTO risk_flags (user_id, score, reasons, reasons_text, status) VALUES ($1, 1, $2, $3, 'open')`, [
+          v.user_id, JSON.stringify([{ code: 'kyc_revoked', weight: 1, detail: { verification: v.id } }]), ['The identity check was rejected after it had been approved; ID level lowered and withdrawals frozen'],
+        ]);
+      }
       await enqueueEmail(s.tx, v.user_id, 'kyc_result', { approved: false });
       s.notifyUser(v.user_id, 'kyc.rejected', {});
     }

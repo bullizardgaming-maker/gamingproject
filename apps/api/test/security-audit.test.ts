@@ -324,3 +324,165 @@ describe('error details (HF-3) and import metering (HF-2)', () => {
     expect(codes).toContain(429);
   });
 });
+
+describe('Steam/Riot linking is bound to the browser that started it (H-AUTH-3)', () => {
+  it('a callback without the starter’s cookie links nothing; Steam’s signed state must match', async () => {
+    const seller = await makeUser(h, { tier: 2 });
+    const start = await seller.api.post('/v1/seller/linked-accounts/steam/start', { mockAccount: '76561198000009999' });
+    expect(start.status).toBe(200);
+    expect(start.body).not.toHaveProperty('binding');
+    const u = new URL(start.body.url);
+    // The victim's browser (no bz_link cookie) completes the sign-in the attacker started.
+    const res = await h.app.inject({ method: 'GET', url: `${u.pathname}${u.search}` });
+    expect(String(res.headers.location)).toMatch(/link_error=link_not_started_here/);
+    expect((await seller.api.get('/v1/seller/linked-accounts')).body).toEqual([]);
+
+    const { LivePlatformAccounts } = await import('../src/providers/platformAccounts.js');
+    const cb = 'https://api.example.com/v1/linked-accounts/steam/callback';
+    const live = new LivePlatformAccounts({}, (async () => new Response('is_valid:true\n')) as any);
+    const q = { state: 'attacker', 'openid.mode': 'id_res', 'openid.return_to': `${cb}?state=victim`, 'openid.claimed_id': 'https://steamcommunity.com/openid/id/76561197960435530', 'openid.signed': 'claimed_id,identity,return_to,response_nonce' };
+    await expect(live.complete('steam', q, cb)).rejects.toThrow(/not completed/);
+  });
+});
+
+describe('remaining decisions (Nov 6 follow-up)', () => {
+  it('raising a four-eyes threshold or payout cap needs an admin; Finance can still tighten', async () => {
+    const finance = await makeUser(h, { tier: 2, role: 'finance' });
+    // The harness runs at the maximum; an admin lowers it first, then Finance tries to raise it again.
+    const admin = await makeUser(h, { tier: 2, role: 'admin' });
+    expect((await admin.api.put('/v1/admin/controls', { four_eyes_withdrawal_cents: 500_00 })).status).toBe(200);
+    expect((await finance.api.put('/v1/admin/controls', { four_eyes_withdrawal_cents: 50_000_00 })).status).toBe(403);
+    expect((await finance.api.put('/v1/admin/controls', { four_eyes_withdrawal_cents: 400_00 })).status).toBe(200);
+    expect((await admin.api.put('/v1/admin/controls', { four_eyes_withdrawal_cents: 100_000_00 })).status).toBe(200);
+  });
+
+  it('turning on 2FA needs the current password; wrong ones count toward the lockout', async () => {
+    const u = await makeUser(h);
+    expect((await u.api.post('/v1/me/2fa/setup', {})).status).toBe(400);
+    const wrong = await u.api.post('/v1/me/2fa/setup', { currentPassword: 'not my password' });
+    expect(wrong.status).toBe(403);
+    expect(wrong.body.error.code).toBe('wrong_current_password');
+    expect(Number((await h.ctx.db.query('SELECT failed_logins FROM users WHERE id = $1', [u.id])).rows[0].failed_logins)).toBe(1);
+    expect((await u.api.post('/v1/me/2fa/setup', { currentPassword: 'correct horse battery' })).body.secret).toBeTruthy();
+  });
+
+  it('a locked account answers wrong passwords exactly like an unknown email; only the owner learns of the lock', async () => {
+    const { client } = await import('./helpers.js');
+    const u = await makeUser(h);
+    const anon = client(h.app);
+    for (let i = 0; i < h.ctx.cfg.LOGIN_MAX_FAILURES; i++) await anon.post('/v1/auth/login', { email: u.email, password: 'wrong password!' });
+    const locked = await anon.post('/v1/auth/login', { email: u.email, password: 'wrong password!' });
+    const unknown = await anon.post('/v1/auth/login', { email: `nobody_${Date.now()}@example.com`, password: 'wrong password!' });
+    expect([locked.status, locked.body.error.code]).toEqual([unknown.status, unknown.body.error.code]);
+    expect((await anon.post('/v1/auth/login', { email: u.email, password: 'correct horse battery' })).body.error.code).toBe('account_locked');
+  });
+
+  it('an account under a penalty cannot delete itself (and re-register clean)', async () => {
+    const u = await makeUser(h, { tier: 2 });
+    await h.ctx.db.query('UPDATE users SET listing_banned_at = now() WHERE id = $1', [u.id]);
+    const res = await u.api.post('/v1/me/delete', { password: 'correct horse battery' });
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('cannot_close_now');
+    expect((await h.ctx.db.query('SELECT deleted_at FROM users WHERE id = $1', [u.id])).rows[0].deleted_at).toBeNull();
+  });
+
+  it('rewards paid from an order’s commission are taken back when it is refunded after release', async () => {
+    const { buyer, seller, order } = await orderRoom();
+    await seller.api.post(`/v1/orders/${order.id}/deliver`, { payload: 'sent' });
+    await buyer.api.post(`/v1/orders/${order.id}/confirm`, {});
+    const referrer = await makeUser(h, { tier: 2 });
+    // A referral reward and a creator share as they are booked on completion.
+    const { accountId, post } = await import('../src/domain/ledger.js');
+    const { withTx } = await import('../src/db.js');
+    await withTx(h.ctx.db, async (tx) => {
+      await tx.query(`INSERT INTO referral_rewards (referrer_id, referee_id, order_id, amount_cents, status) VALUES ($1, $2, $3, 40, 'granted')`, [referrer.id, buyer.id, order.id]);
+      await post(tx, [{ account: await accountId(tx, 'treasury', 'USD'), amountCents: -40 }, { account: await accountId(tx, 'seller_available', 'USD', referrer.id), amountCents: 40 }], 'referral_reward', order.id);
+    });
+    const balance = async () => Number((await h.ctx.db.query(`SELECT COALESCE(SUM(e.amount_cents), 0)::bigint AS b FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id WHERE a.kind = 'seller_available' AND a.owner_id = $1`, [referrer.id])).rows[0].b);
+    expect(await balance()).toBe(40);
+    const admin = await makeUser(h, { role: 'admin' });
+    const r = await admin.api.post(`/v1/admin/orders/${order.id}/refund-after-release`, { paidBy: 'platform', reason: 'Goodwill refund after release' });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(await balance()).toBe(0);
+  });
+
+  it('an ID check rejected after approval lowers the ID level and freezes withdrawals', async () => {
+    const { applyKycResult } = await import('../src/domain/users.js');
+    const u = await makeUser(h, { tier: 2 });
+    await h.ctx.db.query(`INSERT INTO kyc_verifications (user_id, provider, external_id, level, status) VALUES ($1, $2, 'ext-revoke-1', 'tier2_individual', 'approved')`, [u.id, h.ctx.kyc.name]);
+    await applyKycResult(h.ctx, { externalId: 'ext-revoke-1', status: 'rejected', raw: {} });
+    const row = (await h.ctx.db.query('SELECT kyc_tier, withdrawals_frozen FROM users WHERE id = $1', [u.id])).rows[0];
+    expect(row).toMatchObject({ kyc_tier: 1, withdrawals_frozen: true });
+    expect((await h.ctx.db.query(`SELECT 1 FROM risk_flags WHERE user_id = $1 AND status = 'open'`, [u.id])).rowCount).toBe(1);
+  });
+
+  it('the rules test never says which answers were wrong, and pauses after three failed tries in an hour', async () => {
+    const u = await makeUser(h, { tier: 1 });
+    const test = (await u.api.get('/v1/seller/rules-test')).body;
+    const wrong = Object.fromEntries(test.questions.map((q: any) => [q.id, 0]));
+    for (let i = 0; i < 3; i++) {
+      const r = await u.api.post('/v1/seller/rules-test', { answers: wrong });
+      expect(r.body.passed).toBe(false);
+      expect(r.body.results.some((x: any) => 'correct' in x)).toBe(false);
+    }
+    const fourth = await u.api.post('/v1/seller/rules-test', { answers: wrong });
+    expect(fourth.status).toBe(429);
+    expect(fourth.body.error.code).toBe('rules_test_cooldown');
+  });
+});
+
+describe('rate limits and chat counts (Nov 6 follow-up)', () => {
+  it('sign-in keeps a per-process limit while the shared (Redis) limiter is unreachable', async () => {
+    const { createContext } = await import('../src/context.js');
+    const { buildApp } = await import('../src/server.js');
+    const { MemoryPubSub } = await import('../src/lib/pubsub.js');
+    const silent = { info() {}, warn() {}, error() {} } as any;
+    const app = await buildApp(createContext({ ...h.ctx.cfg, REDIS_URL: 'redis://127.0.0.1:1', AUTH_RATE_LIMIT_PER_MINUTE: 3 } as any, silent, { db: h.ctx.db, dbRead: h.ctx.dbRead, pubsub: new MemoryPubSub(), views: h.ctx.views }));
+    await app.ready();
+    try {
+      const codes: number[] = [];
+      for (let i = 0; i < 5; i++) codes.push((await app.inject({ method: 'POST', url: '/v1/auth/login', headers: { 'content-type': 'application/json' }, payload: JSON.stringify({ email: 'nobody@example.com', password: 'wrong password!' }) })).statusCode);
+      expect(codes.slice(0, 3).every((c) => c === 401)).toBe(true);
+      expect(codes.slice(3)).toEqual([429, 429]);
+    } finally {
+      await app.close().catch(() => {});
+    }
+  });
+
+  it('the parties’ chain check counts only messages they can read (no trace of blocked ones)', async () => {
+    const { buyer, seller, roomId } = await orderRoom();
+    const before = (await buyer.api.get(`/v1/chat/rooms/${roomId}/verify`)).body.messages;
+    const blocked = await seller.api.post(`/v1/chat/rooms/${roomId}/messages`, { body: 'add me on telegram johnny99' });
+    expect(blocked.body.hidden_for_safety).toBe(true);
+    const after = (await buyer.api.get(`/v1/chat/rooms/${roomId}/verify`)).body;
+    expect(after.valid).toBe(true);
+    expect(after.messages).toBe(before);
+  });
+});
+
+describe('chargebacks after a refund to balance (C3)', () => {
+  it('the bank paying the buyer back again is taken from the buyer’s balance, not the seller or the reserve', async () => {
+    const { receiveChargeback } = await import('../src/domain/chargebacks.js');
+    const cfg = h.ctx.cfg as any;
+    const before = cfg.CARD_REFUNDS_ENABLED;
+    cfg.CARD_REFUNDS_ENABLED = false; // the launch policy: refunds go to the Bullizard balance
+    try {
+      const { buyer, order } = await orderRoom();
+      await buyer.api.post(`/v1/orders/${order.id}/dispute`, { reason: 'The gold never arrived in game', category: 'other' });
+      const d = (await h.ctx.db.query('SELECT id FROM disputes WHERE order_id = $1', [order.id])).rows[0];
+      const admin = await makeUser(h, { role: 'admin' });
+      expect((await admin.api.post(`/v1/admin/disputes/${d.id}/resolve`, { outcome: 'buyer', note: 'Not delivered' })).status).toBe(200);
+      const sum = async (kind: string, owner: string | null) =>
+        Number((await h.ctx.db.query(`SELECT COALESCE(SUM(e.amount_cents), 0)::bigint AS b FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id WHERE a.kind = $1 AND a.owner_id IS NOT DISTINCT FROM $2`, [kind, owner])).rows[0].b);
+      const credit = await sum('user_credit', buyer.id);
+      const reserve = await sum('reserve', null);
+      const cb = await receiveChargeback(h.ctx, { orderId: order.id, network: 'visa', reasonCode: '13.1', amountCents: order.amount_cents });
+      expect(cb.amount_cents).toBeGreaterThan(0);
+      expect(await sum('user_credit', buyer.id)).toBe(credit - Number(cb.amount_cents));
+      expect(await sum('reserve', null)).toBe(reserve);
+      expect((await h.ctx.db.query('SELECT withdrawals_frozen FROM users WHERE id = $1', [buyer.id])).rows[0].withdrawals_frozen).toBe(true);
+    } finally {
+      cfg.CARD_REFUNDS_ENABLED = before;
+    }
+  });
+});

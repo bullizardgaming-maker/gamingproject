@@ -192,7 +192,7 @@ describe('crypto checkout (NOWPayments)', () => {
     // No address yet.
     expect((await seller.api.post('/v1/seller/withdrawals', { amountCents: 2000 })).body.error.code).toBe('no_payout_address');
     // Set one: the email carries a link; with 2FA on, the code is needed too.
-    const setupRes = await seller.api.post('/v1/me/2fa/setup');
+    const setupRes = await seller.api.post('/v1/me/2fa/setup', { currentPassword: 'correct horse battery' });
     const secret = new URL(setupRes.body.otpauthUri).searchParams.get('secret')!;
     await seller.api.post('/v1/me/2fa/enable', { code: totpAt(secret, currentStep()) });
     expect((await seller.api.post('/v1/seller/payout-address', { country: 'US', address: 'bad address with spaces!', currency: 'usdttrc20' })).body.error.code).toBe('invalid_address');

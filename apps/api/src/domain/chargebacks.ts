@@ -1,3 +1,4 @@
+import { cardRefundedToBalance, reverseOrderRewards } from './rewardReversal.js';
 import PDFDocument from 'pdfkit';
 import { sellerCurrencyOf, sellerLeg, toSettlement } from './sellerfx.js';
 import type { Ctx } from '../context.js';
@@ -92,7 +93,11 @@ export async function receiveChargeback(ctx: Ctx, input: ChargebackInput) {
       // so the order's escrow is fully cleared. Reversed if the chargeback is won.
       if (held > allocation.escrow) allocation.forfeit = held - allocation.escrow;
     }
-    let rest = amount - (allocation.escrow ?? 0);
+    // Security audit (Nov 2026): a card order already refunded to the buyer's Bullizard balance is paid back by the bank a
+    // second time — that part comes out of the buyer's balance (it may go below zero; their withdrawals freeze), not the seller.
+    const toBuyer = Math.min(amount - (allocation.escrow ?? 0), await cardRefundedToBalance(s.tx, order));
+    if (toBuyer > 0) allocation.buyer_credit = toBuyer;
+    let rest = amount - (allocation.escrow ?? 0) - (allocation.buyer_credit ?? 0);
     if (rest > 0) {
       if (!order.seller_protected) {
         // The seller's balance may be in their own currency: count it in settlement terms at the order's rate.
@@ -106,11 +111,16 @@ export async function receiveChargeback(ctx: Ctx, input: ChargebackInput) {
     if (allocation.escrow) postings.push({ account: await accountId(s.tx, 'escrow', order.currency), amountCents: -allocation.escrow });
     if (allocation.seller_available) postings.push(await sellerLeg(s.tx, order, -allocation.seller_available, 'chargeback_debit'));
     if (allocation.reserve) postings.push({ account: await accountId(s.tx, 'reserve', order.currency), amountCents: -allocation.reserve });
+    if (allocation.buyer_credit) {
+      postings.push({ account: await accountId(s.tx, 'user_credit', order.currency, order.buyer_id), amountCents: -allocation.buyer_credit });
+      await s.tx.query('UPDATE users SET withdrawals_frozen = true WHERE id = $1', [order.buyer_id]);
+    }
     if (allocation.forfeit) {
       postings.push({ account: await accountId(s.tx, 'escrow', order.currency), amountCents: -allocation.forfeit });
       postings.push({ account: await accountId(s.tx, 'treasury', order.currency), amountCents: allocation.forfeit });
     }
     await post(s.tx, postings, 'chargeback_debit', order.id);
+    await reverseOrderRewards(s.tx, order, Number(order.amount_cents)); // security audit: no reward is kept on a charged-back order
 
     const cb = await one(
       s.tx,
@@ -147,6 +157,7 @@ export async function closeChargeback(ctx: Ctx, disputeRef: string, won: boolean
       if (a.escrow) postings.push({ account: await accountId(s.tx, 'escrow', order.currency), amountCents: a.escrow });
       if (a.seller_available) postings.push(await sellerLeg(s.tx, order, a.seller_available, 'chargeback_reversal'));
       if (a.reserve) postings.push({ account: await accountId(s.tx, 'reserve', order.currency), amountCents: a.reserve });
+      if (a.buyer_credit) postings.push({ account: await accountId(s.tx, 'user_credit', order.currency, order.buyer_id), amountCents: a.buyer_credit });
       if (a.forfeit) {
         postings.push({ account: await accountId(s.tx, 'escrow', order.currency), amountCents: a.forfeit });
         postings.push({ account: await accountId(s.tx, 'treasury', order.currency), amountCents: -a.forfeit });

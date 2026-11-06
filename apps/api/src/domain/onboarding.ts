@@ -1,7 +1,7 @@
 import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { many, maybeOne, one } from '../db.js';
-import { badRequest, conflict, forbidden } from '../lib/errors.js';
+import { AppError, badRequest, conflict, forbidden } from '../lib/errors.js';
 import { notify } from './notifications.js';
 import type { User } from './users.js';
 
@@ -60,6 +60,8 @@ export async function rulesTestFor(q: Queryable, user: Pick<User, 'id' | 'kyc_ti
   };
 }
 
+export const RULES_FAILS_PER_HOUR = 3;
+
 /** Grade a submission: every active question answered by index. Passing is recorded on the user. */
 export async function submitRulesTest(ctx: Ctx, user: Pick<User, 'id' | 'kyc_tier' | 'status'>, answers: Record<string, number>, lang = 'en') {
   const ar = lang.toLowerCase().startsWith('ar');
@@ -67,17 +69,20 @@ export async function submitRulesTest(ctx: Ctx, user: Pick<User, 'id' | 'kyc_tie
   if (user.kyc_tier < 1) throw forbidden('tier1_required', 'Verify your email first.');
   const [questions, settings] = await Promise.all([listQuestions(ctx.db, { activeOnly: true }), rulesSettings(ctx.db)]);
   if (!questions.length) throw conflict('no_test', 'The rules test is not set up yet');
-  const results = questions.map((qn) => {
-    const given = answers[qn.id];
-    return { id: qn.id, correct: given === qn.correct, explanation: given === qn.correct ? null : (ar && qn.explanation_ar) || qn.explanation };
-  });
-  const right = results.filter((r) => r.correct).length;
+  // Security audit (Nov 2026): the test can't be solved by trial — a failed attempt never says which answers were wrong (every
+  // question's explanation comes back, to learn from), and after three failed attempts in an hour the next one waits.
+  const recent = await one<{ n: number }>(ctx.db, `SELECT count(*)::int AS n FROM users u, unnest(u.rules_failed_at) t WHERE u.id = $1 AND t > now() - interval '1 hour'`, [user.id]);
+  if (recent.n >= RULES_FAILS_PER_HOUR) throw new AppError(429, 'rules_test_cooldown', 'Take some time to read the rules, then try again in an hour.');
+  const right = questions.filter((qn) => answers[qn.id] === qn.correct).length;
   const scorePct = Math.round((right * 100) / questions.length);
   const passed = scorePct >= settings.passMarkPct;
   await ctx.db.query(
-    `UPDATE users SET rules_attempts = rules_attempts + 1, rules_passed_at = CASE WHEN $2::boolean THEN COALESCE(rules_passed_at, now()) ELSE rules_passed_at END WHERE id = $1`,
-    [user.id, passed],
+    `UPDATE users SET rules_attempts = rules_attempts + 1, rules_passed_at = CASE WHEN $2::boolean THEN COALESCE(rules_passed_at, now()) ELSE rules_passed_at END,
+            rules_failed_at = CASE WHEN $2::boolean THEN rules_failed_at ELSE (rules_failed_at || now())[GREATEST(array_length(rules_failed_at, 1) - $3 + 2, 1):] END
+      WHERE id = $1`,
+    [user.id, passed, RULES_FAILS_PER_HOUR],
   );
+  const results = passed ? [] : questions.map((qn) => ({ id: qn.id, explanation: (ar && qn.explanation_ar) || qn.explanation }));
   return { passed, scorePct, passMarkPct: settings.passMarkPct, results };
 }
 

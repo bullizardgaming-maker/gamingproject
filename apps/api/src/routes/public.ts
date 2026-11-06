@@ -17,7 +17,7 @@ import { assertNotLocked, clearFailedLogins, noteFailedLogin, changePassword, re
 import { REFRESH_TTL_DAYS, issueAccessToken, listSessions, refreshSession, revokeByRefreshToken, revokeFamily, revokeOtherSessions, revokeSessionById } from '../domain/sessions.js';
 import { enqueueEmail, getPreferences, setPreferences, validTimezone } from '../domain/notifications.js';
 import { AppError, badRequest, notFound } from '../lib/errors.js';
-import { safeEqual, sha256 } from '../lib/crypto.js';
+import { safeEqual, sha256, verifyPassword } from '../lib/crypto.js';
 import { ATTR_KEY, ATTR_VALUE_MAX, CATEGORY_DEFAULTS, GAME_SETS, attributesFor, handoverFieldFor, LEAGUES } from '../domain/attributeSets.js';
 import { listLeagues } from '../domain/leagues.js';
 import { affiliateSummary } from '../domain/affiliates.js';
@@ -34,7 +34,7 @@ import {
 import { recordView } from '../domain/analytics.js';
 import { MAX_HISTORY_DAYS, marketPriceHistory, offerPriceHistory } from '../domain/priceHistory.js';
 import { alsoBought } from '../domain/recommendations.js';
-import { completeLink } from '../domain/linkedAccounts.js';
+import { LINK_COOKIE, completeLink } from '../domain/linkedAccounts.js';
 import { LOCALES } from '../domain/locales/index.js';
 import { TICKET_CATEGORIES, createTicket, customerReply, customerResolve, getTicket, listMyTickets } from '../domain/support.js';
 import { createWatch, deleteWatch, listWatches, updateWatch } from '../domain/watches.js';
@@ -320,7 +320,19 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // --- Two-factor login -------------------------------------------------------------
   // Turning 2FA on or off signs out every other device and sends a security email.
-  app.post('/me/2fa/setup', strict, async (req) => beginSetup(ctx, me(req)));
+  // Security audit (Nov 2026): turning 2FA on needs the current password — otherwise a briefly stolen session could enable
+  // its own authenticator, sign every other device out and lock the owner out (a reset keeps 2FA on).
+  app.post('/me/2fa/setup', strict, async (req) => {
+    const { currentPassword } = z.object({ currentPassword: z.string().min(1).max(200) }).parse(req.body ?? {});
+    const user = me(req);
+    await assertNotLocked(ctx, user.id);
+    const row = await one<{ password_hash: string }>(ctx.db, 'SELECT password_hash FROM users WHERE id = $1', [user.id]);
+    if (!(await verifyPassword(currentPassword, row.password_hash))) {
+      await noteFailedLogin(ctx, user.id);
+      throw new AppError(403, 'wrong_current_password', "Your current password isn't right.");
+    }
+    return beginSetup(ctx, user);
+  });
   app.post('/me/2fa/enable', strict, async (req) => {
     const { code } = z.object({ code: z.string().trim() }).parse(req.body);
     const user = me(req);
@@ -743,7 +755,8 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
     try {
       const state = (req.query as Record<string, string>).state ?? '';
       orderId = (await maybeOne<{ order_id: string | null }>(ctx.db, 'SELECT order_id FROM link_states WHERE nonce = $1', [state]))?.order_id ?? null;
-      const done = await completeLink(ctx, provider, req.query as Record<string, string>);
+      const done = await completeLink(ctx, provider, req.query as Record<string, string>, req.cookies?.[LINK_COOKIE]);
+      reply.clearCookie(LINK_COOKIE, { path: '/v1/linked-accounts' });
       if (done.handover) return reply.redirect(`${orderPage(done.handover.orderId)}?handover=ok`);
       return reply.redirect(`${web}?linked=${provider}`);
     } catch (err) {

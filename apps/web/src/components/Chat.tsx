@@ -149,7 +149,7 @@ export function Chat({ roomId, meId, names, accountOrder = false }: { roomId: st
         {m.body ?? <i className="muted">{t('chat.erased')}</i>}
         <span className="meta">
           {mine ? '' : `${m.sender_id ? names[m.sender_id] ?? t('chat.user') : t('chat.system')} · `}
-          {time(m.created_at)} · #{m.seq}
+          {time(m.created_at)}
           {m.flags.length > 0 && ` · ${t('chat.flagged')}`}
         </span>
       </div>

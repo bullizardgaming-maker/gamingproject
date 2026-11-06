@@ -85,6 +85,16 @@ export async function deleteAccount(ctx: Ctx, user: User, password: string, code
   // Accounts under compliance review can't be erased (records must be kept); generic wording, no tipping off.
   const review = await maybeOne(ctx.db, `SELECT 1 FROM aml_cases WHERE user_id = $1 AND status IN ('open', 'escalated', 'reported') LIMIT 1`, [user.id]);
   if (review) throw new AppError(409, 'cannot_close_now', 'Your account cannot be closed right now. Please contact support.');
+  // Security audit (Nov 2026): deleting frees the email for a fresh sign-up, so an account under a penalty (suspension,
+  // listing ban, open or confirmed fraud flag, frozen withdrawals) can't close itself to start clean (a negative balance already blocks);
+  // support can still close it. Same generic wording.
+  const penalised = await maybeOne(
+    ctx.db,
+    `SELECT 1 FROM users u WHERE u.id = $1 AND (u.status <> 'active' OR u.listing_banned_at IS NOT NULL OR u.withdrawals_frozen
+        OR EXISTS (SELECT 1 FROM risk_flags f WHERE f.user_id = u.id AND f.status IN ('open', 'confirmed')))`,
+    [user.id],
+  );
+  if (penalised) throw new AppError(409, 'cannot_close_now', 'Your account cannot be closed right now. Please contact support.');
   const open = await maybeOne(
     ctx.db,
     `SELECT count(*)::int AS n FROM orders WHERE (buyer_id = $1 OR seller_id = $1) AND status IN ('awaiting_payment', 'paid', 'delivered', 'disputed')`,

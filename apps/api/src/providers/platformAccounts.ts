@@ -60,6 +60,17 @@ export class LivePlatformAccounts implements PlatformAccounts {
     if (p === 'steam') {
       // The return_to must be ours, and Steam itself must confirm the signed assertion.
       if (query['openid.mode'] !== 'id_res' || !String(query['openid.return_to'] ?? '').startsWith(callbackUrl)) throw new Error('Steam sign-in was not completed');
+      // Security audit (Nov 2026): the state we look the link up by must be the one inside the signed return_to.
+      let signedState: string | null = null;
+      try {
+        signedState = new URL(String(query['openid.return_to'])).searchParams.get('state');
+      } catch {
+        /* checked below */
+      }
+      if (!signedState || signedState !== query.state) throw new Error('Steam sign-in was not completed');
+      // claimed_id and return_to must be among the fields Steam signed.
+      const signed = String(query['openid.signed'] ?? '').split(',');
+      if (!['claimed_id', 'identity', 'return_to', 'response_nonce'].every((f) => signed.includes(f))) throw new Error('Steam sign-in was not completed');
       const m = STEAM_ID.exec(query['openid.claimed_id'] ?? '');
       if (!m) throw new Error('Steam returned an unexpected account id');
       const check = new URLSearchParams(Object.entries(query).filter(([k]) => k.startsWith('openid.')));

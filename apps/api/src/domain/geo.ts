@@ -37,12 +37,22 @@ const list = (raw: string) => new Set(raw.split(',').map((c) => c.trim().toUpper
 export const sanctionedCountries = (ctx: Ctx) => list(ctx.cfg.SANCTIONED_COUNTRIES);
 export const cryptoBlockedCountries = (ctx: Ctx) => list(ctx.cfg.CRYPTO_BLOCKED_COUNTRIES);
 export const isSanctionedCountry = (ctx: Ctx, country: string | null | undefined) => !!normCountry(country) && sanctionedCountries(ctx).has(normCountry(country)!);
-export const isCryptoBlockedCountry = (ctx: Ctx, country: string | null | undefined) => !!normCountry(country) && cryptoBlockedCountries(ctx).has(normCountry(country)!);
+/**
+ * Security audit (Nov 2026): Cloudflare marks Tor exits as "T1" and connections it can't place as "XX". Tor is treated like
+ * a sanctioned country (it is how a blocked user would hide) and gets no crypto; an unknown country can't withdraw.
+ * requestMeta() reports "XX" when the country header is configured but missing on a request that came through Cloudflare.
+ */
+export const TOR_COUNTRY = 'T1';
+export const UNKNOWN_COUNTRY = 'XX';
+const raw = (c: string | null | undefined) => (c ? c.trim().toUpperCase() : null);
+export const isCryptoBlockedCountry = (ctx: Ctx, country: string | null | undefined) => raw(country) === TOR_COUNTRY || (!!normCountry(country) && cryptoBlockedCountries(ctx).has(normCountry(country)!));
 
 export const NOT_AVAILABLE_HERE_MSG = "Bullizard isn't available here";
 /** 451 country_not_supported when the connection's country (or the withdrawal country) is sanctioned. */
 export function assertNotSanctioned(ctx: Ctx, country: string | null | undefined, what: 'signup' | 'buy' | 'sell' | 'withdraw') {
-  if (isSanctionedCountry(ctx, country)) throw new AppError(451, 'country_not_supported', NOT_AVAILABLE_HERE_MSG, { action: what });
+  if (isSanctionedCountry(ctx, country) || raw(country) === TOR_COUNTRY || (what === 'withdraw' && raw(country) === UNKNOWN_COUNTRY)) {
+    throw new AppError(451, 'country_not_supported', NOT_AVAILABLE_HERE_MSG, { action: what });
+  }
 }
 
 export const METHOD_UNAVAILABLE_MSG = "This payment method isn't available here yet — you can still browse and sell";

@@ -149,13 +149,16 @@ function TwoFactor() {
   const [setup, setSetup] = useState<{ secret: string; qr: string } | null>(null);
   const [codes, setCodes] = useState<string[] | null>(null);
   const [code, setCode] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   if (!user) return null;
 
   const start = async () => {
     setError('');
     try {
-      const res = await api<{ secret: string; otpauthUri: string }>('/me/2fa/setup', { body: {} });
+      // Security audit (Nov 2026): the API asks for the current password before handing out a new authenticator secret.
+      const res = await api<{ secret: string; otpauthUri: string }>('/me/2fa/setup', { body: { currentPassword: password } });
+      setPassword('');
       setSetup({ secret: res.secret, qr: await QRCode.toDataURL(res.otpauthUri, { margin: 1, width: 180 }) });
     } catch (e: any) {
       setError(e.message);
@@ -222,7 +225,10 @@ function TwoFactor() {
           <p className="muted small">
             {t('account.2fa.protects')}{user.role !== 'user' && ` ${t('account.2fa.staff')}`}
           </p>
-          <button className="btn ghost" onClick={start}>{t('account.2fa.setUp')}</button>
+          <div className="row">
+            <input type="password" name="currentPassword" autoComplete="current-password" aria-label={t('account.password.current')} placeholder={t('account.password.current')} value={password} onChange={(e) => setPassword(e.target.value)} style={{ maxWidth: 260 }} />
+            <button className="btn ghost" disabled={!password} onClick={start}>{t('account.2fa.setUp')}</button>
+          </div>
         </>
       )}
       {error && <div className="alert" role="alert">{error}</div>}

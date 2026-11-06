@@ -728,8 +728,9 @@ route('PATCH', '/me/email-preferences', ({ me, body }) => {
   state.emailPrefs[u.id] = { ...state.emailPrefs[u.id], ...body };
   return prefsOf(u.id);
 });
-route('POST', '/me/2fa/setup', ({ me }) => {
+route('POST', '/me/2fa/setup', ({ me, body }) => {
   const u = need(me);
+  if ((u as any).password !== body?.currentPassword) fail(403, 'wrong_current_password', "Your current password isn't right.");
   return { secret: 'JBSWY3DPEHPK3PXP', otpauthUri: `otpauth://totp/Bullizard:${encodeURIComponent(u.email)}?secret=JBSWY3DPEHPK3PXP&issuer=Bullizard` };
 });
 route('POST', '/me/2fa/enable', ({ me, body }) => {
@@ -2358,9 +2359,10 @@ route('POST', '/seller/rules-test', ({ me, body }) => {
   if (u.kyc_tier < 1) fail(403, 'tier1_required', 'Verify your email first.');
   const qs = state.rulesQuestions.filter((q) => q.active);
   const ar = body?.lang === 'ar';
-  const results = qs.map((q: any) => ({ id: q.id, correct: body.answers?.[q.id] === q.correct, explanation: body.answers?.[q.id] === q.correct ? null : (ar && q.explanation_ar) || q.explanation }));
-  const scorePct = Math.round((results.filter((r) => r.correct).length * 100) / qs.length);
+  // Like the API (security audit): a failed attempt shows every explanation, never which answers were wrong.
+  const scorePct = Math.round((qs.filter((q: any) => body.answers?.[q.id] === q.correct).length * 100) / qs.length);
   const passed = scorePct >= state.rulesSettings.passMarkPct;
+  const results = passed ? [] : qs.map((q: any) => ({ id: q.id, explanation: (ar && q.explanation_ar) || q.explanation }));
   u.rules_attempts = (u.rules_attempts ?? 0) + 1;
   if (passed && !u.rules_passed_at) u.rules_passed_at = now();
   save();

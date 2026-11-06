@@ -328,7 +328,7 @@ describe('Round 23e', () => {
     expect(del.status).toBe(403);
     expect(del.body.error.code).toBe('invalid_credentials');
     const { currentStep, totpAt } = await import('../src/domain/mfa.js');
-    const secret: string = (await u.api.post('/v1/me/2fa/setup')).body.secret;
+    const secret: string = (await u.api.post('/v1/me/2fa/setup', { currentPassword: 'correct horse battery' })).body.secret;
     expect((await u.api.post('/v1/me/2fa/enable', { code: totpAt(secret, currentStep()) })).status).toBe(200);
     const off = await u.api.post('/v1/me/2fa/disable', { code: '000000' });
     expect(off.status).toBe(403);

@@ -36,6 +36,7 @@ beforeAll(async () => {
     NEW_ACCOUNT_MAX_PAID_ORDERS_PER_DAY: '2', NEW_ACCOUNT_MAX_PAID_USD_PER_DAY: '50', FX_STATIC_RATES: '{"EUR":0.92,"EGP":48.5}',
   }, { payments });
   defaultHeaders['x-origin-auth'] = ORIGIN_SECRET;
+  defaultHeaders['cf-ipcountry'] = 'US'; // Cloudflare always names a country; a missing one counts as unknown (XX)
   const orig = h.messenger.send.bind(h.messenger);
   h.messenger.send = async (m: any) => {
     sent.push(m);
@@ -44,6 +45,7 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   delete defaultHeaders['x-origin-auth'];
+  delete defaultHeaders['cf-ipcountry'];
   await h.close();
 });
 

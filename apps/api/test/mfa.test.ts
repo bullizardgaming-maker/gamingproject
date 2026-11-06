@@ -33,7 +33,7 @@ describe('two-factor login', () => {
 
   it('enrols, challenges at login, accepts recovery codes once, and can be turned off', async () => {
     const u = await makeUser(h, { tier: 1 });
-    const setupRes = await u.api.post('/v1/me/2fa/setup');
+    const setupRes = await u.api.post('/v1/me/2fa/setup', { currentPassword: 'correct horse battery' });
     expect(setupRes.body.otpauthUri).toMatch(/^otpauth:\/\/totp\/Bullizard/);
     const secret: string = setupRes.body.secret;
 
@@ -75,7 +75,7 @@ describe('two-factor login', () => {
     expect(denied.status).toBe(403);
     expect(denied.body.error.code).toBe('mfa_required');
 
-    const { secret } = (await admin.api.post('/v1/me/2fa/setup')).body;
+    const { secret } = (await admin.api.post('/v1/me/2fa/setup', { currentPassword: 'correct horse battery' })).body;
     const { token } = (await admin.api.post('/v1/me/2fa/enable', { code: codeFor(secret) })).body;
     expect((await client(h.app, token).get('/v1/admin/risk-flags')).status).toBe(200);
   });

@@ -922,6 +922,34 @@ Suites: API 85 files / 778 tests green (multinode excluded), typecheck clean, `n
 image start check: build, runtime imports, migrate through 081, `/readyz` + `/healthz` as `APP_ENV=staging` with
 `PAYMENT_PROVIDER=nowpayments` and `SANDBOX_MODE=false` (proxy CA in a scratch Dockerfile copy, repo Dockerfile unchanged).
 
+## Security audit follow-up (Nov 6, 2026) — the "needs a decision" list, decided and fixed
+
+Migration `088_security_audit.sql` (`users.rules_failed_at`). Tests in `test/security-audit.test.ts` / `security-audit-payouts.test.ts`.
+- **Money controls**: raising `four_eyes_*`, `max_withdrawal_day_cents` or `max_platform_payout_day_cents` in Ops → Controls needs an
+  admin (`staff.manage`); Finance can still lower them.
+- **2FA**: `POST /me/2fa/setup` needs `{ currentPassword }` (403 `wrong_current_password`, counts toward the lockout). Web: password
+  field before "Set up two-factor login"; demo mock checks it.
+- **Lockout**: a wrong password on a locked account gets the same 401 as an unknown email (and doesn't extend the lock); only the
+  right password learns `account_locked`.
+- **Deletion**: `POST /me/delete` refuses (409 `cannot_close_now`) while the account is suspended/banned, listing-banned, has frozen
+  withdrawals or an open/confirmed fraud flag — no deleting to sign up clean.
+- **Rewards**: refund-after-release and chargebacks take back the referral reward, creator share and paid creator bounty pro rata
+  (memos `referral_reversal`, `affiliate_reversal`, `creator_bounty_reversal`; pending bounties voided) — `domain/rewardReversal.ts`.
+- **Chargeback after a refund to balance** (cards): that part is debited from the buyer's balance (withdrawals frozen), not the
+  seller/reserve; a won chargeback gives it back.
+- **KYC**: a rejection after approval (no other approved check) lowers `kyc_tier` to 1, freezes withdrawals, opens a fraud flag.
+- **Rules test**: a failed attempt returns every question's explanation but never which answers were wrong; 3 failed attempts an
+  hour → 429 `rules_test_cooldown`. Web shows the explanations neutrally.
+- **Steam/Riot linking**: start sets an httpOnly `bz_link` cookie (HMAC of the state, path `/v1/linked-accounts`); the callback needs
+  it (`link_not_started_here`). Steam: the state must equal the one in the signed `return_to`, and `openid.signed` must cover
+  claimed_id/identity/return_to/response_nonce.
+- **Countries**: Cloudflare `T1` (Tor) is treated as sanctioned (451 on sign-up/buy/sell/withdraw) and gets no crypto; `XX`
+  (unknown, or the header missing on a Cloudflare request) can't withdraw.
+- **Pause orders** also stops new crypto payment addresses (orders and top-ups); money sent to existing addresses still lands.
+- **Rate limits**: while the Redis limiter is unreachable, sign-in POSTs fall back to a per-process limit (`AUTH_RATE_LIMIT_PER_MINUTE`).
+- **Chat**: `/chat/rooms/:id/verify` gives the parties the count of messages they can read; the web no longer prints `#seq`.
+- **Web CSP** on Vercel (`vercel.json`, `apps/web/vercel.json`): self + Turnstile + Google Fonts + `*.bullizard.com` (https/wss).
+
 ## Security audit (Nov 6, 2026) — fixes
 
 Deep source audit of apps/api (+ web auth/config). No migration. Every fix has a regression test in `test/security-audit.test.ts`

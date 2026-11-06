@@ -15,7 +15,8 @@ interface Result {
   passed: boolean;
   scorePct: number;
   passMarkPct: number;
-  results: Array<{ id: string; correct: boolean; explanation: string | null }>;
+  /** A failed attempt: every question's explanation (the API never says which answers were wrong). */
+  results: Array<{ id: string; correct?: boolean; explanation: string | null }>;
 }
 
 /**
@@ -67,7 +68,7 @@ export function RulesTest({ onPassed }: { onPassed: () => void }) {
                 <span>{o}</span>
               </label>
             ))}
-            {r && !r.correct && <p className="small" style={{ margin: 0, color: 'var(--disputed)' }}>{r.explanation}</p>}
+            {r && !r.correct && r.explanation && <p className="small muted" style={{ margin: 0 }}>{r.explanation}</p>}
           </fieldset>
         );
       })}

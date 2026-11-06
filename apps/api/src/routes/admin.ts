@@ -116,6 +116,11 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
         four_eyes_withdrawal_cents: z.number().int().min(100).max(100_000_00).optional(), four_eyes_user_day_cents: z.number().int().min(100).max(100_000_00).optional(), max_platform_payout_day_cents: z.number().int().min(100).max(10_000_000_00).optional(),
       })
       .parse(req.body);
+    // Security audit (Nov 2026): loosening a money control (raising a payout cap or a four-eyes threshold) would let the person
+    // the four-eyes rule checks switch it off for themselves; only an admin may raise them. Tightening stays with Finance.
+    const cur = await controls(ctx.db, true);
+    const LOOSEN = ['four_eyes_withdrawal_cents', 'four_eyes_user_day_cents', 'max_withdrawal_day_cents', 'max_platform_payout_day_cents'] as const;
+    if (LOOSEN.some((k) => body[k] != null && body[k]! > Number(cur[k]))) requirePermission(req, 'staff.manage');
     const res = await updateControls(ctx, staff.id, body);
     await audit(ctx.db, req, 'controls.update', { type: 'controls', id: 'platform' }, body);
     return res;

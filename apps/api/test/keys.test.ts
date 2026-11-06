@@ -36,7 +36,7 @@ describe('data key rotation', () => {
     const offer = await makeOffer(seller);
     await seller.api.post(`/v1/offers/${offer.id}/inventory`, { format: 'txt', content: 'ROTATE-ME-1' });
     const order = await buyAndPay(h, buyer, offer.id);
-    await seller.api.post('/v1/me/2fa/setup');
+    await seller.api.post('/v1/me/2fa/setup', { currentPassword: 'correct horse battery' });
     const account = await makeOffer(seller, { categorySlug: 'accounts', deliveryMode: 'manual', stock: 1 });
     await seller.api.post(`/v1/offers/${account.id}/owner-proof`, { registrationEmail: 'orig@example.com', registrationDate: '2019-01-01', evidence: { answer: 'blue' } });
     const room = (await buyer.api.get(`/v1/orders/${order.id}`)).body.room_id;

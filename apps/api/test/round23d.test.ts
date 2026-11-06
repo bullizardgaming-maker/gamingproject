@@ -540,7 +540,7 @@ describe('Round 23d', () => {
 
   it('12. accounts: MFA challenge is single-use and dies with a password reset; wrong codes on 2FA-off and delete lock the account; origin secret length; seller ID deadline is live', async () => {
     const u = await makeUser(h, { tier: 1 });
-    const secret: string = (await u.api.post('/v1/me/2fa/setup')).body.secret;
+    const secret: string = (await u.api.post('/v1/me/2fa/setup', { currentPassword: 'correct horse battery' })).body.secret;
     const codeFor = (offset = 0) => totpAt(secret, currentStep() + offset);
     const enabled = await u.api.post('/v1/me/2fa/enable', { code: codeFor() });
     expect(enabled.status).toBe(200);

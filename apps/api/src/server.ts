@@ -51,7 +51,8 @@ const ORIGIN_VERIFIED = Symbol('originVerified');
 export function requestMeta(req: FastifyRequest): RequestMeta {
   // Only the edge's own header is believed, and only when the request came through Cloudflare (origin auth passed);
   // a client-sent one would let buyers fake their country.
-  const country = geoHeader && originVerified(req) ? req.headers[geoHeader] : undefined;
+  // Security audit: the header configured but absent on a request that came through Cloudflare counts as "unknown" (XX).
+  const country = geoHeader && originVerified(req) ? (req.headers[geoHeader] ?? 'XX') : undefined;
   const device = req.headers['x-device-fingerprint'];
   return {
     ip: req.ip,
@@ -264,6 +265,25 @@ export async function buildApp(ctx: Ctx, opts: { logger?: PinoLogger } = {}): Pr
     timeWindow: '1 minute',
     ...(limiterRedis ? { redis: limiterRedis, nameSpace: 'bz-rl:', skipOnError: true } : {}),
   });
+  // Security audit (Nov 2026): the shared limiter lets requests through while Redis is unreachable (skipOnError). The sign-in
+  // routes then fall back to a per-process count (the strict per-minute limit per IP), so a Redis outage never opens
+  // unlimited password or code guessing.
+  if (limiterRedis) {
+    const local = new Map<string, { n: number; reset: number }>();
+    app.addHook('onRequest', async (req, reply) => {
+      if (limiterRedis.status === 'ready' || req.method !== 'POST' || !req.url.startsWith('/v1/auth/') || req.url.startsWith('/v1/auth/refresh') || req.url.startsWith('/v1/auth/logout')) return;
+      const now = Date.now();
+      if (local.size > 50_000) for (const [k, v] of local) if (v.reset < now) local.delete(k);
+      const key = req.ip;
+      const cur = local.get(key);
+      const entry = cur && cur.reset > now ? cur : { n: 0, reset: now + 60_000 };
+      entry.n++;
+      local.set(key, entry);
+      if (entry.n > ctx.cfg.AUTH_RATE_LIMIT_PER_MINUTE) {
+        return reply.status(429).header('retry-after', Math.ceil((entry.reset - now) / 1000)).send({ error: { code: 'rate_limited', message: 'Too many requests. Try again in a minute.' } });
+      }
+    });
+  }
   await app.register(websocket, { options: { maxPayload: 64 * 1024 } });
 
   // Security audit (Nov 2026): sign-in endpoints only take JSON. A cross-site HTML form (urlencoded / multipart / text,
