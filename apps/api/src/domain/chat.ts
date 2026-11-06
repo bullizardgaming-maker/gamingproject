@@ -1,7 +1,7 @@
 import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { many, maybeOne, one } from '../db.js';
-import { hasPermission } from './permissions.js';
+import { hasPermission, staffCan } from './permissions.js';
 import { sha256, type Keyring } from '../lib/crypto.js';
 import { bodyMac, seal, systemMac, unseal, userChatKey } from './chatkeys.js';
 import { AppError, forbidden, notFound } from '../lib/errors.js';
@@ -100,7 +100,7 @@ export async function getOrCreateInquiryRoom(ctx: Ctx, offerId: string, buyerId:
 export async function roomForParticipant(q: Queryable, roomId: string, user: { id: string; role: string; staff_roles?: string[] | null }): Promise<ChatRoom> {
   const room = await maybeOne<ChatRoom>(q, 'SELECT * FROM chat_rooms WHERE id = $1', [roomId]);
   if (!room) throw notFound('Chat room');
-  const staff = hasPermission(user, 'orders.view_any');
+  const staff = staffCan(user, 'orders.view_any');
   if (!staff && room.buyer_id !== user.id && room.seller_id !== user.id) throw forbidden('not_participant', 'Not a participant of this chat');
   return room;
 }

@@ -68,9 +68,36 @@ export function registerGateway(app: FastifyInstance, ctx: Ctx) {
     // on their own. A socket that missed two pongs is dead and is dropped.
     let missed = 0;
     ws.on('pong', () => (missed = 0));
+    /**
+     * Security audit (Nov 2026): re-read the account and session before every room read and on each keep-alive tick,
+     * so a sign-out, password reset, ban or removed staff role ends the socket instead of leaving it subscribed.
+     */
+    const revalidate = async (): Promise<boolean> => {
+      if (!user) return false;
+      const fresh = await getUser(ctx.db, user.id);
+      if (!fresh || fresh.status === 'banned' || (user.session_id && !(await activeSession(ctx.db, user.session_id)))) {
+        ws.close(4401, 'session ended');
+        return false;
+      }
+      user = { ...fresh, session_id: user.session_id, session_family: user.session_family, session_mfa: user.session_mfa, staff_session_ok: user.staff_session_ok };
+      return true;
+    };
     const keepAlive = setInterval(() => {
       if (++missed > 2) return ws.terminate();
       if (ws.readyState === 1) ws.ping();
+      if (user)
+        revalidate()
+          .then(async (ok) => {
+            // A room the user may no longer read (e.g. a removed staff role) stops receiving live messages.
+            for (const r of ok ? [...joined] : []) {
+              const still = await roomForParticipant(ctx.db, r, user!).then(() => true, () => false);
+              if (!still) {
+                joined.delete(r);
+                remove(rooms, r, ws);
+              }
+            }
+          })
+          .catch(() => {});
     }, ctx.cfg.WS_PING_SECONDS * 1_000);
 
     ws.on('close', () => {
@@ -104,6 +131,7 @@ export function registerGateway(app: FastifyInstance, ctx: Ctx) {
 
         switch (frame.type) {
           case 'subscribe': {
+            if (!(await revalidate())) return;
             const room = await roomForParticipant(ctx.db, frame.roomId, user);
             joined.add(frame.roomId);
             add(rooms, frame.roomId, ws);
@@ -114,6 +142,7 @@ export function registerGateway(app: FastifyInstance, ctx: Ctx) {
           }
           case 'sync': {
             if (!joined.has(frame.roomId)) throw new AppError(403, 'not_subscribed', 'Subscribe to the room first');
+            if (!(await revalidate())) return;
             const room = await roomForParticipant(ctx.db, frame.roomId, user);
             if (room.buyer_id !== user.id && room.seller_id !== user.id) await auditAs(ctx.db, user, req.ip, 'chat.viewed', { type: 'chat_room', id: frame.roomId }, { afterSeq: frame.afterSeq, via: 'ws' });
             const messages = await listMessages(ctx.keyring, ctx.db, frame.roomId, frame.afterSeq, 500);
@@ -125,12 +154,9 @@ export function registerGateway(app: FastifyInstance, ctx: Ctx) {
           case 'message': {
             if (tokens <= 0) throw new AppError(429, 'rate_limited', 'Slow down');
             tokens--;
-            // Re-read the user so a suspension applies to open sockets too.
             // Re-check the account and session so suspensions and sign-outs apply to open sockets too.
-            const fresh = await getUser(ctx.db, user.id);
-            if (!fresh || (user.session_id && !(await activeSession(ctx.db, user.session_id)))) return ws.close(4401, 'session ended');
-            user = { ...fresh, session_id: user.session_id, session_family: user.session_family, session_mfa: user.session_mfa };
-            const msg = await postUserMessage(ctx, frame.roomId, user, frame.body);
+            if (!(await revalidate())) return;
+            const msg = await postUserMessage(ctx, frame.roomId, user!, frame.body);
             // Round 29 (8): a message hidden for safety is acknowledged with the standard warning, never as an error.
             if ('hidden_for_safety' in msg) return send(ws, { type: 'hidden_for_safety', roomId: frame.roomId, clientMsgId: frame.clientMsgId, action: msg.action, warning: msg.warning, warning_key: msg.warning_key });
             return send(ws, { type: 'ack', roomId: frame.roomId, clientMsgId: frame.clientMsgId, seq: msg.seq, id: msg.id });

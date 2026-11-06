@@ -251,13 +251,14 @@ describe('§6 no phone anywhere', () => {
       NODE_ENV: 'production', JWT_SECRET: 'x'.repeat(40), DATA_ENCRYPTION_KEYS: 'v1:Y2ktb25seS1kYXRhLWtleS0zMi1ieXRlcy0tLS0tLS0=', FINGERPRINT_KEY: 'fp',
       CRYPTO_INDEXER_SECRET: 'idx', PLATFORM_ACCOUNTS: 'live', MALWARE_SCANNER: 'clamd', EMAIL_PROVIDER: 'resend', RESEND_API_KEY: 're_test',
       TURNSTILE_SECRET: '1x0000000000000000000000000000000AA', ORIGIN_SHARED_SECRET: 'origin-secret-of-at-least-32-characters!',
+      PAYMENT_PROVIDER: 'nowpayments', KYC_PROVIDER: 'sumsub', GEO_COUNTRY_HEADER: 'cf-ipcountry', // security audit: required in production
     } as any;
     const cfg = loadConfig(prod);
     expect(cfg.SMS_PROVIDER).toBe('none');
     expect(() => loadConfig({ ...prod, SMS_PROVIDER: 'console' })).toThrow(/SMS_PROVIDER=console/);
     expect(loadConfig({} as any).SMS_PROVIDER).toBe('console'); // development and tests
     const lines: string[] = [];
-    const ctx = createContext(cfg, { info: (o: any, m?: string) => lines.push(String(m ?? o)), warn() {}, error() {} } as any, { db: h.ctx.db, dbRead: h.ctx.dbRead, pubsub: h.ctx.pubsub, views: h.ctx.views });
+    const ctx = createContext({ ...cfg, PAYMENT_PROVIDER: 'mock', KYC_PROVIDER: 'mock' } as any, { info: (o: any, m?: string) => lines.push(String(m ?? o)), warn() {}, error() {} } as any, { db: h.ctx.db, dbRead: h.ctx.dbRead, pubsub: h.ctx.pubsub, views: h.ctx.views });
     await expect(ctx.messenger.send({ channel: 'sms', to: '+14155550123', body: 'Your code is 123456' })).rejects.toThrow(/SMS is not configured/);
     expect(lines.join('\n')).not.toContain('123456');
 

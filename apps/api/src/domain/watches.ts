@@ -45,7 +45,9 @@ export async function createWatch(ctx: Ctx, userId: string, input: WatchInput) {
 
   if (input.offerId) {
     const o = await liveOffer(ctx.db, input.offerId);
-    if (!o || o.status === 'removed') throw notFound('Offer');
+    // Security audit (Nov 2026): the same visibility as the public offer page — a listing reserved for another buyer or still
+    // in moderation review is not there for anyone else.
+    if (!o || o.status === 'removed' || o.status === 'review' || (o.reserved_for && o.reserved_for !== userId)) throw notFound('Offer');
     if (o.seller_id === userId) throw badRequest('own_offer', 'You can’t watch your own listing');
     const row = await maybeOne(
       ctx.db,

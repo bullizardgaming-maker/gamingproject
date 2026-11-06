@@ -75,12 +75,24 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
       const c = await maybeOne<{ order_id: string }>(ctx.db, 'SELECT order_id FROM warranty_claims WHERE id = $1', [id]);
       if (c) await requireLeadForLargeOrder(req, c.order_id);
     }
+    const wc = await maybeOne<{ order_id: string }>(ctx.db, 'SELECT order_id FROM warranty_claims WHERE id = $1', [id]);
+    if (wc) await assertNotParty(staff.id, wc.order_id);
     const claim = await decideClaim(ctx, staff.id, id, body);
     await audit(ctx.db, req, 'warranty_claim.decide', { type: 'warranty_claim', id }, body);
     return claim;
   });
 
   /** Orders above the Lead threshold ($200, playbook): only the Support Lead (or an admin) releases or decides them. */
+  /** Security audit (Nov 2026): staff never decide money on an order they bought or sold (release, refund, dispute, warranty). */
+  async function assertNotParty(staffId: string, orderId: string) {
+    const o = await maybeOne<{ buyer_id: string; seller_id: string }>(ctx.db, 'SELECT buyer_id, seller_id FROM orders WHERE id = $1', [orderId]);
+    if (o && (o.buyer_id === staffId || o.seller_id === staffId)) throw forbidden('own_order', 'You cannot decide an order you are part of; ask another staff member');
+  }
+  /** Security audit: holds, flags and cases on your own account are decided by someone else. */
+  const assertNotSelf = (staffId: string, userId: string | null | undefined) => {
+    if (userId && userId === staffId) throw forbidden('own_account', 'You cannot decide this for your own account; ask another staff member');
+  };
+
   async function requireLeadForLargeOrder(req: FastifyRequest, orderId: string) {
     // Round 25 (M2): the order's USD value, whatever currency it is in.
     const o = await maybeOne<{ amount_cents: string; amount_usd_cents: string; currency: string }>(ctx.db, 'SELECT amount_cents, amount_usd_cents, currency FROM orders WHERE id = $1', [orderId]);
@@ -136,6 +148,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const { id } = Id.parse(req.params);
     const d = await maybeOne<{ order_id: string }>(ctx.db, 'SELECT order_id FROM disputes WHERE id = $1', [id]);
     if (d) await requireLeadForLargeOrder(req, d.order_id);
+    if (d) await assertNotParty(arbiter.id, d.order_id);
     const res = await resolveDispute(ctx, id, arbiter.id, body.outcome, body.note, body.refundCents);
     await audit(ctx.db, req, 'dispute.resolve', { type: 'dispute', id }, body);
     return res;
@@ -159,6 +172,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return withScope(ctx, async (s) => {
       const flag = await maybeOne(s.tx, 'SELECT * FROM risk_flags WHERE id = $1 FOR UPDATE', [Id.parse(req.params).id]);
       if (!flag) throw notFound('Risk flag');
+      assertNotSelf(admin.id, flag.user_id); // security audit: nobody clears (or confirms) a flag on their own account
       if (decision === 'confirm') await assertMayChangeStatus(s.tx, admin, flag.user_id); // Round 23e: confirming bans
       await s.tx.query(`UPDATE risk_flags SET status = $2, reviewed_by = $3 WHERE user_id = $1 AND status = 'open'`, [
         flag.user_id, decision === 'clear' ? 'cleared' : 'confirmed', admin.id,
@@ -306,9 +320,10 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   /** Listing ban (penalty ladder step 2): the account stays, but it can't create or relist offers; live offers pause. */
   app.post('/admin/users/:id/listing-ban', async (req) => {
-    requirePermission(req, 'moderation.manage'); // the penalty ladder's middle rung: support (the Lead) and arbiters
+    const actor = requirePermission(req, 'moderation.manage'); // the penalty ladder's middle rung: support (the Lead) and arbiters
     const { on, reason } = z.object({ on: z.boolean(), reason: z.string().trim().min(3).max(500).optional() }).parse(req.body);
     const { id } = Id.parse(req.params);
+    await assertMayChangeStatus(ctx.db, actor, id); // security audit: the rank rule, and never on yourself (no self-unban)
     if (on) {
       await ctx.db.query(`UPDATE users SET listing_banned_at = now(), listing_ban_reason = $2 WHERE id = $1`, [id, reason ?? null]);
       await ctx.db.query(`UPDATE offers SET status = 'paused', expired_reason = 'listing_ban', version = version + 1, updated_at = now() WHERE seller_id = $1 AND status = 'active'`, [id]);
@@ -558,6 +573,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const { id } = Id.parse(req.params);
     const { note } = z.object({ note: z.string().trim().min(3).max(1_000) }).parse(req.body);
     await requireLeadForLargeOrder(req, id);
+    await assertNotParty(staff.id, id);
     const o = await releaseByStaff(ctx, id, staff.id, note);
     await audit(ctx.db, req, 'order.release', { type: 'order', id }, { note });
     return { id: o.id, status: 'completed' };
@@ -753,8 +769,9 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   app.put('/admin/users/:id/payout-hold', async (req) => {
-    requirePermission(req, 'payout_holds.set');
+    const staff = requirePermission(req, 'payout_holds.set');
     const { id } = Id.parse(req.params);
+    assertNotSelf(staff.id, id); // security audit
     const { days, reason } = z.object({ days: z.number().int().min(0).max(90).nullable(), reason: z.string().trim().min(3).max(300) }).parse(req.body);
     await ctx.db.query('UPDATE users SET payout_hold_days = $2 WHERE id = $1', [id, days]);
     await audit(ctx.db, req, 'user.payout_hold_set', { type: 'user', id }, { days, reason });
@@ -1057,6 +1074,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
       .object({ amountCents: z.number().int().positive().optional(), paidBy: z.enum(['seller', 'platform', 'reserve']), reason: z.string().trim().min(10).max(500) })
       .parse(req.body);
     await requireLeadForLargeOrder(req, id);
+    await assertNotParty(staff.id, id);
     const res = await refundAfterRelease(ctx, id, staff.id, body);
     await audit(ctx.db, req, 'order.refunded_after_release', { type: 'order', id }, { ...body, refundId: res.refund.id, creditNote: res.creditNote.number });
     return res;
@@ -1086,6 +1104,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
       .parse(req.body);
     const staff = requirePermission(req, body.decision === 'report' ? 'aml.sar' : 'aml.review');
     const { id } = Id.parse(req.params);
+    assertNotSelf(staff.id, (await maybeOne<{ user_id: string }>(ctx.db, 'SELECT user_id FROM aml_cases WHERE id = $1', [id]))?.user_id); // security audit
     const res = await decideCase(ctx, id, staff.id, body);
     await audit(ctx.db, req, `aml.case_${body.decision}`, { type: 'aml_case', id }, { note: body.note, sarReference: body.sarReference });
     return res;

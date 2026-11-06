@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { verifyMessage } from 'ethers';
 import { z } from 'zod';
+import { assertNoOffPlatform } from '../lib/offplatform.js';
 import type { Ctx } from '../context.js';
 import { many, maybeOne, one } from '../db.js';
 import { featureListing, foundingStatus, listRanks, pricePreview, sellerTier, unfeatureListing } from '../domain/commission.js';
@@ -177,9 +178,11 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     const csv = await exportListings(ctx.db, me(req).id);
     return reply.header('Content-Type', 'text/csv; charset=utf-8').header('Content-Disposition', 'attachment; filename="bullizard-listings.csv"').send(csv);
   });
-  app.post('/seller/listings/import', async (req) => {
+  // Security audit (Nov 2026): every row runs the listing screen (regex-heavy); previews are free, so the route is metered.
+  app.post('/seller/listings/import', { config: { rateLimit: { max: 6, timeWindow: '1 minute', keyGenerator: (req) => `listing-import:${req.user?.id ?? req.ip}` } } }, async (req) => {
     const user = me(req);
     requireSeller(user);
+    assertNotSanctioned(ctx, requestMeta(req).ipCountry, 'sell'); // security audit: the sell check on every way onto the market
     const body = z.object({ csv: z.string().min(1).max(2_000_000), dryRun: z.boolean().default(true) }).parse(req.body);
     return importListings(ctx, user, body.csv, { dryRun: body.dryRun });
   });
@@ -256,6 +259,7 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
   /** Round 26 (B3): copy a listing to another server; stock starts at what the seller enters. */
   app.post('/offers/:id/duplicate', async (req, reply) => {
     const body = z.object({ attributes: z.record(z.string().max(30), z.string().max(60)).optional(), stock: z.number().int().min(0).max(2_000_000_000).optional() }).parse(req.body ?? {});
+    assertNotSanctioned(ctx, requestMeta(req).ipCountry, 'sell'); // security audit: the sell check on every way onto the market
     return reply.status(201).send(await duplicateOffer(ctx, me(req), Id.parse(req.params).id, body));
   });
   /** Round 26 (B2): pause / resume / soft delete (open orders → pause only). */
@@ -273,6 +277,8 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
   /** Bring a listing expired by a league ending back, in an open league. */
   app.post('/offers/:id/relist', async (req) => {
     const { league } = z.object({ league: z.string().trim().min(1).max(60) }).parse(req.body);
+    requireSeller(me(req)); // security audit: a listing-banned, suspended or ID-overdue seller cannot relist either
+    assertNotSanctioned(ctx, requestMeta(req).ipCountry, 'sell'); // security audit: the sell check on every way onto the market
     await relistExpired(ctx, me(req).id, Id.parse(req.params).id, league);
     return getOffer(ctx.db, Id.parse(req.params).id);
   });
@@ -290,6 +296,7 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/offers/:id/inventory', async (req) => {
     const user = me(req);
     requireSeller(user);
+    assertNotSanctioned(ctx, requestMeta(req).ipCountry, 'sell'); // security audit: the sell check on every way onto the market
     const body = InventoryBody.parse(req.body);
     return uploadInventory(ctx, user.id, Id.parse(req.params).id, body.format, body.content);
   });
@@ -397,6 +404,8 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
       .object({ paused: z.boolean(), until: z.string().datetime().optional(), message: z.string().trim().max(200).optional() })
       .parse(req.body);
     if (body.until && new Date(body.until) <= new Date()) throw badRequest('invalid_until', 'Pick a time in the future');
+    assertNoOffPlatform(body.message); // security audit: the notice is public on the shop page and every listing
+    if (!body.paused) assertNotSanctioned(ctx, requestMeta(req).ipCountry, 'sell'); // security audit: the sell check on every way onto the market
     if (!body.paused && (await shopHeldForDebt(ctx.db, user.id))) {
       throw new AppError(409, 'debt_outstanding', 'Your shop reopens as soon as your balance is settled');
     }

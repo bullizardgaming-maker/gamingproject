@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { assertNoOffPlatform } from '../lib/offplatform.js';
 import type { Ctx } from '../context.js';
 import { maybeOne, one } from '../db.js';
 import { getOrCreateInquiryRoom, listMessages, listRooms, postUserMessage, roomForParticipant, verifyChain } from '../domain/chat.js';
@@ -208,11 +209,13 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.post('/orders/:id/dispute', async (req) => {
     const { reason, category } = z.object({ reason: z.string().trim().min(10).max(2_000), category: z.enum(DISPUTE_CATEGORIES).default('other') }).parse(req.body);
+    assertNoOffPlatform(reason, { allowEmail: true }); // security audit: the reason is shown to the other party and emailed
     return openDispute(ctx, Id.parse(req.params).id, me(req).id, reason, category);
   });
   /** Either side adds a written statement to an open dispute (up to five each). */
   app.post('/orders/:id/dispute/statements', async (req, reply) => {
     const { body } = z.object({ body: z.string().trim().min(10).max(2_000) }).parse(req.body);
+    assertNoOffPlatform(body, { allowEmail: true });
     return reply.status(201).send(await addStatement(ctx, Id.parse(req.params).id, me(req).id, body));
   });
 
@@ -227,16 +230,19 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
   /** Boosting orders: the seller posts a progress milestone (percent, note, optional chat screenshot). */
   app.post('/orders/:id/progress', async (req, reply) => {
     const body = z.object({ percent: z.number().int().min(0).max(100), note: z.string().trim().max(500).default(''), attachmentId: z.string().uuid().optional() }).parse(req.body);
+    assertNoOffPlatform(body.note); // security audit: shown to the buyer inside the official order message
     return reply.status(201).send(await postProgress(ctx, me(req).id, Id.parse(req.params).id, body));
   });
 
   // Account warranty claims (after release, while the order's warranty runs).
   app.post('/orders/:id/warranty-claims', async (req, reply) => {
     const body = z.object({ reason: z.enum(CLAIM_REASONS), details: z.string().trim().min(10).max(2_000) }).parse(req.body);
+    assertNoOffPlatform(body.details, { allowEmail: true });
     return reply.status(201).send(await openClaim(ctx, me(req).id, Id.parse(req.params).id, body));
   });
   app.post('/warranty-claims/:id/seller', async (req) => {
     const body = z.object({ action: z.enum(['fixed', 'refund', 'contest']), message: z.string().trim().max(1_000).optional() }).parse(req.body);
+    assertNoOffPlatform(body.message, { allowEmail: true });
     return sellerRespond(ctx, me(req).id, Id.parse(req.params).id, body);
   });
   app.post('/warranty-claims/:id/buyer', async (req) => {

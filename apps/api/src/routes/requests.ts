@@ -4,7 +4,8 @@ import type { Ctx } from '../context.js';
 import {
   acceptProposal, closeRequest, createRequest, getRequest, listBoard, listMyProposals, listMyRequests, propose, withdrawProposal,
 } from '../domain/requests.js';
-import { me } from '../server.js';
+import { me, requestMeta } from '../server.js';
+import { assertNotSanctioned } from '../domain/geo.js';
 
 const Id = z.object({ id: z.string().uuid() });
 
@@ -48,6 +49,7 @@ export async function requestRoutes(app: FastifyInstance, ctx: Ctx) {
       })
       .refine((b) => b.offerId || (b.priceCents != null && b.deliveryHours != null), 'Give a price and a delivery time, or offer one of your listings')
       .parse(req.body);
+    assertNotSanctioned(ctx, requestMeta(req).ipCountry, 'sell'); // security audit: a proposal becomes a listing
     return reply.status(201).send(await propose(ctx, me(req), Id.parse(req.params).id, body));
   });
   app.delete('/requests/:id/proposals/mine', async (req) => withdrawProposal(ctx, me(req).id, Id.parse(req.params).id));

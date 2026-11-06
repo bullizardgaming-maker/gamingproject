@@ -176,6 +176,7 @@ export async function enforceIdDeadlines(ctx: Ctx) {
 /** Called when Tier 2 is approved: the restriction lifts and paused listings come back. */
 export async function liftIdRestriction(q: Queryable, userId: string) {
   const r = await q.query(`UPDATE users SET selling_restricted_at = NULL WHERE id = $1 AND selling_restricted_at IS NOT NULL`, [userId]);
-  if (r.rowCount) await q.query(`UPDATE offers SET status = 'active', expired_reason = NULL, version = version + 1, updated_at = now() WHERE seller_id = $1 AND status = 'paused' AND expired_reason = 'id_overdue'`, [userId]);
+  if (r.rowCount) await q.query(`UPDATE offers SET status = 'active', expired_reason = NULL, version = version + 1, updated_at = now() WHERE seller_id = $1 AND status = 'paused' AND expired_reason = 'id_overdue'
+      AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = $1 AND (u.listing_banned_at IS NOT NULL OR u.status <> 'active'))`, [userId]); // security audit: never past a listing ban
   return !!r.rowCount;
 }

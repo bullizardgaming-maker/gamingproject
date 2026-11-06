@@ -19,7 +19,7 @@ import { withScope } from './events.js';
 import { checkSecondFactor } from './mfa.js';
 import { holdPolicy, withdrawable } from './payoutholds.js';
 import { PUBLIC_USER_COLUMNS, type User } from './users.js';
-import { ensureScreenedForPayout } from './aml.js';
+import { ensureScreenedForPayout, matchWallet, openCase } from './aml.js';
 import { MANUAL_METHODS, WITHDRAWAL_METHODS, cleanIdentifier, isWithdrawalMethod, methodAvailableIn, withdrawalFeeQuote } from './withdrawalMethods.js';
 import { assertNotSanctioned, cleanWithdrawalCountry } from './geo.js';
 import { coinName } from './cryptoPayments.js';
@@ -89,6 +89,12 @@ export async function requestPayoutAddress(ctx: Ctx, user: User, input: { countr
     if (!(PAYOUT_COINS as readonly string[]).includes(currency)) throw badRequest('unsupported_coin', `Payouts are sent in ${PAYOUT_COINS.map(coinName).join(', ')}`);
     address = (input.address ?? '').trim();
     if (!/^[A-Za-z0-9:_-]{10,128}$/.test(address)) throw badRequest('invalid_address', 'That does not look like a wallet address');
+    // Security audit: a payout wallet on the sanctions list is refused and opens a compliance case that holds payouts.
+    const hits = await matchWallet(ctx.db, address);
+    if (hits.length) {
+      await openCase(ctx, user.id, { source: 'sanctions', rule: 'sanctions_payout_wallet', severity: 'high', holdsPayouts: true, details: { value: address, matches: hits } });
+      throw new AppError(403, 'address_not_allowed', 'This address cannot be used for withdrawals');
+    }
   } else {
     if (!input.identifier) throw badRequest(method === 'wallet' ? 'invalid_phone' : 'invalid_ipa', method === 'wallet' ? 'Enter the wallet’s phone number' : 'Enter your InstaPay address or phone');
     identifier = cleanIdentifier(method, input.identifier);
@@ -177,6 +183,7 @@ export async function requestCryptoWithdrawal(ctx: Ctx, userId: string, amountCe
       s.tx, `SELECT ${PUBLIC_USER_COLUMNS}, payout_address, payout_address_currency, payout_method, payout_identifier_ciphertext, payout_identifier_hint, payout_country FROM users WHERE id = $1 FOR UPDATE`, [userId],
     );
     assertNotSanctioned(ctx, user.payout_country, 'withdraw'); // Round 29 (1): blocked by the withdrawal country
+    assertNotSanctioned(ctx, opts.meta?.ipCountry, 'withdraw'); // security audit: and by the connection country, for every caller (incl. /me/credit/withdraw)
     const method = isWithdrawalMethod(user.payout_method) ? user.payout_method : 'usdt';
     // Round 29: the web names the method (and shows the details) it is withdrawing through; it must be the confirmed one —
     // the destination always comes from the confirmed payout method, never from the request body.
@@ -337,6 +344,8 @@ export async function decideWithdrawal(ctx: Ctx, id: string, staff: { id: string
     if (w.status !== 'pending_approval') throw conflict('invalid_state', `This withdrawal is ${w.status}`);
     // Kill switch (Round 22): while withdrawals are paused, staff can't approve or send either; rejecting stays possible.
     if (approve) await assertNotPaused(s.tx, 'withdrawals');
+    // Security audit: a freeze, AML hold, ban or sanctioned destination placed after the request stops the approval too.
+    if (approve) await assertPayeeClear(ctx, s.tx, w);
     const amount = Number(w.amount_cents);
     const fee = Number(w.fee_cents);
     const net = Number(w.net_cents);
@@ -447,10 +456,27 @@ async function keepProviderError(ctx: Ctx, id: string, pe: ProviderError) {
   await ctx.db.query('UPDATE withdrawals SET provider_error = $2, updated_at = now() WHERE id = $1', [id, JSON.stringify(pe)]);
 }
 
+/**
+ * Security audit (Nov 2026): the account and destination are re-checked whenever money is about to leave (approval,
+ * send, verification retry), not only at request time — a fraud freeze, AML hold, ban or a destination that is now on
+ * the sanctions wallet list stops the payout (it stays where it is; rejecting is still possible).
+ */
+async function assertPayeeClear(ctx: Ctx, q: Queryable, w: { user_id: string; destination_address?: string | null }) {
+  const u = await maybeOne<{ withdrawals_frozen: boolean; aml_hold: boolean; status: string; payout_country: string | null }>(
+    q, 'SELECT withdrawals_frozen, aml_hold, status, payout_country FROM users WHERE id = $1', [w.user_id],
+  );
+  if (!u || u.withdrawals_frozen || u.aml_hold || u.status === 'banned') throw new AppError(423, 'withdrawals_frozen', 'This account’s withdrawals are frozen pending a review');
+  assertNotSanctioned(ctx, u.payout_country, 'withdraw');
+  if (w.destination_address && (await matchWallet(q, w.destination_address)).length) {
+    throw new AppError(423, 'withdrawals_frozen', 'This account’s withdrawals are frozen pending a review');
+  }
+}
+
 async function sendPayout(ctx: Ctx, np: NowPaymentsProvider, w0: any) {
   const id = w0.id as string;
   if (MANUAL_METHODS.has(w0.method)) return w0; // Round 29 (2): sent by Finance by hand, never by the provider
   await assertNotPaused(ctx.db, 'withdrawals'); // kill switch: nothing leaves while paused; the job sends it once lifted
+  await assertPayeeClear(ctx, ctx.db, w0); // security audit: a freeze / hold placed after approval stops the send
   // Round 22b (6): an approved withdrawal in a coin we no longer pay out in is reversed, never sent.
   if (!(PAYOUT_COINS as readonly string[]).includes(w0.destination_currency)) {
     await failWithdrawal(ctx, id, 'unsupported_coin', 'unsupported_coin');
@@ -566,6 +592,9 @@ export async function recheckUnknownPayout(ctx: Ctx, id: string, opts: { manual?
   if (found) {
     const status = String(found.status).toUpperCase();
     if (w.verify_pending && ['CREATING', 'WAITING'].includes(status) && w.provider_ref) {
+      // Security audit: verifying is what makes the provider send the batch — the kill switch and holds cover it too.
+      await assertNotPaused(ctx.db, 'withdrawals');
+      await assertPayeeClear(ctx, ctx.db, w);
       try {
         await np.verifyPayout(w.provider_ref);
       } catch (err) {

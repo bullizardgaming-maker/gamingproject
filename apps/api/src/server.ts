@@ -13,8 +13,8 @@ import { safeEqual, sha256 } from './lib/crypto.js';
 import { captureException, createMetrics } from './observability.js';
 import type { Ctx } from './context.js';
 import { AppError, forbidden, unauthorized } from './lib/errors.js';
-import { userFromToken, type User } from './domain/users.js';
-import { hasPermission, type Permission } from './domain/permissions.js';
+import { staffMfaRequired as staffMfaRequiredFor, userFromToken, type User } from './domain/users.js';
+import { hasPermission, staffCan, type Permission } from './domain/permissions.js';
 import { publicRoutes } from './routes/public.js';
 import { orderRoutes } from './routes/orders.js';
 import { sellerRoutes } from './routes/seller.js';
@@ -99,7 +99,7 @@ export const ORDER_STAFF_FIELDS = new Set(['released_by', 'release_note', 'tax_c
  * from which it can be derived (what the seller entered next to what the buyer pays). Round 25: the seller's unit price in
  * micro-units too, and `featured_until` (a featured listing shows as such only on the seller's own shop page).
  */
-export const SELLER_ONLY_FIELDS = new Set(['seller_rate_bps', 'seller_price_cents', 'seller_price_tiers', 'seller_unit_price_micros', 'featured_until', 'seller_min_qty']); // Round 28: the saved minimum is the seller's; buyers see the effective one
+export const SELLER_ONLY_FIELDS = new Set(['seller_rate_bps', 'seller_price_cents', 'seller_price_tiers', 'seller_unit_price_micros', 'featured_until', 'seller_min_qty', 'review_reasons', 'review_note']); // security audit: moderation hits and notes are the seller's and staff's only // Round 28: the saved minimum is the seller's; buyers see the effective one
 /** On an order (a row with both buyer_id and seller_id) the seller's side of the money is the seller's (item 7). */
 export const ORDER_SELLER_FIELDS = new Set(['commission_bps', 'commission_cents', 'seller_net_cents', 'commission_tax_cents', 'seller_received_cents']);
 /** Round 24: what the buyer gave for delivery (method, character, city, UID) is for the two parties and staff only. */
@@ -220,7 +220,7 @@ export async function buildApp(ctx: Ctx, opts: { logger?: PinoLogger } = {}): Pr
 
   app.decorateRequest('user', null);
   app.decorateRequest('staffMfaRequired', false);
-  const staffMfaRequired = (ctx.cfg.STAFF_MFA_REQUIRED ?? (ctx.cfg.NODE_ENV === 'production' ? 'true' : 'false')) === 'true';
+  const staffMfaRequired = staffMfaRequiredFor(ctx.cfg);
 
   // Keep the raw body: webhook signatures (PSP, KYC, indexer) are computed over exact bytes.
   const jsonParser = (req: FastifyRequest, body: Buffer, done: (err: Error | null, v?: unknown) => void) => {
@@ -266,6 +266,15 @@ export async function buildApp(ctx: Ctx, opts: { logger?: PinoLogger } = {}): Pr
   });
   await app.register(websocket, { options: { maxPayload: 64 * 1024 } });
 
+  // Security audit (Nov 2026): sign-in endpoints only take JSON. A cross-site HTML form (urlencoded / multipart / text,
+  // no CORS preflight) could otherwise sign a victim's browser into the attacker's account (login CSRF: the refresh
+  // cookie is set on the top-level response).
+  app.addHook('onRequest', async (req, reply) => {
+    if (req.method !== 'POST' || !req.url.startsWith('/v1/auth/')) return;
+    const type = String(req.headers['content-type'] ?? '').split(';')[0]!.trim().toLowerCase();
+    if (type && type !== 'application/json') return reply.status(415).send({ error: { code: 'unsupported_media_type', message: 'Send JSON' } });
+  });
+
   // Session auth (optional on every route; handlers call me()/requirePermission()).
   app.addHook('onRequest', async (req) => {
     req.staffMfaRequired = staffMfaRequired;
@@ -280,7 +289,7 @@ export async function buildApp(ctx: Ctx, opts: { logger?: PinoLogger } = {}): Pr
   // Round 23d: rows are often sent as `SELECT *`. Fields that only staff may see are stripped from every
   // response to a non-staff caller, however deep they sit (an order inside a cart, a list of orders).
   app.addHook('preSerialization', async (req, _reply, payload) => {
-    if (req.user && hasPermission(req.user, 'orders.view_any')) return payload;
+    if (req.user && staffCan(req.user, 'orders.view_any')) return payload;
     return stripInternalFields(payload, req.user?.id ?? null);
   });
 

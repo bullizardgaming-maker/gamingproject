@@ -376,6 +376,12 @@ export function loadConfig(overrides: Partial<Record<keyof Config, string>> = {}
     // Round 23b. Production proper: the origin only answers Cloudflare. Staging may run without the secret until the
     // Cloudflare proxy is on (the API logs a warning at start: originWarning()).
     if (cfg.APP_ENV === 'production' && !cfg.ORIGIN_SHARED_SECRET) throw new Error('ORIGIN_SHARED_SECRET is required in production (the X-Origin-Auth value Cloudflare adds)');
+    // Security audit (Nov 2026): production proper never runs the mock payment page (it marks any order paid) or mock
+    // identity checks, and the sanctions / crypto-by-country rules need the edge's country header (otherwise every
+    // country check sees "unknown" and lets the request through).
+    if (cfg.APP_ENV === 'production' && !cfg.SANDBOX_MODE && cfg.PAYMENT_PROVIDER === 'mock') throw new Error('PAYMENT_PROVIDER=mock is not allowed in production: use nowpayments');
+    if (cfg.APP_ENV === 'production' && !cfg.SANDBOX_MODE && cfg.KYC_PROVIDER === 'mock') throw new Error('KYC_PROVIDER=mock is not allowed in production: use sumsub');
+    if (cfg.APP_ENV === 'production' && !cfg.GEO_COUNTRY_HEADER) throw new Error('GEO_COUNTRY_HEADER (cf-ipcountry) is required in production: sanctions and crypto-by-country checks read it');
     if (cfg.ORIGIN_SHARED_SECRET && cfg.ORIGIN_SHARED_SECRET.length < 32) throw new Error('ORIGIN_SHARED_SECRET must be at least 32 characters (openssl rand -base64 32)'); // Round 23d
     // Round 24: no SMS provider is required (no phone anywhere); console would print codes to the log, so it stays refused.
     if (cfg.APP_ENV === 'production' && cfg.SMS_PROVIDER === 'console') throw new Error('SMS_PROVIDER=console is not allowed in production: leave it unset (SMS off) or use twilio');

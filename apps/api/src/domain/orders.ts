@@ -18,7 +18,7 @@ import { accountId, orderEscrowBalance, post } from './ledger.js';
 import { centsToTokenUnits, orderIdToBytes32 } from './web3.js';
 import { taxForCommission } from './tax.js';
 import { assertNotPaused, assertOrderWithinLimits } from './controls.js';
-import { hasPermission } from './permissions.js';
+import { hasPermission, staffCan } from './permissions.js';
 import { assertWalletClear } from './aml.js';
 import { sellerLeg, sellerRateFor } from './sellerfx.js';
 import { enqueueEmail } from './notifications.js';
@@ -333,6 +333,9 @@ export async function priceOrder(
       discount -= MIN_CARD_CHARGE_CENTS - charged;
       charged = MIN_CARD_CHARGE_CENTS;
     }
+    // Security audit (Nov 2026): an order worth less than the card minimum would need a negative discount (the buyer
+    // pays more than the price, and a refund pays the gap back out of treasury); the escrow could never release either.
+    if (discount < 0) throw badRequest('amount_too_small', `Card payments start at ${(MIN_CARD_CHARGE_CENTS / 100).toFixed(2)}; add more to this order`);
   }
 
   const presentment = (input.currency ?? offer.currency).toUpperCase();
@@ -1416,7 +1419,7 @@ export async function getOrderFor(ctx: Ctx, orderId: string, user: { id: string;
     [orderId],
   );
   if (!order) throw notFound('Order');
-  const staff = hasPermission(user, 'orders.view_any');
+  const staff = staffCan(user, 'orders.view_any');
   if (!staff && order.buyer_id !== user.id && order.seller_id !== user.id) throw notFound('Order');
   // Sellers (and staff) see the buyer's reputation and their own rating of this order.
   const sellerView = staff || order.seller_id === user.id;
@@ -1426,7 +1429,10 @@ export async function getOrderFor(ctx: Ctx, orderId: string, user: { id: string;
     // Round 24: which staff member opened it from a ticket is staff's to know.
     maybeOne<any>(q, 'SELECT * FROM disputes WHERE order_id = $1', [orderId]).then(async (d) => {
       if (!d) return d;
-      if (!staff) delete d.opened_by_staff;
+      if (!staff) {
+        delete d.opened_by_staff;
+        delete d.resolved_by; // security audit: the arbiter's identity stays internal
+      }
       return { ...d, statements: await listStatements(q, d.id) };
     }),
     many(q, 'SELECT from_status, to_status, reason, created_at FROM order_events WHERE order_id = $1 ORDER BY id', [orderId]),

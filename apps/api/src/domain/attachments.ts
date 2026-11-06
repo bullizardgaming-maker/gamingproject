@@ -1,3 +1,5 @@
+import { assertNotPaused } from './controls.js';
+import { detectOffPlatform } from './safety.js';
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
@@ -312,14 +314,21 @@ export async function stripVideoMetadata(src: string, kind: 'mp4' | 'webm'): Pro
     return { file: out, size, sha256: hashed.sha256, hashed, cleanup };
   } catch (err) {
     await cleanup();
-    throw new AppError(422, 'video_not_processable', 'This video could not be processed. Export it again as MP4 (H.264) or WebM and retry', { reason: String((err as Error).message).slice(0, 200) });
+    // Security audit (Nov 2026): ffmpeg's own output (temp paths, versions) is never sent to the client.
+    throw new AppError(422, 'video_not_processable', 'This video could not be processed. Export it again as MP4 (H.264) or WebM and retry');
   }
 }
 
 /** What acceptUpload stores: bytes in memory (images, ≤ 8 MB) or a spooled file (videos). */
 type Incoming = { data: Buffer } | { file: string; size: number; sha256: string };
 
-const cleanName = (name: string) => name.replace(/[^\w.\- ]+/g, '_').slice(0, 100) || 'image';
+const cleanName = (name: string) => {
+  const clean = name.replace(/[^\w.\- ]+/g, '_').slice(0, 100) || 'image';
+  // Security audit (Nov 2026): the file name is shown to the other party in the chat; one carrying contact details
+  // ("telegram johnny99.png") would skip the chat filter, so it is replaced by a neutral name.
+  if (detectOffPlatform(clean.replace(/[._]+/g, ' ')).length) return `file${clean.match(/\.[A-Za-z0-9]{1,5}$/)?.[0] ?? ''}`;
+  return clean;
+};
 
 /**
  * Upload a screenshot to an order chat:
@@ -332,6 +341,7 @@ const cleanName = (name: string) => name.replace(/[^\w.\- ]+/g, '_').slice(0, 10
  */
 export async function uploadAttachment(ctx: Ctx, roomId: string, user: { id: string; role: string; status: string }, fileName: string, body: Buffer) {
   if (user.status !== 'active') throw forbidden('suspended', 'Account suspended');
+  await assertNotPaused(ctx.db, 'chat'); // security audit: the chat kill switch covers files too
   const room = await roomForParticipant(ctx.db, roomId, user);
   if (room.buyer_id !== user.id && room.seller_id !== user.id) throw forbidden('not_participant', 'Only the buyer and seller can add evidence');
   if (body.length === 0) throw badRequest('empty_file', 'The file is empty');
@@ -358,6 +368,7 @@ export async function uploadVideoStream(
   declaredBytes?: number,
 ) {
   if (user.status !== 'active') throw forbidden('suspended', 'Account suspended');
+  await assertNotPaused(ctx.db, 'chat'); // security audit: the chat kill switch covers files too
   const room = await roomForParticipant(ctx.db, roomId, user);
   if (room.buyer_id !== user.id && room.seller_id !== user.id) throw forbidden('not_participant', 'Only the buyer and seller can add evidence');
   if (declaredBytes && declaredBytes > MAX_VIDEO_BYTES) throw videoTooLarge(ctx);
@@ -543,6 +554,7 @@ export async function startDirectVideoUpload(
 ) {
   if (!ctx.storage.presignPut) throw new AppError(409, 'direct_upload_unavailable', `Videos can be up to ${MAX_VIDEO_BYTES / 1_048_576} MB`, { maxBytes: MAX_VIDEO_BYTES, maxMb: MAX_VIDEO_BYTES / 1_048_576 });
   if (user.status !== 'active') throw forbidden('suspended', 'Account suspended');
+  await assertNotPaused(ctx.db, 'chat'); // security audit: the chat kill switch covers files too
   const room = await roomForParticipant(ctx.db, roomId, user);
   if (room.buyer_id !== user.id && room.seller_id !== user.id) throw forbidden('not_participant', 'Only the buyer and seller can add evidence');
   if (input.bytes > MAX_DIRECT_VIDEO_BYTES) {

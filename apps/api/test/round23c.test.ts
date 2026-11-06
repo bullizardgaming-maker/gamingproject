@@ -30,6 +30,10 @@ const prodEnv = (extra: Record<string, string> = {}) =>
     SMS_PROVIDER: 'twilio',
     TURNSTILE_SECRET: '1x0000000000000000000000000000000AA',
     ORIGIN_SHARED_SECRET: 'origin-secret-of-at-least-32-characters!',
+    // Security audit (Nov 2026): production refuses mock payments / KYC and needs the country header.
+    PAYMENT_PROVIDER: 'nowpayments',
+    KYC_PROVIDER: 'sumsub',
+    GEO_COUNTRY_HEADER: 'cf-ipcountry',
     ...extra,
   }) as any;
 const stagingEnv = (extra: Record<string, string> = {}) =>

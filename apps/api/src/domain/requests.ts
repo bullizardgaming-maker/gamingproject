@@ -224,12 +224,12 @@ export async function acceptProposal(ctx: Ctx, buyerId: string, requestId: strin
     if (r.status !== 'open' || new Date(r.expires_at) <= new Date()) throw conflict('not_open', 'This request is no longer open');
     const p = await maybeOne<any>(
       tx,
-      `SELECT p.*, u.status AS seller_status, u.kyc_tier, u.rules_passed_at, u.selling_restricted_at, u.display_name AS seller_name FROM request_proposals p JOIN users u ON u.id = p.seller_id
+      `SELECT p.*, u.status AS seller_status, u.kyc_tier, u.rules_passed_at, u.selling_restricted_at, u.listing_banned_at, u.display_name AS seller_name FROM request_proposals p JOIN users u ON u.id = p.seller_id
         WHERE p.id = $1 AND p.request_id = $2 FOR UPDATE OF p`,
       [proposalId, requestId],
     );
     if (!p || p.status !== 'pending') throw notFound('Proposal');
-    if (p.seller_status !== 'active' || p.kyc_tier < 1 || !p.rules_passed_at || (p.selling_restricted_at && p.kyc_tier < 2)) throw conflict('seller_unavailable', 'This seller can no longer sell');
+    if (p.seller_status !== 'active' || p.kyc_tier < 1 || !p.rules_passed_at || p.listing_banned_at || (p.selling_restricted_at && p.kyc_tier < 2)) throw conflict('seller_unavailable', 'This seller can no longer sell');
 
     if (p.listing_offer_id) {
       // An existing listing: the buyer checks it out like anyone else, nothing private is created.

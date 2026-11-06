@@ -37,6 +37,12 @@ export async function refundAfterRelease(
       throw conflict('chargeback_exists', 'The buyer’s bank already reversed this payment');
     }
     if (order.status !== 'completed') throw conflict('not_released', `Only completed orders can be refunded after release (this one is ${order.status})`);
+    // Security audit (Nov 2026): an order closed by a split decision already refunded part of the money to the buyer; the
+    // pro-rata parts below assume the full order was released, so a second refund here would pay the buyer twice and
+    // over-charge the seller. Those orders are settled; a correction goes through a ledger adjustment.
+    if (await maybeOne(s.tx, 'SELECT 1 FROM disputes WHERE order_id = $1 AND COALESCE(refund_cents, 0) > 0', [order.id])) {
+      throw conflict('dispute_split_settled', 'This order was settled by a split dispute decision and cannot be refunded again');
+    }
     const done = await one<{ s: number }>(s.tx, 'SELECT COALESCE(SUM(amount_cents), 0)::bigint AS s FROM post_release_refunds WHERE order_id = $1', [order.id]);
     const remaining = Number(order.amount_cents) - Number(done.s);
     const amount = input.amountCents ?? remaining;

@@ -922,6 +922,38 @@ Suites: API 85 files / 778 tests green (multinode excluded), typecheck clean, `n
 image start check: build, runtime imports, migrate through 081, `/readyz` + `/healthz` as `APP_ENV=staging` with
 `PAYMENT_PROVIDER=nowpayments` and `SANDBOX_MODE=false` (proxy CA in a scratch Dockerfile copy, repo Dockerfile unchanged).
 
+## Security audit (Nov 6, 2026) — fixes
+
+Deep source audit of apps/api (+ web auth/config). No migration. Every fix has a regression test in `test/security-audit.test.ts`
+or `test/security-audit-payouts.test.ts` (each fails on the code before this commit). Brief: project doc `claude/security-audit-brief.md`.
+- **WebSocket**: subscribe / sync / message re-read the account and session, and every keep-alive tick closes a socket whose
+  session was revoked (sign-out everywhere, password reset, ban) and drops rooms the user may no longer read (`ws/gateway.ts`).
+- **Staff powers outside `requirePermission`** (order reads, chat rooms, field stripping) go through `staffCan()`
+  (`permissions.ts`): active account + a session that meets the staff 2FA rule (`users.staff_session_ok`, set in `userFromToken`).
+- **Payouts**: connection-country sanctions check inside `requestCryptoWithdrawal` (covers `/me/credit/withdraw`);
+  `assertPayeeClear` re-checks freeze / AML hold / ban / sanctioned destination at approval, send and verification retry; the
+  verification retry respects the withdrawals kill switch; payout wallets on the sanctions list are refused (403
+  `address_not_allowed`) and open an AML case; top-up→withdraw review counts what was actually credited from outside money
+  (ledger credits drawn on `gateway_clearing`), not the deposit's stated amount; a payment held as `sanctioned_wallet` is never
+  applied by a later poll/IPN.
+- **Staff self-dealing**: no release / refund-after-release / dispute / warranty decision on an order you are party to
+  (403 `own_order`); listing ban follows the rank rule (no self-unban); no own payout hold, risk-flag or AML-case decision, and no
+  approving a ledger adjustment that pays yourself (403 `own_account`); FX overrides are measured against the rate before the
+  day's override chain (no 2 % steps past the second approver).
+- **Selling paths**: sanctions sell check on duplicate, CSV import, restock, shop reopen and request proposals; `requireSeller`
+  on relist; a listing-banned seller's request proposal can't be accepted; ID approval doesn't reactivate listings of a
+  listing-banned seller.
+- **Text that reaches the other side**: dispute reason/statements, progress notes, warranty texts, shop pause notice and game
+  suggestions refuse contact details/links (400 `offplatform_contact`, `lib/offplatform.ts`); attachment names carrying contact
+  details are replaced by a neutral `file.ext`.
+- **Exposure**: `review_reasons` / `review_note` are seller+staff only; `dispute.resolved_by` hidden from the parties; watches
+  only on listings the viewer could see; ffmpeg stderr no longer returned.
+- **Money**: refund-after-release refused on orders settled by a split dispute (409 `dispute_split_settled`, was a double
+  refund); with card payments on, an order below the card minimum is refused (400 `amount_too_small`, was a negative discount).
+- **Edge/config**: `/v1/auth/*` POSTs take JSON only (415; login CSRF); `APP_ENV=production` refuses `PAYMENT_PROVIDER=mock`,
+  `KYC_PROVIDER=mock` (unless `SANDBOX_MODE`) and a missing `GEO_COUNTRY_HEADER`; "pause orders" also stops wallet top-ups,
+  "pause chat" also stops attachments; CSV import metered (6/min per user). `@sentry/node` 11.11 (npm audit clean).
+
 ## Round 29d (Nov 6, 2026) — review fixes
 
 Migration `087_round29d.sql`. Pushed to main and staging.

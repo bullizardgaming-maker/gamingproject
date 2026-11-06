@@ -39,6 +39,7 @@ const prodEnv = (extra: Record<string, string> = {}) =>
     SMS_PROVIDER: 'twilio',
     TURNSTILE_SECRET: '1x0000000000000000000000000000000AA',
     ORIGIN_SHARED_SECRET: 'origin-secret-of-at-least-32-characters!',
+    PAYMENT_PROVIDER: 'nowpayments', KYC_PROVIDER: 'sumsub', GEO_COUNTRY_HEADER: 'cf-ipcountry', // security audit: required in production
     ...extra,
   }) as any;
 
@@ -114,8 +115,8 @@ function postStream(url: string, token: string, body: Readable, size: number): P
 
 describe('1. origin guard required in production', () => {
   it('APP_ENV=production refuses to start without ORIGIN_SHARED_SECRET; staging warns instead', () => {
-    expect(() => loadConfig(prodEnv({ ORIGIN_SHARED_SECRET: '' }))).toThrow(/ORIGIN_SHARED_SECRET is required in production/);
-    const staging = loadConfig(prodEnv({ APP_ENV: 'staging', MALWARE_SCANNER: 'dev', ORIGIN_SHARED_SECRET: '' }));
+    expect(() => loadConfig(prodEnv({ ORIGIN_SHARED_SECRET: '', GEO_COUNTRY_HEADER: '' }))).toThrow(/ORIGIN_SHARED_SECRET is required in production/);
+    const staging = loadConfig(prodEnv({ APP_ENV: 'staging', MALWARE_SCANNER: 'dev', ORIGIN_SHARED_SECRET: '', GEO_COUNTRY_HEADER: '' }));
     expect(staging.ORIGIN_SHARED_SECRET).toBeUndefined();
     expect(originWarning(staging)).toMatch(/ORIGIN_SHARED_SECRET is not set/);
     expect(originWarning(loadConfig(prodEnv({ APP_ENV: 'staging', MALWARE_SCANNER: 'dev' })))).toBeNull();

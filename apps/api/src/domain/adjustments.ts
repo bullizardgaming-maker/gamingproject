@@ -48,6 +48,8 @@ export async function decideAdjustment(ctx: Ctx, id: string, adminId: string, ap
     if (!a) throw notFound('Adjustment');
     if (a.status !== 'pending_approval') throw conflict('already_decided', `Adjustment is ${a.status}`);
     if (a.requested_by === adminId) throw forbidden('four_eyes', 'A different admin must approve this adjustment');
+    // Security audit (Nov 2026): the approver never approves a line that pays their own account.
+    if (approve && (a.lines as AdjustmentLine[]).some((l) => l.ownerId === adminId)) throw forbidden('own_account', 'You cannot approve an adjustment to your own account');
     if (!approve) {
       return one(s.tx, `UPDATE ledger_adjustments SET status = 'rejected', decided_by = $2, decided_at = now() WHERE id = $1 RETURNING *`, [id, adminId]);
     }

@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { assertNoOffPlatform } from '../lib/offplatform.js';
 import type { Ctx } from '../context.js';
 import { many, maybeOne, one } from '../db.js';
 import { commissionSettings, listRanks } from '../domain/commission.js';
@@ -576,6 +577,7 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   });
   app.post('/games/votes', async (req, reply) => {
     const { name } = z.object({ name: z.string().trim().min(1).max(80) }).parse(req.body);
+    assertNoOffPlatform(name); // security audit: suggestions are listed publicly
     return reply.status(201).send(await suggestGame(ctx, me(req), name));
   });
   app.post('/games/votes/:id/vote', async (req) => {

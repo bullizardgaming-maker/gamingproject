@@ -574,8 +574,13 @@ describe('Round 23d', () => {
       NODE_ENV: 'production', APP_ENV: 'production', JWT_SECRET: 'x'.repeat(40), DATA_ENCRYPTION_KEYS: 'v1:Y2ktb25seS1kYXRhLWtleS0zMi1ieXRlcy0tLS0tLS0=', FINGERPRINT_KEY: 'fp', CRYPTO_INDEXER_SECRET: 'idx',
       PLATFORM_ACCOUNTS: 'live', MALWARE_SCANNER: 'clamd', EMAIL_PROVIDER: 'resend', RESEND_API_KEY: 're_test', SMS_PROVIDER: 'twilio', TURNSTILE_SECRET: '1x0000000000000000000000000000000AA',
       ORIGIN_SHARED_SECRET: 'origin-secret-of-at-least-32-characters!',
+      PAYMENT_PROVIDER: 'nowpayments', KYC_PROVIDER: 'sumsub', GEO_COUNTRY_HEADER: 'cf-ipcountry', // security audit: required in production
     } as any;
     expect(() => loadConfig(base)).not.toThrow();
+    // Security audit (EDGE-3/4): production refuses the mock payment page, mock KYC and a missing country header.
+    expect(() => loadConfig({ ...base, PAYMENT_PROVIDER: 'mock' })).toThrow(/PAYMENT_PROVIDER=mock is not allowed/);
+    expect(() => loadConfig({ ...base, KYC_PROVIDER: undefined })).toThrow(/KYC_PROVIDER=mock is not allowed/);
+    expect(() => loadConfig({ ...base, GEO_COUNTRY_HEADER: undefined })).toThrow(/GEO_COUNTRY_HEADER/);
     expect(() => loadConfig({ ...base, ORIGIN_SHARED_SECRET: 'short' })).toThrow(/at least 32 characters/);
     expect(() => loadConfig({ ...base, STAFF_MFA_REQUIRED: 'false' })).toThrow(/STAFF_MFA_REQUIRED=false is not allowed/);
 

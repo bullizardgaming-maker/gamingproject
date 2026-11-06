@@ -56,6 +56,11 @@ export interface User {
   region?: Region;
   /** True when the current session was established with a second factor. */
   session_mfa?: boolean;
+  /**
+   * Security audit (Nov 2026): false when this session may not use staff powers (staff two-factor is required and the
+   * session was opened without it). Paths that check a staff permission outside requirePermission read it via staffCan().
+   */
+  staff_session_ok?: boolean;
   session_id?: string;
   session_family?: string;
 }
@@ -123,6 +128,11 @@ export function assertMaySignIn(user: { status: string; suspended_until?: string
   }
 }
 
+/** Staff two-factor rule: on in production unless explicitly configured (production refuses 'false'). */
+export function staffMfaRequired(cfg: { STAFF_MFA_REQUIRED?: string; NODE_ENV: string }): boolean {
+  return (cfg.STAFF_MFA_REQUIRED ?? (cfg.NODE_ENV === 'production' ? 'true' : 'false')) === 'true';
+}
+
 export async function userFromToken(ctx: Ctx, token: string): Promise<User> {
   try {
     const payload = await verifyJwt(ctx, token, 'session');
@@ -137,7 +147,7 @@ export async function userFromToken(ctx: Ctx, token: string): Promise<User> {
       user.status = 'active';
       user.suspended_until = null;
     }
-    return { ...user, session_mfa: session.mfa, session_id: session.id, session_family: session.family_id };
+    return { ...user, session_mfa: session.mfa, staff_session_ok: !staffMfaRequired(ctx.cfg) || session.mfa, session_id: session.id, session_family: session.family_id };
   } catch {
     throw new AppError(401, 'session_expired', 'You were signed out. Sign in again.'); // Round 23f (§9.2)
   }

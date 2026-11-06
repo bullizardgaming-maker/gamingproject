@@ -471,7 +471,10 @@ export async function applyCryptoPayment(ctx: Ctx, ev: Extract<PaymentEvent, { t
     if (row0.order_id) await lockOrder(s.tx, row0.order_id);
     else if (row0.deposit_id) await s.tx.query('SELECT id FROM wallet_deposits WHERE id = $1 FOR UPDATE', [row0.deposit_id]);
     else await s.tx.query('SELECT id FROM orders WHERE checkout_id = $1 ORDER BY id FOR UPDATE', [row0.checkout_id]);
-    const row = await one<{ id: string; status: string; applied_at: string | null }>(s.tx, 'SELECT id, status, applied_at FROM crypto_payments WHERE id = $1 FOR UPDATE', [row0.id]);
+    const row = await one<{ id: string; status: string; applied_at: string | null; review_reason: string | null }>(s.tx, 'SELECT id, status, applied_at, review_reason FROM crypto_payments WHERE id = $1 FOR UPDATE', [row0.id]);
+    // Security audit (Nov 2026): money from a sanctioned wallet stays held for compliance — a later poll or IPN for the same
+    // payment that no longer names the payer must not fund the order or credit the balance.
+    if (row.review_reason?.startsWith('sanctioned_wallet')) return payable(s.tx, ref, buyerId, false);
     // A row already credited to the buyer's balance keeps that status; the deposit figures still update.
     await s.tx.query(
       `UPDATE crypto_payments SET status = CASE WHEN status = 'credited' THEN 'credited' ELSE $2 END, actually_paid = $3, actually_paid_usd = $4, outcome_amount = $5, outcome_currency = $6, raw = $7, updated_at = now() WHERE id = $1`,
@@ -529,7 +532,7 @@ export async function applyCryptoPayment(ctx: Ctx, ev: Extract<PaymentEvent, { t
     }
     // The deposits that fund this order are marked with what each was worth, so anything arriving later is treated as extra.
     const funding = await many<{ id: string; actually_paid_usd: string | null; outcome_amount: string | null; outcome_currency: string | null; price_currency: string; raw: any }>(
-      s.tx, `SELECT id, actually_paid_usd::text, outcome_amount::text, outcome_currency, price_currency, raw FROM crypto_payments WHERE ${whereRef(target)} AND applied_at IS NULL AND status IN ('finished', 'confirmed', 'sending', 'partially_paid') FOR UPDATE`, [target.id],
+      s.tx, `SELECT id, actually_paid_usd::text, outcome_amount::text, outcome_currency, price_currency, raw FROM crypto_payments WHERE ${whereRef(target)} AND applied_at IS NULL AND status IN ('finished', 'confirmed', 'sending', 'partially_paid') AND (review_reason IS NULL OR review_reason NOT LIKE 'sanctioned_wallet%') FOR UPDATE`, [target.id],
     );
     // USD invoices: the whole gap between what the buyer sent and what reached the wallet is NOWPayments' fee (CFO B1).
     // Round 25b (M1): with an EUR invoice the gap also holds the EUR→USD conversion: only the expected fee is psp_fee,

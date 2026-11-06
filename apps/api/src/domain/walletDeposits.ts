@@ -1,3 +1,4 @@
+import { assertNotPaused } from './controls.js';
 import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { many, maybeOne, one } from '../db.js';
@@ -85,6 +86,7 @@ export const VIEW = 'id, user_id, method, currency, amount_cents, fee_cents, tot
 
 /** Creates the deposit (awaiting_payment); the caller starts the crypto invoice on it. */
 export async function createDeposit(ctx: Ctx, userId: string, input: { method: DepositMethod; amountCents: number; ipCountry?: string | null }) {
+  await assertNotPaused(ctx.db, 'orders'); // security audit: the "pause orders" switch stops new money coming in through top-ups too
   const t = depositMethodTable(ctx)[input.method];
   if (!t.enabled) throw new AppError(409, 'method_coming_soon', 'This way of adding funds is coming soon');
   if (input.method !== 'crypto') throw new AppError(409, 'method_coming_soon', 'This way of adding funds is coming soon');
@@ -160,9 +162,17 @@ export async function creditDeposit(s: TxScope, deposit: { id: string; user_id: 
 export async function topupWithdrawReview(ctx: Ctx, q: Queryable, userId: string): Promise<string[]> {
   const r = await one<{ deposits: number; deposited: string; biggest: string; spent: string }>(
     q,
-    `SELECT (SELECT count(*)::int FROM wallet_deposits d WHERE d.user_id = $1 AND d.status = 'credited' AND d.credited_at > now() - interval '30 days') AS deposits,
-            (SELECT COALESCE(SUM(amount_cents), 0)::bigint FROM wallet_deposits d WHERE d.user_id = $1 AND d.status = 'credited' AND d.credited_at > now() - interval '30 days')::text AS deposited,
-            (SELECT COALESCE(MAX(amount_cents), 0)::bigint FROM wallet_deposits d WHERE d.user_id = $1 AND d.status = 'credited' AND d.credited_at > now() - interval '30 days')::text AS biggest,
+    // Security audit (Nov 2026): what was actually credited from outside money (every user_credit credit whose transaction
+    // drew on gateway_clearing: wallet top-ups incl. overpayment, order overpayments, kept partial / late / extra deposits),
+    // not the amount the deposit was opened for — sending far more than a small deposit's amount no longer skips the review.
+    `WITH topups AS (
+       SELECT e.txn_id, SUM(e.amount_cents) AS cents FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id
+        WHERE a.kind = 'user_credit' AND a.owner_id = $1 AND e.amount_cents > 0 AND e.created_at > now() - interval '30 days'
+          AND EXISTS (SELECT 1 FROM ledger_entries g JOIN ledger_accounts ga ON ga.id = g.account_id WHERE g.txn_id = e.txn_id AND ga.kind = 'gateway_clearing')
+        GROUP BY e.txn_id)
+     SELECT (SELECT count(*)::int FROM topups) AS deposits,
+            (SELECT COALESCE(SUM(cents), 0)::bigint FROM topups)::text AS deposited,
+            (SELECT COALESCE(MAX(cents), 0)::bigint FROM topups)::text AS biggest,
             (SELECT COALESCE(SUM(credit_cents), 0)::bigint FROM orders o WHERE o.buyer_id = $1 AND o.paid_at > now() - interval '30 days' AND o.status NOT IN ('cancelled'))::text AS spent`,
     [userId],
   );

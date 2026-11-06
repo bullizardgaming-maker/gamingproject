@@ -90,3 +90,11 @@ export function permissionsOf(u: HasRoles): Set<Permission> {
 
 export const hasPermission = (u: HasRoles, p: Permission) => permissionsOf(u).has(p);
 export const isStaff = (u: HasRoles) => rolesOf(u).length > 0;
+
+/**
+ * Security audit (Nov 2026): a staff permission used outside requirePermission (order/chat reads, response field stripping)
+ * applies only to an active account on a session that satisfies the staff two-factor rule — the same conditions
+ * requirePermission enforces. Users loaded without session data (system paths) are judged by their roles alone.
+ */
+export const staffCan = (u: HasRoles & { status?: string; staff_session_ok?: boolean }, p: Permission) =>
+  hasPermission(u, p) && (u.status === undefined || u.status === 'active') && u.staff_session_ok !== false;

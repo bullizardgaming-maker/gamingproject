@@ -196,6 +196,19 @@ export async function requestRateOverride(ctx: Ctx, actor: { id: string }, input
   const current = await maybeOne<{ rate: string }>(ctx.db, 'SELECT rate::text AS rate FROM fx_rates WHERE currency = $1', [currency]);
   const previous = current ? Number(current.rate) : null;
   const changeBps = previous ? Math.round((Math.abs(input.rate - previous) / previous) * 10_000) : 0;
+  // Security audit (Nov 2026): a run of self-applied small steps (each ≤ 2 %) is measured from where it started — the rate
+  // before the first self-applied override of the last 24 h since the last two-person approval — so one person cannot move
+  // the rate further than the second-approver threshold.
+  const chainStart = await maybeOne<{ previous_rate: string | null }>(
+    ctx.db,
+    `SELECT previous_rate::text FROM fx_rate_overrides o
+      WHERE o.currency = $1 AND o.status = 'applied' AND o.decided_by IS NULL AND o.decided_at > now() - make_interval(hours => $2)
+        AND o.requested_at > COALESCE((SELECT max(requested_at) FROM fx_rate_overrides WHERE currency = $1 AND status = 'applied' AND decided_by IS NOT NULL), '-infinity')
+      ORDER BY o.requested_at ASC LIMIT 1`,
+    [currency, FX_OVERRIDE_HOURS],
+  );
+  const base = chainStart?.previous_rate ? Number(chainStart.previous_rate) : null;
+  const chainBps = base ? Math.round((Math.abs(input.rate - base) / base) * 10_000) : 0;
   await ctx.db.query(`UPDATE fx_rate_overrides SET status = 'superseded', decided_at = now() WHERE currency = $1 AND status = 'pending'`, [currency]);
   const row = await one<any>(
     ctx.db,
@@ -203,7 +216,7 @@ export async function requestRateOverride(ctx: Ctx, actor: { id: string }, input
      VALUES ($1, $2, $3, $4, $5, $6, 'pending') RETURNING *`,
     [currency, input.rate, previous, changeBps, input.note, actor.id],
   );
-  if (changeBps > FX_OVERRIDE_SECOND_APPROVER_BPS) {
+  if (Math.max(changeBps, chainBps) > FX_OVERRIDE_SECOND_APPROVER_BPS) {
     return { ...row, applied: false, needs_second_approver: true, change_bps: changeBps };
   }
   await applyOverride(ctx, row, actor.id, true);

@@ -38,6 +38,7 @@ const prodEnv = (extra: Record<string, string> = {}) =>
     TURNSTILE_SECRET: '1x0000000000000000000000000000000AA',
     ORIGIN_SHARED_SECRET: 'origin-secret-of-at-least-32-characters!', // required in production since Round 23b
     SMS_PROVIDER: 'twilio',
+    PAYMENT_PROVIDER: 'nowpayments', KYC_PROVIDER: 'sumsub', GEO_COUNTRY_HEADER: 'cf-ipcountry', // security audit: required in production
     ...extra,
   }) as any;
 
@@ -72,7 +73,7 @@ describe('9. the production image has every runtime package', () => {
 
 describe('7. staging mode', () => {
   it('APP_ENV=staging with NODE_ENV=production allows MALWARE_SCANNER=dev (no ClamAV, no CLAMD_HOST)', () => {
-    const cfg = loadConfig(prodEnv({ APP_ENV: 'staging', MALWARE_SCANNER: 'dev', SANDBOX_MODE: 'true', PLATFORM_ACCOUNTS: 'mock' }));
+    const cfg = loadConfig(prodEnv({ APP_ENV: 'staging', MALWARE_SCANNER: 'dev', SANDBOX_MODE: 'true', PLATFORM_ACCOUNTS: 'mock', PAYMENT_PROVIDER: 'mock', KYC_PROVIDER: 'mock' }));
     expect(cfg.APP_ENV).toBe('staging');
     expect(cfg.NODE_ENV).toBe('production');
     expect(cfg.MALWARE_SCANNER).toBe('dev');
