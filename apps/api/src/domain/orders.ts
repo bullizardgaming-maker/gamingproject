@@ -5,14 +5,14 @@ import { many, maybeOne, one, withTx } from '../db.js';
 import { badRequest, conflict, forbidden, notFound, AppError } from '../lib/errors.js';
 import type { PaymentEvent } from '../providers/payments/types.js';
 import { appendMessage, createOrderRoom } from './chat.js';
-import { grossUp, refreshSellerRate, sellerTier, splitGross } from './commission.js';
+import { grossUpForSeller, refreshSellerRate, sellerTier, splitGross } from './commission.js';
 import type { TxScope } from './events.js';
 import { withScope } from './events.js';
 import { applyRiskActions, assessOrder, recordSignals, riskReasonsText, subnetOf } from './fraud.js';
 import { randomBytes } from 'node:crypto';
 import { handoverFieldFor, handoverKey } from './attributeSets.js';
 import { cleanDeliveryChoice, offeredMethods, type DeliveryInfo, type DeliveryMethod } from './delivery.js';
-import { maybePayAffiliate } from './affiliates.js';
+import { maybePayAffiliate, maybeRecordBounty } from './affiliates.js';
 import { markDelivered, releaseReservation, reserveInventory, reserveManualStock, storeManualDelivery } from './inventory.js';
 import { accountId, orderEscrowBalance, post } from './ledger.js';
 import { centsToTokenUnits, orderIdToBytes32 } from './web3.js';
@@ -298,8 +298,9 @@ export async function priceOrder(
   }
   // The seller's price in the settlement currency, then the commission grossed up on top of it.
   const sellerAmount = Math.round(listingTotal / listingRate);
-  const rateBps = (await refreshSellerRate(tx, offer.seller_id)).rateBps;
-  const amount = grossUp(sellerAmount, rateBps);
+  await refreshSellerRate(tx, offer.seller_id);
+  // Round 29d (L1): an order that crosses the promo cap pays the promo rate only on the part under it.
+  const { amount, rateBps } = await grossUpForSeller(tx, offer.seller_id, sellerAmount);
   if (amount < 1) throw badRequest('amount_too_small', 'Order total is below the minimum');
   // Round 25: currency orders are at least $1.00 (what the buyer pays, in USD).
   if (micro && amount < MIN_CURRENCY_ORDER_USD_CENTS) {
@@ -377,19 +378,26 @@ export function usdCents(settlementCurrency: string, cents: number) {
  * Round 29 (3): per-account velocity for accounts younger than 7 days — at most NEW_ACCOUNT_MAX_PAID_ORDERS_PER_DAY paid
  * orders and NEW_ACCOUNT_MAX_PAID_USD_PER_DAY in 24 h (config). A clear, automatic boundary; nothing manual.
  */
-async function assertNewAccountVelocity(ctx: Ctx, buyer: { id: string; created_at?: string }) {
+/**
+ * Round 29d (L2): the first week's velocity limits count the orders the account created (still awaiting payment) as well
+ * as the ones it paid, and this order is counted in: `current + this one > cap` refuses it, so a buyer cannot line up
+ * several unpaid orders and pay them together.
+ */
+async function assertNewAccountVelocity(q: Queryable, ctx: Ctx, buyer: { id: string; created_at?: string }, thisOrderCents: number) {
   // (The $100-per-order and 3-open-orders limits of the first week are Ops controls: assertOrderWithinLimits.)
   const u = await one<{ age_hours: number; n: number; usd_cents: string }>(
-    ctx.db,
+    q,
     `SELECT EXTRACT(EPOCH FROM (now() - u.created_at)) / 3600 AS age_hours,
-            (SELECT count(*)::int FROM orders o WHERE o.buyer_id = u.id AND o.paid_at > now() - interval '24 hours') AS n,
-            (SELECT COALESCE(SUM(o.charged_cents), 0)::bigint FROM orders o WHERE o.buyer_id = u.id AND o.paid_at > now() - interval '24 hours')::text AS usd_cents
+            (SELECT count(*)::int FROM orders o WHERE o.buyer_id = u.id AND o.created_at > now() - interval '24 hours'
+               AND (o.paid_at IS NOT NULL OR o.status = 'awaiting_payment')) AS n,
+            (SELECT COALESCE(SUM(o.charged_cents), 0)::bigint FROM orders o WHERE o.buyer_id = u.id AND o.created_at > now() - interval '24 hours'
+               AND (o.paid_at IS NOT NULL OR o.status = 'awaiting_payment'))::text AS usd_cents
        FROM users u WHERE u.id = $1`,
     [buyer.id],
   );
   if (Number(u.age_hours) >= 24 * 7) return;
-  if (u.n >= ctx.cfg.NEW_ACCOUNT_MAX_PAID_ORDERS_PER_DAY) throw new AppError(429, 'velocity_limit', `New accounts can pay for up to ${ctx.cfg.NEW_ACCOUNT_MAX_PAID_ORDERS_PER_DAY} orders a day during their first week`, { limit: 'orders', max: ctx.cfg.NEW_ACCOUNT_MAX_PAID_ORDERS_PER_DAY });
-  if (Number(u.usd_cents) >= ctx.cfg.NEW_ACCOUNT_MAX_PAID_USD_PER_DAY * 100) throw new AppError(429, 'velocity_limit', `New accounts can pay for up to $${ctx.cfg.NEW_ACCOUNT_MAX_PAID_USD_PER_DAY} a day during their first week`, { limit: 'usd', max: ctx.cfg.NEW_ACCOUNT_MAX_PAID_USD_PER_DAY });
+  if (u.n + 1 > ctx.cfg.NEW_ACCOUNT_MAX_PAID_ORDERS_PER_DAY) throw new AppError(429, 'velocity_limit', `New accounts can pay for up to ${ctx.cfg.NEW_ACCOUNT_MAX_PAID_ORDERS_PER_DAY} orders a day during their first week`, { limit: 'orders', max: ctx.cfg.NEW_ACCOUNT_MAX_PAID_ORDERS_PER_DAY });
+  if (Number(u.usd_cents) + thisOrderCents > ctx.cfg.NEW_ACCOUNT_MAX_PAID_USD_PER_DAY * 100) throw new AppError(429, 'velocity_limit', `New accounts can pay for up to $${ctx.cfg.NEW_ACCOUNT_MAX_PAID_USD_PER_DAY} a day during their first week`, { limit: 'usd', max: ctx.cfg.NEW_ACCOUNT_MAX_PAID_USD_PER_DAY });
 }
 /** Round 28 (3): the minimum per order is the seller's, or the stock left when that is smaller (manual delivery). */
 function effectiveMinQty(offer: { min_qty?: number | string | null; available?: number | string | null; delivery_mode?: string }) {
@@ -428,7 +436,6 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
   if (input.rail === 'crypto' && !ctx.cfg.ONCHAIN_ESCROW_ENABLED) throw badRequest('rail_unavailable', 'On-chain escrow is not available; pay with crypto at checkout instead');
   if (input.rail === 'crypto' && !input.walletAddress) throw badRequest('wallet_required', 'walletAddress is required for crypto escrow');
   if (input.walletAddress) await assertWalletClear(ctx, buyer.id, input.walletAddress);
-  await assertNewAccountVelocity(ctx, buyer);
 
   if (input.idempotencyKey) {
     const existing = await maybeOne<Order>(ctx.db, 'SELECT * FROM orders WHERE buyer_id = $1 AND idempotency_key = $2', [buyer.id, input.idempotencyKey]);
@@ -476,6 +483,7 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
     // Beta limits: order size for everyone, tighter for accounts in their first days (Ops → Controls).
     const created = buyer.created_at ?? (await one<{ created_at: string }>(s.tx, 'SELECT created_at FROM users WHERE id = $1', [buyer.id])).created_at;
     await assertOrderWithinLimits(s.tx, { id: buyer.id, created_at: created }, amount);
+    await assertNewAccountVelocity(s.tx, ctx, buyer, amount);
     const { rank } = await sellerTier(s.tx, offer.seller_id);
     const protection = offer.risk_class === 'high' ? 'insurance_14d' : 'until_confirmed';
     const termsVersion = await assertTermsCurrent(s.tx, buyer.id, input.tosVersion);
@@ -963,6 +971,7 @@ async function releaseEscrow(ctx: Ctx, s: TxScope, order: Order & { title: strin
     await enqueueEmail(s.tx, order.buyer_id, 'order_completed', emailData(order));
     await maybeGrantReferral(ctx, s, order);
     await maybePayAffiliate(ctx, s, order);
+    await maybeRecordBounty(ctx, s, order);
   }
   s.notifyUser(order.seller_id, 'order.completed', { orderId: order.id });
   s.notifyUser(order.buyer_id, 'order.completed', { orderId: order.id });

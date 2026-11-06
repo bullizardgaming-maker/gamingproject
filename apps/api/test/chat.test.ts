@@ -108,6 +108,11 @@ describe('chat ledger', () => {
     expect(msgs).toHaveLength(before);
     expect(msgs.some((m: any) => m.body.includes('discord'))).toBe(false);
     expect((await seller.api.get(`/v1/chat/rooms/${roomId}/messages`)).body.some((m: any) => m.body.includes('discord'))).toBe(false);
+    // Round 29d (H1): the inbox preview never shows a hidden message to the other party (nor to the sender).
+    for (const who of [buyer, seller]) {
+      const room = (await who.api.get('/v1/chat/rooms')).body.find((r: any) => r.id === roomId);
+      expect(room.last_message ?? '').not.toContain('discord');
+    }
     const mod = await makeUser(h, { role: 'support' });
     const queue = (await mod.api.get('/v1/admin/moderation/chats')).body;
     const flag = queue.find((f: any) => f.room_id === roomId);

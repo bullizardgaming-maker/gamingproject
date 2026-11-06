@@ -265,21 +265,49 @@ export async function requestCryptoWithdrawal(ctx: Ctx, userId: string, amountCe
     if (instant && ctx.payments instanceof NowPaymentsProvider) {
       try {
         const decided = await decideWithdrawal(ctx, w.id, { id: userId, role: 'system' }, true, undefined, { system: true });
-        return withdrawalView({ ...w, ...decided, instant: decided.status !== 'pending_approval' });
+        return sellerWithdrawalView({ ...w, ...decided, instant: decided.status !== 'pending_approval' });
       } catch (err) {
         ctx.log.warn({ err: (err as Error).message, withdrawalId: w.id }, 'dragon instant payout could not be sent; left for staff');
-        return withdrawalView({ ...(await one<any>(ctx.db, 'SELECT * FROM withdrawals WHERE id = $1', [w.id])), instant: false });
+        return sellerWithdrawalView({ ...(await one<any>(ctx.db, 'SELECT * FROM withdrawals WHERE id = $1', [w.id])), instant: false });
       }
     }
-    return withdrawalView(w);
+    return sellerWithdrawalView(w);
   });
 }
 
-/** Round 29: a withdrawal as the web shows it — `method` and masked `details`, never the phone / IPA itself. */
+/** Round 29: a withdrawal as Ops shows it — `method` and masked `details`, never the phone / IPA itself. */
 export function withdrawalView<T extends Record<string, any>>(w: T) {
   const details = w.method === 'usdt' || !w.method ? { network: w.destination_currency ?? null, address: w.destination_address ?? null } : w.method === 'wallet' ? { phone: w.destination_hint ?? null } : { ipa: w.destination_hint ?? null };
   const { destination_ciphertext: _c, ...rest } = w;
   return { ...rest, method: w.method ?? 'usdt', details };
+}
+
+/** "TXk4…9fQ2": enough of an address to recognise it, not enough to copy it. */
+const maskAddress = (a: string | null | undefined) => (a && a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a ?? null);
+
+/**
+ * Round 29d (M2): a withdrawal as its owner (buyer or seller) sees it — status, amounts, fee, method, the masked destination
+ * and one generic reason code. Staff ids, notes, the provider's wording, review texts and poll bookkeeping never leave Ops.
+ */
+export function sellerWithdrawalView(w: Record<string, any>) {
+  const method = w.method ?? 'usdt';
+  const details = method === 'usdt' ? { network: w.destination_currency ?? null, address: maskAddress(w.destination_address) } : method === 'wallet' ? { phone: w.destination_hint ?? null } : { ipa: w.destination_hint ?? null };
+  const reason_code =
+    w.status === 'rejected' ? 'rejected'
+    : w.status === 'failed' ? (w.provider_error ? 'provider_error' : 'failed')
+    : w.status === 'unknown' ? 'checking_with_provider'
+    : w.status === 'pending_approval' && w.review_reason ? 'under_review'
+    : w.status === 'pending_approval' ? 'awaiting_approval'
+    : null;
+  return {
+    id: w.id, status: w.status, reason_code,
+    amount_cents: Number(w.amount_cents), fee_cents: w.fee_cents == null ? null : Number(w.fee_cents), net_cents: w.net_cents == null ? null : Number(w.net_cents),
+    network_fee_cents: w.network_fee_cents == null ? null : Number(w.network_fee_cents), currency: w.currency, source: w.source ?? 'balance',
+    method, details, country: w.country ?? null,
+    payout_currency: w.payout_currency ?? 'USD', payout_amount_cents: w.payout_amount_cents == null ? null : Number(w.payout_amount_cents), payout_rate: w.payout_rate == null ? null : Number(w.payout_rate),
+    destination_currency: w.destination_currency ?? null, tx_hash: w.tx_hash ?? null,
+    instant: w.instant ?? false, created_at: w.created_at, updated_at: w.updated_at ?? w.created_at, decided_at: w.decided_at ?? null,
+  };
 }
 
 export async function listPendingWithdrawals(q: Queryable, ctx?: Ctx) {
@@ -718,6 +746,7 @@ export async function markPayoutSentManually(ctx: Ctx, id: string, staff: User, 
   const lead = hasPermission(staff, 'withdrawals.second_approve');
   if (!finance && !lead) throw forbidden('forbidden', 'Finance or the Support Lead only');
   return withScope(ctx, async (s) => {
+    await assertNotPaused(s.tx, 'withdrawals'); // Round 29d (L4): the kill switch covers money sent by hand too
     const w = await maybeOne<any>(s.tx, 'SELECT * FROM withdrawals WHERE id = $1 FOR UPDATE', [id]);
     if (!w) throw notFound('Withdrawal');
     if (!['processing', 'unknown'].includes(w.status)) throw conflict('not_sendable', `A ${w.status} withdrawal cannot be marked as sent`);

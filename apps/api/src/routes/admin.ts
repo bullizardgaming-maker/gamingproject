@@ -28,7 +28,7 @@ import { businessMetrics } from '../domain/analytics.js';
 import { getTicket, staffReply, ticketQueue, updateTicket } from '../domain/support.js';
 import { DISPUTE_CATEGORIES, caseFile } from '../domain/disputes.js';
 import { addTerm, chatFlagQueue, decideChatFlag, decideListing, listTerms, moderationCounts, removeTerm, reviewQueue } from '../domain/moderation.js';
-import { me, requestMeta, requirePermission } from '../server.js';
+import { me, requestMeta, requirePermission, requireAnyPermission } from '../server.js';
 import { audit, listAudit } from '../domain/audit.js';
 import { ipCountriesOf } from '../domain/sessions.js';
 import { decideClaim, escalatedClaims } from '../domain/warranty.js';
@@ -39,6 +39,7 @@ import { retentionPolicy, runRetention } from '../domain/retention.js';
 import { keyStatus, rotateAll } from '../domain/keyrotation.js';
 import { setRate, taxReport } from '../domain/tax.js';
 import { fxPosition, recordConversion } from '../domain/sellerfx.js';
+import { FX_OVERRIDE_HOURS, FX_OVERRIDE_SECOND_APPROVER_BPS, currentRates, decideRateOverride, listRateOverrides, requestRateOverride } from '../domain/fx.js';
 import { getInvoice, invoicePdf, issueMonthlyInvoices } from '../domain/invoices.js';
 import { decideAdjustment, listAdjustments, requestAdjustment, userLedger } from '../domain/adjustments.js';
 import { decideTreasuryWithdrawal, listTreasuryWithdrawals, requestTreasuryWithdrawal, treasuryBalance } from '../domain/treasury.js';
@@ -255,7 +256,8 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   const assertOutranks = (actor: { id: string; role: string; staff_roles?: string[] | null }, targetId: string) => assertMayChangeStatus(ctx.db, actor, targetId);
   /** Round 29 (1): the account as staff see it — region, the connection countries (sign-up and latest session), the withdrawal country. */
   app.get('/admin/users/:id', async (req) => {
-    if (!hasPermission(me(req), 'users.suspend')) requirePermission(req, 'support.manage');
+    // Round 29d (M3): always through requirePermission, so staff MFA and a suspended account's loss of powers apply.
+    requireAnyPermission(req, ['users.suspend', 'support.manage']);
     const { id } = Id.parse(req.params);
     const user = await maybeOne<any>(ctx.db, `SELECT ${PUBLIC_USER_COLUMNS}, seller_rank, founding, trust_level, payout_country, payout_method FROM users WHERE id = $1`, [id]);
     if (!user) throw notFound('User');
@@ -772,6 +774,28 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const reencrypted = await rotateAll(ctx);
     await audit(ctx.db, req, 'keys.rotated', { type: 'keyring', id: null }, { current: ctx.keyring.currentVersion, reencrypted });
     return { reencrypted, status: await keyStatus(ctx) };
+  });
+
+  // --- Round 29d (M4): the rate table — sources, fallback flags, Finance overrides (2nd approver above 2 %) ------
+  app.get('/admin/fx/rates', async (req) => {
+    requirePermission(req, 'fx.manage');
+    return { ...(await currentRates(ctx)), overrides: await listRateOverrides(ctx), second_approver_above_bps: FX_OVERRIDE_SECOND_APPROVER_BPS, override_hours: FX_OVERRIDE_HOURS };
+  });
+  app.put('/admin/fx/rates/:currency', async (req) => {
+    const actor = requirePermission(req, 'fx.manage');
+    const { currency } = z.object({ currency: z.string().length(3) }).parse(req.params);
+    const body = z.object({ rate: z.number().positive(), note: z.string().trim().min(3).max(500) }).parse(req.body);
+    const res = await requestRateOverride(ctx, actor, { currency, rate: body.rate, note: body.note });
+    await audit(ctx.db, req, res.applied ? 'fx.override' : 'fx.override_requested', { type: 'fx_rate', id: currency.toUpperCase() }, { rate: body.rate, change_bps: res.change_bps, note: body.note });
+    return res;
+  });
+  app.post('/admin/fx/rates/overrides/:id/decide', async (req) => {
+    const actor = requirePermission(req, 'fx.manage');
+    const { id } = Id.parse(req.params);
+    const { approve } = z.object({ approve: z.boolean() }).parse(req.body);
+    const res = await decideRateOverride(ctx, actor, id, approve);
+    await audit(ctx.db, req, approve ? 'fx.override_approved' : 'fx.override_rejected', { type: 'fx_rate_override', id }, { currency: res.currency, rate: res.rate });
+    return res;
   });
 
   // --- Currency position (sellers paid in EUR/EGP) ---------------------------------------

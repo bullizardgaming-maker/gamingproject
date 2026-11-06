@@ -2,7 +2,7 @@ import type { Ctx } from '../context.js';
 import type { Queryable } from '../db.js';
 import { many, maybeOne, one } from '../db.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
-import type { TxScope } from './events.js';
+import { withScope, type TxScope } from './events.js';
 import { accountId, post } from './ledger.js';
 
 /**
@@ -111,6 +111,86 @@ export async function maybePayAffiliate(ctx: Ctx, s: TxScope, order: { id: strin
   return earned;
 }
 
+/**
+ * Round 29d (M5, CFO 16): the creator's first-order bounty — $2.50 for a referred buyer's FIRST completed order of $10 or
+ * more, paid once the order has had no dispute for 7 days, only during the creator's first 90 days in the programme, and
+ * capped per creator and across all creators per month (the caps are checked when it is paid, not when it is earned).
+ */
+export async function maybeRecordBounty(ctx: Ctx, s: TxScope, order: { id: string; buyer_id: string; seller_id?: string; charged_cents?: number; currency: string }) {
+  if (!ctx.cfg.CREATOR_BOUNTY_CENTS) return null;
+  const a = await maybeOne<{ id: string; user_id: string; created_at: string; prior_orders: number }>(
+    s.tx,
+    `SELECT a.id, a.user_id, a.created_at,
+            (SELECT count(*)::int FROM orders o WHERE o.buyer_id = t.user_id AND o.id <> $2 AND o.status = 'completed') AS prior_orders
+       FROM affiliate_attributions t JOIN affiliates a ON a.id = t.affiliate_id JOIN users u ON u.id = t.user_id
+      WHERE t.user_id = $1 AND a.status = 'active' AND u.referred_by IS NULL`,
+    [order.buyer_id, order.id],
+  );
+  if (!a || a.prior_orders > 0) return null;
+  if (order.seller_id && order.seller_id === a.user_id) return null;
+  if ((order.charged_cents ?? 0) < ctx.cfg.CREATOR_BOUNTY_MIN_ORDER_CENTS) return null;
+  if (Date.now() - new Date(a.created_at).getTime() > ctx.cfg.CREATOR_BOUNTY_FIRST_DAYS * 86_400_000) return null;
+  const linked = await maybeOne(
+    s.tx,
+    `SELECT 1 FROM risk_signals x JOIN risk_signals y ON x.kind = y.kind AND x.value = y.value
+      WHERE x.user_id = $1 AND y.user_id = $2 AND x.kind IN ('device', 'card', 'wallet', 'ip_subnet') LIMIT 1`,
+    [a.user_id, order.buyer_id],
+  );
+  if (linked) return null;
+  const ins = await s.tx.query(
+    `INSERT INTO creator_bounties (affiliate_id, creator_id, buyer_id, order_id, amount_cents, currency, eligible_at)
+     VALUES ($1, $2, $3, $4, $5, $6, now() + make_interval(days => $7)) ON CONFLICT (order_id) DO NOTHING`,
+    [a.id, a.user_id, order.buyer_id, order.id, ctx.cfg.CREATOR_BOUNTY_CENTS, order.currency, ctx.cfg.CREATOR_BOUNTY_DISPUTE_DAYS],
+  );
+  return ins.rowCount ? ctx.cfg.CREATOR_BOUNTY_CENTS : null;
+}
+
+/** Worker: pays the bounties whose 7 dispute-free days are up; a disputed or refunded order voids it; the monthly caps void the rest. */
+export async function payCreatorBounties(ctx: Ctx, limit = 200): Promise<{ paid: number; voided: number }> {
+  const due = await many<{ id: string }>(ctx.db, `SELECT id FROM creator_bounties WHERE status = 'pending' AND eligible_at <= now() ORDER BY eligible_at LIMIT $1`, [limit]);
+  let paid = 0;
+  let voided = 0;
+  for (const { id } of due) {
+    await withScope(ctx, async (s) => {
+      const b = await one<any>(s.tx, 'SELECT * FROM creator_bounties WHERE id = $1 FOR UPDATE', [id]);
+      if (b.status !== 'pending') return;
+      const trouble = await maybeOne<{ reason: string }>(
+        s.tx,
+        `SELECT CASE WHEN d.id IS NOT NULL THEN 'disputed' ELSE 'order_' || o.status END AS reason
+           FROM orders o LEFT JOIN disputes d ON d.order_id = o.id WHERE o.id = $1 AND (d.id IS NOT NULL OR o.status <> 'completed')`,
+        [b.order_id],
+      );
+      const voidIt = async (reason: string) => {
+        await s.tx.query(`UPDATE creator_bounties SET status = 'void', void_reason = $2 WHERE id = $1`, [id, reason]);
+        voided++;
+      };
+      if (trouble) return voidIt(trouble.reason);
+      const amount = Number(b.amount_cents);
+      const month = await one<{ creator: string; total: string }>(
+        s.tx,
+        `SELECT COALESCE(SUM(amount_cents) FILTER (WHERE creator_id = $1), 0)::text AS creator, COALESCE(SUM(amount_cents), 0)::text AS total
+           FROM creator_bounties WHERE status = 'paid' AND paid_at >= date_trunc('month', now())`,
+        [b.creator_id],
+      );
+      if (Number(month.creator) + amount > ctx.cfg.CREATOR_BOUNTY_CREATOR_MONTH_CAP_CENTS) return voidIt('creator_month_cap');
+      if (Number(month.total) + amount > ctx.cfg.CREATOR_BOUNTY_MONTH_CAP_CENTS) return voidIt('month_cap');
+      await post(
+        s.tx,
+        [
+          { account: await accountId(s.tx, 'treasury', b.currency), amountCents: -amount },
+          { account: await accountId(s.tx, 'seller_available', b.currency, b.creator_id), amountCents: amount },
+        ],
+        'creator_bounty',
+        b.order_id,
+      );
+      await s.tx.query(`UPDATE creator_bounties SET status = 'paid', paid_at = now() WHERE id = $1`, [id]);
+      s.notifyUser(b.creator_id, 'affiliate.bounty', { orderId: b.order_id, amountCents: amount });
+      paid++;
+    });
+  }
+  return { paid, voided };
+}
+
 /** The creator's own view: code, rate, buyers brought, earnings. */
 export async function affiliateSummary(q: Queryable, userId: string) {
   const a = await maybeOne<any>(
@@ -119,11 +199,13 @@ export async function affiliateSummary(q: Queryable, userId: string) {
             (SELECT count(*)::int FROM affiliate_attributions t WHERE t.affiliate_id = a.id) AS buyers,
             (SELECT COALESCE(sum(e.earned_cents), 0)::bigint FROM affiliate_earnings e WHERE e.affiliate_id = a.id) AS earned_cents,
             (SELECT COALESCE(sum(e.earned_cents), 0)::bigint FROM affiliate_earnings e WHERE e.affiliate_id = a.id AND e.created_at > date_trunc('month', now())) AS earned_month_cents,
-            (SELECT count(*)::int FROM affiliate_earnings e WHERE e.affiliate_id = a.id) AS orders
+            (SELECT count(*)::int FROM affiliate_earnings e WHERE e.affiliate_id = a.id) AS orders,
+            (SELECT COALESCE(sum(b.amount_cents), 0)::bigint FROM creator_bounties b WHERE b.affiliate_id = a.id AND b.status = 'paid') AS bounties_paid_cents,
+            (SELECT COALESCE(sum(b.amount_cents), 0)::bigint FROM creator_bounties b WHERE b.affiliate_id = a.id AND b.status = 'pending') AS bounties_pending_cents
        FROM affiliates a WHERE a.user_id = $1`,
     [userId],
   );
   if (!a) return null;
   const recent = await many(q, `SELECT e.order_id, e.commission_cents, e.earned_cents, e.currency, e.created_at FROM affiliate_earnings e WHERE e.affiliate_id = $1 ORDER BY e.created_at DESC LIMIT 50`, [a.id]);
-  return { ...a, rate_bps: Number(a.rate_bps), earned_cents: Number(a.earned_cents), earned_month_cents: Number(a.earned_month_cents), recent };
+  return { ...a, rate_bps: Number(a.rate_bps), earned_cents: Number(a.earned_cents), earned_month_cents: Number(a.earned_month_cents), bounties_paid_cents: Number(a.bounties_paid_cents), bounties_pending_cents: Number(a.bounties_pending_cents), recent };
 }

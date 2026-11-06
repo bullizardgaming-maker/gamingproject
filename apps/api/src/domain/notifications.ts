@@ -146,7 +146,7 @@ export const TEMPLATES = {
     subject: (d) => `Your payment is ${money(d.owed_cents, d.currency)} short`,
     body: (d, link) =>
       `We received ${money(d.paid_cents, d.currency)} for your order, which is ${money(d.owed_cents, d.currency)} less than its price (network fees or an exchange rate change on the way). ` +
-      `Open the order and send the remaining amount to finish paying; what you sent is kept for it.\n\n${link(`/orders/${d.order_id}?pay=crypto`)}`,
+      `Open the ${d.kind === 'deposit' ? 'top-up' : 'order'} and send the remaining amount to finish paying; what you sent is kept for it.\n\n${link(d.kind === 'deposit' ? `/account/wallet?deposit=${String(unmark(d.order_id)).replace(/^deposit:/, '')}` : `/orders/${d.order_id}?pay=crypto`)}`,
   },
   crypto_refund_address: {
     category: 'orders',
@@ -450,7 +450,7 @@ export const TEMPLATES = {
     category: 'orders',
     subject: (d) => `${money(d.amount_cents, d.currency)} kept in your balance`,
     body: (d, link) =>
-      `The payment window for your order closed before the full amount arrived, so the ${money(d.amount_cents, d.currency)} you sent is now in your Bullizard balance. Use it on your next order at checkout, or withdraw it to your wallet (6% fee, minimum 1.50).\n\n${link('/account#credit')}`,
+      `The payment window for your ${d.kind === 'deposit' ? 'top-up' : 'order'} closed before the full amount arrived, so the ${money(d.amount_cents, d.currency)} you sent is now in your Bullizard balance. Use it on your next order at checkout, or withdraw it (the withdrawal fee of your method applies).\n\n${link('/account/wallet')}`,
   },
   listing_expired_league: {
     category: 'selling',

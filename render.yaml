@@ -52,6 +52,8 @@ envVarGroups:
         value: "USD" # CFO B12: payouts locked to USD (USDT TRC-20 / BEP-20)
       - key: FX_SPREAD_BPS
         value: "100" # Round 29 (11): 1 % spread on EUR quotes (CFO)
+      - key: FX_PROVIDER
+        value: live # Round 29d (M4): EGP from the CBE official rate, EUR from the ECB, open.er-api as a flagged fallback; daily at 10:00 Cairo
       - key: SANCTIONS_SOURCE
         value: "ofac" # Round 29 (11): OFAC SDN loaded at start-up and refreshed every 6 h; Ops alert when missing or > 7 days old
       - key: PAYOUT_HOLD_DAYS_NEW
@@ -90,6 +92,10 @@ envVarGroups:
       # Same random value as the X-Origin-Auth header Cloudflare adds (Transform Rule): openssl rand -hex 32
       - key: ORIGIN_SHARED_SECRET
         sync: false
+      # Round 29d: the connection country (crypto hidden in Egypt, sanctioned countries refused) — read only on requests that
+      # carried X-Origin-Auth, so it cannot be spoofed around Cloudflare
+      - key: GEO_COUNTRY_HEADER
+        value: cf-ipcountry
       # Brevo newsletter sync (optional; blank = Ops exports a CSV instead)
       - key: BREVO_API_KEY
         sync: false

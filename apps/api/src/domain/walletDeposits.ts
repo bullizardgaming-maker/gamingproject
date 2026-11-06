@@ -6,6 +6,8 @@ import { accountId, post } from './ledger.js';
 import { enqueueEmail } from './notifications.js';
 import type { TxScope } from './events.js';
 import { isCryptoBlockedCountry } from './geo.js';
+import { creditPartialDeposit, settleStuckPayments } from './cryptoPayments.js';
+import { withScope } from './events.js';
 
 /**
  * Round 29b (CFO, 5 Nov): the wallet. Every user has one; it holds a balance per currency (USD from crypto; EGP from the
@@ -99,8 +101,8 @@ export async function createDeposit(ctx: Ctx, userId: string, input: { method: D
   if (Number(u.age_hours) < 24 * 7 && Number(u.today) + q.amountCents > ctx.cfg.NEW_ACCOUNT_MAX_PAID_USD_PER_DAY * 100) {
     throw new AppError(429, 'velocity_limit', `New accounts can add up to $${ctx.cfg.NEW_ACCOUNT_MAX_PAID_USD_PER_DAY} a day during their first week`, { limit: 'deposit_usd', max: ctx.cfg.NEW_ACCOUNT_MAX_PAID_USD_PER_DAY });
   }
-  // One open crypto deposit at a time: the previous one lapses.
-  await ctx.db.query(`UPDATE wallet_deposits SET status = 'cancelled', updated_at = now() WHERE user_id = $1 AND status = 'awaiting_payment' AND created_at < now() - interval '2 hours'`, [userId]);
+  // One open crypto deposit at a time: an earlier one past its window lapses (what arrived on it stays in the wallet).
+  await expireUnpaidDeposits(ctx, 20, userId);
   return one<any>(
     ctx.db,
     `INSERT INTO wallet_deposits (user_id, method, currency, amount_cents, fee_cents, total_cents, payment_provider, payment_ref, ip_country)
@@ -171,4 +173,36 @@ export async function topupWithdrawReview(ctx: Ctx, q: Queryable, userId: string
   if (r.deposits >= ctx.cfg.TOPUP_REVIEW_CYCLES && spentPct < ctx.cfg.TOPUP_REVIEW_SPENT_PCT) reasons.push(`${r.deposits} top-ups in 30 days ($${(deposited / 100).toFixed(2)}) with ${spentPct} % spent — withdrawing without buying`);
   if (biggest > ctx.cfg.TOPUP_REVIEW_CYCLE_MAX_CENTS && spentPct < ctx.cfg.TOPUP_REVIEW_SPENT_PCT) reasons.push(`A top-up of $${(biggest / 100).toFixed(2)} in the last 30 days with ${spentPct} % spent`);
   return reasons;
+}
+
+/**
+ * Round 29d (M1): the deposit reaper — like cancelUnpaidExpired for orders. A top-up still awaiting payment after its window
+ * (ORDER_PAYMENT_TTL_MINUTES + one hour for a deposit mined right at expiry) is expired, after the provider has been asked
+ * about anything in flight; a partial payment is credited to the wallet (never refunded).
+ */
+export async function expireUnpaidDeposits(ctx: Ctx, limit = 200, userId?: string): Promise<number> {
+  const due = await many<{ id: string }>(
+    ctx.db,
+    `SELECT id FROM wallet_deposits WHERE status = 'awaiting_payment' AND created_at <= now() - make_interval(mins => $1)
+        ${userId ? 'AND user_id = $3' : ''} ORDER BY created_at LIMIT $2`,
+    userId ? [ctx.cfg.ORDER_PAYMENT_TTL_MINUTES + 60, limit, userId] : [ctx.cfg.ORDER_PAYMENT_TTL_MINUTES + 60, limit],
+  );
+  let n = 0;
+  for (const { id } of due) {
+    try {
+      await settleStuckPayments(ctx, { depositId: id });
+      const stillArrived = await maybeOne(ctx.db, `SELECT 1 FROM crypto_payments WHERE deposit_id = $1 AND status IN ('finished', 'confirmed', 'sending') AND applied_at IS NULL AND review_reason IS NULL AND COALESCE(credited_cents, 0) = 0`, [id]);
+      if (stillArrived) continue; // the provider could not be asked: never expire over money that may have arrived
+      await withScope(ctx, async (s) => {
+        const d = await one<any>(s.tx, 'SELECT * FROM wallet_deposits WHERE id = $1 FOR UPDATE', [id]);
+        if (d.status !== 'awaiting_payment') return;
+        await s.tx.query(`UPDATE wallet_deposits SET status = 'expired', updated_at = now() WHERE id = $1`, [id]);
+        await creditPartialDeposit(ctx, s, d);
+        n++;
+      });
+    } catch (err) {
+      if (!(err instanceof AppError)) ctx.log.error({ err, depositId: id }, 'deposit expire failed');
+    }
+  }
+  return n;
 }

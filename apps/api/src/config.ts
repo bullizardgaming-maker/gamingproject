@@ -111,6 +111,14 @@ const Env = z.object({
   // CFO: payout hold after release, by rank (days); Dragon is instant. Staff overrides and the watch list still apply.
   PAYOUT_HOLD_DAYS_BY_RANK: z.string().default('{"hatchling":3,"scale":2,"fang":1,"basilisk":1,"dragon":0}'),
   // CFO: a creator's share runs for this long per referred buyer.
+  // Round 29d (M5, CFO 16): creator first-order bounty — $2.50 per first order of $10+, paid after 7 dispute-free days,
+  // during the creator's first 90 days; capped at $150 per creator and $250 across all creators per month. 0 = off.
+  CREATOR_BOUNTY_CENTS: z.coerce.number().int().min(0).default(250),
+  CREATOR_BOUNTY_MIN_ORDER_CENTS: z.coerce.number().int().min(0).default(1000),
+  CREATOR_BOUNTY_DISPUTE_DAYS: z.coerce.number().int().min(0).default(7),
+  CREATOR_BOUNTY_FIRST_DAYS: z.coerce.number().int().min(1).default(90),
+  CREATOR_BOUNTY_CREATOR_MONTH_CAP_CENTS: z.coerce.number().int().min(0).default(15000),
+  CREATOR_BOUNTY_MONTH_CAP_CENTS: z.coerce.number().int().min(0).default(25000),
   CREATOR_SHARE_MONTHS: z.coerce.number().int().min(1).default(12),
   // Round 29b (CFO): wallet deposits per method — fee, minimum and maximum (minor units of the method's currency).
   DEPOSIT_METHODS_JSON: z.string().optional(),
@@ -179,6 +187,8 @@ const Env = z.object({
   SUPPORTED_CURRENCIES: z.string().default('USD,EUR,EGP'),
   // ecb covers EUR; EGP is not an ECB currency, so 'live' merges ECB with the open exchange-rate API.
   FX_PROVIDER: z.enum(['static', 'ecb', 'live']).default('static'),
+  // Round 29d (M4, CFO): rates update once a day at this hour, Cairo time.
+  FX_REFRESH_HOUR_CAIRO: z.coerce.number().int().min(0).max(23).default(10),
   FX_STATIC_RATES: z.string().default('{"EUR":0.92,"EGP":48.5}'),
   PAYOUT_CURRENCIES: z.string().default('USD'), // CFO B12: payout currency locked to USD at launch (comma list to widen later)
   FX_SPREAD_BPS: z.coerce.number().int().min(0).max(1000).default(0), // CFO B12: no spread while everything is charged in USD; EUR/EGP are shown as approximate
@@ -352,6 +362,9 @@ export function loadConfig(overrides: Partial<Record<keyof Config, string>> = {}
     throw new Error('Use ESCROW_SIGNER=aws_kms in production: the escrow signing key must not sit in an environment variable');
   }
   if (cfg.ESCROW_SIGNER === 'aws_kms' && !cfg.ESCROW_KMS_KEY_ID) throw new Error('ESCROW_KMS_KEY_ID is required with ESCROW_SIGNER=aws_kms');
+  // Round 29d (H2): the country header (CF-IPCountry) is believed only on requests that passed the Cloudflare origin check,
+  // so it is meaningless — and unsafe — without the origin secret.
+  if (cfg.GEO_COUNTRY_HEADER && !cfg.ORIGIN_SHARED_SECRET) throw new Error('GEO_COUNTRY_HEADER needs ORIGIN_SHARED_SECRET: the country header is only trusted on requests Cloudflare authenticated');
   if (cfg.NODE_ENV === 'production') {
     for (const key of ['JWT_SECRET', 'DATA_ENCRYPTION_KEYS', 'FINGERPRINT_KEY', 'CRYPTO_INDEXER_SECRET'] as const) {
       if (!process.env[key] && !overrides[key]) throw new Error(`${key} must be set explicitly in production`);

@@ -111,7 +111,7 @@ export async function listRooms(keyring: Keyring, q: Queryable, userId: string) 
     `SELECT r.*, o.title AS offer_title, ord.status AS order_status, ord.ref AS order_ref,
             bu.display_name AS buyer_name, su.display_name AS seller_name,
             (SELECT row_to_json(m) FROM (SELECT id, room_id, seq, sender_id, kind, body, body_sealed, hash_version, created_at FROM chat_messages m
-                                          WHERE m.room_id = r.id ORDER BY seq DESC LIMIT 1) m) AS last
+                                          WHERE m.room_id = r.id AND NOT m.hidden ORDER BY seq DESC LIMIT 1) m) AS last
        FROM chat_rooms r
        LEFT JOIN offers o ON o.id = r.offer_id
        LEFT JOIN orders ord ON ord.id = r.order_id

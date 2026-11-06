@@ -23,7 +23,7 @@ import { affiliateSummary } from '../domain/affiliates.js';
 import { controls } from '../domain/controls.js';
 import { wallet } from '../domain/wallet.js';
 import { LEGAL_DOCS, acceptTerms, acceptanceStatus, currentDocument, documentHistory, documentVersion, pendingNotice, tosVersion } from '../domain/legal.js';
-import { requestCryptoWithdrawal, withdrawalView } from '../domain/cryptoPayouts.js';
+import { requestCryptoWithdrawal, sellerWithdrawalView } from '../domain/cryptoPayouts.js';
 import { listSuggestions, suggestGame, vote } from '../domain/gameVotes.js';
 import { deleteAccount, exportData } from '../domain/privacy.js';
 import { isStaff as isStaffUser, permissionsOf } from '../domain/permissions.js';
@@ -474,7 +474,6 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
   /** Round 25 (B5): how a viewer in this currency can pay (config PAYMENT_METHODS_JSON; only enabled methods). */
   app.get('/payment-methods', async (req) => {
     const { currency } = z.object({ currency: z.string().length(3).toUpperCase().optional() }).parse(req.query);
-    // Round 29 (1): crypto is hidden for the account country in CRYPTO_BLOCKED_COUNTRIES (Egypt) — never by IP.
     // Round 29 (1): crypto is hidden where the connection comes from a CRYPTO_BLOCKED_COUNTRIES country (Egypt) — the
     // edge's CF-IPCountry decides; the user never sees a country.
     return paymentMethodsFor(ctx, currency).filter((m) => m.id !== 'crypto' || !isCryptoBlockedCountry(ctx, requestMeta(req).ipCountry));
@@ -498,9 +497,10 @@ export async function publicRoutes(app: FastifyInstance, ctx: Ctx) {
       method: z.enum(WITHDRAWAL_METHODS).optional(),
       details: z.object({ network: z.string().max(20).optional(), address: z.string().max(128).optional(), phone: z.string().max(40).optional(), ipa: z.string().max(120).optional() }).optional(),
     }).parse(req.body);
+    assertNotSanctioned(ctx, requestMeta(req).ipCountry, 'withdraw'); // Round 29d (L3)
     return reply.status(201).send(await requestCryptoWithdrawal(ctx, me(req).id, body.amountCents, ctx.cfg.SETTLEMENT_CURRENCY, { source: 'credit', method: body.method, details: body.details, meta: requestMeta(req) }));
   });
-  app.get('/me/withdrawals', async (req) => (await many(ctx.db, 'SELECT * FROM withdrawals WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100', [me(req).id])).map(withdrawalView));
+  app.get('/me/withdrawals', async (req) => (await many(ctx.db, 'SELECT * FROM withdrawals WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100', [me(req).id])).map(sellerWithdrawalView));
   // --- Round 29b: add funds to the wallet (crypto now; Egyptian methods listed as coming soon) ----------
   /** The ways to add funds here, with fee, minimum and maximum; crypto hidden where the connection is from Egypt. */
   app.get('/me/wallet/deposit-methods', async (req) => ({ methods: depositMethodsFor(ctx, requestMeta(req).ipCountry) }));

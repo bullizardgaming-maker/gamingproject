@@ -16,7 +16,7 @@ import { exportListings, importListings } from '../domain/bulkListings.js';
 import { listLinked, startLink, unlink } from '../domain/linkedAccounts.js';
 import { DELIVERY_TIME_KEYS, MAX_VOLUME_DISCOUNTS, MAX_VOLUME_PERCENT, parseUnitPrice } from '../domain/unitPrice.js';
 import { ACCENTS, MAX_INTRO, MAX_PINNED, deleteBanner, storefront, updateStorefront, uploadBanner } from '../domain/storefront.js';
-import { confirmPayoutAddress, payoutAddressOf, removePayoutAddress, requestCryptoWithdrawal, requestPayoutAddress, withdrawalView } from '../domain/cryptoPayouts.js';
+import { confirmPayoutAddress, payoutAddressOf, removePayoutAddress, requestCryptoWithdrawal, requestPayoutAddress, sellerWithdrawalView } from '../domain/cryptoPayouts.js';
 import { WITHDRAWAL_METHODS, isWithdrawalMethod, withdrawalFeeQuote, withdrawalMethodsFor } from '../domain/withdrawalMethods.js';
 import { NowPaymentsProvider } from '../providers/payments/nowpayments.js';
 import { withdrawable } from '../domain/payoutholds.js';
@@ -262,6 +262,7 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/offers/:id/pause', async (req) => setListingState(ctx, me(req).id, Id.parse(req.params).id, 'pause'));
   app.post('/offers/:id/resume', async (req) => {
     requireSeller(me(req)); // Round 26c (H1): a banned or ID-overdue seller cannot bring listings back
+    assertNotSanctioned(ctx, requestMeta(req).ipCountry, 'sell'); // Round 29d (L3): the sell check on every way back to the market
     return setListingState(ctx, me(req).id, Id.parse(req.params).id, 'resume');
   });
   app.delete('/offers/:id', async (req) => setListingState(ctx, me(req).id, Id.parse(req.params).id, 'delete'));
@@ -282,6 +283,7 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
       .parse(req.body);
     const { version, ...patch } = body;
     if (patch.status === 'active') requireSeller(me(req)); // Round 26c (H1)
+    assertNotSanctioned(ctx, requestMeta(req).ipCountry, 'sell'); // Round 29d (L3): editing or re-activating a listing is selling
     return updateOffer(ctx, me(req).id, Id.parse(req.params).id, version, offerInput(patch));
   });
 
@@ -318,6 +320,7 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     const user = me(req);
     const body = WithdrawalBody.parse(req.body);
     const currency = body.currency ?? 'USD'; // Round 22b: withdrawals are USD only (anything else: 400 unsupported_currency)
+    assertNotSanctioned(ctx, requestMeta(req).ipCountry, 'withdraw'); // Round 29d (L3): by the connection country too (the withdrawal country is checked inside)
     // Round 29: the method and details the web shows are checked against the confirmed payout method (CFO fee rules apply).
     return reply.status(201).send(await requestCryptoWithdrawal(ctx, user.id, body.amountCents, currency, { method: body.method, details: body.details, meta: requestMeta(req) }));
   });
@@ -497,7 +500,7 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
     const user = me(req);
     return reply.status(201).send(await startDebtPayment(ctx, user, id, amountCents));
   });
-  app.get('/seller/withdrawals', async (req) => (await many(ctx.db, 'SELECT * FROM withdrawals WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100', [me(req).id])).map(withdrawalView));
+  app.get('/seller/withdrawals', async (req) => (await many(ctx.db, 'SELECT * FROM withdrawals WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100', [me(req).id])).map(sellerWithdrawalView));
 
   /** Link a self-custody wallet (for crypto escrow payouts), proven by a personal_sign signature. */
   app.post('/me/wallet', async (req) => {

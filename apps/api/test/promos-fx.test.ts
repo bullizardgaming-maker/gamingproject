@@ -250,6 +250,88 @@ describe('multiple currencies', () => {
     expect((await client(h.app).get('/v1/offers?q=currency%20test&currency=EUR&maxPrice=4900')).body.items).toHaveLength(1);
   });
 
+  // Round 29d (M4, CFO 6): the rate table — CBE for EGP (fallback flagged), daily at 10:00 Cairo, Finance overrides.
+  it('M4: EGP comes from the CBE official rate; another source answering instead is flagged as a fallback', async () => {
+    const { CbeFxProvider, CompositeFxProvider, StaticFxProvider, parseCbeUsd, refreshRates } = await import('../src/domain/fx.js');
+    const page = '<table><tr><th>Currency</th><th>Buy</th><th>Sell</th></tr><tr><td>US Dollar</td><td>48.4915</td><td>48.6215</td></tr><tr><td>Euro</td><td>52.1</td><td>52.3</td></tr></table>';
+    expect(parseCbeUsd(page)).toBeCloseTo(48.5565, 4);
+    expect(parseCbeUsd('<html>maintenance</html>')).toBeNull();
+    expect(parseCbeUsd('<td>US Dollar</td><td>48.5</td><td>60</td>')).toBeNull(); // nonsense spread → not trusted
+    const cbeDown = { name: 'cbe', fetch: async () => { throw new Error('CBE 503'); } };
+    const cbeUp = { name: 'cbe', fetch: async () => ({ EGP: 48.5565 }) };
+    const ecb = { name: 'ecb', fetch: async () => ({ EUR: 0.92, EGP: 48.9 }) };
+    // CBE answers → EGP from the CBE, not flagged; EUR from the ECB, not flagged
+    const live = new CompositeFxProvider([cbeUp, ecb, new StaticFxProvider({ EGP: 49, EUR: 0.93 })], { EGP: 'cbe', EUR: 'ecb' });
+    expect(await live.fetchDetailed('USD')).toMatchObject({ EGP: { rate: 48.5565, source: 'cbe', fallback: false }, EUR: { rate: 0.92, source: 'ecb', fallback: false } });
+    // CBE down → the ECB's EGP cross rate is used and flagged
+    const degraded = new CompositeFxProvider([cbeDown, ecb], { EGP: 'cbe', EUR: 'ecb' });
+    expect(await degraded.fetchDetailed('USD')).toMatchObject({ EGP: { rate: 48.9, source: 'ecb', fallback: true }, EUR: { fallback: false } });
+    expect(new CbeFxProvider()).toBeInstanceOf(CbeFxProvider);
+    const saved = h.ctx.fx;
+    try {
+      (h.ctx as any).fx = degraded;
+      await refreshRates(h.ctx);
+      const rates = (await client(h.app).get('/v1/fx/rates')).body.rates;
+      expect(rates.find((r: any) => r.currency === 'EGP')).toMatchObject({ source: 'ecb', fallback: true });
+      expect(rates.find((r: any) => r.currency === 'EUR')).toMatchObject({ source: 'ecb', fallback: false });
+    } finally {
+      (h.ctx as any).fx = saved;
+      await refreshRates(h.ctx);
+    }
+  });
+
+  it('M4: rates refresh once a day at 10:00 Cairo, not hourly', async () => {
+    const { lastDailyUpdateAt, maybeRefreshRates } = await import('../src/domain/fx.js');
+    // 06:00 Cairo = 04:00Z → the due update is yesterday 10:00 Cairo (08:00Z yesterday)
+    expect(lastDailyUpdateAt(new Date('2026-11-06T04:00:00Z')).toISOString()).toBe('2026-11-05T08:00:00.000Z');
+    expect(lastDailyUpdateAt(new Date('2026-11-06T09:30:00Z')).toISOString()).toBe('2026-11-06T08:00:00.000Z');
+    await h.ctx.db.query(`UPDATE fx_rates SET fetched_at = now()`);
+    expect(await maybeRefreshRates(h.ctx)).toBe(0); // fetched after the last 10:00 Cairo → nothing to do
+    await h.ctx.db.query(`UPDATE fx_rates SET fetched_at = now() - interval '2 hours' WHERE currency = 'EUR'`);
+    // two hours old is fine unless 10:00 Cairo fell inside those two hours
+    const due = lastDailyUpdateAt().getTime();
+    const expected = Date.now() - 2 * 3_600_000 < due ? 2 : 0;
+    expect(await maybeRefreshRates(h.ctx)).toBe(expected);
+    await h.ctx.db.query(`UPDATE fx_rates SET fetched_at = now() - interval '25 hours'`);
+    expect(await maybeRefreshRates(h.ctx)).toBe(2); // behind yesterday's update → refreshed (both currencies)
+  });
+
+  it('M4: Finance overrides a rate in Ops; a change above 2 % waits for a second Finance member; an override holds for 24 h against the feed', async () => {
+    const finance = await makeUser(h, { role: 'finance' });
+    const finance2 = await makeUser(h, { role: 'finance' });
+    const support = await makeUser(h, { role: 'support' });
+    expect((await support.api.put('/v1/admin/fx/rates/EGP', { rate: 49, note: 'x' })).status).toBe(403);
+    // 48.5 → 49.0 = +1.03 %: applied at once
+    const small = await finance.api.put('/v1/admin/fx/rates/EGP', { rate: 49, note: 'CBE moved this morning' });
+    expect(small.status, JSON.stringify(small.body)).toBe(200);
+    expect(small.body).toMatchObject({ applied: true, needs_second_approver: false, status: 'applied', change_bps: 103 });
+    let table = (await finance.api.get('/v1/admin/fx/rates')).body;
+    expect(table.rates.find((r: any) => r.currency === 'EGP')).toMatchObject({ rate: '49.00000000', source: 'override' });
+    expect(table.rates.find((r: any) => r.currency === 'EGP').override_until).toBeTruthy();
+    // the daily feed does not undo a live override
+    const { refreshRates } = await import('../src/domain/fx.js');
+    await refreshRates(h.ctx);
+    expect((await client(h.app).get('/v1/fx/rates')).body.exact.EGP).toBe('49.00000000');
+    // 49 → 52 = +6.1 %: needs a second approver; the requester cannot approve their own
+    const big = await finance.api.put('/v1/admin/fx/rates/EGP', { rate: 52, note: 'parallel market gap' });
+    expect(big.body).toMatchObject({ applied: false, needs_second_approver: true, status: 'pending', change_bps: 612 });
+    expect((await client(h.app).get('/v1/fx/rates')).body.exact.EGP).toBe('49.00000000');
+    expect((await finance.api.post(`/v1/admin/fx/rates/overrides/${big.body.id}/decide`, { approve: true })).body.error.code).toBe('second_person_required');
+    const approved = await finance2.api.post(`/v1/admin/fx/rates/overrides/${big.body.id}/decide`, { approve: true });
+    expect(approved.body).toMatchObject({ status: 'applied', decided_by: finance2.id });
+    expect((await client(h.app).get('/v1/fx/rates')).body.exact.EGP).toBe('52.00000000');
+    table = (await finance.api.get('/v1/admin/fx/rates')).body;
+    expect(table.overrides[0]).toMatchObject({ status: 'applied', requested_by_name: expect.any(String), decided_by_name: expect.any(String) });
+    // a rejected one changes nothing
+    const again = await finance.api.put('/v1/admin/fx/rates/EGP', { rate: 60, note: 'typo' });
+    expect((await finance2.api.post(`/v1/admin/fx/rates/overrides/${again.body.id}/decide`, { approve: false })).body.status).toBe('rejected');
+    expect((await client(h.app).get('/v1/fx/rates')).body.exact.EGP).toBe('52.00000000');
+    // after the 24 h the feed takes over again
+    await h.ctx.db.query(`UPDATE fx_rates SET override_until = now() - interval '1 minute' WHERE currency = 'EGP'`);
+    await refreshRates(h.ctx);
+    expect((await client(h.app).get('/v1/fx/rates')).body.exact.EGP).toBe('48.50000000');
+  });
+
   it('refuses to price in a currency whose rate is stale, and rejects unsupported currencies', async () => {
     const seller = await makeUser(h, { tier: 2 });
     const buyer = await makeUser(h, { tier: 1 });

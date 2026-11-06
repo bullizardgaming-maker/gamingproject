@@ -215,7 +215,7 @@ describe('crypto checkout (NOWPayments)', () => {
     // Withdraw $20: gross leaves the balance now, waits for the CFO.
     const w = await seller.api.post('/v1/seller/withdrawals', { amountCents: 2000 });
     expect(w.status, JSON.stringify(w.body)).toBe(201);
-    expect(w.body).toMatchObject({ status: 'pending_approval', fee_cents: 150, net_cents: 1850, destination_address: 'TSellerAddress1234567890', destination_currency: 'usdttrc20' });
+    expect(w.body).toMatchObject({ status: 'pending_approval', fee_cents: 150, net_cents: 1850, details: { address: 'TSelle…7890', network: 'usdttrc20' }, destination_currency: 'usdttrc20' }); // Round 29d (M2): masked for the owner
     expect((await seller.api.get('/v1/seller/dashboard')).body.balances.availableCents).toBe(dash.balances.availableCents - 2000);
     const bal = async (kind: string) => Number((await h.ctx.db.query(`SELECT COALESCE(SUM(e.amount_cents), 0) AS s FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id WHERE a.kind = $1 AND e.memo LIKE $2`, [kind, `%:${w.body.id}`])).rows[0].s);
     expect(await bal('withdrawals_pending')).toBe(2000);
@@ -255,7 +255,10 @@ describe('crypto checkout (NOWPayments)', () => {
     const w3 = (await seller.api.post('/v1/seller/withdrawals', { amountCents: 1000 })).body;
     const ap3 = (await cfo.api.post(`/v1/admin/withdrawals/${w3.id}/decide`, { approve: true })).body;
     await ipn({ id: ap3.payout_id, batch_withdrawal_id: ap3.provider_ref, status: 'FAILED', error: 'invalid address', currency: 'usdttrc20', amount: '8.5', address: 'TSellerAddress1234567890', hash: null });
-    expect((await seller.api.get('/v1/seller/withdrawals')).body.find((x: any) => x.id === w3.id)).toMatchObject({ status: 'failed', failure_reason: 'invalid address' });
+    const mine3 = (await seller.api.get('/v1/seller/withdrawals')).body.find((x: any) => x.id === w3.id);
+    expect(mine3).toMatchObject({ status: 'failed', reason_code: 'failed' }); // Round 29d (M2): the provider's wording stays with Ops
+    expect(mine3).not.toHaveProperty('failure_reason');
+    expect((await h.ctx.db.query('SELECT failure_reason FROM withdrawals WHERE id = $1', [w3.id])).rows[0].failure_reason).toBe('invalid address');
     expect((await seller.api.get('/v1/seller/dashboard')).body.balances.availableCents).toBe(dash.balances.availableCents - 2000);
   });
 

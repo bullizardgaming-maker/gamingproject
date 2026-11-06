@@ -77,6 +77,8 @@ const usd = (cents: number) => Math.round(cents) / 100;
 const toCents = (amount: number) => Math.round(amount * 100);
 
 /** What is being paid: one order, or a cart checkout that covers several orders with one payment. */
+const SETTLED_SHORT_ROUNDING_CENTS = 3;
+
 export type PayableRef = { orderId: string } | { checkoutId: string } | { depositId: string };
 interface Payable {
   kind: 'order' | 'checkout' | 'deposit';
@@ -495,8 +497,9 @@ export async function applyCryptoPayment(ctx: Ctx, ev: Extract<PaymentEvent, { t
       const short = due - paid;
       await s.tx.query(`UPDATE crypto_payments SET status = 'partially_paid', apply_note = $2 WHERE id = $1 AND status <> 'credited'`, [row.id, `short by ${(short / 100).toFixed(2)} ${target.currency}: paid ${(paid / 100).toFixed(2)} of ${(due / 100).toFixed(2)} (tolerance ${(tolerance / 100).toFixed(2)})`]);
       if (row.status !== 'partially_paid') {
-        const link = target.kind === 'order' ? target.id : `cart:${target.id}`;
-        await enqueueEmail(s.tx, target.buyer_id, 'crypto_underpaid', { order_id: link, paid_cents: paid, owed_cents: short, currency: target.currency }, `crypto_underpaid:${ev.paymentId}`);
+        // Round 29d (M1): the email's button opens the thing that is short — the order, or the wallet top-up.
+        const link = target.kind === 'order' ? target.id : target.kind === 'deposit' ? `deposit:${target.id}` : `cart:${target.id}`;
+        await enqueueEmail(s.tx, target.buyer_id, 'crypto_underpaid', { order_id: link, paid_cents: paid, owed_cents: short, currency: target.currency, kind: target.kind }, `crypto_underpaid:${ev.paymentId}`);
         if (target.kind === 'order') {
           const room = await maybeOne<{ id: string }>(s.tx, 'SELECT id FROM chat_rooms WHERE order_id = $1', [target.id]);
           if (room) await appendMessage(s, room.id, null, 'system', 'Payment arrived short. Buyer: send the rest or it goes to your balance.', [], undefined, { code: 'underpaid' });
@@ -513,7 +516,9 @@ export async function applyCryptoPayment(ctx: Ctx, ev: Extract<PaymentEvent, { t
     {
       const feeGuess = Math.round((due * ctx.cfg.NOWPAYMENTS_FEE_BPS) / 10_000);
       // CFO (5 Nov): more than 2 % short, or more than $10 — whichever comes first.
-      const allowance = Math.min(Math.floor((due * ctx.cfg.CRYPTO_SETTLED_SHORT_BPS) / 10_000), ctx.cfg.CRYPTO_SETTLED_SHORT_MAX_CENTS);
+      // Round 29d: a few cents of rounding (each deposit rounds its fee up) are never an anomaly — a floor of 3 cents keeps
+      // sub-dollar orders paid in two deposits from being held; the $10 cap still applies.
+      const allowance = Math.min(Math.max(Math.floor((due * ctx.cfg.CRYPTO_SETTLED_SHORT_BPS) / 10_000), SETTLED_SHORT_ROUNDING_CENTS), ctx.cfg.CRYPTO_SETTLED_SHORT_MAX_CENTS);
       const floor = due - feeGuess - allowance;
       if (settled < floor) {
         const reason = `settled_short: ${(settled / 100).toFixed(2)} reached the wallet for ${(due / 100).toFixed(2)} due`;
@@ -682,6 +687,16 @@ async function settledCents(q: Queryable, p: { kind: string; id: string }, fallb
 export async function creditPartialPayments(ctx: Ctx, s: TxScope, order: { id: string; buyer_id: string; currency: string; checkout_id?: string | null; payment_provider?: string | null }) {
   if (order.payment_provider !== 'nowpayments') return 0;
   const ref = order.checkout_id ? { kind: 'checkout', id: order.checkout_id } : { kind: 'order', id: order.id };
+  return creditPartialRows(ctx, s, ref, order);
+}
+
+/** Round 29d (M1): a wallet top-up whose window closed short — what arrived is credited to the wallet (never refunded). */
+export async function creditPartialDeposit(ctx: Ctx, s: TxScope, deposit: { id: string; user_id: string; currency: string; payment_provider?: string | null }) {
+  if (deposit.payment_provider && deposit.payment_provider !== 'nowpayments') return 0;
+  return creditPartialRows(ctx, s, { kind: 'deposit', id: deposit.id }, { id: deposit.id, buyer_id: deposit.user_id, currency: deposit.currency }, 'deposit');
+}
+
+async function creditPartialRows(ctx: Ctx, s: TxScope, ref: { kind: string; id: string }, order: { id: string; buyer_id: string; currency: string }, kind: 'order' | 'deposit' = 'order') {
   const rows = await many<{ id: string; actually_paid_usd: string | null; outcome_amount: string | null; outcome_currency: string | null }>(
     s.tx,
     `SELECT id, actually_paid_usd::text, outcome_amount::text, outcome_currency FROM crypto_payments WHERE ${whereRef(ref)} AND status = 'partially_paid' FOR UPDATE`,
@@ -702,9 +717,13 @@ export async function creditPartialPayments(ctx: Ctx, s: TxScope, order: { id: s
       { account: await accountId(s.tx, 'gateway_clearing', order.currency), amountCents: -total },
       { account: await accountId(s.tx, 'user_credit', order.currency, order.buyer_id), amountCents: total },
     ],
-    'crypto_kept_in_balance',
-    order.id,
+    kind === 'deposit' ? 'wallet_deposit_partial' : 'crypto_kept_in_balance',
+    kind === 'deposit' ? null : order.id,
   );
+  if (kind === 'deposit') {
+    await enqueueEmail(s.tx, order.buyer_id, 'crypto_kept_in_balance', { amount_cents: total, currency: order.currency, kind: 'deposit' }, `crypto_kept:deposit:${order.id}`);
+    return total;
+  }
   const room = await maybeOne<{ id: string }>(s.tx, 'SELECT id FROM chat_rooms WHERE order_id = $1', [order.id]);
   if (room) await appendMessage(s, room.id, null, 'system', `The payment window closed with ${(total / 100).toFixed(2)} ${order.currency} received. It is kept in the buyer's balance to spend on a later order or withdraw.`, [], undefined, { code: 'underpayment_kept', params: { amount_cents: total, currency: order.currency } });
   await enqueueEmail(s.tx, order.buyer_id, 'crypto_kept_in_balance', { order_id: order.id, amount_cents: total, currency: order.currency }, `crypto_kept:${order.id}`);

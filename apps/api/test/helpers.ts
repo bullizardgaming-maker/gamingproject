@@ -54,20 +54,23 @@ export async function setup(overrides: Record<string, string> = {}, ctxOverrides
 
 export type Api = ReturnType<typeof client>;
 
+/** Headers every harness request carries (a suite that runs behind the origin secret sets x-origin-auth here). */
+export const defaultHeaders: Record<string, string> = {};
+
 export function client(app: FastifyInstance, token?: string, headers: Record<string, string> = {}) {
   const call = async (method: string, url: string, payload?: unknown, extra: Record<string, string> = {}) => {
     // Round 23e (item 9): orders must name the Terms version the buyer saw. Like the web app (which sends the version it
     // loaded with the page), the harness sends the version in force unless the test sets `tosVersion` itself (even to
     // undefined, to send none).
     if (method === 'POST' && url === '/v1/orders' && payload && typeof payload === 'object' && !('tosVersion' in payload)) {
-      const terms = await app.inject({ method: 'GET', url: '/v1/legal/terms', headers: { ...headers, ...extra } });
+      const terms = await app.inject({ method: 'GET', url: '/v1/legal/terms', headers: { ...defaultHeaders, ...headers, ...extra } });
       if (terms.statusCode === 200) payload = { ...(payload as object), tosVersion: terms.json().version };
     }
     const res: LightMyRequestResponse = await app.inject({
       method: method as any,
       url,
       payload: payload as any,
-      headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...headers, ...extra },
+      headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...defaultHeaders, ...headers, ...extra },
     });
     let body: any = res.body;
     try {

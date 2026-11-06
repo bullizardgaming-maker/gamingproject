@@ -7,8 +7,9 @@ import { detectOpsAlerts } from '../src/domain/opsAlerts.js';
 import { allowedWebOrigins, legacyCookieDomain, refreshCookieDomain } from '../src/server.js';
 import { cleanIdentifier, withdrawalFeeTable } from '../src/domain/withdrawalMethods.js';
 import { FakeNow } from './fakeNowPayments.js';
-import { client, makeOffer, makeUser, setup, type Harness } from './helpers.js';
+import { client, makeOffer, makeUser, setup, type Harness, defaultHeaders } from './helpers.js';
 
+const ORIGIN_SECRET = 'origin-secret-of-at-least-32-characters!';
 const IPN_SECRET = 'ipn-secret-for-tests';
 let h: Harness;
 let fake: FakeNow;
@@ -27,18 +28,24 @@ beforeAll(async () => {
   };
   const payments = new NowPaymentsProvider({ apiKey: 'k', ipnSecret: IPN_SECRET, apiUrl: 'https://np.test', email: 'e', password: 'p', twoFactorSecret: 'JBSWY3DPEHPK3PXP', fetch: fetch as any, timeoutMs: 2_000 });
   h = await setup({
-    PAYMENT_PROVIDER: 'nowpayments', NOWPAYMENTS_API_KEY: 'k', NOWPAYMENTS_IPN_SECRET: IPN_SECRET, NOWPAYMENTS_FEE_BPS: 50, GEO_COUNTRY_HEADER: 'cf-ipcountry',
+    PAYMENT_PROVIDER: 'nowpayments', NOWPAYMENTS_API_KEY: 'k', NOWPAYMENTS_IPN_SECRET: IPN_SECRET, NOWPAYMENTS_FEE_BPS: 50,
+    // Round 29d (H2): the country header is believed only behind the Cloudflare origin secret; every harness request carries it.
+    GEO_COUNTRY_HEADER: 'cf-ipcountry', ORIGIN_SHARED_SECRET: ORIGIN_SECRET,
     // CFO defaults (5 Nov): 3.99 % + $1 (min $5 / $10), wallet 6 % + EGP 10, InstaPay 6 % + EGP 5; EGP at 48.5 (static test rate) less the 1 % margin.
     WITHDRAWAL_FEES_JSON: '', CRYPTO_UNDERPAY_TOLERANCE_BPS: '0', OVERPAY_TO_BALANCE_ABOVE_CENTS: '300', PAYOUT_HOLD_DAYS_BY_RANK: '{"hatchling":3,"scale":2,"fang":1,"basilisk":1,"dragon":0}', FX_SPREAD_BPS: '100',
     NEW_ACCOUNT_MAX_PAID_ORDERS_PER_DAY: '2', NEW_ACCOUNT_MAX_PAID_USD_PER_DAY: '50', FX_STATIC_RATES: '{"EUR":0.92,"EGP":48.5}',
   }, { payments });
+  defaultHeaders['x-origin-auth'] = ORIGIN_SECRET;
   const orig = h.messenger.send.bind(h.messenger);
   h.messenger.send = async (m: any) => {
     sent.push(m);
     return orig(m);
   };
 });
-afterAll(async () => h.close());
+afterAll(async () => {
+  delete defaultHeaders['x-origin-auth'];
+  await h.close();
+});
 
 async function ipn(body: Record<string, unknown>) {
   return h.app.inject({ method: 'POST', url: '/v1/payments/webhook/nowpayments', headers: { 'content-type': 'application/json', 'x-nowpayments-sig': ipnSignature(IPN_SECRET, body) }, payload: JSON.stringify(sortDeep(body)) });
@@ -128,6 +135,22 @@ describe('Round 29 — CEO decisions and test findings', () => {
     expect(second.body).toMatchObject({ status: 'paid', tx_hash: '0xmanual1' });
     const audits = (await h.ctx.db.query(`SELECT action FROM admin_audit_log WHERE target_id = $1 ORDER BY created_at`, [w.id])).rows.map((r: any) => r.action);
     expect(audits).toEqual(expect.arrayContaining(['withdrawal.manual_send_requested', 'withdrawal.manual_sent']));
+    // Round 29d (L4): the withdrawals kill switch stops a manual send too
+    const w2 = (await seller.api.post('/v1/seller/withdrawals', { amountCents: 10_00 })).body;
+    fake.payoutMode = 'timeout'; // the fake resets to ok after each payout call
+    expect((await cfo.api.post(`/v1/admin/withdrawals/${w2.id}/decide`, { approve: true })).body.error.code).toBe('payout_unknown');
+    const admin = await makeUser(h, { role: 'admin' });
+    const { forgetControlsCache } = await import('../src/domain/controls.js');
+    await admin.api.put('/v1/admin/controls', { pause_withdrawals: true, pause_message: 'Payouts paused for a check.' });
+    forgetControlsCache();
+    try {
+      expect((await cfo.api.post(`/v1/admin/withdrawals/${w2.id}/mark-sent`, { hash: '0xmanual2', note: 'sent' })).body.error.code).toBe('withdrawals_paused');
+    } finally {
+      await admin.api.put('/v1/admin/controls', { pause_withdrawals: false, pause_message: null });
+      forgetControlsCache();
+    }
+    expect((await cfo.api.post(`/v1/admin/withdrawals/${w2.id}/mark-sent`, { hash: '0xmanual2', note: 'sent' })).status).toBe(200);
+    fake.payoutMode = 'ok';
   });
 
   it('9. the seller profile carries the rating and every badge the seller holds', async () => {
@@ -138,6 +161,26 @@ describe('Round 29 — CEO decisions and test findings', () => {
     expect(p).toMatchObject({ rating: { count: 1, average: 5, positive_pct: 100 }, rating_average: 5, review_count: 1 });
     expect(p.badges.map((b: any) => b.key)).toEqual(['rank:hatchling', 'founding', 'id_verified', 'top_seller']);
     expect(p.badges[1]).toEqual({ key: 'founding', label: 'Founding Seller' });
+  });
+
+  it('H2 (29d). the country header counts only behind the Cloudflare origin check: EG → no crypto, IR → 451, a spoofed header without origin auth is ignored; GEO_COUNTRY_HEADER needs ORIGIN_SHARED_SECRET', async () => {
+    const buyer = await makeUser(h, { tier: 1 });
+    // through Cloudflare (x-origin-auth from defaultHeaders)
+    const egypt = (await buyer.api.get('/v1/payment-methods', { 'cf-ipcountry': 'EG' })).body;
+    expect(egypt.some((m: any) => m.id === 'crypto')).toBe(false);
+    expect((await buyer.api.get('/v1/payment-methods', { 'cf-ipcountry': 'US' })).body.some((m: any) => m.id === 'crypto')).toBe(true);
+    expect((await client(h.app, undefined, { 'cf-ipcountry': 'IR' }).post('/v1/auth/register', { email: `ir_${Date.now()}@example.com`, password: 'correct horse battery', displayName: 'Nope', acceptTerms: true })).status).toBe(451);
+    // the same headers straight at the origin (no x-origin-auth): refused outright, so the header can never be spoofed
+    const direct = await h.app.inject({ method: 'GET', url: '/v1/payment-methods', headers: { authorization: `Bearer ${buyer.token}`, 'cf-ipcountry': 'EG' } });
+    expect(direct.statusCode).toBe(403);
+    expect(direct.json().error.code).toBe('origin_forbidden');
+    // a webhook path is exempt from the origin check: its country header is NOT believed (ipCountry undefined), so nothing is hidden or blocked there
+    const { requestMeta, originVerified } = await import('../src/server.js');
+    const fakeReq: any = { headers: { 'cf-ipcountry': 'IR' }, ip: '1.2.3.4' };
+    expect(originVerified(fakeReq)).toBe(false);
+    expect(requestMeta(fakeReq).ipCountry).toBeUndefined();
+    const { loadConfig } = await import('../src/config.js');
+    expect(() => loadConfig({ ...process.env, GEO_COUNTRY_HEADER: 'cf-ipcountry', ORIGIN_SHARED_SECRET: '' } as any)).toThrow(/GEO_COUNTRY_HEADER needs ORIGIN_SHARED_SECRET/);
   });
 
   it('7. the cart is gone: no cart or checkout routes; one listing per purchase', async () => {
@@ -164,11 +207,20 @@ describe('Round 29 — CEO decisions and test findings', () => {
     const seller = await makeUser(h, { tier: 2 });
     const offer = await makeOffer(seller, { deliveryMode: 'manual', stock: 5, categorySlug: 'currency', title: 'Gold', priceCents: 10_00 });
     const us = await makeUser(h, { tier: 2 });
-    const token = (await h.app.inject({ method: 'POST', url: '/v1/auth/login', payload: { email: us.email, password: 'correct horse battery' }, headers: { 'x-token-delivery': 'body' } })).json().token;
+    const token = (await h.app.inject({ method: 'POST', url: '/v1/auth/login', payload: { email: us.email, password: 'correct horse battery' }, headers: { 'x-origin-auth': ORIGIN_SECRET, 'x-token-delivery': 'body' } })).json().token;
     const fromIran = client(h.app, token, { 'cf-ipcountry': 'KP' });
     expect((await fromIran.post('/v1/orders', { offerId: offer.id, quantity: 1, ...delivery })).status).toBe(451);
     expect((await fromIran.post('/v1/offers', { categorySlug: 'currency', game: 'Albion Online', deliveryMode: 'manual', stock: 10, unitPrice: '1', deliveryMethods: ['f2f'], deliveryMinutes: 30, attributes: { server: 'Europe' } })).status).toBe(451);
     expect((await client(h.app, token, { 'cf-ipcountry': 'US' }).post('/v1/orders', { offerId: offer.id, quantity: 1, ...delivery })).status).toBe(201);
+    // Round 29d (L3): editing / resuming a listing and withdrawing are refused from a sanctioned connection too
+    const mine = await client(h.app, token, { 'cf-ipcountry': 'US' }).post('/v1/offers', { categorySlug: 'currency', game: 'Albion Online', deliveryMode: 'manual', stock: 10, unitPrice: '1', deliveryMethods: ['f2f'], deliveryMinutes: 30, attributes: { server: 'Europe' } });
+    expect(mine.status, JSON.stringify(mine.body)).toBe(201);
+    expect((await fromIran.patch(`/v1/offers/${mine.body.id}`, { version: mine.body.version, stock: 11 })).status).toBe(451);
+    await client(h.app, token, { 'cf-ipcountry': 'US' }).post(`/v1/offers/${mine.body.id}/pause`);
+    expect((await fromIran.post(`/v1/offers/${mine.body.id}/resume`)).status).toBe(451);
+    expect((await client(h.app, token, { 'cf-ipcountry': 'US' }).post(`/v1/offers/${mine.body.id}/resume`)).status).toBe(200);
+    expect((await fromIran.post('/v1/seller/withdrawals', { amountCents: 10_00 })).body.error).toMatchObject({ code: 'country_not_supported', details: { action: 'withdraw' } });
+    expect((await fromIran.post('/v1/me/withdrawals', { amountCents: 10_00 })).body.error).toMatchObject({ code: 'country_not_supported', details: { action: 'withdraw' } });
     // The seller profile shows the region, never a country.
     const profile = (await client(h.app).get(`/v1/sellers/${seller.id}`)).body;
     expect(profile.region).toBe('global');
@@ -176,10 +228,16 @@ describe('Round 29 — CEO decisions and test findings', () => {
     // Staff see the connection countries (sign-up and latest) on the account.
     const admin = await makeUser(h, { role: 'admin' });
     await client(h.app, token, { 'cf-ipcountry': 'BR' }).get('/v1/me');
-    await h.app.inject({ method: 'POST', url: '/v1/auth/login', payload: { email: us.email, password: 'correct horse battery' }, headers: { 'x-token-delivery': 'body', 'cf-ipcountry': 'BR' } });
+    await h.app.inject({ method: 'POST', url: '/v1/auth/login', payload: { email: us.email, password: 'correct horse battery' }, headers: { 'x-origin-auth': ORIGIN_SECRET, 'x-token-delivery': 'body', 'cf-ipcountry': 'BR' } });
     const view = await admin.api.get(`/v1/admin/users/${us.id}`);
     expect(view.status, JSON.stringify(view.body)).toBe(200);
     expect(view.body).toMatchObject({ region: 'global', last_ip_country: 'BR' });
+    // Round 29d (M3): the read goes through requirePermission — a suspended staff account loses it, a buyer never had it
+    expect((await client(h.app, token).get(`/v1/admin/users/${us.id}`)).body.error.code).toBe('insufficient_permission');
+    const support = await makeUser(h, { role: 'support' });
+    expect((await support.api.get(`/v1/admin/users/${us.id}`)).status).toBe(200);
+    await h.ctx.db.query(`UPDATE users SET status = 'suspended' WHERE id = $1`, [support.id]);
+    expect((await support.api.get(`/v1/admin/users/${us.id}`)).body.error.code).toBe('account_restricted');
   });
 
   it('1. crypto is hidden where the connection is from Egypt (never shown as a country); elsewhere it shows; the withdrawal country lists the methods', async () => {
@@ -286,6 +344,7 @@ describe('Round 29 — CEO decisions and test findings', () => {
     const seller = await makeUser(h, { tier: 2 });
     const cheap = await makeOffer(seller, { deliveryMode: 'manual', stock: 20, categorySlug: 'currency', title: 'Gold', priceCents: 10_00 });
     const dear = await makeOffer(seller, { deliveryMode: 'manual', stock: 20, categorySlug: 'currency', title: 'Gold', priceCents: 60_00 });
+    const mid = await makeOffer(seller, { deliveryMode: 'manual', stock: 20, categorySlug: 'currency', title: 'Gold', priceCents: 38_00 });
     const huge = await makeOffer(seller, { deliveryMode: 'manual', stock: 20, categorySlug: 'currency', title: 'Gold', priceCents: 120_00 });
     const buyer = await makeUser(h, { tier: 1 });
     await buyCrypto(buyer, cheap.id);
@@ -294,18 +353,28 @@ describe('Round 29 — CEO decisions and test findings', () => {
     expect(third.status).toBe(429);
     expect(third.body.error).toMatchObject({ code: 'velocity_limit', details: { limit: 'orders', max: 2 } });
     const rich = await makeUser(h, { tier: 1 });
-    await buyCrypto(rich, dear.id); // $60 paid in a day > $50
-    expect((await rich.api.post('/v1/orders', { offerId: cheap.id, quantity: 1, ...delivery })).body.error).toMatchObject({ code: 'velocity_limit', details: { limit: 'usd', max: 50 } });
+    // Round 29d (L2): this order counts too — $60 alone is over the $50 day, and an unpaid order counts like a paid one
+    expect((await rich.api.post('/v1/orders', { offerId: dear.id, quantity: 1, ...delivery })).body.error).toMatchObject({ code: 'velocity_limit', details: { limit: 'usd', max: 50 } });
+    const unpaid = await rich.api.post('/v1/orders', { offerId: mid.id, quantity: 1, ...delivery }); // $40, left unpaid
+    expect(unpaid.status).toBe(201);
+    expect((await rich.api.post('/v1/orders', { offerId: mid.id, quantity: 1, ...delivery })).body.error).toMatchObject({ code: 'velocity_limit', details: { limit: 'usd', max: 50 } }); // 40 + 40 > 50
+    const cancelled = await rich.api.post(`/v1/orders/${unpaid.body.order.id}/cancel`);
+    expect(cancelled.status, JSON.stringify(cancelled.body)).toBe(200);
+    const after = await rich.api.post('/v1/orders', { offerId: mid.id, quantity: 1, ...delivery });
+    expect(after.status, JSON.stringify(after.body)).toBe(201); // a cancelled order no longer counts
     // CFO: $100 per order and 3 open orders in the first week are the Ops controls (new_account_max_order_cents / new_account_max_open_orders).
     const fresh = await makeUser(h, { tier: 1 });
     await h.ctx.db.query('UPDATE platform_controls SET new_account_days = 7'); // the test harness turns the first-week controls off; on here
     const { forgetControlsCache } = await import('../src/domain/controls.js');
     forgetControlsCache();
+    const savedVelocity = h.ctx.cfg.NEW_ACCOUNT_MAX_PAID_ORDERS_PER_DAY;
+    (h.ctx.cfg as any).NEW_ACCOUNT_MAX_PAID_ORDERS_PER_DAY = 10; // the orders/day velocity (2 in this suite) would fire first
     try {
       expect((await fresh.api.post('/v1/orders', { offerId: huge.id, quantity: 1, ...delivery })).body.error).toMatchObject({ code: 'new_account_limit', details: { maxCents: 10_000 } });
       for (let i = 0; i < 3; i++) expect((await fresh.api.post('/v1/orders', { offerId: cheap.id, quantity: 1, ...delivery })).status).toBe(201);
       expect((await fresh.api.post('/v1/orders', { offerId: cheap.id, quantity: 1, ...delivery })).body.error).toMatchObject({ code: 'new_account_limit', details: { maxOpen: 3 } });
     } finally {
+      (h.ctx.cfg as any).NEW_ACCOUNT_MAX_PAID_ORDERS_PER_DAY = savedVelocity;
       await h.ctx.db.query('UPDATE platform_controls SET new_account_days = 0');
       forgetControlsCache();
     }
@@ -384,7 +453,7 @@ describe('Round 29 — CEO decisions and test findings', () => {
     expect((await seller.api.post('/v1/seller/withdrawals', { amountCents: 2000, method: 'usdt' })).body.error.code).toBe('method_not_confirmed');
     const w = await seller.api.post('/v1/seller/withdrawals', { amountCents: 20_00, method: 'wallet', details: { phone: '•••• 5678' } });
     expect(w.status, JSON.stringify(w.body)).toBe(201);
-    expect(w.body).toMatchObject({ method: 'wallet', country: 'EG', fee_cents: 120 + fixedUsd, net_cents: 2000 - 120 - fixedUsd, payout_currency: 'EGP', details: { phone: '•••• 5678' }, destination_hint: '•••• 5678', destination_address: null });
+    expect(w.body).toMatchObject({ method: 'wallet', country: 'EG', fee_cents: 120 + fixedUsd, net_cents: 2000 - 120 - fixedUsd, payout_currency: 'EGP', details: { phone: '•••• 5678' } });
     expect(Number(w.body.payout_amount_cents)).toBe(quote.payoutAmountCents);
     expect(JSON.stringify(w.body)).not.toMatch(/2010123/);
     // Finance approves: nothing goes to NOWPayments; Finance reads the number (audited) and marks it paid with the Lead.
@@ -468,6 +537,37 @@ describe('Round 29 — CEO decisions and test findings', () => {
     expect((await client(h.app, buyer.token, { 'cf-ipcountry': 'EG' }).post(`/v1/me/wallet/deposits/${dep2.id}/crypto/pay`, { coin: 'usdttrc20' })).body.error.code).toBe('method_unavailable_here');
   });
 
+  it('M1 (29d). a top-up that arrives short is told with a wallet link; after the window the reaper expires it and credits what arrived to the wallet', async () => {
+    const buyer = await agedBuyer();
+    const dep = (await buyer.api.post('/v1/me/wallet/deposits', { method: 'crypto', amountCents: 20_00 })).body;
+    const pay = await buyer.api.post(`/v1/me/wallet/deposits/${dep.id}/crypto/pay`, { coin: 'usdttrc20' });
+    const p = fake.payments.get(pay.body.payment_id)!;
+    // 20.10 due; 15.00 reaches the wallet
+    const short = finished(p, { actually_paid: Math.round(p.pay_amount * (15 / 20.1) * 1e12) / 1e12, outcome_amount: 15, actually_paid_at_fiat: 15 });
+    Object.assign(p, short);
+    await ipn(short);
+    expect((await buyer.api.get(`/v1/me/wallet/deposits/${dep.id}`)).body.status).toBe('awaiting_payment');
+    const underpaid = await h.ctx.db.query(`SELECT data FROM notifications WHERE user_id = $1 AND template = 'crypto_underpaid'`, [buyer.id]);
+    expect(underpaid.rows[0].data).toMatchObject({ kind: 'deposit', order_id: `deposit:${dep.id}` });
+    for (let i = 0; i < 6; i++) await dispatchEmails(h.ctx);
+    const mail = sent.filter((m) => m.to === buyer.email && /short/.test(m.subject ?? '')).at(-1)!;
+    expect(mail.body).toContain(`/account/wallet?deposit=${dep.id}`);
+    expect(mail.body).not.toContain('/orders/');
+    // still inside the window: nothing happens
+    const { expireUnpaidDeposits } = await import('../src/domain/walletDeposits.js');
+    expect(await expireUnpaidDeposits(h.ctx)).toBe(0);
+    await h.ctx.db.query(`UPDATE wallet_deposits SET created_at = now() - interval '3 hours' WHERE id = $1`, [dep.id]);
+    const before = (await buyer.api.get('/v1/me/wallet')).body.breakdown.USD.credit_cents;
+    expect(await expireUnpaidDeposits(h.ctx)).toBe(1);
+    expect((await buyer.api.get(`/v1/me/wallet/deposits/${dep.id}`)).body.status).toBe('expired');
+    expect((await buyer.api.get('/v1/me/wallet')).body.breakdown.USD.credit_cents).toBe(before + 15_00);
+    const kept = await h.ctx.db.query(`SELECT data FROM notifications WHERE user_id = $1 AND template = 'crypto_kept_in_balance'`, [buyer.id]);
+    expect(kept.rows[0].data).toMatchObject({ kind: 'deposit', amount_cents: 15_00 });
+    // a new top-up can start; the expired one is not touched again
+    expect((await buyer.api.post('/v1/me/wallet/deposits', { method: 'crypto', amountCents: 10_00 })).status).toBe(201);
+    expect(await expireUnpaidDeposits(h.ctx)).toBe(0);
+  });
+
   it('29b. top-up → withdraw without spending: allowed once, held for staff with the reason in words when repeated (3 in 30 days, under 20 % spent)', async () => {
     const buyer = await agedBuyer();
     await h.ctx.db.query(`UPDATE users SET payout_address = 'TBuyerAddr1234567890xyz', payout_address_currency = 'usdttrc20', payout_country = 'US', payout_hold_days = 0 WHERE id = $1`, [buyer.id]);
@@ -481,18 +581,26 @@ describe('Round 29 — CEO decisions and test findings', () => {
     await topUp(20_00);
     const first = await buyer.api.post('/v1/me/withdrawals', { amountCents: 15_00, method: 'usdt', details: { network: 'usdttrc20', address: 'TBuyerAddr1234567890xyz' } });
     expect(first.status).toBe(201);
-    expect(first.body.review_reason).toBeNull();
+    expect(first.body.reason_code).toBe('awaiting_approval');
+    // Round 29d (M2): the owner's view is a projection — no staff ids, notes, review texts or provider wording
+    for (const k of ['review_reason', 'review_reasons_text', 'decided_by', 'decision_note', 'failure_reason', 'provider_error', 'manual_send_requested_by', 'manual_send_note', 'destination_ciphertext', 'first_approved_by']) expect(first.body, k).not.toHaveProperty(k);
     await topUp(20_00);
     await topUp(20_00);
     const third = await buyer.api.post('/v1/me/withdrawals', { amountCents: 15_00 });
     expect(third.status).toBe(201);
-    expect(third.body).toMatchObject({ status: 'pending_approval', review_reason: 'topup_withdraw_pattern' });
-    expect(third.body.review_reasons_text[0]).toMatch(/3 top-ups in 30 days/);
+    expect(third.body).toMatchObject({ status: 'pending_approval', reason_code: 'under_review' });
+    expect(JSON.stringify(third.body)).not.toMatch(/top-ups in 30 days|topup_withdraw_pattern/);
+    const mine = (await buyer.api.get('/v1/me/withdrawals')).body.find((x: any) => x.id === third.body.id);
+    expect(mine).toMatchObject({ reason_code: 'under_review', method: 'usdt' });
+    expect(mine.details.address).toMatch(/^TBuyer…0xyz$/);
+    expect(mine).not.toHaveProperty('review_reasons_text');
     const flag = await h.ctx.db.query('SELECT reasons FROM risk_flags WHERE withdrawal_id = $1', [third.body.id]);
     expect(flag.rows[0].reasons.kind).toBe('topup_withdraw_pattern');
     const lead = await makeUser(h, { role: 'lead' });
     const pending = (await lead.api.get('/v1/admin/withdrawals')).body.find((x: any) => x.id === third.body.id);
     expect(pending.review_reasons_text).toHaveLength(1);
+    expect(pending.review_reasons_text[0]).toMatch(/3 top-ups in 30 days/);
+    expect(pending.review_reason).toBe('topup_withdraw_pattern');
   });
 
   it('29c. security emails are readable: "Chrome on Android", the region (never a country), the IP on its own line, the time in the user’s timezone, one "This wasn’t me" button; no "18+ only" footer', async () => {
@@ -503,7 +611,7 @@ describe('Round 29 — CEO decisions and test findings', () => {
     expect((await api.put('/v1/me/timezone', { timezone: 'Mars/Olympus' })).body.error.code).toBe('invalid_timezone');
     expect((await api.put('/v1/me/timezone', { timezone: 'Asia/Riyadh' })).body).toEqual({ timezone: 'Asia/Riyadh' });
     // a second device signs in
-    await h.app.inject({ method: 'POST', url: '/v1/auth/login', payload: { email: us.body.user.email, password: 'correct horse battery' }, headers: { 'x-token-delivery': 'body', 'cf-ipcountry': 'SA', 'user-agent': ua, 'x-forwarded-for': '203.0.113.9', 'x-device-fingerprint': 'phone-2' } });
+    await h.app.inject({ method: 'POST', url: '/v1/auth/login', payload: { email: us.body.user.email, password: 'correct horse battery' }, headers: { 'x-origin-auth': ORIGIN_SECRET, 'x-token-delivery': 'body', 'cf-ipcountry': 'SA', 'user-agent': ua, 'x-forwarded-for': '203.0.113.9', 'x-device-fingerprint': 'phone-2' } });
     for (let i = 0; i < 6; i++) await dispatchEmails(h.ctx);
     const mail = sent.filter((m) => m.to === us.body.user.email && m.subject === 'New sign-in to your Bullizard account').at(-1)!;
     expect(mail).toBeTruthy();
@@ -518,7 +626,7 @@ describe('Round 29 — CEO decisions and test findings', () => {
     expect(mail.body).not.toContain('18+');
     // Arabic, same shape
     await api.put('/v1/me/locale', { locale: 'ar' });
-    await h.app.inject({ method: 'POST', url: '/v1/auth/login', payload: { email: us.body.user.email, password: 'correct horse battery' }, headers: { 'x-token-delivery': 'body', 'cf-ipcountry': 'SA', 'user-agent': ua, 'x-device-fingerprint': 'phone-3' } });
+    await h.app.inject({ method: 'POST', url: '/v1/auth/login', payload: { email: us.body.user.email, password: 'correct horse battery' }, headers: { 'x-origin-auth': ORIGIN_SECRET, 'x-token-delivery': 'body', 'cf-ipcountry': 'SA', 'user-agent': ua, 'x-device-fingerprint': 'phone-3' } });
     for (let i = 0; i < 6; i++) await dispatchEmails(h.ctx);
     const ar = sent.filter((m) => m.to === us.body.user.email && /Bullizard/.test(m.subject ?? '') && /تسجيل دخول/.test(m.subject ?? '')).at(-1)!;
     expect(ar.body).toContain('الجهاز: Chrome on Android');
@@ -536,7 +644,7 @@ describe('Round 29 — CEO decisions and test findings', () => {
     expect(setCookies.filter((c) => c.startsWith('bz_rt=') && c.includes('Max-Age=0')).length).toBeGreaterThanOrEqual(1);
     const valid = decodeURIComponent(fresh.split(';')[0]!.slice('bz_rt2='.length));
     // a browser that still carries the old cookie twice (host-only on the API host + Domain=.bullizard.com) sends both, stale, first
-    const ok = await h.app.inject({ method: 'POST', url: '/v1/auth/refresh', headers: { cookie: `bz_rt=stale-host-only; bz_rt=stale-apex-domain; bz_rt2=${encodeURIComponent(valid)}` } });
+    const ok = await h.app.inject({ method: 'POST', url: '/v1/auth/refresh', headers: { 'x-origin-auth': ORIGIN_SECRET, cookie: `bz_rt=stale-host-only; bz_rt=stale-apex-domain; bz_rt2=${encodeURIComponent(valid)}` } });
     expect(ok.statusCode).toBe(200);
     expect(ok.json().token).toBeTruthy();
     const rotated = ([] as string[]).concat(ok.headers['set-cookie'] as any);
@@ -544,10 +652,10 @@ describe('Round 29 — CEO decisions and test findings', () => {
     expect(rotated.some((c) => c.startsWith('bz_rt=') && c.includes('Max-Age=0'))).toBe(true);
     // the old cookie alone, still valid from before the rename, is accepted once (and replaced by bz_rt2)
     const newValid = decodeURIComponent(rotated.find((c) => c.startsWith('bz_rt2=rt_'))!.split(';')[0]!.slice('bz_rt2='.length));
-    const legacy = await h.app.inject({ method: 'POST', url: '/v1/auth/refresh', headers: { cookie: `bz_rt=${encodeURIComponent(newValid)}` } });
+    const legacy = await h.app.inject({ method: 'POST', url: '/v1/auth/refresh', headers: { 'x-origin-auth': ORIGIN_SECRET, cookie: `bz_rt=${encodeURIComponent(newValid)}` } });
     expect(legacy.statusCode).toBe(200);
     // only stale values → signed out, every variant cleared
-    const bad = await h.app.inject({ method: 'POST', url: '/v1/auth/refresh', headers: { cookie: `bz_rt=stale; bz_rt2=stale-too` } });
+    const bad = await h.app.inject({ method: 'POST', url: '/v1/auth/refresh', headers: { 'x-origin-auth': ORIGIN_SECRET, cookie: `bz_rt=stale; bz_rt2=stale-too` } });
     expect(bad.statusCode).toBe(401);
     expect(bad.json().error.code).toBe('session_expired');
     expect(([] as string[]).concat(bad.headers['set-cookie'] as any).filter((c) => /^bz_rt2?=/.test(c) && c.includes('Max-Age=0')).length).toBeGreaterThanOrEqual(2);

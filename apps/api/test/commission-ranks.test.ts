@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { grossUp } from '../src/domain/commission.js';
-import { client, makeOffer, makeUser, setup, type Harness } from './helpers.js';
+import { buyAndPay, client, makeOffer, makeUser, setup, type Harness } from './helpers.js';
 
 let h: Harness;
 beforeAll(async () => {
@@ -27,6 +27,28 @@ describe('commission gross-up and seller ranks', () => {
     expect(eur).toMatchObject({ listingCurrency: 'EUR', settlementCents: 100_00, buyerCents: 105_27 });
     // Small amounts pay the minimum withdrawal fee.
     expect((await seller.api.get('/v1/seller/price-preview?priceCents=1000')).body).toMatchObject({ withdrawalFeeCents: 1_50, afterWithdrawalCents: 8_50 });
+  });
+
+  it('L1 (29d): an order that crosses the $1,500 promo cap pays the promo rate only on the part under the cap', async () => {
+    const { grossUpForSeller } = await import('../src/domain/commission.js');
+    const seller = await makeUser(h, { tier: 2 });
+    const buyer = await makeUser(h, { tier: 1 });
+    const offer = await makeOffer(seller, { priceCents: 400_00, stock: 10 });
+    await seller.api.post(`/v1/offers/${offer.id}/inventory`, { format: 'txt', content: 'L1-A\nL1-B\nL1-C' });
+    // $1,400 of promo sales already booked: $100 of the next $400 order is under the cap, $300 over it
+    await h.ctx.db.query(`UPDATE users SET seller_since = now() - interval '1 day' WHERE id = $1`, [seller.id]);
+    const o = await buyAndPay(h, buyer, offer.id);
+    await h.ctx.db.query(`UPDATE orders SET seller_net_cents = 1400_00 WHERE id = $1`, [o.id]);
+    const split = await grossUpForSeller(h.ctx.db, seller.id, 400_00);
+    expect(split.split).toEqual({ underCapCents: 100_00, promoRateBps: 500, overCapCents: 300_00, rankRateBps: 1399 });
+    expect(split.amount).toBe(grossUp(100_00, 500) + grossUp(300_00, 1399));
+    const q = (await buyer.api.post('/v1/orders/quote', { offerId: offer.id })).body;
+    expect(q.amountCents).toBe(grossUp(100_00, 500) + grossUp(300_00, 1399)); // 105.27 + 348.79, not 421.06 at the promo rate
+    expect(q.amountCents).toBeGreaterThan(grossUp(400_00, 500));
+    expect(q.amountCents).toBeLessThan(grossUp(400_00, 1399));
+    // fully over the cap: the rank rate on everything
+    await h.ctx.db.query(`UPDATE orders SET seller_net_cents = 1500_00 WHERE id = $1`, [o.id]);
+    expect((await grossUpForSeller(h.ctx.db, seller.id, 400_00))).toMatchObject({ amount: grossUp(400_00, 1399), rateBps: 1399, split: null });
   });
 
   it('shows the public rank table, and the dashboard reports rank, rate and promo', async () => {

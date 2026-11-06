@@ -126,6 +126,21 @@ export async function sellerTier(q: Queryable, sellerId: string) {
   };
 }
 
+/**
+ * Round 29d (L1): the buyer price for a seller amount, with the promo cap honoured exactly — the part of this order that
+ * still fits under the $1,500 promo cap is grossed up at the promo rate, the rest at the seller's rank rate.
+ */
+export async function grossUpForSeller(q: Queryable, sellerId: string, sellerCents: number) {
+  const t = await sellerTier(q, sellerId);
+  if (!t.promo || t.promo.remainingCents >= sellerCents) return { amount: grossUp(sellerCents, t.rateBps), rateBps: t.rateBps, split: null };
+  const underCap = Math.max(0, t.promo.remainingCents);
+  const overCap = sellerCents - underCap;
+  const amount = grossUp(underCap, t.rateBps) + grossUp(overCap, t.rank.rateBps);
+  // the blended rate, for the order's record
+  const rateBps = sellerCents > 0 ? Math.round(((amount - sellerCents) / amount) * 10_000) : t.rateBps;
+  return { amount, rateBps, split: { underCapCents: underCap, promoRateBps: t.rateBps, overCapCents: overCap, rankRateBps: t.rank.rateBps } };
+}
+
 /** Stores the seller's current rate and rank on the user row (listings read it in SQL). */
 export async function refreshSellerRate(q: Queryable, sellerId: string) {
   const t = await sellerTier(q, sellerId);

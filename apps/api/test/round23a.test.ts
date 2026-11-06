@@ -124,8 +124,10 @@ describe('8. render.yaml (staging blueprint)', () => {
     expect(cfg.EMAIL_FROM).toBe('Bullizard <no-reply@mail.bullizard.com>');
     expect(cfg.ALERTS_EMAIL).toBe('alerts@bullizard.com');
     expect(cfg.FINANCE_EMAIL).toBe('finance@bullizard.com');
-    // Blank sync:false values (Render sends "") count as unset.
-    expect(loadConfig({ ...env, BREVO_API_KEY: '', ORIGIN_SHARED_SECRET: '' } as any).ORIGIN_SHARED_SECRET).toBeUndefined();
+    // Blank sync:false values (Render sends "") count as unset. Round 29d (H2): a blank origin secret with the country
+    // header set refuses to start (the header is only trusted behind Cloudflare), so that case is checked with both blank.
+    expect(() => loadConfig({ ...env, BREVO_API_KEY: '', ORIGIN_SHARED_SECRET: '' } as any)).toThrow(/GEO_COUNTRY_HEADER needs ORIGIN_SHARED_SECRET/);
+    expect(loadConfig({ ...env, BREVO_API_KEY: '', ORIGIN_SHARED_SECRET: '', GEO_COUNTRY_HEADER: '' } as any).ORIGIN_SHARED_SECRET).toBeUndefined();
   });
 });
 

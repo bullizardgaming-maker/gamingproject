@@ -329,6 +329,7 @@ describe('B8 review fixes', () => {
     const cfg = loadConfig({
       ...vars, JWT_SECRET: 'x'.repeat(40), DATA_ENCRYPTION_KEYS: 'v1:Y2ktb25seS1kYXRhLWtleS0zMi1ieXRlcy0tLS0tLS0=', FINGERPRINT_KEY: 'fp', CRYPTO_INDEXER_SECRET: 'idx',
       RESEND_API_KEY: 're_test', TURNSTILE_SECRET: '1x0000000000000000000000000000000AA', NOWPAYMENTS_API_KEY: 'k', NOWPAYMENTS_IPN_SECRET: 's',
+      ORIGIN_SHARED_SECRET: 'origin-secret-of-at-least-32-characters!', // Round 29d (H2): GEO_COUNTRY_HEADER in the blueprint needs it
     } as any);
     expect(cfg).toMatchObject({ SANDBOX_MODE: false, PAYMENT_PROVIDER: 'nowpayments', PLATFORM_ACCOUNTS: 'live' });
   });

@@ -1,5 +1,7 @@
 import type { Ctx } from './context.js';
 import { autoCompleteExpired, cancelUnpaidExpired, handleLateDeliveries } from './domain/orders.js';
+import { expireUnpaidDeposits } from './domain/walletDeposits.js';
+import { payCreatorBounties } from './domain/affiliates.js';
 import { dispatchEmails, queueProtectionReminders } from './domain/notifications.js';
 import { maybeRunScheduledReconciliation } from './domain/reconciliation.js';
 import { heartbeat } from './observability.js';
@@ -65,6 +67,8 @@ export async function runJobsOnce(ctx: Ctx) {
     job(ctx, 'expire_unpaid', () => cancelUnpaidExpired(ctx), 0),
     job(ctx, 'protection_reminders', () => queueProtectionReminders(ctx), 0),
     job(ctx, 'late_deliveries', () => handleLateDeliveries(ctx), { notified: 0, refunded: 0 }),
+    job(ctx, 'expire_unpaid_deposits', () => expireUnpaidDeposits(ctx), 0), // Round 29d (M1): the deposit reaper
+    job(ctx, 'creator_bounties', () => payCreatorBounties(ctx), { paid: 0, voided: 0 }), // Round 29d (M5)
     job(ctx, 'fx_rates', () => maybeRefreshRates(ctx), 0),
     job(ctx, 'support_auto_resolve', () => autoResolveTickets(ctx), 0),
     job(ctx, 'requests_expire', () => expireRequests(ctx), 0),

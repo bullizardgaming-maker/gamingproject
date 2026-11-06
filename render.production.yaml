@@ -33,6 +33,10 @@ envVarGroups:
         sync: false # Cloudflare Turnstile; the site key is VITE_TURNSTILE_SITE_KEY on Vercel
       - key: ORIGIN_SHARED_SECRET
         sync: false # = the X-Origin-Auth value Cloudflare adds (at least 32 chars: openssl rand -base64 32); requests without it are refused
+      # Round 29d: the connection country (crypto hidden in Egypt, sanctioned countries refused) — read only on requests that
+      # carried X-Origin-Auth, so it cannot be spoofed around Cloudflare
+      - key: GEO_COUNTRY_HEADER
+        value: cf-ipcountry
       - key: BREVO_API_KEY
         sync: false # newsletter sync; blank = CSV export in Ops
       - key: BREVO_LIST_ID_EN

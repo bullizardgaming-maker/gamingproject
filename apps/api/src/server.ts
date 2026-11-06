@@ -44,9 +44,14 @@ export interface RequestMeta {
 
 let geoHeader: string | undefined;
 
+/** Round 29d (H2): set by originGuard once X-Origin-Auth matched — the only requests whose Cloudflare headers are believed. */
+export const originVerified = (req: FastifyRequest): boolean => (req as any)[ORIGIN_VERIFIED] === true;
+const ORIGIN_VERIFIED = Symbol('originVerified');
+
 export function requestMeta(req: FastifyRequest): RequestMeta {
-  // Only the edge's own header is believed; a client-sent one would let buyers fake their country.
-  const country = geoHeader ? req.headers[geoHeader] : undefined;
+  // Only the edge's own header is believed, and only when the request came through Cloudflare (origin auth passed);
+  // a client-sent one would let buyers fake their country.
+  const country = geoHeader && originVerified(req) ? req.headers[geoHeader] : undefined;
   const device = req.headers['x-device-fingerprint'];
   return {
     ip: req.ip,
@@ -72,6 +77,13 @@ export function requirePermission(req: FastifyRequest, permission: Permission): 
     throw forbidden('mfa_required', 'Staff actions need two-factor login. Turn it on in Account, then sign in again.');
   }
   return user;
+}
+
+/** Round 29d (M3): any one of several permissions — the status, MFA and restriction checks of requirePermission always apply. */
+export function requireAnyPermission(req: FastifyRequest, permissions: Permission[]): User {
+  const user = me(req);
+  const held = permissions.find((p) => hasPermission(user, p));
+  return requirePermission(req, held ?? permissions[0]!);
 }
 
 /**
@@ -184,6 +196,7 @@ export function originGuard(secret: string | undefined) {
     if (typeof given !== 'string' || !safeEqual(sha256(given), sha256(secret))) {
       return reply.status(403).send({ error: { code: 'origin_forbidden', message: 'Direct access to the origin is not allowed' } });
     }
+    Object.defineProperty(req, ORIGIN_VERIFIED, { value: true, configurable: true });
     const cf = req.headers['cf-connecting-ip'];
     if (typeof cf === 'string' && isIP(cf.trim())) Object.defineProperty(req, 'ip', { value: cf.trim(), configurable: true, enumerable: true });
   };
