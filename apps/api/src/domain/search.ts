@@ -85,8 +85,8 @@ function filterSql(p: SearchParams, arg: (v: unknown) => string, skip?: Filter):
   if (p.category && skip !== 'category') where.push(`f.category_slug = ${arg(p.category)}`);
   if (p.minPriceCents != null) where.push(`${GROSS_SQL('f.price_settlement_cents')} >= ${arg(p.minPriceCents)}`);
   if (p.maxPriceCents != null) where.push(`${GROSS_SQL('f.price_settlement_cents')} <= ${arg(p.maxPriceCents)}`);
-  if (p.minUnitPriceMicros != null) where.push(`${GROSS_SQL('f.price_settlement_micros')} >= ${arg(p.minUnitPriceMicros)}`);
-  if (p.maxUnitPriceMicros != null) where.push(`${GROSS_SQL('f.price_settlement_micros')} <= ${arg(p.maxUnitPriceMicros)}`);
+  if (p.minUnitPriceMicros != null) where.push(`${GROSS_SQL('f.price_settlement_micros', 'u', 'micros')} >= ${arg(p.minUnitPriceMicros)}`);
+  if (p.maxUnitPriceMicros != null) where.push(`${GROSS_SQL('f.price_settlement_micros', 'u', 'micros')} <= ${arg(p.maxUnitPriceMicros)}`);
   if (p.delivery) where.push(`f.delivery_mode = ${arg(p.delivery === 'instant' ? 'auto' : 'manual')}`);
   if (p.deliveryMethod && skip !== 'deliveryMethod') where.push(`f.delivery_methods @> ARRAY[${arg(p.deliveryMethod)}::text]`);
   if (p.maxDeliveryMinutes != null) where.push(`${DELIVERY_MINUTES_SQL} <= ${arg(p.maxDeliveryMinutes)}`);
@@ -373,7 +373,7 @@ export async function serverSummary(q: Queryable, game: string, category = 'curr
   const rows = await many<{ name: string; offers: number; sellers_count: number; sold: number; from_micros: string | null; sellers: Array<{ id: string; name: string; avatar: string | null }> }>(
     q,
     `WITH live AS (
-       SELECT f.attributes->>$3 AS name, f.seller_id, f.sold_count, ${GROSS_SQL('f.price_settlement_micros')} AS micros, u.display_name, u.completed_orders
+       SELECT f.attributes->>$3 AS name, f.seller_id, f.sold_count, ${GROSS_SQL('f.price_settlement_micros', 'u', 'micros')} AS micros, u.display_name, u.completed_orders
          FROM offers f JOIN users u ON u.id = f.seller_id
         WHERE ${LIVE.join(' AND ')} AND f.available > 0 AND lower(f.game) = lower($1) AND f.category_slug = $2 AND lower(f.attributes->>'${keyLiteral(field.key)}') IS NOT NULL
      ), per_seller AS (

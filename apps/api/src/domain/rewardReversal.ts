@@ -36,13 +36,21 @@ export async function reverseOrderRewards(tx: Tx, order: { id: string; amount_ce
   }
 }
 
-/** For a chargeback: how much of the order's card payment was already given back to the buyer's balance (a refund to balance). */
-export async function cardRefundedToBalance(tx: Tx, order: { id: string; charged_cents: number | string | null }) {
-  const rows = await many<{ txn_id: string }>(
+/**
+ * For a chargeback: how much of the order's card payment was already given back to the buyer's Bullizard balance. Round 29e
+ * (M-B): the sum of every refund-to-balance posting — a full refund (`refund`), the buyer's leg of a dispute split
+ * (`dispute_split`) and of a post-release refund (`clawback:*`) — so a partial refund is netted exactly, not all-or-nothing.
+ * Postings with a gateway_clearing leg are refunds that went back to the card and are not counted. Capped at the charge.
+ */
+export async function cardRefundedToBalance(tx: Tx, order: { id: string; buyer_id?: string; charged_cents: number | string | null }) {
+  const row = await many<{ cents: string }>(
     tx,
-    `SELECT DISTINCT e.txn_id FROM ledger_entries e WHERE e.order_id = $1 AND e.memo = 'refund'
+    `SELECT COALESCE(SUM(e.amount_cents), 0)::text AS cents
+       FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id
+      WHERE e.order_id = $1 AND a.kind = 'user_credit' AND e.amount_cents > 0
+        AND (e.memo = 'refund' OR e.memo = 'dispute_split' OR e.memo LIKE 'clawback:%')
         AND NOT EXISTS (SELECT 1 FROM ledger_entries g JOIN ledger_accounts ga ON ga.id = g.account_id WHERE g.txn_id = e.txn_id AND ga.kind = 'gateway_clearing')`,
     [order.id],
   );
-  return rows.length ? Number(order.charged_cents ?? 0) : 0;
+  return Math.min(Number(row[0]?.cents ?? 0), Number(order.charged_cents ?? 0));
 }

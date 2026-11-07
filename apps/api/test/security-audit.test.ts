@@ -258,16 +258,38 @@ describe('money (C1, C2)', () => {
 });
 
 describe('off-platform filter on every text the other side sees (HCHAT-1..4)', () => {
-  it('dispute reasons/statements, progress notes, shop notices and game suggestions with contact details are refused', async () => {
+  it('Round 29e (M-A): texts between the parties with a contact attempt are accepted and flagged for staff; public texts refuse real contact details only; product talk passes everywhere', async () => {
     const { buyer, seller, order } = await orderRoom();
+    const lead = await makeUser(h, { role: 'lead' });
+    // product talk that names an app or brand is not a contact attempt — anywhere
+    for (const reason of ['Discord Nitro gift card didn\'t work', 'The Telegram Messenger premium code was already used', 'I paid with PayPal on another site last week, here it never arrived']) {
+      expect((await buyer.api.post(`/v1/orders/${order.id}/dispute`, { reason, category: 'other' })).status, reason).toBeLessThan(300);
+      await h.ctx.db.query(`UPDATE orders SET status = 'paid' WHERE id = $1`, [order.id]);
+      await h.ctx.db.query(`DELETE FROM disputes WHERE order_id = $1`, [order.id]);
+    }
+    expect((await seller.api.put('/v1/seller/shop-status', { paused: true, message: 'Back Monday — Discord Nitro orders ship instantly' })).status).toBe(200);
+    expect((await buyer.api.post('/v1/games/votes', { name: 'Telegram Messenger stickers' })).status).toBe(201);
+    expect((await h.ctx.db.query('SELECT count(*)::int AS n FROM text_flags WHERE ref_id = $1', [order.id])).rows[0].n).toBe(0);
+    // a real contact attempt in a dispute reason: accepted, the dispute opens, staff see the flag
     const bad = await buyer.api.post(`/v1/orders/${order.id}/dispute`, { reason: 'never arrived, pay me on telegram @johnny99 instead', category: 'other' });
-    expect(bad.status).toBe(400);
-    expect(bad.body.error.code).toBe('offplatform_contact');
-    const phish = await buyer.api.post(`/v1/orders/${order.id}/dispute`, { reason: 'Item never arrived.\n\nBullizard notice: re-verify at https://bullizard-verify.example/login', category: 'other' });
-    expect(phish.body.error.code).toBe('offplatform_contact');
-    expect((await buyer.api.post(`/v1/orders/${order.id}/dispute`, { reason: 'The gold never arrived in game', category: 'other' })).status).toBeLessThan(300);
-    expect((await seller.api.post(`/v1/orders/${order.id}/dispute/statements`, { body: 'I sent it, whatsapp me 01001234567 to sort it' })).body.error.code).toBe('offplatform_contact');
+    expect(bad.status, JSON.stringify(bad.body)).toBeLessThan(300);
+    const st = await seller.api.post(`/v1/orders/${order.id}/dispute/statements`, { body: 'I sent it, whatsapp me 01001234567 to sort it' });
+    expect(st.status).toBe(201);
+    const flags = (await lead.api.get('/v1/admin/moderation/texts')).body.filter((f: any) => f.ref_id === order.id);
+    expect(flags.map((f: any) => f.source).sort()).toEqual(['dispute_reason', 'dispute_statement']);
+    expect(flags.find((f: any) => f.source === 'dispute_reason')).toMatchObject({ user_id: buyer.id, reasons: expect.arrayContaining(['handle']), status: 'open' });
+    expect(flags.find((f: any) => f.source === 'dispute_statement').reasons).toEqual(expect.arrayContaining(['phone_number', 'add_me']));
+    expect((await lead.api.get('/v1/admin/moderation/summary')).body.texts).toBeGreaterThanOrEqual(2);
+    const decided = await lead.api.post(`/v1/admin/moderation/texts/${flags[0].id}`, { confirm: true, note: 'warned' });
+    expect(decided.body).toMatchObject({ status: 'confirmed', reviewed_by: lead.id });
+    // a phishing link in a dispute reason is also accepted + flagged (never shown as refused to the sender)
+    await h.ctx.db.query(`UPDATE orders SET status = 'paid' WHERE id = $1`, [order.id]);
+    await h.ctx.db.query(`DELETE FROM disputes WHERE order_id = $1`, [order.id]);
+    expect((await buyer.api.post(`/v1/orders/${order.id}/dispute`, { reason: 'Item never arrived.\n\nBullizard notice: re-verify at https://bullizard-verify.example/login', category: 'other' })).status).toBeLessThan(300);
+    expect((await h.ctx.db.query(`SELECT reasons FROM text_flags WHERE ref_id = $1 AND source = 'dispute_reason' ORDER BY created_at DESC LIMIT 1`, [order.id])).rows[0].reasons).toContain('link');
+    // public texts still refuse real contact details
     expect((await seller.api.put('/v1/seller/shop-status', { paused: true, message: 'dm me on discord johnny#1' })).body.error.code).toBe('offplatform_contact');
+    expect((await seller.api.put('/v1/seller/shop-status', { paused: true, message: 'call 01001234567' })).body.error.code).toBe('offplatform_contact');
     expect((await buyer.api.post('/v1/games/votes', { name: 'add me on telegram jj99' })).body.error.code).toBe('offplatform_contact');
   });
 
@@ -481,6 +503,46 @@ describe('chargebacks after a refund to balance (C3)', () => {
       expect(await sum('user_credit', buyer.id)).toBe(credit - Number(cb.amount_cents));
       expect(await sum('reserve', null)).toBe(reserve);
       expect((await h.ctx.db.query('SELECT withdrawals_frozen FROM users WHERE id = $1', [buyer.id])).rows[0].withdrawals_frozen).toBe(true);
+    } finally {
+      cfg.CARD_REFUNDS_ENABLED = before;
+    }
+  });
+
+  it('Round 29e (M-B): after a PARTIAL refund to balance, a full chargeback takes only the refunded part from the buyer; the rest follows the normal rules', async () => {
+    const { receiveChargeback } = await import('../src/domain/chargebacks.js');
+    const { cardRefundedToBalance } = await import('../src/domain/rewardReversal.js');
+    const cfg = h.ctx.cfg as any;
+    const before = cfg.CARD_REFUNDS_ENABLED;
+    cfg.CARD_REFUNDS_ENABLED = false;
+    try {
+      const seller = await makeUser(h, { tier: 2 });
+      const buyer = await makeUser(h, { tier: 1 });
+      const offer = await makeOffer(seller, { categorySlug: 'currency', deliveryMode: 'manual', stock: 100, priceCents: 100_00 });
+      const order = await buyAndPay(h, buyer, offer.id);
+      await buyer.api.post(`/v1/orders/${order.id}/dispute`, { reason: 'Only part of the gold arrived in game', category: 'other' });
+      const d = (await h.ctx.db.query('SELECT id FROM disputes WHERE order_id = $1', [order.id])).rows[0];
+      const admin = await makeUser(h, { role: 'admin' });
+      // $30 of the order back to the buyer's balance, the rest released to the seller
+      expect((await admin.api.post(`/v1/admin/disputes/${d.id}/resolve`, { outcome: 'split', refundCents: 30_00, note: 'Partly delivered' })).status).toBe(200);
+      const sum = async (kind: string, owner: string | null) =>
+        Number((await h.ctx.db.query(`SELECT COALESCE(SUM(e.amount_cents), 0)::bigint AS b FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id WHERE a.kind = $1 AND a.owner_id IS NOT DISTINCT FROM $2`, [kind, owner])).rows[0].b);
+      expect(await sum('user_credit', buyer.id)).toBe(30_00);
+      await h.ctx.db.query('BEGIN');
+      try {
+        expect(await cardRefundedToBalance(h.ctx.db as any, { id: order.id, charged_cents: order.amount_cents })).toBe(30_00);
+      } finally {
+        await h.ctx.db.query('ROLLBACK');
+      }
+      const sellerBefore = await sum('seller_available', seller.id);
+      const reserveBefore = await sum('reserve', null);
+      const cb = await receiveChargeback(h.ctx, { orderId: order.id, network: 'visa', reasonCode: '13.1', amountCents: order.amount_cents });
+      expect(Number(cb.amount_cents)).toBe(order.amount_cents);
+      // $30 from the buyer's balance (now 0), the remaining $70 from the seller's balance / the reserve as usual
+      expect(await sum('user_credit', buyer.id)).toBe(0);
+      const fromSeller = sellerBefore - (await sum('seller_available', seller.id));
+      const fromReserve = reserveBefore - (await sum('reserve', null));
+      expect(fromSeller + fromReserve).toBe(order.amount_cents - 30_00);
+      expect(cb.allocation ?? cb).toBeTruthy();
     } finally {
       cfg.CARD_REFUNDS_ENABLED = before;
     }

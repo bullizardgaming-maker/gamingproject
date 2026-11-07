@@ -27,6 +27,11 @@ export function originOf(name: string, value: string) {
   return u.origin;
 }
 
+/**
+ * The page's Content-Security-Policy. It is the ONLY full policy: vercel.json's header carries just `frame-ancestors`
+ * (a header-only directive), so the configured API origin below is what connect-src allows — a preview or another API
+ * host never collides with a fixed `*.bullizard.com` list (Round 29e).
+ */
 export function csp(apiUrl?: string, opts: { turnstile?: boolean; uploadOrigin?: string } = {}) {
   // A separately hosted API (VITE_API_URL) must be allowed for fetch and the WebSocket.
   let api = '';

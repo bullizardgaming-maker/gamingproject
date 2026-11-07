@@ -48,6 +48,25 @@ for (const d of ['script-src', 'frame-src']) {
   if (!turnstile && has) failures.push(`CSP ${d} allows ${CF} without a Turnstile site key`);
 }
 if (html.includes('challenges.cloudflare.com/turnstile')) failures.push('index.html loads the Turnstile script; only the auth forms may inject it');
+// Round 29e: the configured API origin must be reachable (fetch + WebSocket); vercel.json's header must not carry a
+// competing connect-src (both policies are enforced, so a fixed header list would block any other API host).
+if (process.env.VITE_API_URL) {
+  try {
+    const origin = new URL(process.env.VITE_API_URL).origin;
+    const connect = directive('connect-src').split(/\s+/);
+    if (!connect.includes(origin)) failures.push(`CSP connect-src must allow the configured API origin ${origin}`);
+    if (!connect.includes(origin.replace(/^http/, 'ws'))) failures.push(`CSP connect-src must allow the API WebSocket origin ${origin.replace(/^http/, 'ws')}`);
+  } catch {
+    failures.push(`VITE_API_URL must be a URL, got '${process.env.VITE_API_URL}'`);
+  }
+}
+for (const file of [path.join(root, 'vercel.json'), path.join(root, '../../vercel.json')]) {
+  const name = path.relative(path.join(root, '../..'), file);
+  const cfg = JSON.parse(readFileSync(file, 'utf8'));
+  const h = (cfg.headers ?? []).flatMap((x) => x.headers ?? []).find((x) => x.key.toLowerCase() === 'content-security-policy');
+  if (h && /connect-src|default-src/.test(h.value)) failures.push(`${name}: the CSP header must only carry frame-ancestors; the full policy (with VITE_API_URL) comes from the build`);
+  if (!h || !/frame-ancestors 'none'/.test(h.value)) failures.push(`${name}: the CSP header must set frame-ancestors 'none'`);
+}
 
 if (failures.length) {
   console.error('Static file / CSP check failed:\n - ' + failures.join('\n - '));

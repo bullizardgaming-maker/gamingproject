@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { assertNoOffPlatform } from '../lib/offplatform.js';
+import { flagContactAttempt } from '../lib/offplatform.js';
 import type { Ctx } from '../context.js';
 import { maybeOne, one } from '../db.js';
 import { getOrCreateInquiryRoom, listMessages, listRooms, postUserMessage, roomForParticipant, verifyChain } from '../domain/chat.js';
@@ -209,14 +209,18 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.post('/orders/:id/dispute', async (req) => {
     const { reason, category } = z.object({ reason: z.string().trim().min(10).max(2_000), category: z.enum(DISPUTE_CATEGORIES).default('other') }).parse(req.body);
-    assertNoOffPlatform(reason, { allowEmail: true }); // security audit: the reason is shown to the other party and emailed
-    return openDispute(ctx, Id.parse(req.params).id, me(req).id, reason, category);
+    const { id } = Id.parse(req.params);
+    const d = await openDispute(ctx, id, me(req).id, reason, category);
+    await flagContactAttempt(ctx.db, reason, { source: 'dispute_reason', refType: 'order', refId: id, userId: me(req).id }, { allowEmail: true }); // Round 29e (M-A): accepted, flagged for staff
+    return d;
   });
   /** Either side adds a written statement to an open dispute (up to five each). */
   app.post('/orders/:id/dispute/statements', async (req, reply) => {
     const { body } = z.object({ body: z.string().trim().min(10).max(2_000) }).parse(req.body);
-    assertNoOffPlatform(body, { allowEmail: true });
-    return reply.status(201).send(await addStatement(ctx, Id.parse(req.params).id, me(req).id, body));
+    const { id } = Id.parse(req.params);
+    const st = await addStatement(ctx, id, me(req).id, body);
+    await flagContactAttempt(ctx.db, body, { source: 'dispute_statement', refType: 'order', refId: id, userId: me(req).id }, { allowEmail: true });
+    return reply.status(201).send(st);
   });
 
   /** The seller rates the buyer once the order is complete (positive/negative, tags from a fixed list). */
@@ -230,20 +234,26 @@ export async function orderRoutes(app: FastifyInstance, ctx: Ctx) {
   /** Boosting orders: the seller posts a progress milestone (percent, note, optional chat screenshot). */
   app.post('/orders/:id/progress', async (req, reply) => {
     const body = z.object({ percent: z.number().int().min(0).max(100), note: z.string().trim().max(500).default(''), attachmentId: z.string().uuid().optional() }).parse(req.body);
-    assertNoOffPlatform(body.note); // security audit: shown to the buyer inside the official order message
-    return reply.status(201).send(await postProgress(ctx, me(req).id, Id.parse(req.params).id, body));
+    const { id } = Id.parse(req.params);
+    const p = await postProgress(ctx, me(req).id, id, body);
+    await flagContactAttempt(ctx.db, body.note, { source: 'progress_note', refType: 'order', refId: id, userId: me(req).id });
+    return reply.status(201).send(p);
   });
 
   // Account warranty claims (after release, while the order's warranty runs).
   app.post('/orders/:id/warranty-claims', async (req, reply) => {
     const body = z.object({ reason: z.enum(CLAIM_REASONS), details: z.string().trim().min(10).max(2_000) }).parse(req.body);
-    assertNoOffPlatform(body.details, { allowEmail: true });
-    return reply.status(201).send(await openClaim(ctx, me(req).id, Id.parse(req.params).id, body));
+    const { id } = Id.parse(req.params);
+    const claim = await openClaim(ctx, me(req).id, id, body);
+    await flagContactAttempt(ctx.db, body.details, { source: 'warranty_claim', refType: 'order', refId: id, userId: me(req).id }, { allowEmail: true });
+    return reply.status(201).send(claim);
   });
   app.post('/warranty-claims/:id/seller', async (req) => {
     const body = z.object({ action: z.enum(['fixed', 'refund', 'contest']), message: z.string().trim().max(1_000).optional() }).parse(req.body);
-    assertNoOffPlatform(body.message, { allowEmail: true });
-    return sellerRespond(ctx, me(req).id, Id.parse(req.params).id, body);
+    const { id } = Id.parse(req.params);
+    const res = await sellerRespond(ctx, me(req).id, id, body);
+    await flagContactAttempt(ctx.db, body.message, { source: 'warranty_reply', refType: 'claim', refId: id, userId: me(req).id }, { allowEmail: true });
+    return res;
   });
   app.post('/warranty-claims/:id/buyer', async (req) => {
     const { action } = z.object({ action: z.enum(['confirm', 'escalate', 'withdraw']) }).parse(req.body);

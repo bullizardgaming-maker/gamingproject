@@ -27,7 +27,7 @@ import { toCsv } from '../domain/exports.js';
 import { businessMetrics } from '../domain/analytics.js';
 import { getTicket, staffReply, ticketQueue, updateTicket } from '../domain/support.js';
 import { DISPUTE_CATEGORIES, caseFile } from '../domain/disputes.js';
-import { addTerm, chatFlagQueue, decideChatFlag, decideListing, listTerms, moderationCounts, removeTerm, reviewQueue } from '../domain/moderation.js';
+import { addTerm, chatFlagQueue, decideChatFlag, decideListing, decideTextFlag, listTerms, moderationCounts, removeTerm, reviewQueue, textFlagQueue } from '../domain/moderation.js';
 import { me, requestMeta, requirePermission, requireAnyPermission } from '../server.js';
 import { audit, listAudit } from '../domain/audit.js';
 import { ipCountriesOf } from '../domain/sessions.js';
@@ -853,6 +853,20 @@ export async function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     // Staff reading chat excerpts is logged, as for opening an order's chat.
     if (flags.length) await audit(ctx.db, req, 'moderation.chats_viewed', { type: 'chat_flags', id: status }, { count: flags.length });
     return flags;
+  });
+  // Round 29e (M-A): contact attempts in dispute reasons / statements, warranty texts and progress notes — accepted, flagged here.
+  app.get('/admin/moderation/texts', async (req) => {
+    requirePermission(req, 'moderation.manage');
+    const { status } = z.object({ status: z.enum(['open', 'confirmed', 'dismissed']).default('open') }).parse(req.query);
+    return textFlagQueue(ctx.db, status);
+  });
+  app.post('/admin/moderation/texts/:id', async (req) => {
+    const staff = requirePermission(req, 'moderation.manage');
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ confirm: z.boolean(), note: z.string().trim().max(1_000).optional() }).parse(req.body);
+    const res = await decideTextFlag(ctx.db, id, staff.id, body.confirm, body.note);
+    await audit(ctx.db, req, body.confirm ? 'moderation.text_confirmed' : 'moderation.text_dismissed', { type: 'text_flag', id }, { note: body.note });
+    return res;
   });
   app.post('/admin/moderation/chats/:id', async (req) => {
     const staff = requirePermission(req, 'moderation.manage');

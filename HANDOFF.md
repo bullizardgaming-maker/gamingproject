@@ -982,6 +982,15 @@ or `test/security-audit-payouts.test.ts` (each fails on the code before this com
   `KYC_PROVIDER=mock` (unless `SANDBOX_MODE`) and a missing `GEO_COUNTRY_HEADER`; "pause orders" also stops wallet top-ups,
   "pause chat" also stops attachments; CSV import metered (6/min per user). `@sentry/node` 11.11 (npm audit clean).
 
+## Round 29e (Nov 7, 2026) — review fixes
+
+Migration `088_round29e.sql`. Pushed to main and staging.
+- **M-A** Texts outside the chat are checked for **contact intent only** (`detectContactIntent` in `safety.ts`: phone numbers, emails, links, handles, "add me / contact me on <app>", "discord: name", "my telegram is …", an address offered for payment, "pay outside") — a bare app or brand name is product talk ("Discord Nitro gift card didn't work", "Telegram Messenger") and passes. Dispute reasons and statements, warranty texts, progress notes and seller messages are **accepted and flagged** (`text_flags`; `GET /admin/moderation/texts?status=`, `POST /admin/moderation/texts/:id { confirm, note }`, `texts` count on `/admin/moderation/summary`). The shop notice and game suggestions (public) still refuse, but only real contact details (`assertNoContactDetails`). The **chat** keeps the CEO's rule (anything caught is hidden + queued, never refused) and its full pattern set — `chat-filter.test.ts` pins both detectors; the product-talk examples live there as `PRODUCT_TALK`.
+- **M-B** `cardRefundedToBalance` sums every refund-to-balance posting of the order (`refund`, the buyer leg of `dispute_split`, `clawback:*`), capped at the charge — a chargeback after a **partial** refund takes only that part from the buyer's balance; the rest follows the normal rules (test: $100 card order, $30 split, $100 chargeback → $30 from the buyer, $70 seller/reserve).
+- **L (CSP)** `vercel.json` / `apps/web/vercel.json` CSP headers now carry only `frame-ancestors 'none'` (header-only directive); the full policy — with the configured `VITE_API_URL` origin and its WebSocket in `connect-src` — is the build's meta tag (`csp()` in `vite.config.ts`). Both policies were enforced together, so the header's fixed `*.bullizard.com` list blocked any other API host (previews). `scripts/verify-static-files.mjs` checks the built connect-src against `VITE_API_URL` and that the headers carry no competing `connect-src`/`default-src`.
+- **L (promo price)** Listing prices use the real rate once the promo is nearly used up: `GROSS_SQL` prices the part under the remaining promo at the promo rate and the rest at the rank rate (`users.rank_rate_bps`, `users.promo_remaining_cents`, refreshed by `refreshSellerRate`); `promoSalesCents` counts orders **created and still awaiting payment** too, and the seller rate is refreshed right after an order is created (and a cancelled order gives the slice back).
+- Tests: `security-audit` (M-A flow, M-B), `chat-filter` (+17 product-talk / +17 intent phrases), `commission-ranks` (listing price + unpaid orders).
+
 ## Round 29d (Nov 6, 2026) — review fixes
 
 Migration `087_round29d.sql`. Pushed to main and staging.

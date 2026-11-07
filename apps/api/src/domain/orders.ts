@@ -530,6 +530,7 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
       ],
     );
     await recordAcceptance(s.tx, buyer.id, termsVersion, 'order', input.ip ?? null); // Round 23d: the version this order was placed under
+    await refreshSellerRate(s.tx, offer.seller_id); // Round 29e: this (still unpaid) order now counts toward the seller's promo cap, so the shown prices follow
     if (price.promoId) await reserveRedemption(s.tx, price.promoId, order.id, buyer.id, price.discountCents);
     if (delivery) {
       await s.tx.query('UPDATE orders SET character_name = $2, delivery_method = $3, delivery_info = $4 WHERE id = $1', [order.id, characterName, delivery.method, JSON.stringify(delivery.info)]);

@@ -151,8 +151,8 @@ export const OFFER_LIST_SQL = `
          (1 + floor(2 * sqrt(GREATEST(u.completed_orders, 0))))::int AS seller_level,
          CASE WHEN u.review_count > 0 THEN round(100.0 * u.positive_review_count / u.review_count, 1)::float8 END AS seller_positive_pct,
          f.sold_count, f.public_id, f.delivery_methods,
-         CASE WHEN f.unit_price_micros IS NOT NULL THEN ${GROSS_SQL(EFFECTIVE_MICROS_SQL)} END AS unit_price_micros,
-         f.unit_price_micros AS seller_unit_price_micros, f.volume_discounts, ${GROSS_SQL('f.price_settlement_micros')} AS price_settlement_micros,
+         CASE WHEN f.unit_price_micros IS NOT NULL THEN ${GROSS_SQL(EFFECTIVE_MICROS_SQL, 'u', 'micros')} END AS unit_price_micros,
+         f.unit_price_micros AS seller_unit_price_micros, f.volume_discounts, ${GROSS_SQL('f.price_settlement_micros', 'u', 'micros')} AS price_settlement_micros,
          f.delivery_minutes, ${DELIVERY_TIME_SQL} AS delivery_time
     FROM offers f JOIN categories c ON c.slug = f.category_slug JOIN users u ON u.id = f.seller_id
     LEFT JOIN linked_accounts la ON la.id = f.linked_account_id AND la.unlinked_at IS NULL`;
@@ -316,7 +316,7 @@ export async function priceGuide(ctx: Ctx, seller: { id: string }, q: { game: st
   if (!hit || now - hit.at > PRICE_GUIDE_TTL_MS) {
     const rows = await many<{ seller_id: string; micros: string }>(
       ctx.db,
-      `SELECT f.seller_id, ${GROSS_SQL('f.price_settlement_micros')} AS micros
+      `SELECT f.seller_id, ${GROSS_SQL('f.price_settlement_micros', 'u', 'micros')} AS micros
          FROM offers f JOIN users u ON u.id = f.seller_id
         WHERE f.status = 'active' AND f.reserved_for IS NULL AND category_open(f.category_slug) AND u.status = 'active' AND u.deleted_at IS NULL
           AND NOT (u.shop_paused AND (u.shop_paused_until IS NULL OR u.shop_paused_until > now()))

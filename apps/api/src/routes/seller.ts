@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { verifyMessage } from 'ethers';
 import { z } from 'zod';
-import { assertNoOffPlatform } from '../lib/offplatform.js';
+import { assertNoContactDetails } from '../lib/offplatform.js';
 import type { Ctx } from '../context.js';
 import { many, maybeOne, one } from '../db.js';
 import { featureListing, foundingStatus, listRanks, pricePreview, sellerTier, unfeatureListing } from '../domain/commission.js';
@@ -404,7 +404,7 @@ export async function sellerRoutes(app: FastifyInstance, ctx: Ctx) {
       .object({ paused: z.boolean(), until: z.string().datetime().optional(), message: z.string().trim().max(200).optional() })
       .parse(req.body);
     if (body.until && new Date(body.until) <= new Date()) throw badRequest('invalid_until', 'Pick a time in the future');
-    assertNoOffPlatform(body.message); // security audit: the notice is public on the shop page and every listing
+    assertNoContactDetails(body.message); // security audit: the notice is public on the shop page and every listing (Round 29e: real contact details only)
     if (!body.paused) assertNotSanctioned(ctx, requestMeta(req).ipCountry, 'sell'); // security audit: the sell check on every way onto the market
     if (!body.paused && (await shopHeldForDebt(ctx.db, user.id))) {
       throw new AppError(409, 'debt_outstanding', 'Your shop reopens as soon as your balance is settled');

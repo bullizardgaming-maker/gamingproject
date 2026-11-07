@@ -128,6 +128,47 @@ export function detectOffPlatform(body: string, opts: { allowEmail?: boolean; al
   return [...hits];
 }
 
+/**
+ * Round 29e (M-A): contact INTENT only — what the texts outside the chat are checked for. A phone number, an email, a link,
+ * a handle, an address offered for payment, "add me / contact me on <app>", "discord: name", "my telegram is …", or asking
+ * to pay outside. A bare app or brand name is product talk ("Discord Nitro gift card didn't work", "Telegram Messenger",
+ * "paid with PayPal last time") and never a hit here. Same category names as detectOffPlatform.
+ */
+const APP_LONG = '(?:discord|telegram|whatsapp|whats\\s?app|signal|snapchat|instagram|skype|viber|wechat|kik|messenger|facebook|botim|imo)';
+const APP_SHORT = '(?:disc|dc|tele|tg|wa|snap|insta|ig|fb|line)';
+const APP_WORD = `(?:${APP_LONG}|${APP_SHORT})`;
+const CONTACT_INTENT_PATTERNS: Array<[string, RegExp]> = [
+  // "discord: name", "my telegram is @x", "whatsapp = 010…", "tg: x" (a short form needs the colon or equals sign)
+  ['handle', new RegExp(`\\b${APP_LONG}\\s*(?:id|tag|user(?:name)?|handle|number|no\\.?|num)?\\s*(?:is|=|:)\\s*@?[\\w.#+-]{3,}`, 'i')],
+  ['handle', new RegExp(`\\b${APP_SHORT}\\s*(?:id|tag|user(?:name)?|handle|number|num)?\\s*[:=]\\s*@?[\\w.#+-]{3,}`, 'i')],
+  ['handle', new RegExp(`\\bmy\\s+(?:${APP_LONG}|disc|tele|insta|snap)\\b(?!\\s+(?:nitro|premium|account|server|bot|order|purchase|subscription|gift|key|code))`, 'i')],
+  // "add me on discord", "contact me via telegram", "let's talk on whatsapp", "dm me in insta", "on discord?"
+  ['add_me', new RegExp(`\\b(?:add|contact|dm|message|msg|text|reach|find|ping|call|talk\\s+to|chat\\s+with|hit)\\s+(?:me|us)(?:\\s+up)?\\s+(?:on|at|via|through|in|over)\\s+${APP_WORD}\\b|\\b(?:let'?s|lets|we\\s+can|can\\s+we|wanna|want\\s+to)\\s+(?:talk|chat|continue|move|switch|go)\\s+(?:on|to|over\\s+to|via|in)\\s+${APP_WORD}\\b|\\b(?:on|via|over)\\s+${APP_WORD}\\s*[?]`, 'i')],
+  // the app as a verb: "whatsapp me", "discord us later"
+  ['add_me', new RegExp(`\\b${APP_LONG}\\s+(?:me|us)\\b`, 'i')],
+  ['add_me', /ضيفني (?:على|ع) (?!اللعبة|الجيم)|كلمني على (?!هنا|الشات|المحادثة|الموقع)|تواصل معي على (?!هنا|الشات|المحادثة|الموقع)|(?:ديسكورد|تيليجرام|تلجرام|واتساب|واتس|انستا)\s*(?:بتاعي|ي)?\s*[:=]\s*\S|(?:رقمي|نمرتي)\s*[:=]?\s*[\d٠-٩]/],
+];
+const INTENT_FROM_OFFPLATFORM = new Set(['phone_number', 'email', 'link', 'handle', 'add_me', 'pay_outside']);
+export function detectContactIntent(body: string, opts: { allowEmail?: boolean; ownAddresses?: string[] } = {}): string[] {
+  if (!body) return [];
+  let text = withoutLoginMethods(body);
+  if (opts.ownAddresses?.length) text = withoutOwnAddresses(text, opts.ownAddresses);
+  const emailRe = OFFPLATFORM_PATTERNS.find(([n]) => n === 'email')![1];
+  const noEmails = text.replace(new RegExp(emailRe.source, 'g'), ' ');
+  const hits = new Set<string>();
+  for (const [name, re] of OFFPLATFORM_PATTERNS) {
+    if (!INTENT_FROM_OFFPLATFORM.has(name)) continue;
+    if (opts.allowEmail && name === 'email') continue;
+    if (re.test(name === 'link' ? noEmails : text)) hits.add(name);
+  }
+  for (const [name, re] of CONTACT_INTENT_PATTERNS) if (re.test(text)) hits.add(name);
+  if (CONTACT_LINK.test(text)) hits.add('link');
+  if (HANDLE.test(text)) hits.add('handle');
+  // an address is a contact only when offered as the place to pay ("send to my wallet 0x…"), not as evidence ("I sent to 0x…")
+  if (walletOffered(text, opts.ownAddresses)) hits.add('wallet_address');
+  return [...hits];
+}
+
 const MESSENGERS = new Set(['discord', 'telegram', 'whatsapp', 'facebook', 'instagram', 'other_messenger']);
 /** Links that open a chat or a payment page with someone: t.me/xyz, wa.me/…, paypal.me/x, discord.gg/…. */
 const CONTACT_LINK = /\b(?:t\.me|telegram\.me|wa\.me|chat\.whatsapp\.com|m\.me|paypal\.me|cash\.app|discord\.gg|discord(?:app)?\.com\/invite|venmo\.com(?:\/u)?)\/[\w.@$-]+/i;

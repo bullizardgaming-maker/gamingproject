@@ -82,7 +82,18 @@ export function splitGross(buyerCents: number, sellerCents: number) {
 }
 
 /** SQL for the buyer price of an expression in seller cents, given the seller row alias `u`. */
-export const GROSS_SQL = (expr: string, userAlias = 'u') => `CEIL((${expr}) * 10000.0 / (10000 - ${userAlias}.commission_rate_bps))::bigint`;
+/**
+ * Buyer price of a seller amount in SQL. Round 29e: while a promo is nearly used up (`promo_remaining_cents` set and
+ * smaller than the amount) the part under the cap is grossed up at the promo rate and the rest at the rank rate — the
+ * price the order will really pay (Round 29d L1). `unit` says whether `expr` is in cents or micros (cents × 10 000).
+ */
+export const GROSS_SQL = (expr: string, userAlias = 'u', unit: 'cents' | 'micros' = 'cents') => {
+  const u = userAlias;
+  const remaining = unit === 'micros' ? `(${u}.promo_remaining_cents * 10000)` : `${u}.promo_remaining_cents`;
+  const at = (amount: string, rate: string) => `CEIL((${amount}) * 10000.0 / (10000 - ${rate}))`;
+  return `(CASE WHEN ${u}.promo_remaining_cents IS NULL OR ${remaining} >= (${expr}) THEN ${at(expr, `${u}.commission_rate_bps`)}
+    ELSE ${at(`LEAST((${expr}), ${remaining})`, `${u}.commission_rate_bps`)} + ${at(`(${expr}) - LEAST((${expr}), ${remaining})`, `${u}.rank_rate_bps`)} END)::bigint`;
+};
 
 export async function monthlySalesCents(q: Queryable, sellerId: string): Promise<number> {
   const row = await one<{ total: number }>(
@@ -96,7 +107,15 @@ export async function monthlySalesCents(q: Queryable, sellerId: string): Promise
 
 /** CFO (5 Nov): promo sales so far — seller net of orders paid since the first listing (cancelled ones excluded). */
 export async function promoSalesCents(q: Queryable, sellerId: string, sellerSince: string): Promise<number> {
-  const r = await one<{ total: string }>(q, `SELECT COALESCE(SUM(seller_net_cents), 0)::bigint AS total FROM orders WHERE seller_id = $1 AND paid_at IS NOT NULL AND paid_at >= $2 AND status NOT IN ('cancelled', 'refunded')`, [sellerId, sellerSince]);
+  // Round 29e: orders created and still awaiting payment count toward the promo too, so two buyers cannot both be quoted
+  // the promo rate for the last slice of the cap.
+  const r = await one<{ total: string }>(
+    q,
+    `SELECT COALESCE(SUM(seller_net_cents), 0)::bigint AS total FROM orders
+      WHERE seller_id = $1 AND created_at >= $2 AND status NOT IN ('cancelled', 'refunded')
+        AND (paid_at IS NOT NULL OR status = 'awaiting_payment')`,
+    [sellerId, sellerSince],
+  );
   return Number(r.total);
 }
 
@@ -145,10 +164,10 @@ export async function grossUpForSeller(q: Queryable, sellerId: string, sellerCen
 export async function refreshSellerRate(q: Queryable, sellerId: string) {
   const t = await sellerTier(q, sellerId);
   await q.query(
-    `UPDATE users SET commission_rate_bps = $2, seller_rank = $3, commission_computed_at = now(),
+    `UPDATE users SET commission_rate_bps = $2, seller_rank = $3, commission_computed_at = now(), rank_rate_bps = $4, promo_remaining_cents = $5,
             badges = COALESCE((SELECT array_agg(b) FROM unnest(badges) b WHERE b NOT LIKE 'rank:%' OR b = 'rank:' || lower($3)), '{}')
       WHERE id = $1`,
-    [sellerId, t.rateBps, t.rank.name],
+    [sellerId, t.rateBps, t.rank.name, t.rank.rateBps, t.promo ? t.promo.remainingCents : null],
   );
   return t;
 }

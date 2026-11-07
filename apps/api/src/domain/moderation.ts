@@ -157,8 +157,30 @@ export async function removeTerm(q: Queryable, id: string) {
 }
 
 export async function moderationCounts(q: Queryable) {
-  return one<{ listings: number; chats: number }>(
+  return one<{ listings: number; chats: number; texts: number }>(
     q,
-    `SELECT (SELECT count(*)::int FROM offers WHERE status = 'review') AS listings, (SELECT count(*)::int FROM chat_flags WHERE status = 'open') AS chats`,
+    `SELECT (SELECT count(*)::int FROM offers WHERE status = 'review') AS listings, (SELECT count(*)::int FROM chat_flags WHERE status = 'open') AS chats,
+            (SELECT count(*)::int FROM text_flags WHERE status = 'open') AS texts`,
   );
+}
+
+// ---- Round 29e (M-A): contact attempts in texts outside the chat (dispute reasons, statements, warranty, progress notes) ----
+export async function textFlagQueue(q: Queryable, status: 'open' | 'confirmed' | 'dismissed' = 'open') {
+  return many<any>(
+    q,
+    `SELECT f.*, u.display_name AS user_name, u.email AS user_email, u.offplatform_strikes, u.status AS user_status,
+            (SELECT count(*)::int FROM chat_flags x WHERE x.user_id = f.user_id AND x.status = 'confirmed') +
+            (SELECT count(*)::int FROM text_flags x WHERE x.user_id = f.user_id AND x.status = 'confirmed' AND x.id <> f.id) AS confirmed_before
+       FROM text_flags f JOIN users u ON u.id = f.user_id WHERE f.status = $1 ORDER BY f.created_at LIMIT 200`,
+    [status],
+  );
+}
+export async function decideTextFlag(q: Queryable, id: string, staffId: string, confirm: boolean, note?: string) {
+  const row = await maybeOne<any>(
+    q,
+    `UPDATE text_flags SET status = $2, reviewed_by = $3, note = $4, reviewed_at = now() WHERE id = $1 AND status = 'open' RETURNING *`,
+    [id, confirm ? 'confirmed' : 'dismissed', staffId, note ?? null],
+  );
+  if (!row) throw notFound('Flag');
+  return row;
 }

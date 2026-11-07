@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classify, detectOffPlatform, detectSplit } from '../src/domain/safety.js';
+import { classify, detectOffPlatform, detectSplit, detectContactIntent } from '../src/domain/safety.js';
 import { ACCOUNT_R22B, BAN, DEPOSIT_R22B, NORMAL_R22, OWN_DEPOSIT_DELIVERED, OWN_DEPOSIT_WITH_CONTACT, QUEUE_R22 } from './fixtures/chat-phrases.js';
 
 /**
@@ -53,6 +53,32 @@ describe('chat filter: disguised and explicit hits are caught', () => {
       expect(detectOffPlatform(phrase)).toContain(cat);
     });
   }
+});
+
+// Round 29e (M-A): texts outside the chat are checked for contact INTENT only — an app or brand name on its own is product talk.
+export const PRODUCT_TALK = [
+  'Discord Nitro gift card didn\'t work', 'Telegram Messenger', 'The Telegram Premium code was already redeemed', 'Nitro for 1 month didn\'t apply to my discord account',
+  'I paid with PayPal last time, this time from the wallet', 'WhatsApp Business account for sale', 'Instagram followers not delivered', 'the discord server invite in the listing was dead',
+  'FunPay has the same item cheaper', 'eneba key invalid', 'I sent 0x52908400098527886E0F7030069857D2E4169EE7 as the listing said', 'my line of work is boosting', 'ok.gg see you',
+  'Venmo gift card 25 USD arrived as 10', 'Zelle is not a payment method here, I know', 'الكود مش شغال، ديسكورد نيترو', 'جيفت كارد تيليجرام بريميوم مش شغالة',
+];
+export const CONTACT_INTENT: Array<[string, string]> = [
+  ['add me on discord', 'add_me'], ['discord: pat#1234', 'handle'], ['my telegram is @cheapgold', 'handle'], ['contact me via whatsapp', 'add_me'], ['dm me in insta', 'add_me'],
+  ['tg: @cheap', 'handle'], ['call me 01012345678', 'phone_number'], ['t.me/cheapgold', 'link'], ['see bit.ly/abc', 'link'], ['mail me at x@y.com', 'email'],
+  ['send to my wallet 0x52908400098527886E0F7030069857D2E4169EE7', 'wallet_address'], ['pay outside the site and save', 'pay_outside'], ['lets talk on whatsapp', 'add_me'],
+  ['on discord?', 'add_me'], ['whatsapp me 01001234567', 'add_me'], ['ضيفني على ديسكورد', 'add_me'], ['واتساب: 01012345678', 'add_me'],
+];
+describe('contact intent (texts outside the chat, Round 29e)', () => {
+  for (const phrase of [...PRODUCT_TALK, ...NORMAL_EN, ...NORMAL_AR, ...NORMAL_R22]) {
+    it(`product talk passes: ${phrase}`, () => expect(detectContactIntent(phrase)).toEqual([]));
+  }
+  for (const [phrase, cat] of CONTACT_INTENT) {
+    it(`catches ${cat}: ${phrase}`, () => expect(detectContactIntent(phrase)).toContain(cat));
+  }
+  it('an account order may name its email; an address the sender merely reports is not a contact', () => {
+    expect(detectContactIntent('login is acc@mail.com, password sent in the box', { allowEmail: true })).toEqual([]);
+    expect(detectContactIntent('I already sent USDT to T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb, check it')).toEqual([]);
+  });
 });
 
 describe('split messages and confidence', () => {

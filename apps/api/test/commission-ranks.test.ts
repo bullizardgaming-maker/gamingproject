@@ -46,6 +46,21 @@ describe('commission gross-up and seller ranks', () => {
     expect(q.amountCents).toBe(grossUp(100_00, 500) + grossUp(300_00, 1399)); // 105.27 + 348.79, not 421.06 at the promo rate
     expect(q.amountCents).toBeGreaterThan(grossUp(400_00, 500));
     expect(q.amountCents).toBeLessThan(grossUp(400_00, 1399));
+    // Round 29e (L): the listing shows that real price too, not the promo price
+    const { refreshSellerRate } = await import('../src/domain/commission.js');
+    await refreshSellerRate(h.ctx.db, seller.id);
+    const shown = (await client(h.app).get(`/v1/offers/${offer.id}`)).body;
+    expect(shown.price_cents).toBe(grossUp(100_00, 500) + grossUp(300_00, 1399));
+    expect((await client(h.app).get(`/v1/offers?game=${encodeURIComponent(offer.game)}`)).body.items.find((x: any) => x.id === offer.id).price_cents).toBe(shown.price_cents);
+    // an order created but not yet paid counts toward the remaining promo: the next quote and the listing price move at once
+    const buyer2 = await makeUser(h, { tier: 1 });
+    const unpaid = await buyer2.api.post('/v1/orders', { offerId: offer.id, quantity: 1, acceptTos: true });
+    expect(unpaid.status, JSON.stringify(unpaid.body)).toBe(201);
+    expect((await grossUpForSeller(h.ctx.db, seller.id, 400_00))).toMatchObject({ amount: grossUp(400_00, 1399), rateBps: 1399, split: null }); // the $100 left went to the unpaid order
+    expect((await client(h.app).get(`/v1/offers/${offer.id}`)).body.price_cents).toBe(grossUp(400_00, 1399));
+    await buyer2.api.post(`/v1/orders/${unpaid.body.order.id}/cancel`);
+    await refreshSellerRate(h.ctx.db, seller.id);
+    expect((await client(h.app).get(`/v1/offers/${offer.id}`)).body.price_cents).toBe(shown.price_cents); // cancelled: the promo slice is back
     // fully over the cap: the rank rate on everything
     await h.ctx.db.query(`UPDATE orders SET seller_net_cents = 1500_00 WHERE id = $1`, [o.id]);
     expect((await grossUpForSeller(h.ctx.db, seller.id, 400_00))).toMatchObject({ amount: grossUp(400_00, 1399), rateBps: 1399, split: null });
