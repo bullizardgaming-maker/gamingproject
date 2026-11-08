@@ -11,7 +11,7 @@ import { CATEGORIES, DEMO_CODE, DEMO_FULL, seed, type DemoState, type DemoUser }
 import { CATEGORY_DEFAULTS, GAME_SETS, LEAGUES, PERMANENT_LEAGUES, currencyTitle, handoverFieldFor, handoverKey, setLeagues } from '../../../api/src/domain/attributeSets';
 import { attributesFor, cleanAttributes } from '@/lib/attributes';
 import { checkTiers, effectivePrice, unitPriceFor } from '../../../api/src/domain/priceTiers';
-import { classify, detectOffPlatform, matchTerms } from '../../../api/src/domain/safety';
+import { classify, detectContactIntent, detectOffPlatform, matchTerms } from '../../../api/src/domain/safety';
 import { parseCsv } from '../../../api/src/domain/csv';
 import { platformForGame } from '../../../api/src/domain/platforms';
 import { DELIVERY_TIMES, MIN_CURRENCY_ORDER_USD_CENTS, centsForMicros, checkVolumeDiscounts, deliveryTimeFor, formatUnitPrice, grossMicros, isDeliveryTime, parseUnitPrice, totalCentsFor, unitMicrosFor, volumePercentFor } from '../../../api/src/domain/unitPrice';
@@ -578,6 +578,24 @@ function applyCredit(buyer: DemoUser, o: any) {
     o.payment_provider = 'none';
     payDemoOrder(o.id);
   }
+}
+
+// Round 29e (M-A, as the API's lib/offplatform.ts flagContactAttempt): texts between the two parties outside the chat are
+// accepted; one carrying a contact attempt (handle, phone, link, "add me on…", a wallet offered for payment) is flagged for staff.
+const TEXT_FLAG_ROUTES: Array<[RegExp, string, 'order' | 'claim', (b: any) => unknown, boolean]> = [
+  [/^\/orders\/[^/]+\/dispute$/, 'dispute_reason', 'order', (b) => b.reason, true],
+  [/^\/orders\/[^/]+\/dispute\/statements$/, 'dispute_statement', 'order', (b) => b.body, true],
+  [/^\/orders\/[^/]+\/progress$/, 'progress_note', 'order', (b) => b.note, false],
+  [/^\/orders\/[^/]+\/warranty-claims$/, 'warranty_claim', 'order', (b) => b.details, true],
+  [/^\/warranty-claims\/[^/]+\/seller$/, 'warranty_reply', 'claim', (b) => b.message, true],
+];
+function flagTextRoute(method: string, path: string, userId: string, refId: string, body: any) {
+  if (method !== 'POST') return;
+  const hit = TEXT_FLAG_ROUTES.find(([re]) => re.test(path));
+  const text = hit ? hit[3](body) : null;
+  if (!hit || typeof text !== 'string' || !text) return;
+  const reasons = detectContactIntent(text, { allowEmail: hit[4] });
+  if (reasons.length) state.textFlags.push({ id: rid(), source: hit[1], ref_type: hit[2], ref_id: refId, user_id: userId, reasons, excerpt: text.slice(0, 500), status: 'open', reviewed_by: null, note: null, created_at: now(), reviewed_at: null });
 }
 
 // ---------------------------------------------------------------------------
@@ -2853,7 +2871,31 @@ route('POST', '/me/notifications/:id/read', ({ me, params }) => {
 // --- Moderation ----------------------------------------------------------------------------
 route('GET', '/admin/moderation/summary', ({ me }) => (needPerm(me, 'moderation.manage'), {
   listings: state.offers.filter((o) => o.status === 'review').length, chats: state.chatFlags.filter((f) => f.status === 'open').length,
+  texts: state.textFlags.filter((f) => f.status === 'open').length,
 }));
+// Round 29e (M-A): contact attempts in dispute reasons/statements, warranty texts and progress notes are accepted and listed here.
+route('GET', '/admin/moderation/texts', ({ me, query }) => {
+  needPerm(me, 'moderation.manage');
+  const status = query.get('status') ?? 'open';
+  if (!['open', 'confirmed', 'dismissed'].includes(status)) fail(400, 'validation_error', 'Unknown status');
+  return state.textFlags
+    .filter((f) => f.status === status)
+    .sort((a, b) => a.created_at.localeCompare(b.created_at))
+    .map((f) => {
+      const u = userById(f.user_id);
+      return {
+        ...f, user_name: u?.display_name ?? 'User', user_email: u?.email ?? '', user_status: (u as any)?.status ?? 'active',
+        offplatform_strikes: state.chatFlags.filter((x) => x.user_id === f.user_id && x.status !== 'dismissed' && x.strike !== false).length,
+        confirmed_before: state.chatFlags.filter((x) => x.user_id === f.user_id && x.status === 'confirmed').length + state.textFlags.filter((x) => x.user_id === f.user_id && x.status === 'confirmed' && x.id !== f.id).length,
+      };
+    });
+});
+route('POST', '/admin/moderation/texts/:id', ({ me, params, body }) => {
+  const u = needPerm(me, 'moderation.manage');
+  const f = state.textFlags.find((x) => x.id === params[0] && x.status === 'open') ?? fail(404, 'not_found', 'Flag not found');
+  Object.assign(f, { status: body.confirm ? 'confirmed' : 'dismissed', reviewed_by: u.id, note: body.note ?? null, reviewed_at: now() });
+  return f;
+});
 route('GET', '/admin/moderation/listings', ({ me }) => {
   needPerm(me, 'moderation.manage');
   return state.offers
@@ -4005,7 +4047,9 @@ export async function demoFetch(method: string, pathWithQuery: string, body: unk
     const match = m === method ? re.exec(path) : null;
     if (!match) continue;
     try {
-      const data = h({ me, body: body ?? {}, query: new URLSearchParams(qs ?? ''), params: match.slice(1).map(decodeURIComponent) });
+      const params = match.slice(1).map(decodeURIComponent);
+      const data = h({ me, body: body ?? {}, query: new URLSearchParams(qs ?? ''), params });
+      if (me) flagTextRoute(method, path, me.id, params[0]!, body ?? {});
       save();
       return { status: data === undefined ? 204 : method === 'POST' && /\/(orders|offers)$/.test(path) ? 201 : 200, data };
     } catch (err) {

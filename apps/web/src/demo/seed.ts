@@ -433,6 +433,11 @@ export function seed() {
     chatFlags: [
       { id: 'cf-1', room_id: flagRoom.id, seq: 3, user_id: 'u-req-zed', user_name: 'zed.plays', user_email: 'zed@example.test', reasons: ['whatsapp', 'external_payment', 'phone_number'], status: 'open', note: null, created_at: ago(30 * 60_000) },
     ] as any[],
+    // Round 29e (M-A): contact attempts in texts outside the chat (accepted, flagged for staff in Ops → Moderation → Texts).
+    textFlags: [
+      { id: 'tf-1', source: 'dispute_statement', ref_type: 'order', ref_id: 'seed-3', user_id: users[0]!.id, reasons: ['add_me', 'handle'], excerpt: 'The login he sent does not work. Message me on telegram @fastbuyer22 and I will explain everything.', status: 'open', reviewed_by: null, note: null, created_at: ago(45 * 60_000), reviewed_at: null },
+      { id: 'tf-2', source: 'progress_note', ref_type: 'order', ref_id: 'seed-5', user_id: users[4]!.id, reasons: ['link'], excerpt: 'Halfway there, Gold III now. Live updates on discord.gg/boostzone', status: 'open', reviewed_by: null, note: null, created_at: ago(3 * 60 * 60_000), reviewed_at: null },
+    ] as any[],
     reviews: [
       { id: 'r1', order_id: 'seed-1', seller_id: users[1]!.id, rating: 5, comment: 'Key worked instantly.', seller_reply: null, created_at: ago(20 * day) },
       { id: 'r2', order_id: 'seed-2', seller_id: users[1]!.id, rating: 5, comment: 'Gold arrived in 20 minutes.', seller_reply: 'Thanks!', created_at: ago(12 * day) },

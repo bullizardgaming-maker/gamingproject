@@ -1,7 +1,7 @@
 import { useId } from 'react';
 import { Link } from 'react-router-dom';
 import { money } from '../api';
-import { Medal as Award, SealCheck as BadgeCheck, Clock, Coins, Package, ThumbsUp, GameController as Gamepad2, Gift, Key as KeyRound, RocketLaunch as Rocket, ShieldCheck, DeviceMobile as Smartphone, Star, Sword as Swords, UserCircle as UserRound, VideoCamera as Video, Lightning as Zap } from '@phosphor-icons/react';
+import { Medal as Award, SealCheck as BadgeCheck, Clock, Coins, CreditCard, Headset, Package, ThumbsUp, GameController as Gamepad2, Gift, Key as KeyRound, RocketLaunch as Rocket, ShieldCheck, DeviceMobile as Smartphone, Star, Sword as Swords, UserCircle as UserRound, VideoCamera as Video, Lightning as Zap } from '@phosphor-icons/react';
 import { categoriesUnavailable, categoryLabel, deliveryLabel, initials, retryCategories, useCategoryOrder } from '@/lib/catalog';
 import { cn } from '@/lib/utils';
 import { attributePairs } from '@/lib/attributes';
@@ -173,10 +173,10 @@ export function RankPill({ name, className }: { name: string; className?: string
 
 export function TrustStrip({ className }: { className?: string }) {
   const items = [
-    [ShieldCheck, t('trust.escrow'), t('trust.escrow.text')],
-    [Video, t('trust.proof'), t('trust.proof.text')],
-    [Coins, t('trust.crypto'), t('trust.crypto.text')],
-    [Star, t('trust.reviews'), t('trust.reviews.text')],
+    [ShieldCheck, t('trust.protector'), t('trust.protector.text')],
+    [Headset, t('trust.support'), t('trust.support.text')],
+    [Zap, t('trust.delivery'), t('trust.delivery.text')],
+    [CreditCard, t('trust.payments'), t('trust.payments.text')],
   ] as const;
   return (
     <div className={cn('trust-strip', className)}>

@@ -7,22 +7,31 @@ const fmt = (d: string) => new Date(d).toLocaleString([], { month: 'short', day:
 /** "term:aimbot" → "aimbot", "contact:discord" → "contact: discord" */
 const reasonLabel = (r: string) => (r.startsWith('term:') ? r.slice(5) : r.startsWith('contact:') ? `contact: ${r.slice(8).replace('_', ' ')}` : r.replace('_', ' '));
 
-type Sub = 'listings' | 'chats' | 'terms';
+type Sub = 'listings' | 'chats' | 'texts' | 'terms';
+type Counts = { listings: number; chats: number; texts?: number };
+const SOURCE_LABEL: Record<string, string> = {
+  dispute_reason: 'Dispute reason',
+  dispute_statement: 'Dispute statement',
+  progress_note: 'Progress note',
+  warranty_claim: 'Warranty claim',
+  warranty_reply: 'Warranty reply (seller)',
+};
 
-/** Operations → Moderation: listings held for review, chats flagged for off-platform contact, and the term list. */
+/** Operations → Moderation: listings held for review, chats and other texts flagged for off-platform contact, and the term list. */
 export function ModerationPanel() {
   const [sub, setSub] = useState<Sub>('listings');
-  const [counts, setCounts] = useState<{ listings: number; chats: number } | null>(null);
-  const refreshCounts = useCallback(() => void api<{ listings: number; chats: number }>('/admin/moderation/summary').then(setCounts).catch(() => {}), []);
+  const [counts, setCounts] = useState<Counts | null>(null);
+  const refreshCounts = useCallback(() => void api<Counts>('/admin/moderation/summary').then(setCounts).catch(() => {}), []);
   useEffect(refreshCounts, [refreshCounts]);
   return (
     <div className="stack">
       <div className="filters" role="group" aria-label="Moderation" style={{ margin: 0 }}>
         <button aria-pressed={sub === 'listings'} onClick={() => setSub('listings')}>Listings to review{counts ? ` (${counts.listings})` : ''}</button>
         <button aria-pressed={sub === 'chats'} onClick={() => setSub('chats')}>Flagged chats{counts ? ` (${counts.chats})` : ''}</button>
+        <button aria-pressed={sub === 'texts'} onClick={() => setSub('texts')}>Texts{counts ? ` (${counts.texts ?? 0})` : ''}</button>
         <button aria-pressed={sub === 'terms'} onClick={() => setSub('terms')}>Terms</button>
       </div>
-      {sub === 'listings' ? <ListingQueue onChange={refreshCounts} /> : sub === 'chats' ? <ChatQueue onChange={refreshCounts} /> : <Terms />}
+      {sub === 'listings' ? <ListingQueue onChange={refreshCounts} /> : sub === 'chats' ? <ChatQueue onChange={refreshCounts} /> : sub === 'texts' ? <TextQueue onChange={refreshCounts} /> : <Terms />}
     </div>
   );
 }
@@ -124,6 +133,69 @@ function ChatQueue({ onChange }: { onChange: () => void }) {
                 </div>
               ))}
             </div>
+            {f.status === 'open' ? (
+              <div className="row">
+                <button className="btn" onClick={() => decide(f.id, true)}>Confirm</button>
+                <button className="btn ghost" onClick={() => decide(f.id, false)}>Dismiss</button>
+              </div>
+            ) : (
+              f.note && <div className="small muted">Note: {f.note}</div>
+            )}
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+/** Round 29e (M-A): contact attempts in dispute reasons and statements, warranty texts and progress notes. */
+function TextQueue({ onChange }: { onChange: () => void }) {
+  const [status, setStatus] = useState<'open' | 'confirmed' | 'dismissed'>('open');
+  const [list, setList] = useState<any[] | null>(null);
+  const [error, setError] = useState('');
+  const load = useCallback(() => {
+    setList(null);
+    setError('');
+    api<any[]>(`/admin/moderation/texts?status=${status}`).then(setList).catch((e) => setError(e.message));
+  }, [status]);
+  useEffect(load, [load]);
+  const decide = async (id: string, confirm: boolean) => {
+    try {
+      await api(`/admin/moderation/texts/${id}`, { body: { confirm } });
+      load();
+      onChange();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+  return (
+    <div className="stack">
+      <div className="row spread">
+        <p className="small muted" style={{ margin: 0, flex: '1 1 320px' }}>
+          Dispute reasons and statements, warranty claims and replies, and boosting progress notes that look like an attempt to move the deal off Bullizard. The text was saved and the other side can see it. Confirm a real attempt, or dismiss a false alarm. No strike is added automatically.
+        </p>
+        <div className="filters" role="group" aria-label="Flag status" style={{ margin: 0 }}>
+          {(['open', 'confirmed', 'dismissed'] as const).map((s) => <button key={s} aria-pressed={status === s} onClick={() => setStatus(s)}>{s[0]!.toUpperCase() + s.slice(1)}</button>)}
+        </div>
+      </div>
+      {error && <div className="alert" role="alert">{error}</div>}
+      {list === null ? (
+        error ? null : <p className="muted">Loading…</p>
+      ) : list.length === 0 ? (
+        <div className="card muted">Nothing here. 🎉</div>
+      ) : (
+        list.map((f) => (
+          <div key={f.id} className="card stack" style={{ gap: 8 }} data-testid="text-flag">
+            <div className="row spread" style={{ alignItems: 'start' }}>
+              <div style={{ minWidth: 0, flex: '1 1 300px' }}>
+                <b>{f.user_name}</b> <span className="small muted">{f.user_email} · strikes {f.offplatform_strikes}{f.confirmed_before ? ` · ${f.confirmed_before} confirmed before` : ''}{f.user_status !== 'active' ? ` · ${f.user_status}` : ''}</span>
+                <div className="small muted">
+                  {SOURCE_LABEL[f.source] ?? f.source} · {f.ref_type === 'order' ? <Link to={`/orders/${f.ref_id}`}>Order {String(f.ref_id).slice(0, 8)}</Link> : `Claim ${String(f.ref_id).slice(0, 8)}`} · {fmt(f.created_at)}
+                </div>
+              </div>
+              <div className="row" style={{ gap: 6 }}>{f.reasons.map((r: string) => <span key={r} className="chip disputed">{reasonLabel(r)}</span>)}</div>
+            </div>
+            <p className="small" style={{ margin: 0, padding: '8px 10px', borderRadius: 8, background: 'var(--disputed-soft)', border: '1px solid var(--rule)', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{f.excerpt}</p>
             {f.status === 'open' ? (
               <div className="row">
                 <button className="btn" onClick={() => decide(f.id, true)}>Confirm</button>
