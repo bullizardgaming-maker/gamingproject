@@ -137,13 +137,20 @@ export function detectOffPlatform(body: string, opts: { allowEmail?: boolean; al
 const APP_LONG = '(?:discord|telegram|whatsapp|whats\\s?app|signal|snapchat|instagram|skype|viber|wechat|kik|messenger|facebook|botim|imo)';
 const APP_SHORT = '(?:disc|dc|tele|tg|wa|snap|insta|ig|fb|line)';
 const APP_WORD = `(?:${APP_LONG}|${APP_SHORT})`;
+// outside payment methods: a name alone is product talk ("Zelle gift card"); paying THROUGH one is contact intent
+const PAY_APP = '(?:paypal|venmo|zelle|cash\\s?app|cashapp|revolut|wise|skrill|payoneer|western\\s?union|instapay|insta\\s?pay|vodafone\\s?cash|vf\\s?cash|etisalat\\s?cash|orange\\s?cash|we\\s?pay|fawry|binance\\s?pay|bank\\s+transfer|wire)';
 const CONTACT_INTENT_PATTERNS: Array<[string, RegExp]> = [
   // "discord: name", "my telegram is @x", "whatsapp = 010…", "tg: x" (a short form needs the colon or equals sign)
-  ['handle', new RegExp(`\\b${APP_LONG}\\s*(?:id|tag|user(?:name)?|handle|number|no\\.?|num)?\\s*(?:is|=|:)\\s*@?[\\w.#+-]{3,}`, 'i')],
+  ['handle', new RegExp(`\\b${APP_LONG}\\s*(?:id|tag|user(?:name)?|handle|number|no\\.?|num)?\\s*(?:is|=|:)\\s*(?!(?:not|down|fine|ok|broken|dead|working|the|a|an|my|our|for|on|in|to|also|still)\\b)@?[\\w.#+-]{3,}`, 'i')],
   ['handle', new RegExp(`\\b${APP_SHORT}\\s*(?:id|tag|user(?:name)?|handle|number|num)?\\s*[:=]\\s*@?[\\w.#+-]{3,}`, 'i')],
   ['handle', new RegExp(`\\bmy\\s+(?:${APP_LONG}|disc|tele|insta|snap)\\b(?!\\s+(?:nitro|premium|account|server|bot|order|purchase|subscription|gift|key|code))`, 'i')],
   // "add me on discord", "contact me via telegram", "let's talk on whatsapp", "dm me in insta", "on discord?"
   ['add_me', new RegExp(`\\b(?:add|contact|dm|message|msg|text|reach|find|ping|call|talk\\s+to|chat\\s+with|hit)\\s+(?:me|us)(?:\\s+up)?\\s+(?:on|at|via|through|in|over)\\s+${APP_WORD}\\b|\\b(?:let'?s|lets|we\\s+can|can\\s+we|wanna|want\\s+to)\\s+(?:talk|chat|continue|move|switch|go)\\s+(?:on|to|over\\s+to|via|in)\\s+${APP_WORD}\\b|\\b(?:on|via|over)\\s+${APP_WORD}\\s*[?]`, 'i')],
+  // "add me discord johnny99" / "add me on discord" without the preposition or the handle
+  ['add_me', new RegExp(`\\b(?:add|dm|message|msg|text|ping)\\s+(?:me|us)\\s+${APP_WORD}\\b`, 'i')],
+  // Round 29f (3): paying through an outside method — "pay me on paypal instead", "send on instapay", "vodafone cash to 010…"
+  ['pay_outside', new RegExp(`\\b(?:pay|send|transfer|settle)(?:\\s+(?:me|us|it|the\\s+rest|half|directly|direct))?\\s+(?:on|via|through|by|with|over|using)\\s+${PAY_APP}\\b|\\b${PAY_APP}\\s+(?:me|us|instead|direct(?:ly)?|is\\s+(?:faster|cheaper|better|easier))\\b|\\b${PAY_APP}\\s*(?:to|:|=)\\s*(?:@|\\+|0|\\d)`, 'i')],
+  ['pay_outside', /(?:ادفع|حول|ابعت|ارسل)(?:\s+\S+){0,2}\s+(?:على|عن طريق|ب|عبر)\s*(?:انستاباي|إنستاباي|فودافون\s*كاش|اتصالات\s*كاش|اورنج\s*كاش|باي\s*بال|بايبال|فوري)/],
   // the app as a verb: "whatsapp me", "discord us later"
   ['add_me', new RegExp(`\\b${APP_LONG}\\s+(?:me|us)\\b`, 'i')],
   ['add_me', /ضيفني (?:على|ع) (?!اللعبة|الجيم)|كلمني على (?!هنا|الشات|المحادثة|الموقع)|تواصل معي على (?!هنا|الشات|المحادثة|الموقع)|(?:ديسكورد|تيليجرام|تلجرام|واتساب|واتس|انستا)\s*(?:بتاعي|ي)?\s*[:=]\s*\S|(?:رقمي|نمرتي)\s*[:=]?\s*[\d٠-٩]/],

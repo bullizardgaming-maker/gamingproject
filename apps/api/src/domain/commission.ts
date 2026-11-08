@@ -108,12 +108,16 @@ export async function monthlySalesCents(q: Queryable, sellerId: string): Promise
 /** CFO (5 Nov): promo sales so far — seller net of orders paid since the first listing (cancelled ones excluded). */
 export async function promoSalesCents(q: Queryable, sellerId: string, sellerSince: string): Promise<number> {
   // Round 29e: orders created and still awaiting payment count toward the promo too, so two buyers cannot both be quoted
-  // the promo rate for the last slice of the cap.
+  // the promo rate for the last slice of the cap. Round 29f (2): only ONE unpaid order per buyer (the largest) counts, so a
+  // single buyer parking several unpaid orders cannot use the seller's promo up.
   const r = await one<{ total: string }>(
     q,
-    `SELECT COALESCE(SUM(seller_net_cents), 0)::bigint AS total FROM orders
-      WHERE seller_id = $1 AND created_at >= $2 AND status NOT IN ('cancelled', 'refunded')
-        AND (paid_at IS NOT NULL OR status = 'awaiting_payment')`,
+    `SELECT (
+        (SELECT COALESCE(SUM(seller_net_cents), 0) FROM orders
+          WHERE seller_id = $1 AND created_at >= $2 AND paid_at IS NOT NULL AND status NOT IN ('cancelled', 'refunded'))
+      + (SELECT COALESCE(SUM(m), 0) FROM (SELECT MAX(seller_net_cents) AS m FROM orders
+          WHERE seller_id = $1 AND created_at >= $2 AND status = 'awaiting_payment' AND paid_at IS NULL GROUP BY buyer_id) x)
+     )::bigint::text AS total`,
     [sellerId, sellerSince],
   );
   return Number(r.total);

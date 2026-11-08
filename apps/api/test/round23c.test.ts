@@ -122,7 +122,7 @@ describe('follow-up 13: a build URL that is not a URL names the variable', () =>
     expect(() => vite.csp('ftp://api.bullizard.com')).toThrow(/VITE_API_URL must be an https URL/);
     expect(() => vite.csp('http://api.bullizard.com')).toThrow(/VITE_API_URL must be an https URL/);
     expect(vite.csp('https://api-staging.bullizard.com/v1', { uploadOrigin: 'https://acc.r2.cloudflarestorage.com/bucket' })).toContain(
-      'connect-src \'self\' ws: wss: https://api-staging.bullizard.com wss://api-staging.bullizard.com https://acc.r2.cloudflarestorage.com',
+      'connect-src \'self\' https://api-staging.bullizard.com wss://api-staging.bullizard.com https://acc.r2.cloudflarestorage.com',
     );
     expect(vite.csp('http://localhost:4000')).toContain('http://localhost:4000'); // local builds
   });

@@ -24,14 +24,19 @@ export async function flagContactAttempt(
   q: Queryable,
   text: string | null | undefined,
   ref: { source: TextFlagSource; refType: 'order' | 'claim'; refId: string; userId: string },
-  opts: { allowEmail?: boolean } = {},
+  opts: { allowEmail?: boolean; log?: { error: (obj: unknown, msg: string) => void } } = {},
 ): Promise<string[]> {
   if (!text) return [];
   const reasons = detectContactIntent(text, { allowEmail: opts.allowEmail });
   if (!reasons.length) return [];
-  await q.query(
-    `INSERT INTO text_flags (source, ref_type, ref_id, user_id, reasons, excerpt) VALUES ($1, $2, $3, $4, $5, $6)`,
-    [ref.source, ref.refType, ref.refId, ref.userId, reasons, text.slice(0, 500)],
-  );
+  // Round 29f (1): the dispute / claim / note is already saved — a failed flag is logged, never surfaced as an error.
+  try {
+    await q.query(
+      `INSERT INTO text_flags (source, ref_type, ref_id, user_id, reasons, excerpt) VALUES ($1, $2, $3, $4, $5, $6)`,
+      [ref.source, ref.refType, ref.refId, ref.userId, reasons, text.slice(0, 500)],
+    );
+  } catch (err) {
+    (opts.log ?? console).error({ err, source: ref.source, refId: ref.refId, reasons }, 'text flag insert failed (request still succeeds)');
+  }
   return reasons;
 }

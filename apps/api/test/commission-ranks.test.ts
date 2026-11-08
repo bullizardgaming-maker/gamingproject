@@ -58,9 +58,23 @@ describe('commission gross-up and seller ranks', () => {
     expect(unpaid.status, JSON.stringify(unpaid.body)).toBe(201);
     expect((await grossUpForSeller(h.ctx.db, seller.id, 400_00))).toMatchObject({ amount: grossUp(400_00, 1399), rateBps: 1399, split: null }); // the $100 left went to the unpaid order
     expect((await client(h.app).get(`/v1/offers/${offer.id}`)).body.price_cents).toBe(grossUp(400_00, 1399));
-    await buyer2.api.post(`/v1/orders/${unpaid.body.order.id}/cancel`);
-    await refreshSellerRate(h.ctx.db, seller.id);
-    expect((await client(h.app).get(`/v1/offers/${offer.id}`)).body.price_cents).toBe(shown.price_cents); // cancelled: the promo slice is back
+    // Round 29f (2): a second unpaid order from the same buyer does not eat more of the promo — only their largest unpaid order counts
+    const second = await buyer2.api.post('/v1/orders', { offerId: offer.id, quantity: 1, acceptTos: true });
+    expect(second.status, JSON.stringify(second.body)).toBe(201);
+    expect((await client(h.app).get(`/v1/offers/${offer.id}`)).body.price_cents).toBe(grossUp(400_00, 1399)); // unchanged
+    expect((await grossUpForSeller(h.ctx.db, seller.id, 400_00))).toMatchObject({ amount: grossUp(400_00, 1399), split: null });
+    // and at most MAX_UNPAID_ORDERS_PER_BUYER (3) unpaid orders in all
+    const third = await makeOffer(await makeUser(h, { tier: 2 }), { priceCents: 10_00, stock: 5, deliveryMode: 'manual' });
+    expect((await buyer2.api.post('/v1/orders', { offerId: third.id, quantity: 1, acceptTos: true })).status).toBe(201);
+    const fourth = await makeOffer(await makeUser(h, { tier: 2 }), { priceCents: 10_00, stock: 5, deliveryMode: 'manual' });
+    expect((await buyer2.api.post('/v1/orders', { offerId: fourth.id, quantity: 1, acceptTos: true })).body.error).toMatchObject({ code: 'too_many_unpaid_orders', details: { max: 3 } });
+    await buyer2.api.post(`/v1/orders/${second.body.order.id}/cancel`);
+    // the payment window closing frees the slice again — the reaper cancels the order and the listing price follows at once
+    await h.ctx.db.query(`UPDATE orders SET payment_expires_at = now() - interval '2 hours' WHERE id = $1`, [unpaid.body.order.id]);
+    const { cancelUnpaidExpired } = await import('../src/domain/orders.js');
+    expect(await cancelUnpaidExpired(h.ctx)).toBeGreaterThanOrEqual(1);
+    expect((await h.ctx.db.query('SELECT status FROM orders WHERE id = $1', [unpaid.body.order.id])).rows[0].status).toBe('cancelled');
+    expect((await client(h.app).get(`/v1/offers/${offer.id}`)).body.price_cents).toBe(shown.price_cents); // expired: the promo slice is back
     // fully over the cap: the rank rate on everything
     await h.ctx.db.query(`UPDATE orders SET seller_net_cents = 1500_00 WHERE id = $1`, [o.id]);
     expect((await grossUpForSeller(h.ctx.db, seller.id, 400_00))).toMatchObject({ amount: grossUp(400_00, 1399), rateBps: 1399, split: null });

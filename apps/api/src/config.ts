@@ -278,6 +278,9 @@ const Env = z.object({
   // Off-platform contact: the offence that bans (1 = instant ban on the first offence). Earlier ones warn.
   OFFPLATFORM_SUSPEND_STRIKES: z.coerce.number().int().min(1).default(3),
   ORDER_PAYMENT_TTL_MINUTES: z.coerce.number().default(30),
+  // Round 29f (2): unpaid orders count toward a seller's promo cap, so one buyer may hold at most this many orders awaiting
+  // payment at a time, until they pay, cancel, or the payment window closes.
+  MAX_UNPAID_ORDERS_PER_BUYER: z.coerce.number().int().min(1).default(3),
   // Admin/arbiter actions need a session signed in with a second factor (PCI DSS 8.4). Defaults to on in production.
   STAFF_MFA_REQUIRED: z.enum(['true', 'false']).optional(),
   VIDEO_METADATA_STRIP: z.enum(['ffmpeg', 'off']).default('ffmpeg'), // Round 23d: proof videos are re-muxed without metadata (GPS); 'off' is for tests only

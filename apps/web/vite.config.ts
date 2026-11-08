@@ -53,7 +53,8 @@ export function csp(apiUrl?: string, opts: { turnstile?: boolean; uploadOrigin?:
   "style-src 'self' https://fonts.googleapis.com",
   "font-src https://fonts.gstatic.com",
   `img-src 'self' data:${apiImg}`,
-  `connect-src 'self' ws: wss:${api}${upload}`,
+  // Round 29f (4): the WebSocket is allowed only on the API origin ('self' covers a same-origin API, sockets included).
+  `connect-src 'self'${api}${upload}`,
   `frame-src https://checkout.stripe.com https://js.stripe.com${cf}`,
   "form-action 'self' https://checkout.stripe.com",
   "base-uri 'none'",

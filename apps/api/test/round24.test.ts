@@ -122,6 +122,8 @@ describe('§3 the buyer’s delivery choice on the order', () => {
     expect((await order({ deliveryMethod: 'market', deliveryInfo: { character: 'Hero2', city: 'Caerleon' }, saveInfo: true })).status).toBe(201);
     expect((await buyer.api.get('/v1/me')).body.user.handover_names).toEqual({ 'albion online': 'Hero2' });
     const poe = (await seller.api.post('/v1/offers', { categorySlug: 'currency', game: 'Path of Exile', title: 'Divines', priceCents: 2_00, deliveryMode: 'manual', stock: 9, attributes: { league: 'Standard', mode: 'Softcore' } })).body;
+    // Round 29f (2): a buyer holds at most 3 unpaid orders — clear the ones this test parked
+    for (const row of (await h.ctx.db.query(`SELECT id FROM orders WHERE buyer_id = $1 AND status = 'awaiting_payment'`, [buyer.id])).rows) await buyer.api.post(`/v1/orders/${row.id}/cancel`);
     const legacy = await buyer.api.post('/v1/orders', { offerId: poe.id, acceptTos: true, characterName: 'OldClient' });
     expect(legacy.status, JSON.stringify(legacy.body)).toBe(201);
     expect(legacy.body.order).toMatchObject({ delivery_method: 'f2f', delivery_info: { character: 'OldClient' }, character_name: 'OldClient' });

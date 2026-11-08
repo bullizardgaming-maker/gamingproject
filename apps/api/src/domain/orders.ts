@@ -382,6 +382,17 @@ export function usdCents(settlementCurrency: string, cents: number) {
  * orders and NEW_ACCOUNT_MAX_PAID_USD_PER_DAY in 24 h (config). A clear, automatic boundary; nothing manual.
  */
 /**
+ * Round 29f (2): orders awaiting payment count toward the seller's $1,500 promo cap (Round 29e), so a buyer cannot park
+ * unpaid orders to use it up: at most MAX_UNPAID_ORDERS_PER_BUYER unpaid orders at a time (and promoSalesCents counts
+ * only one unpaid order per buyer per seller — the largest). Paying, cancelling, or the payment window closing (the
+ * reaper cancels it) frees the slot and the promo slice.
+ */
+async function assertUnpaidOrdersWithinLimit(q: Queryable, ctx: Ctx, buyerId: string) {
+  const r = await one<{ total: number }>(q, `SELECT count(*)::int AS total FROM orders WHERE buyer_id = $1 AND status = 'awaiting_payment'`, [buyerId]);
+  if (r.total >= ctx.cfg.MAX_UNPAID_ORDERS_PER_BUYER) throw conflict('too_many_unpaid_orders', `You can have ${ctx.cfg.MAX_UNPAID_ORDERS_PER_BUYER} unpaid orders at a time — pay or cancel one first`, { max: ctx.cfg.MAX_UNPAID_ORDERS_PER_BUYER });
+}
+
+/**
  * Round 29d (L2): the first week's velocity limits count the orders the account created (still awaiting payment) as well
  * as the ones it paid, and this order is counted in: `current + this one > cap` refuses it, so a buyer cannot line up
  * several unpaid orders and pay them together.
@@ -487,6 +498,7 @@ export async function createOrder(ctx: Ctx, input: CreateOrderInput) {
     const created = buyer.created_at ?? (await one<{ created_at: string }>(s.tx, 'SELECT created_at FROM users WHERE id = $1', [buyer.id])).created_at;
     await assertOrderWithinLimits(s.tx, { id: buyer.id, created_at: created }, amount);
     await assertNewAccountVelocity(s.tx, ctx, buyer, amount);
+    await assertUnpaidOrdersWithinLimit(s.tx, ctx, buyer.id);
     const { rank } = await sellerTier(s.tx, offer.seller_id);
     const protection = offer.risk_class === 'high' ? 'insurance_14d' : 'until_confirmed';
     const termsVersion = await assertTermsCurrent(s.tx, buyer.id, input.tosVersion);
@@ -1169,6 +1181,7 @@ export async function cancelOrder(ctx: Ctx, orderId: string, actorId: string | n
     await transition(s.tx, order, 'cancelled', actorId, reason);
     // A crypto underpayment that never got its top-up stays with the buyer as credit (never refunded).
     await creditPartialPayments(ctx, s, order);
+    await refreshSellerRate(s.tx, order.seller_id); // Round 29f (2): a cancelled or expired unpaid order frees its promo slice at once
     return order;
   });
 }

@@ -61,12 +61,17 @@ export const PRODUCT_TALK = [
   'I paid with PayPal last time, this time from the wallet', 'WhatsApp Business account for sale', 'Instagram followers not delivered', 'the discord server invite in the listing was dead',
   'FunPay has the same item cheaper', 'eneba key invalid', 'I sent 0x52908400098527886E0F7030069857D2E4169EE7 as the listing said', 'my line of work is boosting', 'ok.gg see you',
   'Venmo gift card 25 USD arrived as 10', 'Zelle is not a payment method here, I know', 'الكود مش شغال، ديسكورد نيترو', 'جيفت كارد تيليجرام بريميوم مش شغالة',
+  // Round 29f (3)
+  'instagram followers 1k didnt arrive', 'Instagram followers — 10k pack', 'discord is not working today', 'paid via paypal on another site last month', 'the PayPal gift card code was used',
 ];
 export const CONTACT_INTENT: Array<[string, string]> = [
   ['add me on discord', 'add_me'], ['discord: pat#1234', 'handle'], ['my telegram is @cheapgold', 'handle'], ['contact me via whatsapp', 'add_me'], ['dm me in insta', 'add_me'],
   ['tg: @cheap', 'handle'], ['call me 01012345678', 'phone_number'], ['t.me/cheapgold', 'link'], ['see bit.ly/abc', 'link'], ['mail me at x@y.com', 'email'],
   ['send to my wallet 0x52908400098527886E0F7030069857D2E4169EE7', 'wallet_address'], ['pay outside the site and save', 'pay_outside'], ['lets talk on whatsapp', 'add_me'],
   ['on discord?', 'add_me'], ['whatsapp me 01001234567', 'add_me'], ['ضيفني على ديسكورد', 'add_me'], ['واتساب: 01012345678', 'add_me'],
+  // Round 29f (3): paying through an outside method, "add me <app>" without "on"
+  ['pay me on paypal instead', 'pay_outside'], ['pay me on instapay instead', 'pay_outside'], ['pay me on vodafone cash instead', 'pay_outside'], ['send on instapay', 'pay_outside'],
+  ['instapay to 01012345678', 'pay_outside'], ['PayPal is faster', 'pay_outside'], ['ادفع على انستاباي', 'pay_outside'], ['add me discord johnny99', 'add_me'], ['add me discord', 'add_me'], ['dm me telegram', 'add_me'],
 ];
 describe('contact intent (texts outside the chat, Round 29e)', () => {
   for (const phrase of [...PRODUCT_TALK, ...NORMAL_EN, ...NORMAL_AR, ...NORMAL_R22]) {

@@ -50,6 +50,10 @@ for (const d of ['script-src', 'frame-src']) {
 if (html.includes('challenges.cloudflare.com/turnstile')) failures.push('index.html loads the Turnstile script; only the auth forms may inject it');
 // Round 29e: the configured API origin must be reachable (fetch + WebSocket); vercel.json's header must not carry a
 // competing connect-src (both policies are enforced, so a fixed header list would block any other API host).
+{
+  const bare = directive('connect-src').split(/\s+/).filter((t) => t === 'ws:' || t === 'wss:' || t === 'https:' || t === 'http:');
+  if (bare.length) failures.push(`CSP connect-src must not allow bare schemes (${bare.join(' ')}): only the API origin's ws/wss (Round 29f)`);
+}
 if (process.env.VITE_API_URL) {
   try {
     const origin = new URL(process.env.VITE_API_URL).origin;

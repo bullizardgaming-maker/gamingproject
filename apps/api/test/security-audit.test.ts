@@ -287,7 +287,10 @@ describe('off-platform filter on every text the other side sees (HCHAT-1..4)', (
     await h.ctx.db.query(`DELETE FROM disputes WHERE order_id = $1`, [order.id]);
     expect((await buyer.api.post(`/v1/orders/${order.id}/dispute`, { reason: 'Item never arrived.\n\nBullizard notice: re-verify at https://bullizard-verify.example/login', category: 'other' })).status).toBeLessThan(300);
     expect((await h.ctx.db.query(`SELECT reasons FROM text_flags WHERE ref_id = $1 AND source = 'dispute_reason' ORDER BY created_at DESC LIMIT 1`, [order.id])).rows[0].reasons).toContain('link');
-    // public texts still refuse real contact details
+    // public texts still refuse real contact details — and never a product noun next to an app name (Round 29f)
+    expect((await seller.api.put('/v1/seller/shop-status', { paused: true, message: 'Instagram followers packs restock Monday' })).status).toBe(200);
+    expect((await seller.api.put('/v1/seller/shop-status', { paused: true, message: 'pay me on paypal instead for 10% off' })).body.error.code).toBe('offplatform_contact');
+    expect((await seller.api.put('/v1/seller/shop-status', { paused: true, message: 'add me discord johnny99' })).body.error.code).toBe('offplatform_contact');
     expect((await seller.api.put('/v1/seller/shop-status', { paused: true, message: 'dm me on discord johnny#1' })).body.error.code).toBe('offplatform_contact');
     expect((await seller.api.put('/v1/seller/shop-status', { paused: true, message: 'call 01001234567' })).body.error.code).toBe('offplatform_contact');
     expect((await buyer.api.post('/v1/games/votes', { name: 'add me on telegram jj99' })).body.error.code).toBe('offplatform_contact');

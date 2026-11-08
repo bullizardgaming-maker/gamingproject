@@ -982,6 +982,14 @@ or `test/security-audit-payouts.test.ts` (each fails on the code before this com
   `KYC_PROVIDER=mock` (unless `SANDBOX_MODE`) and a missing `GEO_COUNTRY_HEADER`; "pause orders" also stops wallet top-ups,
   "pause chat" also stops attachments; CSV import metered (6/min per user). `@sentry/node` 11.11 (npm audit clean).
 
+## Round 29f (Nov 8, 2026) — small follow-ups
+
+Pushed to main and staging. No migration.
+1. `flagContactAttempt` never fails the request: the dispute / claim / note is already saved, so a failed `text_flags` insert is logged (`ctx.log`) and the call still succeeds.
+2. Unpaid orders count toward a seller's $1,500 promo (29e), so a buyer may hold **one unpaid order per seller** (409 `unpaid_order_exists`, `details.orderId`) and at most **`MAX_UNPAID_ORDERS_PER_BUYER` (3)** in all (409 `too_many_unpaid_orders`). Paying, cancelling or the payment window closing frees the slot; `cancelOrder` (buyer cancel and the reaper) refreshes the seller rate at once, so an expired unpaid order gives the promo slice back immediately. The first-week open-orders control still applies on top.
+3. Filter gaps (`detectContactIntent`): `pay_outside` now catches paying **through** an outside method — "pay me on paypal / instapay / vodafone cash instead", "send on instapay", "instapay to 010…", "PayPal is faster", Arabic «ادفع على انستاباي» (`PAY_APP` list: PayPal, Venmo, Zelle, Cash App, Revolut, Wise, Skrill, Payoneer, Western Union, InstaPay, Vodafone/Etisalat/Orange Cash, WE Pay, Fawry, Binance Pay, bank transfer / wire); `add_me` catches "add me discord johnny99" / "dm me telegram" (no "on"). A method or app **name alone** stays product talk ("Zelle gift card", "paid via paypal on another site", "Instagram followers 1k didn't arrive", "discord is not working today") — the shop notice accepts "Instagram followers packs restock Monday". Phrases pinned in `chat-filter.test.ts` (`PRODUCT_TALK` / `CONTACT_INTENT`) and `security-audit`.
+4. CSP `connect-src` is `'self'` + the configured API origin and **its** `wss://` only — no bare `ws:`/`wss:` (a same-origin API is covered by `'self'`, sockets included). `verify-static-files.mjs` fails the build on any bare scheme in connect-src.
+
 ## Round 29e (Nov 7, 2026) — review fixes
 
 Migration `088_round29e.sql`. Pushed to main and staging.
