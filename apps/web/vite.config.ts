@@ -51,7 +51,7 @@ export function csp(apiUrl?: string, opts: { turnstile?: boolean; uploadOrigin?:
   "default-src 'self'",
   `script-src 'self'${cf}`,
   "style-src 'self' https://fonts.googleapis.com",
-  "font-src https://fonts.gstatic.com",
+  "font-src 'self' https://fonts.gstatic.com",
   `img-src 'self' data:${apiImg}`,
   // Round 29f (4): the WebSocket is allowed only on the API origin ('self' covers a same-origin API, sockets included).
   `connect-src 'self'${api}${upload}`,

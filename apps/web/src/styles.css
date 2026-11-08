@@ -1,3 +1,11 @@
+@font-face {
+  font-family: 'Satoshi';
+  src: url('/fonts/Satoshi-Variable.woff2') format('woff2');
+  font-weight: 300 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* Round 26b: typed text is black in light mode, white in dark mode, in every input. */
 :root {
   --input-ink: #000;
@@ -31,10 +39,11 @@
   --viz-2: #eb6834;
   --edge: #cfd6e0;          /* borders that must show on cards (listing rows, chips, inputs in pop-ups) */
 
-  --display: 'Alexandria', 'Segoe UI', system-ui, sans-serif;
-  --body: 'Inter', 'Alexandria', 'Segoe UI', system-ui, sans-serif;
-  /* No mono font: numbers, IDs and timers use Inter with tabular figures (.mono / .num). */
-  --mono: 'Inter', 'Alexandria', system-ui, sans-serif;
+  /* Satoshi (Fontshare, self-hosted) for Latin text; it has no Arabic, so Alexandria covers Arabic. */
+  --display: 'Satoshi', 'Alexandria', 'Segoe UI', system-ui, sans-serif;
+  --body: 'Satoshi', 'Alexandria', 'Segoe UI', system-ui, sans-serif;
+  /* No mono font: numbers, IDs and timers use Satoshi with tabular figures (.mono / .num). */
+  --mono: 'Satoshi', 'Alexandria', system-ui, sans-serif;
 
   --radius: 10px;
   --gutter: clamp(16px, 4vw, 40px);
@@ -357,14 +366,14 @@ html.dark .secret { background: #0a0f17; color: #dbe4ef; }
 html[lang='ar'] * { letter-spacing: normal !important; }
 html[lang='ar'] body { line-height: 1.7; }
 /* Arabic text is set in Alexandria; numbers keep Inter's tabular figures. */
-html[lang='ar'] { --body: 'Alexandria', 'Inter', system-ui, sans-serif; --mono: 'Inter', 'Alexandria', system-ui, sans-serif; --font-mono: 'Inter', 'Alexandria', system-ui, sans-serif; }
+html[lang='ar'] { --display: 'Alexandria', 'Satoshi', system-ui, sans-serif; --font-display: var(--display); --body: 'Alexandria', 'Satoshi', system-ui, sans-serif; --font-sans: var(--body); --mono: 'Satoshi', 'Alexandria', system-ui, sans-serif; --font-mono: var(--mono); }
 
 /* =====================================================================================
- * Bullizard brand layer (Oct 2026): Alexandria + Inter, Night Frost dark by default, one green.
+ * Bullizard brand layer (Oct 2026): Satoshi (Latin) + Alexandria (Arabic), Night Frost dark by default, one green.
  * Rules: one rune-green element per view (the main action), dark text on green, no hover
  * shadows (hover = border rule -> steel), figures in Inter tabular-nums.
  * ===================================================================================== */
-body { font-family: var(--body); font-feature-settings: 'cv11'; }
+body { font-family: var(--body); }
 h1, h2, h3 { font-family: var(--display); letter-spacing: -0.01em; line-height: 1.12; }
 h1 { font-weight: 800; }
 h2 { font-weight: 700; }
