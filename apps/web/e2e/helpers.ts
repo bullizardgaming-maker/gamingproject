@@ -152,3 +152,19 @@ export async function payoutCountry(page: Page, country = 'Germany') {
   await page.getByRole('listbox').getByRole('option', { name: country, exact: true }).click();
   await expect(input).toHaveValue(country);
 }
+
+/** CEO, 8 Nov: language, currency and region live in the top bar's place control (Save applies them). */
+export async function setLanguage(page: Page, lang: string) {
+  await page.locator('.prefs-pill').click();
+  const panel = page.locator('.loc-panel');
+  await panel.locator('#loc-lang').selectOption(lang);
+  await panel.locator('.loc-actions .btn:not(.ghost)').click();
+  await expect(panel).toHaveCount(0);
+}
+export async function setCurrency(page: Page, cur: string) {
+  await page.locator('.prefs-pill').click();
+  const panel = page.locator('.loc-panel');
+  await panel.locator('#loc-cur').selectOption(cur);
+  await panel.locator('.loc-actions .btn:not(.ghost)').click();
+  await expect(panel).toHaveCount(0);
+}

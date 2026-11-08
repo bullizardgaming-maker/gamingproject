@@ -1,11 +1,11 @@
 import { expect, test } from '@playwright/test';
-import { watchErrors } from './helpers';
+import { setCurrency, watchErrors } from './helpers';
 
 test.describe('browsing', () => {
   test('home, market paging and search', async ({ page }) => {
     const done = watchErrors(page);
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: /The market for every game/ })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1, name: /Bullizard\s*Digital Marketplace/ })).toBeVisible();
     // Round 25: the market opens on game coins as game + server cards, G2G-style, with a filter panel.
     await page.goto('/market');
     await expect(page.getByRole('heading', { name: 'Currency', exact: true })).toBeVisible();
@@ -77,10 +77,10 @@ test.describe('browsing', () => {
 
   test('dark mode and display currency persist', async ({ page }) => {
     await page.goto('/games/genshin-impact');
-    await page.getByLabel('Show prices in', { exact: true }).first().selectOption('EGP');
+    await setCurrency(page, 'EGP');
     await expect(page.getByText(/EGP\s?[\d,.]+/).first()).toBeVisible(); // exact, no "≈" (Round 25)
     await expect(page.getByText(/≈/)).toHaveCount(0);
-    await page.getByLabel('Show prices in', { exact: true }).first().selectOption('EUR');
+    await setCurrency(page, 'EUR');
     await expect(page.getByText(/€[\d,.]+/).first()).toBeVisible();
     // The theme follows the device until the viewer picks one; the choice sticks across a reload.
     await page.emulateMedia({ colorScheme: 'dark' });
@@ -88,7 +88,7 @@ test.describe('browsing', () => {
     await page.emulateMedia({ colorScheme: 'light' });
     await expect(page.locator('html')).not.toHaveClass(/dark/);
     await page.emulateMedia({ colorScheme: 'dark' });
-    await page.getByRole('button', { name: 'Language, currency and theme' }).click();
+    await page.locator('.prefs-pill').click();
     await page.getByRole('button', { name: 'Use light theme' }).click();
     await page.reload();
     await expect(page.locator('html')).not.toHaveClass(/dark/);
@@ -98,14 +98,13 @@ test.describe('browsing', () => {
     const cairo = await browser.newContext({ timezoneId: 'Africa/Cairo', locale: 'en-US' });
     const page = await cairo.newPage();
     await page.goto('/games/genshin-impact');
-    await expect(page.getByLabel('Show prices in').first()).toHaveValue('EGP');
     await expect(page.getByTestId('prefs-currency')).toHaveText('EGP'); // visible in the top bar
     await expect(page.getByText(/EGP\s?[\d,.]+/).first()).toBeVisible();
     await cairo.close();
     const berlin = await browser.newContext({ timezoneId: 'Europe/Berlin', locale: 'de-DE' });
     const p2 = await berlin.newPage();
     await p2.goto('/games/genshin-impact');
-    await expect(p2.getByLabel('Preise anzeigen in').first()).toHaveValue('EUR');
+    await expect(p2.getByTestId('prefs-currency')).toHaveText('EUR');
     await berlin.close();
   });
 

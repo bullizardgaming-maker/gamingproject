@@ -1,10 +1,12 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { GameBanner } from '@/components/GameArt';
-import { ArrowRight } from '@phosphor-icons/react';
+import { ArrowRight, UsersThree } from '@phosphor-icons/react';
 import { CATEGORY_ICON, CategoriesRetry, TrustStrip } from '../components/CatalogUi';
 import { GameSearch } from '../components/SiteHeader';
-import { BrandMark } from '../components/Brand';
+import { BrandMark, BrandWordmark } from '../components/Brand';
+import { HeroEye } from '../components/HeroEye';
+import { PaymentStrip } from '../components/PaymentStrip';
 import { StatusEye } from '../components/StatusEye';
 import { api, money } from '../api';
 import { useSession } from '../session';
@@ -12,13 +14,13 @@ import { categoryLabel, popular, slugify, useCategoryOrder, useGames, type GameE
 import { useRecent } from '@/lib/recent';
 import { statusLabel } from '@/lib/orderUi';
 import { usePageMeta } from '@/lib/seo';
-import { t } from '../i18n';
+import { t, useLocale } from '../i18n';
 
 interface OrderLine { id: string; ref?: string; offer_id?: string; offer_title: string; game: string; amount_cents: number; currency: string; status: string; created_at: string }
 
 /**
- * Home: the photo hero with the big search and the trust strip (full width), then what this
- * buyer had going (recently bought, continue browsing) and our top games. No game artwork.
+ * Home (CEO, 8 Nov): the eye hero ("Bullizard · Digital Marketplace", search), the trust strip, trending games,
+ * what this visitor browsed and bought, two ways to get paid, and the moving strip of ways to pay.
  */
 export function Home() {
   usePageMeta({ description: t('home.meta') });
@@ -30,32 +32,52 @@ export function Home() {
     if (!user) return setBought([]);
     api<OrderLine[]>('/orders?as=buyer').then((o) => setBought(o.filter((x) => x.status !== 'cancelled').slice(0, 4))).catch(() => setBought([]));
   }, [user?.id]);
-  const top = games ? popular(games, 10) : [];
-  const trending = games ? popular(games, 5) : [];
+  const trending = games ? popular(games, 6) : [];
   const browsed = recent.browsed.filter((b) => games?.some((g) => g.game === b.game)).slice(0, 4);
+  const ar = useLocale() === 'ar';
 
   return (
     <>
-      <section className="home-hero2 bleed">
-        <div className="shell shell-wide home-hero2-inner">
-          <h1>{t('home.hero.title')}</h1>
-          <p className="lede">{t('home.hero.lede')}</p>
-          <p className="small muted" style={{ margin: 0 }}>{t('home.hero.soon')}</p>
-          <div className="home-search"><GameSearch big /></div>
-          {trending.length > 0 && (
-            <div className="row" style={{ gap: 8 }}>
-              <span className="eyebrow" style={{ margin: '0 4px 0 0' }}>{t('search.trending')}</span>
-              {trending.map((g) => (
-                <Link key={g.game} to={`/games/${slugify(g.game)}`} className="search-pill">{g.game}</Link>
-              ))}
-            </div>
-          )}
+      <section className="lp-hero bleed">
+        <div className="shell lp-hero-in">
+          <div className="lp-hero-text">
+            <h1 className="lp-title">
+              {ar ? <span lang="ar" className="wordmark-ar lp-word-ar">بوليزارد</span> : <BrandWordmark className="lp-word" title="Bullizard" />}
+              <span className="lp-kicker">{t('lp.kicker')}</span>
+            </h1>
+            <p className="lp-lede">{t('lp.lede')}</p>
+            <div className="home-search lp-search"><GameSearch big /></div>
+          </div>
+          <HeroEye className="lp-eye" />
         </div>
       </section>
 
       <section className="trust-band bleed">
-        <div className="shell shell-wide"><TrustStrip /></div>
+        <div className="shell"><TrustStrip /></div>
       </section>
+
+      <section className="home-block" aria-labelledby="home-top">
+        <div className="home-head">
+          <h2 id="home-top">{t('lp.trending')}</h2>
+          <Link to="/games" className="home-more">{t('home.allGames')} <ArrowRight className="size-4 rtl:rotate-180" aria-hidden /></Link>
+        </div>
+        <CategoriesRetry />
+        <div className="home-games">
+          {games === null
+            ? Array.from({ length: 6 }, (_, i) => <div key={i} className="card home-game-skel" aria-hidden />)
+            : trending.map((g) => <GameTile key={g.game} game={g} />)}
+        </div>
+        <Link to="/games/vote" className="small muted mt-4 inline-block">{t('home.voteNext')}</Link>
+      </section>
+
+      {browsed.length > 0 && (
+        <section className="home-block" aria-labelledby="home-continue">
+          <div className="home-head"><h2 id="home-continue">{t('lp.browsed')}</h2></div>
+          <div className="home-games">
+            {browsed.map((b) => <GameTile key={b.game} game={games!.find((g) => g.game === b.game)!} only={b.categories} />)}
+          </div>
+        </section>
+      )}
 
       {bought.length > 0 && (
         <section className="home-block" aria-labelledby="home-bought">
@@ -80,50 +102,41 @@ export function Home() {
         </section>
       )}
 
-      {browsed.length > 0 && (
-        <section className="home-block" aria-labelledby="home-continue">
-          <div className="home-head"><h2 id="home-continue">{t('home.continue')}</h2></div>
-          <div className="home-games">
-            {browsed.map((b) => <GameTile key={b.game} game={games!.find((g) => g.game === b.game)!} only={b.categories} />)}
-          </div>
-        </section>
-      )}
-
-      <section className="home-block" aria-labelledby="home-top">
+      <section className="home-block lp-earn" aria-labelledby="lp-earn-title">
         <div className="home-head">
-          <h2 id="home-top">{t('home.topGames')}</h2>
-          <Link to="/games" className="home-more">{t('home.allGames')} <ArrowRight className="size-4 rtl:rotate-180" aria-hidden /></Link>
+          <div>
+            <h2 id="lp-earn-title">{t('lp.earn.title')}</h2>
+            <p className="muted" style={{ margin: '6px 0 0' }}>{t('lp.earn.sub')}</p>
+          </div>
         </div>
-        <CategoriesRetry />
-        <div className="home-games">
-          {games === null
-            ? Array.from({ length: 5 }, (_, i) => <div key={i} className="card home-game-skel" aria-hidden />)
-            : top.map((g) => <GameTile key={g.game} game={g} />)}
+        <div className="lp-earn-grid">
+          <article className="lp-earn-card" aria-labelledby="lp-aff-title">
+            <div className="lp-earn-top">
+              <span className="lp-earn-tag"><UsersThree className="size-4" aria-hidden /> {t('lp.aff.tag')}</span>
+              <div className="lp-earn-big num" aria-hidden>20%</div>
+            </div>
+            <h3 id="lp-aff-title">{t('lp.aff.title')}</h3>
+            <p>{t('lp.aff.text')}</p>
+            <div className="lp-earn-actions">
+              <Link to={user ? '/account#invite' : '/signup'} className="btn lp-go">{t('lp.earn.cta')} <ArrowRight className="size-4 rtl:rotate-180" aria-hidden /></Link>
+              <Link to={`/support/new?category=other&subject=${encodeURIComponent(t('lp.aff.creatorSubject'))}`} className="lp-earn-link">{t('lp.aff.creator')}</Link>
+            </div>
+          </article>
+          <article className="lp-earn-card lp-earn-sell" aria-labelledby="lp-sell-title">
+            <div className="lp-earn-top">
+              <span className="lp-earn-tag"><BrandMark style={{ width: 16, height: 14 }} /> {t('grow.sellBadge')}</span>
+              <div className="lp-earn-big num" aria-hidden>5%</div>
+            </div>
+            <h3 id="lp-sell-title">{t('lp.sell.title')}</h3>
+            <p>{t('lp.sell.text')}</p>
+            <div className="lp-earn-actions">
+              <Link to="/sell" className="btn lp-go">{t('lp.earn.cta')} <ArrowRight className="size-4 rtl:rotate-180" aria-hidden /></Link>
+            </div>
+          </article>
         </div>
-        <Link to="/games/vote" className="small muted mt-4 inline-block">{t('home.voteNext')}</Link>
       </section>
 
-      <section className="home-block" style={{ paddingTop: 48 }}>
-        <h2 style={{ margin: 0 }}>{t('grow.title')}</h2>
-        <p className="muted" style={{ margin: '6px 0 0', fontSize: 16 }}>{t('grow.sub')}</p>
-        <div className="grow-grid">
-          <article className="grow-card" style={{ backgroundImage: 'url(/img/grow-invite.jpg)', '--photo': 'url(/img/grow-invite.jpg)' } as CSSProperties}>
-            <div className="grow-in">
-              <h3>{t('grow.inviteTitle')}</h3>
-              <p className="muted">{t('grow.inviteText')}</p>
-              <Link to="/account" className="btn ghost">{t('grow.inviteCta')}</Link>
-            </div>
-          </article>
-          <article className="grow-card" style={{ backgroundImage: 'url(/img/grow-sell.jpg)', '--photo': 'url(/img/grow-sell.jpg)' } as CSSProperties}>
-            <div className="grow-in">
-              <span className="founding"><BrandMark style={{ width: 18, height: 16 }} />{t('grow.sellBadge')}</span>
-              <h3>{t('grow.sellTitle')}</h3>
-              <p className="muted">{t('grow.sellText')}</p>
-              <Link to="/sell" className="btn go">{t('grow.sellCta')}</Link>
-            </div>
-          </article>
-        </div>
-      </section>
+      <PaymentStrip />
     </>
   );
 }

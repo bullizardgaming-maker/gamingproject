@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { buy, disputeViaSupport, signIn, signOut } from './helpers';
+import { buy, disputeViaSupport, signIn, signOut, setLanguage } from './helpers';
 
 /** CEO decisions of Oct 23: terms line instead of a checkbox, recurring referral, no seller API, translated chat notices. */
 test.describe('launch decisions', () => {
@@ -38,7 +38,7 @@ test.describe('launch decisions', () => {
     await page.getByPlaceholder(/Your side for the arbiter/).fill('My trade link is in the chat; nothing has arrived.');
     await page.getByRole('button', { name: 'Add statement' }).click();
     await expect(page.getByText('The buyer added a statement to the dispute. The arbiter reads both sides’ statements with this chat.')).toBeVisible();
-    await page.getByLabel('Language', { exact: true }).first().selectOption('ar');
+    await setLanguage(page, 'ar');
     await expect(page.getByText('أضاف المشتري إفادة إلى النزاع. يقرأ المحكّم إفادات الطرفين مع هذه المحادثة.')).toBeVisible();
   });
 
@@ -57,7 +57,7 @@ test.describe('launch decisions', () => {
     await page.getByRole('button', { name: 'Sign up, it’s free!' }).click();
     const box = page.getByRole('checkbox', { name: /18 or older/ });
     await expect(box).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Privacy Policy' })).toHaveAttribute('href', '/privacy');
+    await expect(page.locator('#main').getByRole('link', { name: 'Privacy Policy' })).toHaveAttribute('href', '/privacy');
     await page.locator('input[name=displayName]').fill('New Trader');
     await page.locator('input[name=email]').fill(`new-${Date.now()}@example.com`);
     await page.locator('input[name=password]').fill('correct horse battery');
@@ -67,11 +67,14 @@ test.describe('launch decisions', () => {
     await page.getByRole('button', { name: 'Create account' }).click();
     await expect(page).toHaveURL(/\/account/);
 
+    // CEO, 8 Nov: the footer has one "Legal" link; the five documents are listed there.
     const footer = page.getByRole('contentinfo');
-    await footer.getByRole('link', { name: 'Restricted countries' }).click();
-    await expect(page.getByTestId('legal-restricted-countries')).toContainText('Version 2026-10-24');
     await expect(footer.getByText('18+ only. Not affiliated with any game publisher.')).toBeVisible();
-    await footer.getByRole('link', { name: 'Seller Agreement' }).click();
+    await footer.getByRole('link', { name: 'Legal', exact: true }).click();
+    await page.getByTestId('legal-index').getByRole('link', { name: 'Restricted countries' }).click();
+    await expect(page.getByTestId('legal-restricted-countries')).toContainText('Version 2026-10-24');
+    await footer.getByRole('link', { name: 'Legal', exact: true }).click();
+    await page.getByTestId('legal-index').getByRole('link', { name: 'Seller Agreement' }).click();
     await expect(page.getByRole('heading', { name: 'Seller Agreement' })).toBeVisible();
   });
 });

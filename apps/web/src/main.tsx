@@ -14,6 +14,7 @@ import { CreateOffer, EditOffer } from './pages/CreateOffer';
 import { PayoutAddressConfirm } from './pages/SellerMoney';
 import { Messages } from './pages/Messages';
 import { LegalHistory, LegalPage } from './pages/Legal';
+import { AboutPage, LegalIndex } from './pages/Company';
 import { Account, ForgotPassword, Login, ResetPassword } from './pages/Account';
 import { MAIN_ORIGIN, onSupportHost, supportHostServes } from '@/lib/support';
 import { Admin } from './pages/Admin';
@@ -137,6 +138,8 @@ function App() {
           <Route path="/sell/payout-address/confirm" element={<PayoutAddressConfirm />} />
           <Route path="/sell/analytics" element={<Sell />} />
           <Route path="/sell/invoices" element={<Navigate to="/sell/money" replace />} />
+          <Route path="/about" element={<AboutPage />} />
+          <Route path="/legal" element={<LegalIndex />} />
           <Route path="/terms" element={<LegalPage doc="terms" />} />
           <Route path="/terms/history" element={<LegalHistory doc="terms" />} />
           <Route path="/terms/versions/:version" element={<LegalPage doc="terms" />} />

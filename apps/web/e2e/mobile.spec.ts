@@ -21,12 +21,12 @@ test.describe('phone layout', () => {
     }
   });
 
-  test('language and currency are reachable from the footer', async ({ page }) => {
+  test('region, language and currency are reachable from the top bar', async ({ page }) => {
     await page.goto('/');
-    const lang = page.locator('footer').getByLabel('Language');
-    await lang.scrollIntoViewIfNeeded();
-    await expect(lang).toBeVisible();
-    await lang.selectOption('es');
+    await page.getByRole('button', { name: /^Region:/ }).click();
+    const panel = page.getByRole('dialog', { name: 'Localization settings' });
+    await panel.getByLabel('Language').selectOption('es');
+    await panel.getByRole('button', { name: 'Save' }).click();
     await expect(page.locator('html')).toHaveAttribute('lang', 'es');
   });
 });

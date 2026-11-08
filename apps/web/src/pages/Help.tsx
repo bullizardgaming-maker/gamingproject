@@ -262,7 +262,7 @@ export function SupportNew() {
           {orderId && !orders.some((o) => o.id === orderId) && <option value={orderId}>{t('sup.orderShort', { id: orderId.slice(0, 8) })}</option>}
         </select>
       </label>
-      <label className="field">{t('sup.subject')}<input name="subject" required minLength={3} maxLength={140} placeholder={t('sup.subjectHint')} /></label>
+      <label className="field">{t('sup.subject')}<input name="subject" required minLength={3} maxLength={140} defaultValue={params.get('subject') ?? ''} placeholder={t('sup.subjectHint')} /></label>
       <label className="field">
         {t('sup.details')}
         <textarea name="body" required minLength={2} maxLength={5000} rows={6} placeholder={t('sup.detailsHint')} />

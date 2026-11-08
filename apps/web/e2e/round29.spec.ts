@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { signIn, signOut } from './helpers';
+import { signIn, signOut, setLanguage } from './helpers';
 
 /** Round 29: regions (no country names), no crypto from Egypt connections, country only in the withdrawal form, every badge + rating, no cart, real 503 messages, Ops fixes, support links. */
 
@@ -36,7 +36,7 @@ test.describe('regions, not countries', () => {
 
   test('Arabic: the region names are translated', async ({ page }) => {
     await signIn(page, 'Buyer');
-    await page.getByLabel('Language', { exact: true }).first().selectOption('ar');
+    await setLanguage(page, 'ar');
     await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
     await page.goto('/account');
     for (const r of ['آسيا', 'الشرق الأوسط', 'أمريكا', 'أوروبا', 'عالمي']) await expect(page.getByTestId('region-settings').getByText(r, { exact: true })).toBeVisible();
@@ -188,11 +188,10 @@ test.describe('Ops', () => {
   });
 });
 
-test('support links: footer “Contact support” + “My requests”, and the order page', async ({ page }) => {
+test('support links: footer “Help Center”, and the order page', async ({ page }) => {
   await signIn(page, 'Buyer');
   const footer = page.getByRole('contentinfo');
-  await expect(footer.getByRole('link', { name: 'Contact support' })).toHaveAttribute('href', '/support/new');
-  await expect(footer.getByRole('link', { name: 'My requests' })).toHaveAttribute('href', '/support');
+  await expect(footer.getByRole('link', { name: 'Help Center' })).toHaveAttribute('href', '/help'); // help centre off → contact form
   await page.goto('/orders');
   await page.locator('a[href^="/orders/"]').first().click();
   const link = page.getByTestId('order-support').getByRole('link', { name: 'Contact support' });

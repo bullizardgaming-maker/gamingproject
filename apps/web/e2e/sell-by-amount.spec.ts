@@ -22,7 +22,7 @@ test.describe('seller side', () => {
     await publishOffer(page);
     await expect(page.getByText('Your offer is live.')).toBeVisible();
     await page.goto('/games/albion-online/currency');
-    await page.getByRole('button', { name: /Europe/ }).click(); // the server is picked first (Round 24)
+    await page.locator('#main').getByRole('button', { name: /Europe/ }).click(); // the server is picked first (Round 24)
     const row = page.locator('.cl-row').filter({ hasText: 'NorthWind' }).filter({ hasText: '15 min' });
     await expect(row).toBeVisible();
     await row.locator('a').first().click();

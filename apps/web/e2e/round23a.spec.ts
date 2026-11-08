@@ -1,7 +1,7 @@
 import { mkdirSync, truncateSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
-import { payCrypto, signIn, signOut, watchErrors, buyNow } from './helpers';
+import { payCrypto, signIn, signOut, watchErrors, buyNow, setLanguage } from './helpers';
 
 /** Round 23a: newsletter consent, Cloudflare Turnstile on the auth forms only, the proof video size message. */
 
@@ -41,7 +41,7 @@ test.describe('newsletter consent', () => {
     await expect(page.locator('.card', { has: page.getByRole('heading', { name: 'News and offers' }) }).getByRole('checkbox')).not.toBeChecked();
     await signOut(page);
     await page.goto('/login');
-    await page.getByLabel('Language', { exact: true }).first().selectOption('ar');
+    await setLanguage(page, 'ar');
     await expect(page.locator('html')).toHaveAttribute('dir', 'rtl'); // the Arabic strings are in before the click
     await page.getByRole('button', { name: 'Sign up, it’s free!' }).click(); // the auth chrome is English-only
     await expect(page.getByText(/راسلني عن الألعاب الجديدة والعروض\./)).toBeVisible();
